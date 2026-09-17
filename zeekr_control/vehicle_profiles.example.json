@@ -3,7 +3,10 @@
     "name": "我的车辆",
     "variant": "",
     "image": "",
-    "image_alt": ""
+    "image_alt": "",
+    "range_km": null,
+    "range_standard": "",
+    "range_source": ""
   },
   "vehicles": {}
 }

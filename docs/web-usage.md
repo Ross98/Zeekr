@@ -95,3 +95,16 @@ node --check zeekr_control/static/app.js
 `tests/ui_smoke.cjs` 使用 Playwright 和 `tests/web_fixture.py` 的合成响应验收浏览器，不读取真实会话。需要本机可用的 Playwright 与 Chromium；可通过 `NODE_PATH` 和 `CHROMIUM_EXECUTABLE` 指定安装位置。截图在 `/tmp/zeekr-web-qa/`，属于合成数据界面验收，不是车辆状态证据。
 
 运行期 Python 不需要额外第三方包；Node/Playwright 仅用于开发验收。界面不包含远程车控或通知系统。
+
+
+## 能源与充电：标称续航与表显达成率
+
+能源页将动力电池电量、剩余续航和车型标称续航集中展示；右侧显示“续航达成率（表显估算）”。充电组合、单项状态与剩余时间另设分区，原始参数和低压电池默认折叠；刷新保留展开状态。
+
+在本地 `zeekr_control/vehicle_profiles.json` 的对应车辆资料中配置 `range_km`、`range_standard` 和 `range_source`。标称里程必须是大于 0 且不超过 3000 的有限数值，标准支持 CLTC、WLTP、NEDC、EPA。示例模板不预设车型续航；多车场景通过 `vehicles` 分别配置，未配置的车辆不继承其他车型数值。
+
+2023 款极氪 001 WE86 四驱参考值为 546 km（CLTC）。本次核对依据为[爱卡车型配置表](https://newcar.xcar.com.cn/m68120/config.htm)和[2023 款上市报道](https://www.ithome.com/0/664/912.htm)，属于第三方资料，并非已取得的旧款官方配置原页。
+
+计算方式：剩余续航 ÷（标称续航 × 当前电量 ÷ 100）× 100%。例如标称 546 km、电量 50%、剩余 230 km，结果为 84.2%。计算使用同一缓存快照的动力电池字段，不使用低压电池值；电量为 0、无有效标称值或数据缺失时显示“无法计算”，大于 100% 的结果不截断。该指标不代表实际行驶达成率或电池健康。
+
+修改后端代码后重启 Web 服务，再读取状态；修改车型资料后在下一次成功刷新时加载。仅刷新浏览器不会主动请求车辆云端状态。新增 `tests/ui_energy.cjs` 覆盖计算边界、未知充电状态、键盘展开、刷新保留和 320/390/1024/1440 px 布局，使用合成数据。

@@ -206,8 +206,49 @@ function car() {
 
 function energy() {
   if (!state?.model) return modelRequired();
-  const m = state.model;
-  return `<div class="metric-grid">${metric('动力电池',m.metrics.battery,'battery','不使用低压电池电量',true)}${metric('电池续航',m.metrics.range,'range','电动车专用续航字段')}${metric('充电组合',m.charging.value,'energy','仅匹配已核对状态时解释')}</div><div class="notice info">${icon('info')}充电状态、充电器状态、连接状态分别展示。“未充电”不等于“未插枪”。</div><div class="grid-two grid-equal"><section class="card"><div class="card-head"><h2>充电与放电</h2>${pill('缓存参数')}</div>${table(m.fields.filter(f => f.group==='能源与充电' && !['chargeLevel','distanceToEmptyOnBatteryOnly'].includes(f.key)),true)}</section><section class="card"><div class="card-head"><h2>低压电池</h2>${pill('独立于动力电池')}</div><div class="card-meta">健康字段不用于判断动力电池健康；电气字段单位仍需实车核对。</div>${table(m.fields.filter(f => f.group==='低压电池'),true)}</section></div>`;
+  const m = state.model, profile = state.profile || {};
+  const battery = m.metric_details?.battery?.value, range = m.metric_details?.range?.value;
+  const validBattery = Number.isFinite(battery) && battery >= 0 && battery <= 100;
+  const validRange = Number.isFinite(range) && range >= 0;
+  const rated = profile.range_km;
+  const validRated = Number.isFinite(rated) && rated > 0 && ['CLTC','WLTP','NEDC','EPA'].includes(profile.range_standard);
+  const reference = validRated && validBattery ? rated * battery / 100 : null;
+  const ratio = reference > 0 && validRange ? range / reference * 100 : null;
+  const canCalculate = Number.isFinite(ratio);
+  const format = value => new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value);
+  const electric = m.fields.filter(f => f.group === '能源与充电');
+  const field = key => electric.find(f => f.key === key);
+  const time = field('timeToFullyCharged');
+  const remainingTime = !time || time.value === '未知' ? '未知' : time.value === '暂无有效时间估计' ? time.value : `原值 ${time.value}（单位待核实）`;
+  const electricKeys = ['chargeUAct','chargeIAct','dcChargeSts','dcChargeIAct','dcChargePileUAct','dcChargePileIAct','chargeHvSts','hvTempLevel','ptReady'];
+  const strategyKeys = ['bookChargeSts','chargeLidAcStatus','chargeLidDcAcStatus','disChargeSts','disChargeConnectStatus','disChargeUAct','disChargeIAct','timeToTargetDisCharged'];
+  const primaryKeys = ['chargeLevel','distanceToEmptyOnBatteryOnly','chargeSts','chargerState','statusOfChargerConnection','timeToFullyCharged'];
+  const other = electric.filter(f => ![...electricKeys,...strategyKeys,...primaryKeys].includes(f.key));
+  return `<section class="energy-freshness">${icon('clock')}<strong>${age(m.updated_time,'车辆数据更新于 ')}</strong><span>云端缓存 · 不代表实时状态</span></section>
+  <div class="energy-top">
+    <section class="card energy-battery"><div class="card-head"><h2>动力电池与续航</h2>${pill('动力电池','', 'battery')}</div>
+      <div class="energy-primary"><div><span>当前电量</span><strong>${validBattery ? format(battery) : '未知'}${validBattery ? '<small>%</small>' : ''}</strong></div><div><span>剩余续航</span><strong>${validRange ? format(range) : '未知'}${validRange ? '<small>km</small>' : ''}</strong></div></div>
+      <div class="energy-battery-track" ${validBattery ? `role="meter" aria-label="动力电池电量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${battery}"` : 'aria-label="电量未知"'}><div style="width:${validBattery ? battery : 0}%"></div></div>
+      <div class="energy-rating"><div><span>标称续航${validRated ? `（${esc(profile.range_standard)}）` : ''}</span><strong>${validRated ? `${format(rated)} <small>km</small>` : '待配置'}</strong></div><span>${esc(profile.variant || '车型资料待配置')}</span></div>
+    </section>
+    <section class="card energy-achievement"><div class="card-head"><h2>续航达成率</h2>${pill('表显估算')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${ratio.toFixed(1)}<small>%</small>` : '<span>无法计算</span>'}</div>
+      <p class="energy-caption">按当前电量折算，与 ${esc(validRated ? profile.range_standard : '标称')} 续航比较</p>
+      <div class="energy-reference">${row('当前电量对应标称续航',reference !== null ? `${format(reference)} km` : '未知')}${row('当前表显剩余续航',validRange ? `${format(range)} km` : '未知')}</div>
+      <p class="energy-caption">${canCalculate ? '基于表显剩余续航估算，不代表实际行驶达成率或电池健康。' : '需要有效电量、剩余续航和车型标称值；电量为 0 时无法计算。'}</p>
+    </div></section>
+  </div>
+  <section class="card energy-charge"><div class="card-head"><h2>充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body">
+    <div class="energy-charge-grid">${[['chargeSts','车辆充电状态'],['chargerState','充电器工作状态'],['statusOfChargerConnection','充电枪连接状态']].map(([key,label]) => `<div><span>${label}</span><strong>${!field(key) || field(key).value === '未知' ? '未知' : '单项待核实'}</strong></div>`).join('')}</div>
+    <div class="energy-charge-time">${row('充满剩余时间',remainingTime)}</div><p class="energy-caption">${m.charging.confirmed ? '三项组合匹配已核对的“未充电”；连接状态仍需单独核实。' : '当前组合尚未核对，无法判断是否正在充电。'}</p>
+  </div></section>
+  <section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
+    <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 剩余续航 ÷（标称续航 × 电量 ÷ 100）× 100%。使用同一车辆缓存快照的动力电池电量和剩余续航；未使用低压电池数据。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值，实际续航随温度、速度与空调使用变化。</p><p>实际行驶达成率需要行驶距离和消耗电量，不能由当前快照得出。</p></div></details>
+    ${carDisclosure('energy-status','充电状态原值',electric.filter(f => primaryKeys.includes(f.key)))}
+    ${carDisclosure('energy-electric','电压、电流与高压参数',electric.filter(f => electricKeys.includes(f.key)))}
+    ${carDisclosure('energy-strategy','预约、充电口与对外放电',electric.filter(f => strategyKeys.includes(f.key)))}
+    ${carDisclosure('energy-other','电耗与其他能源参数',other)}
+    <details class="car-disclosure" data-detail="energy-low-voltage"><summary><span>低压电池</span><span class="car-detail-count">独立于动力电池</span></summary><p class="car-disclosure-note">低压电池电量与健康字段不代表动力电池状态；未验证电气单位保留原值。</p>${table(m.fields.filter(f => f.group === '低压电池'),true)}</details>
+  </section>`;
 }
 
 function privacyGate(track = false) {
@@ -263,9 +304,9 @@ function more() { return `<div class="more-grid">${['energy','fields','settings'
 
 function render() {
   generation++;
-  const carOpenDetails = page === 'car' && $('#main').dataset.page === 'car'
+  const carOpenDetails = ['car','energy'].includes(page) && $('#main').dataset.page === page
     ? [...document.querySelectorAll('#main details[data-detail][open]')].map(el => el.dataset.detail) : [];
-  const carFocusedDetail = page === 'car' ? document.activeElement?.closest('details[data-detail]')?.dataset.detail : null;
+  const carFocusedDetail = ['car','energy'].includes(page) ? document.activeElement?.closest('details[data-detail]')?.dataset.detail : null;
   if (map) { map.remove(); map = null; mapMarker = null; }
   navigation();
   $('#main').dataset.page=page;
