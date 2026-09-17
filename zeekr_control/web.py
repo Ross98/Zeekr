@@ -315,7 +315,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/app.css': ('app.css', 'text/css; charset=utf-8'),
                           '/vendor/leaflet.js': ('vendor/leaflet.js', 'text/javascript; charset=utf-8'),
                           '/vendor/leaflet.css': ('vendor/leaflet.css', 'text/css; charset=utf-8'),
-                          '/car.svg': ('car.svg', 'image/svg+xml')}
+                          '/car.svg': ('car.svg', 'image/svg+xml'),
+                          '/car-001.png': ('car-001.png', 'image/png')}
                 if url.path in assets:
                     name, content_type = assets[url.path]
                     return self.send(200, (STATIC / name).read_bytes(), content_type)

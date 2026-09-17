@@ -144,11 +144,64 @@ function table(fields, paths = false) {
   return `<div class="table-wrap"><table class="fields"><thead><tr><th>参数</th><th>当前值 / 原值</th><th>解释依据</th></tr></thead><tbody>${fields.map(f => `<tr><td>${esc(f.name)}${paths ? `<span class="field-path">${esc(f.path)}</span>` : ''}</td><td><span class="field-value">${esc(f.value)}</span>${f.evidence === '待核实' ? '<span class="field-path">原始值，含义待核对</span>' : ''}</td><td>${pill(f.evidence,f.evidence==='待核实'||f.evidence==='未知'?'warn':'')}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
+// Classify interpreted labels only. Never translate unverified cloud enums here.
+function carStateKind(value) {
+  if (['关闭','已锁','已锁车'].includes(value)) return 'safe';
+  if (['打开','开启','未锁','未锁车'].includes(value)) return 'attention';
+  return 'unknown';
+}
+function carState(value) {
+  const kind = carStateKind(value);
+  return `<span class="car-state state-${kind}">${esc(kind === 'unknown' ? '未知' : value)}</span>`;
+}
+function carPhoto() {
+  // The configured overview SVG wraps this exact official PNG. Keep the
+  // existing profile association so an unconfigured vehicle gets no wrong model.
+  const profile = state.profile;
+  if (profile?.image !== '/car.svg') return '<div class="car-photo-empty">车型图片待配置</div>';
+  return `<figure class="car-photo"><img src="/car-001.png" alt="${esc(profile.image_alt || profile.name)}"></figure>`;
+}
+function carDisclosure(key, label, fields) {
+  const uncertain = fields.filter(f => ['未知','待核实'].includes(f.evidence)).length;
+  return `<details class="car-disclosure" data-detail="${key}"><summary><span>${label}</span><span class="car-detail-count">${fields.length ? `${fields.length} 项${uncertain ? ` · ${uncertain} 项待核实 / 未知` : ''}` : '暂无返回数据'}</span></summary>${table(fields,true)}</details>`;
+}
 function car() {
   if (!state?.model) return modelRequired();
   const m = state.model;
-  return `<div class="grid-two"><section class="card"><div class="card-head"><h2>门锁、车门与车窗</h2>${pill('按本车已核对组合解释')}</div><div class="card-body"><div class="door-grid">${m.doors.map(d => `<div class="door-card"><h3>${esc(d.name)}</h3>${['door','lock','window'].map((key,i) => `<div class="inline-row"><span>${['车门','门锁','车窗'][i]}</span><span class="${d[key]==='未知'?'unknown':'known'}">${esc(d[key])}<span class="raw">原值 ${esc(d.raw[key])}</span></span></div>`).join('')}</div>`).join('')}</div><div class="section-gap">${row('中控锁组合',m.lock.value)}${row('尾门开闭',m.trunk)}${row('前舱盖',m.hood)}</div></div></section><section class="card"><div class="card-head"><h2>四轮胎压与胎温</h2></div><div class="card-body">${tyres()}<div class="divider section-gap"></div><p class="subtle">保留接口小数；轮位按左舵车辆显示。未设置未经核对的胎压报警阈值。</p><div class="temperature"><div><div class="small-label">车内</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="subtle">温度更新 ${esc(m.temperature_updated_at)}</div></div></section></div>
-  <section class="card"><div class="card-head"><h2>空调、座椅与空气质量</h2>${link('全部参数','fields')}</div><div class="card-meta">未核实枚举保留原值；通用字段不代表本车配备或正在运行该硬件。</div>${table(m.fields.filter(f => ['空调与舒适','空气质量'].includes(f.group)),true)}</section>`;
+  const positions = ['左前','右前','左后','右后'];
+  const doors = positions.map(name => m.doors.find(d => d.name === name) || {name,door:'未知',lock:'未知',window:'未知',raw:{}});
+  const labels = [['door','车门'],['lock','门锁'],['window','车窗']];
+  const lock = m.lock.confirmed ? m.lock.value : '未知';
+  const statuses = doors.flatMap(d => labels.map(([key,label]) => ({name:d.name+label,value:d[key]})))
+    .concat([{name:'中控锁',value:lock},{name:'尾门',value:m.trunk},{name:'前舱盖',value:m.hood}]);
+  const attention = statuses.filter(item => carStateKind(item.value) === 'attention');
+  const unknown = statuses.filter(item => carStateKind(item.value) === 'unknown');
+  const doorCards = doors.map((d,i) => `<article class="car-door car-door-${i}" data-position="${d.name}"><h3>${d.name}<span>${['主驾','副驾','后排','后排'][i]}</span></h3>${labels.map(([key,label]) => `<div class="inline-row"><span>${label}</span>${carState(d[key])}</div>`).join('')}</article>`).join('');
+  const doorFields = doors.flatMap(d => labels.map(([key,label]) => ({name:d.name+label,value:d.raw?.[key] ?? '未知',evidence:carStateKind(d[key]) === 'unknown' ? '待核实' : '本车已核对'})));
+  const climateFields = m.fields.filter(f => f.group === '空调与舒适' && !/^(winPos|winStatus)/.test(f.key) && !['interiorTemp','exteriorTemp','temperatureUpdateTime'].includes(f.key));
+  const equipment = f => /sunroof|curtain/i.test(f.key) || /^(rl|rr)Vent/.test(f.key);
+  const seat = f => /^(drv|pass|rl|rr|steerWhl)/.test(f.key);
+  return `<section class="car-summary" aria-label="车辆状态摘要">
+    <div class="car-summary-top"><div class="car-freshness">${icon('clock')}<strong>${age(m.updated_time,'车辆数据更新于 ')}</strong><span>云端缓存 · 不代表实时状态</span></div><div class="car-summary-counts"><span class="car-state state-${attention.length ? 'attention' : 'neutral'}">需关注 ${attention.length} 项</span><span class="car-state state-${unknown.length ? 'unknown' : 'neutral'}">未知 ${unknown.length} 项</span></div></div>
+    <div class="car-summary-stats">${labels.map(([key,label]) => { const count = doors.filter(d => carStateKind(d[key]) === 'safe').length; return `<div><span>${label}</span><strong class="state-${count === 4 ? 'safe' : 'unknown'}">${count}<small> / 4</small></strong><span>${key === 'lock' ? '已确认锁止' : '已确认关闭'}</span></div>`; }).join('')}</div>
+    ${attention.length ? `<div class="car-attention-list">${attention.map(item => `<span>${esc(item.name)} · ${esc(item.value)}</span>`).join('')}</div>` : ''}
+    <p class="car-summary-note">${unknown.length ? '未知项请在下方逐项查看；未知不代表正常或异常。' : '以上为缓存快照中的门窗状态。'}</p>
+  </section>
+  <div class="car-main-grid"><section class="card car-closures"><div class="card-head"><h2>门锁、车门与车窗</h2><span class="car-caption">左舵车辆 · 只读状态</span></div><div class="card-body">
+    <div class="car-vehicle-grid"><div class="car-end car-hood"><span>车头 · 前舱盖</span>${carState(m.hood)}</div>${doorCards}<div class="car-art">${carPhoto()}</div><div class="car-end car-trunk"><span>车尾 · 尾门</span>${carState(m.trunk)}</div></div>
+    <div class="car-lock-row"><span>${icon('lock')}中控锁</span>${carState(lock)}</div>
+    <p class="car-caption car-legend"><span class="state-safe">关闭 / 锁止</span><span class="state-attention">打开 / 未锁</span><span class="state-unknown">未知</span><span>状态以文字为准</span></p>
+  </div></section>
+  <div class="car-secondary"><section class="card car-tyres"><div class="card-head"><h2>四轮胎压与胎温</h2><span class="car-caption">车头朝上</span></div><div class="card-body"><div class="tyre-grid car-wheel-grid">${positions.map(name => { const t = m.tyres.find(t => t.name === name); return `<div class="car-wheel" data-position="${name}"><span class="car-wheel-name">${name}</span><strong>${esc(t?.pressure ?? '未知')}</strong><span>胎温 ${esc(t?.temperature ?? '未知')}</span></div>`; }).join('')}</div><p class="car-caption car-tyre-note">保留接口精度；暂无已核对的胎压报警阈值。</p></div></section>
+  <section class="card car-cabin"><div class="card-head"><h2>座舱与环境</h2></div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="car-temperature-time">${icon('clock')}${age(m.temperature_updated_time,'温度更新于 ')}</div><p class="car-caption">温度与整车状态可能不同步</p></div></section></div></div>
+  <section class="card car-data"><div class="card-head"><h2>参数与数据详情</h2>${link('全部参数','fields')}</div><p class="card-meta">按需展开查看。待核实参数不代表本车配备或正在运行该设备。</p>
+    <details class="car-disclosure" data-detail="closures"><summary><span>门窗数据与解释依据</span><span class="car-detail-count">四门 / 中控锁 / 尾门 / 前舱盖</span></summary><p class="car-disclosure-note">原值仅用于核对。只解释本车已核对组合；其他值显示未知，不从单个编码推测开闭或锁止。</p>${table(doorFields)}${table(m.fields.filter(f => /^(winStatus|doorPos)/.test(f.key) || ['centralLockingStatus','trunkOpenStatus','trunkLockStatus','engineHoodOpenStatus'].includes(f.key)),true)}</details>
+    ${carDisclosure('climate','空调相关参数',climateFields.filter(f => !equipment(f) && !seat(f)))}
+    ${carDisclosure('seats','座椅与方向盘',climateFields.filter(f => !equipment(f) && seat(f)))}
+    ${carDisclosure('air','空气质量',m.fields.filter(f => f.group === '空气质量'))}
+    ${carDisclosure('equipment','待核实设备',climateFields.filter(equipment))}
+    <details class="car-disclosure" data-detail="times"><summary><span>完整时间与数据说明</span></summary><div class="car-disclosure-note">${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}<p>刷新会重新读取云端缓存，不保证车辆产生新数据。胎压与胎温按左舵车辆轮位展示；不使用未经核对的报警阈值。</p></div></details>
+  </section>`;
 }
 
 function energy() {
@@ -200,6 +253,9 @@ function more() { return `<div class="more-grid">${['energy','fields','settings'
 
 function render() {
   generation++;
+  const carOpenDetails = page === 'car' && $('#main').dataset.page === 'car'
+    ? [...document.querySelectorAll('#main details[data-detail][open]')].map(el => el.dataset.detail) : [];
+  const carFocusedDetail = page === 'car' ? document.activeElement?.closest('details[data-detail]')?.dataset.detail : null;
   if (map) { map.remove(); map = null; mapMarker = null; }
   navigation();
   $('#main').dataset.page=page;
@@ -207,7 +263,9 @@ function render() {
   $('.breadcrumb').textContent = `我的车库 / ${state?.profile?.name || '我的车辆'}`;
   const error = transientError || state?.error;
   const body = {overview,car,energy,map:mapPage,tracks:tracksPage,fields:fieldsPage,settings,more}[page]();
-  $('#main').innerHTML = head() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (page==='overview' && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
+  $('#main').innerHTML = head() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
+  carOpenDetails.forEach(key => { const detail = $(`details[data-detail="${key}"]`); if(detail) detail.open = true; });
+  if (carFocusedDetail) $(`details[data-detail="${carFocusedDetail}"] > summary`)?.focus({preventScroll:true});
   updateClock();
   if (page === 'fields') renderFields();
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);

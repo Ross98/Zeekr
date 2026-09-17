@@ -1,10 +1,12 @@
 # Third-party attribution
 
-## Vehicle overview image
+## Vehicle images
 
 The overview uses an unmodified Zeekr 001 product image from Zeekr's official
 European model page, retrieved 2026-09-17. It is embedded locally in
 `zeekr_control/static/car.svg`; the SVG viewport trims transparent margins only.
+The vehicle details page uses the same original PNG bytes extracted into
+`zeekr_control/static/car-001.png`, without a vector wrapper or image edits.
 Vehicle color, regional specification and trim are illustrative and do not
 identify any owner's exact vehicle configuration. Rights remain with the
 original rights holder; no open-source image license is claimed.
