@@ -114,3 +114,58 @@ class WebModelTests(unittest.TestCase):
         model = self.build({'additionalVehicleStatus': {'drivingSafetyStatus': {
             'doorOpenStatusDriver': 0, 'trunkOpenStatus': 0}}})
         self.assertEqual(model.get('closure'), {'doors': '未知', 'windows': '未知', 'trunk': '关闭'})
+
+    def test_charging_cards_use_observed_combinations(self):
+        for charger, dc, amps, lid, expected, work in (
+            (0, 0, 0, 2, '未充电', '空闲'),
+            (24, 12, 210, 1, '直流充电中', '工作中'),
+            (26, 10, 0, 1, '充电已停止', '已停止'),
+        ):
+            data = {'additionalVehicleStatus': {'electricVehicleStatus': {
+                'chargeSts': 0, 'chargerState': charger, 'statusOfChargerConnection': 0,
+                'dcChargeSts': dc, 'dcChargePileIAct': amps, 'dcChargePileUAct': 400,
+                'chargeLidDcAcStatus': lid, 'timeToFullyCharged': 2047}}}
+            result = self.build(data)['charging']
+            self.assertEqual(result['value'], expected)
+            self.assertEqual(result['work_state'], work)
+            self.assertEqual(result['connection_state'], '接口未提供有效连接判断')
+            self.assertNotIn('充满', result['value'])
+            data['additionalVehicleStatus']['electricVehicleStatus']['dcChargePileIAct'] = 123
+            if charger != 24:
+                self.assertEqual(self.build(data)['charging']['work_state'], '未知')
+
+    def test_calibrated_fields_preserve_unknowns_and_validity(self):
+        from zeekr_control.web_model import fields_for
+        from zeekr_control.vehicle_state import decode
+        data = {'basicVehicleStatus': {'engineStatus': 'engine_running', 'speed': 0, 'speedValidity': False},
+                'additionalVehicleStatus': {
+                    'electricVehicleStatus': {'chargeLidAcStatus': 2, 'chargeLidDcAcStatus': 1,
+                        'dcChargePileUAct': 401.7, 'dcChargePileIAct': 0, 'chargeSts': 0},
+                    'drivingSafetyStatus': {'doorLockStatusDriver': 1, 'doorOpenStatusDriver': 0,
+                        'electricParkBrakeStatus': 1, 'engineHoodOpenStatus': 0},
+                    'drivingBehaviourStatus': {'gearAutoStatus': 3}}}
+        rows = {r['key']: r for r in fields_for(data)}
+        self.assertEqual(rows['chargeLidAcStatus']['name'], '交流慢充口盖')
+        self.assertEqual(rows['chargeLidDcAcStatus']['value'], '打开')
+        self.assertEqual(rows['speed']['value'], '未知')
+        self.assertEqual(rows['doorOpenStatusDriver']['value'], '关闭')
+        self.assertEqual(rows['doorLockStatusDriver']['evidence'], '待核实')
+        self.assertEqual(rows['dcChargePileUAct']['value'], '401.7 V')
+        self.assertEqual(rows['gearAutoStatus']['evidence'], '本车场景观察')
+        self.assertEqual(rows['engineHoodOpenStatus']['evidence'], '待核实')
+        self.assertEqual(rows['chargeSts']['value'], '0')
+        self.assertIs(decode(data)['off'], False)
+        data['additionalVehicleStatus']['electricVehicleStatus']['chargeLidAcStatus'] = 1
+        data['additionalVehicleStatus']['drivingBehaviourStatus']['gearAutoStatus'] = 0
+        rows = {r['key']: r for r in fields_for(data)}
+        self.assertEqual(rows['chargeLidAcStatus']['evidence'], '待核实')
+        self.assertEqual(rows['gearAutoStatus']['value'], '0')
+
+    def test_running_power_conflicts_with_cached_charging(self):
+        from zeekr_control.vehicle_state import decode
+        for charger, dc, amps in ((24, 12, 210), (26, 10, 0)):
+            data = {'basicVehicleStatus': {'engineStatus': 'engine_running'},
+                    'additionalVehicleStatus': {'electricVehicleStatus': {
+                        'chargerState': charger, 'dcChargeSts': dc,
+                        'dcChargePileUAct': 400, 'dcChargePileIAct': amps, 'chargeLidDcAcStatus': 1}}}
+            self.assertIsNone(decode(data)['charging'])

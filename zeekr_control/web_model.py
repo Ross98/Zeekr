@@ -13,7 +13,7 @@ LABELS = {
     'chargeUAct': '充电电压', 'chargeIAct': '充电电流', 'dcChargeSts': '直流充电状态',
     'dcChargeIAct': '直流充电电流', 'dcChargePileUAct': '桩侧电压', 'dcChargePileIAct': '桩侧电流',
     'timeToFullyCharged': '预计充电剩余时间', 'bookChargeSts': '预约充电状态',
-    'chargeLidAcStatus': '充电口盖状态', 'chargeLidDcAcStatus': '另一充电口盖状态',
+    'chargeLidAcStatus': '交流慢充口盖', 'chargeLidDcAcStatus': '直流快充口盖',
     'disChargeSts': '对外放电状态', 'disChargeConnectStatus': '放电连接状态',
     'disChargeUAct': '放电电压', 'disChargeIAct': '放电电流', 'timeToTargetDisCharged': '放电剩余时间',
     'dcDcActvd': 'DC/DC 激活状态', 'dcDcConnectStatus': 'DC/DC 连接状态',
@@ -36,7 +36,7 @@ LABELS = {
     'rrVentSts': '右后通风状态', 'rrVentDetail': '右后通风细节',
     'steerWhlHeatingSts': '方向盘加热', 'interiorPM25': '车内 PM2.5 指标',
     'interiorPM25Level': '车内 PM2.5 等级', 'exteriorPM25Level': '车外 PM2.5 等级', 'relHumSts': '相对湿度指标',
-    'direction': '方向字段', 'speed': '车速', 'speedValidity': '车速有效性', 'engineStatus': '动力状态原值',
+    'direction': '方向字段', 'speed': '车速', 'speedValidity': '车速有效性', 'engineStatus': '动力状态',
     'engineSpeed': '转速字段', 'gearAutoStatus': '自动挡位状态', 'gearManualStatus': '手动挡位状态',
     'usageMode': '使用模式', 'carMode': '车辆模式', 'daysToService': '保养剩余天数指标',
     'distanceToService': '保养剩余里程指标', 'engineHrsToService': '保养运行小时指标',
@@ -85,6 +85,7 @@ def scalar(value):
 def fields_for(data):
     """Only documented scalar names are exposed; unknown identities stay server-side."""
     result = []
+    state = decode(section(data))
 
     def walk(value, path='', group='其他参数'):
         if not isinstance(value, dict):
@@ -98,7 +99,45 @@ def fields_for(data):
                 walk(item, full, current)
             elif key in LABELS:
                 rendered, evidence = scalar(item), '待核实'
-                if key in ('timeToFullyCharged', 'timeToTargetDisCharged') and number(item) == 2047:
+                numeric = number(item)
+                calibrated = None
+                if path == 'additionalVehicleStatus.electricVehicleStatus':
+                    if key == 'chargeLidAcStatus' and numeric == 2:
+                        calibrated = ('关闭', '本车场景观察')
+                    elif key == 'chargeLidDcAcStatus' and numeric in (1, 2):
+                        calibrated = ('打开' if numeric == 1 else '关闭', '本车场景观察')
+                    elif key in ('dcChargePileUAct', 'dcChargePileIAct'):
+                        unit, minimum, maximum = (' V', 0, 1500) if key.endswith('UAct') else (' A', -2000, 2000)
+                        calibrated = (display(item, unit, minimum, maximum), '本车已核对')
+                    elif key == 'timeToFullyCharged' and numeric != 2047:
+                        calibrated = (display(item, ' 分钟', 0, 2046) if state['charging'] is True else '未知', '本车已核对')
+                elif path == 'additionalVehicleStatus.drivingSafetyStatus':
+                    locked = number(value.get('centralLockingStatus')) == 2 and all(
+                        number(value.get('doorLockStatus' + side)) == 1 for side in SIDES)
+                    if locked and key in ['centralLockingStatus'] + ['doorLockStatus' + side for side in SIDES]:
+                        calibrated = ('已锁车' if key == 'centralLockingStatus' else '已锁', '本车已核对（组合）')
+                    elif numeric == 0 and key in ['trunkOpenStatus'] + ['doorOpenStatus' + side for side in SIDES]:
+                        calibrated = ('关闭', '本车已核对')
+                    elif key == 'electricParkBrakeStatus' and numeric in (0, 1):
+                        calibrated = ('行驶样本值 0' if numeric == 0 else '停车／充电样本值 1', '本车场景观察')
+                elif path == 'additionalVehicleStatus.climateStatus':
+                    if numeric == 0 and key in ['winPos' + side for side in SIDES]:
+                        calibrated = ('关闭', '本车已核对')
+                elif path == 'additionalVehicleStatus.drivingBehaviourStatus':
+                    if key == 'gearAutoStatus' and numeric == 3:
+                        calibrated = ('D 挡（挂 D 时观察到）', '本车场景观察')
+                elif path == 'basicVehicleStatus':
+                    if key == 'engineStatus' and item in ('engine_running', 'engine_off'):
+                        calibrated = ('动力运行' if item == 'engine_running' else '动力关闭', '本车场景观察')
+                    elif key == 'speed':
+                        calibrated = (display(state['speed'], ' km/h', 0, 400), '已返回（有效车速）')
+                    elif key == 'speedValidity' and (isinstance(item, bool) or item in ('true', 'false')):
+                        calibrated = ('有效' if item is True or item == 'true' else '无效', '已返回')
+                    elif key == 'usageMode' and numeric in (1, 2, 13):
+                        calibrated = ({1: '到达锁车样本值 1', 2: '直流充电样本值 2', 13: '行驶样本值 13'}[numeric], '本车场景观察')
+                if calibrated is not None:
+                    rendered, evidence = calibrated
+                elif key in ('timeToFullyCharged', 'timeToTargetDisCharged') and number(item) == 2047:
                     rendered, evidence = '暂无有效时间估计', '社区解释'
                 elif key == 'temperatureUpdateTime':
                     rendered, evidence = updated_at(item), '已返回'
@@ -145,6 +184,7 @@ def build_model(data):
     windows_closed = all(number(climate.get('winPos' + side)) == 0 for side in SIDES)
     vehicle_state = decode(data)
     charging = vehicle_state['charging']
+    stopped = vehicle_state['charging_phase'] == 'stopped'
     dc_charging = charging is True and vehicle_state['charging_mode'] == 'dc'
     remaining = number(electric.get('timeToFullyCharged'), 0, 2046)
     remaining_time = ('暂无有效时间估计' if number(electric.get('timeToFullyCharged')) == 2047
@@ -170,10 +210,12 @@ def build_model(data):
                     'inside': display(climate.get('interiorTemp'), '°C', -80, 100),
                     'outside': display(climate.get('exteriorTemp'), '°C', -80, 100)},
         'lock': {'value': '已锁车' if locked else '未知', 'confirmed': locked},
-        'charging': {'value': '直流充电中' if dc_charging else '充电中' if charging is True else '未充电' if charging is False else '未知',
+        'charging': {'value': '充电已停止' if stopped else '直流充电中' if dc_charging else '充电中' if charging is True else '未充电' if charging is False else '未知',
                      'confirmed': charging is not None, 'mode': vehicle_state['charging_mode'],
                      'remaining_time': remaining_time,
-                     'detail': '直流口盖、充电状态与桩侧电压电流组合已核对；通用零值不代表未充电。' if dc_charging else
+                     'work_state': '已停止' if stopped else '工作中' if charging is True else '空闲' if charging is False else '未知',
+                     'connection_state': '接口未提供有效连接判断',
+                     'detail': '匹配本车已观察的直流停止组合；不能仅据此判断停止原因或是否已拔枪。' if stopped else '直流口盖、充电状态与桩侧电压电流组合已核对；通用零值不代表未充电。' if dc_charging else
                                '匹配充电证据；数据来自车辆云端缓存。' if charging is True else
                                '匹配未充电证据，已排除直流侧充电冲突；连接码不单独解释。' if charging is False else
                                '证据缺失或冲突，暂无法确认是否正在充电。'},

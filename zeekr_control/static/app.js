@@ -241,7 +241,7 @@ function energy() {
     </div></section>
   </div>
   <section class="card energy-charge"><div class="card-head"><h2>充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body">
-    <div class="energy-charge-grid">${[['chargeSts','车辆充电状态'],['chargerState','充电器工作状态'],['statusOfChargerConnection','充电枪连接状态']].map(([key,label]) => `<div><span>${label}</span><strong>${!field(key) || field(key).value === '未知' ? '未知' : m.charging.mode === 'dc' && key === 'chargerState' ? '直流充电组合已匹配' : `原值 ${esc(field(key).value)}（不单独判定）`}</strong></div>`).join('')}</div>
+    <div class="energy-charge-grid">${[['车辆充电状态',m.charging.value],['充电器工作状态',m.charging.work_state || '未知'],['充电连接状态',m.charging.connection_state || '接口未提供有效连接判断']].map(([label,value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div>
     <div class="energy-charge-time">${row('预计充电剩余时间',remainingTime)}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p>
   </div></section>
   <section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
