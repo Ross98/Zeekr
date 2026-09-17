@@ -1,5 +1,6 @@
 """Presentation data with conservative, vehicle-specific interpretations."""
 from .summary import SIDES, POSITIONS, display, number, section, updated_at
+from .vehicle_state import decode
 
 
 LABELS = {
@@ -11,7 +12,7 @@ LABELS = {
     'chargeSts': '充电状态', 'chargerState': '充电器工作状态', 'statusOfChargerConnection': '充电枪连接状态',
     'chargeUAct': '充电电压', 'chargeIAct': '充电电流', 'dcChargeSts': '直流充电状态',
     'dcChargeIAct': '直流充电电流', 'dcChargePileUAct': '桩侧电压', 'dcChargePileIAct': '桩侧电流',
-    'timeToFullyCharged': '充满剩余时间', 'bookChargeSts': '预约充电状态',
+    'timeToFullyCharged': '预计充电剩余时间', 'bookChargeSts': '预约充电状态',
     'chargeLidAcStatus': '充电口盖状态', 'chargeLidDcAcStatus': '另一充电口盖状态',
     'disChargeSts': '对外放电状态', 'disChargeConnectStatus': '放电连接状态',
     'disChargeUAct': '放电电压', 'disChargeIAct': '放电电流', 'timeToTargetDisCharged': '放电剩余时间',
@@ -142,8 +143,12 @@ def build_model(data):
         number(safety.get('doorLockStatus' + side)) == 1 for side in SIDES)
     doors_closed = all(number(safety.get('doorOpenStatus' + side)) == 0 for side in SIDES)
     windows_closed = all(number(climate.get('winPos' + side)) == 0 for side in SIDES)
-    not_charging = all(number(electric.get(key)) == 0 for key in
-                       ('chargeSts', 'chargerState', 'statusOfChargerConnection'))
+    vehicle_state = decode(data)
+    charging = vehicle_state['charging']
+    dc_charging = charging is True and vehicle_state['charging_mode'] == 'dc'
+    remaining = number(electric.get('timeToFullyCharged'), 0, 2046)
+    remaining_time = ('暂无有效时间估计' if number(electric.get('timeToFullyCharged')) == 2047
+                      else display(electric.get('timeToFullyCharged'), ' 分钟') if charging is True and remaining is not None else '未知')
     status_time = timestamp(data.get('updateTime'))
     temperature_time = timestamp(climate.get('temperatureUpdateTime'))
     return {
@@ -165,7 +170,13 @@ def build_model(data):
                     'inside': display(climate.get('interiorTemp'), '°C', -80, 100),
                     'outside': display(climate.get('exteriorTemp'), '°C', -80, 100)},
         'lock': {'value': '已锁车' if locked else '未知', 'confirmed': locked},
-        'charging': {'value': '未充电' if not_charging else '未知', 'confirmed': not_charging},
+        'charging': {'value': '直流充电中' if dc_charging else '充电中' if charging is True else '未充电' if charging is False else '未知',
+                     'confirmed': charging is not None, 'mode': vehicle_state['charging_mode'],
+                     'remaining_time': remaining_time,
+                     'detail': '直流口盖、充电状态与桩侧电压电流组合已核对；通用零值不代表未充电。' if dc_charging else
+                               '匹配充电证据；数据来自车辆云端缓存。' if charging is True else
+                               '匹配未充电证据，已排除直流侧充电冲突；连接码不单独解释。' if charging is False else
+                               '证据缺失或冲突，暂无法确认是否正在充电。'},
         'doors': [{'name': name, 'door': '关闭' if doors_closed else '未知',
                    'lock': '已锁' if locked else '未知', 'window': '关闭' if windows_closed else '未知',
                    'raw': {'door': scalar(safety.get('doorOpenStatus' + side)),

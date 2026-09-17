@@ -221,7 +221,7 @@ function energy() {
   const electric = m.fields.filter(f => f.group === '能源与充电');
   const field = key => electric.find(f => f.key === key);
   const time = field('timeToFullyCharged');
-  const remainingTime = !time || time.value === '未知' ? '未知' : time.value === '暂无有效时间估计' ? time.value : `原值 ${time.value}（单位待核实）`;
+  const remainingTime = m.charging.remaining_time || '未知';
   const electricKeys = ['chargeUAct','chargeIAct','dcChargeSts','dcChargeIAct','dcChargePileUAct','dcChargePileIAct','chargeHvSts','hvTempLevel','ptReady'];
   const strategyKeys = ['bookChargeSts','chargeLidAcStatus','chargeLidDcAcStatus','disChargeSts','disChargeConnectStatus','disChargeUAct','disChargeIAct','timeToTargetDisCharged'];
   const primaryKeys = ['chargeLevel','distanceToEmptyOnBatteryOnly','chargeSts','chargerState','statusOfChargerConnection','timeToFullyCharged'];
@@ -241,8 +241,8 @@ function energy() {
     </div></section>
   </div>
   <section class="card energy-charge"><div class="card-head"><h2>充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body">
-    <div class="energy-charge-grid">${[['chargeSts','车辆充电状态'],['chargerState','充电器工作状态'],['statusOfChargerConnection','充电枪连接状态']].map(([key,label]) => `<div><span>${label}</span><strong>${!field(key) || field(key).value === '未知' ? '未知' : '单项待核实'}</strong></div>`).join('')}</div>
-    <div class="energy-charge-time">${row('充满剩余时间',remainingTime)}</div><p class="energy-caption">${m.charging.confirmed ? '三项组合匹配已核对的“未充电”；连接状态仍需单独核实。' : '当前组合尚未核对，无法判断是否正在充电。'}</p>
+    <div class="energy-charge-grid">${[['chargeSts','车辆充电状态'],['chargerState','充电器工作状态'],['statusOfChargerConnection','充电枪连接状态']].map(([key,label]) => `<div><span>${label}</span><strong>${!field(key) || field(key).value === '未知' ? '未知' : m.charging.mode === 'dc' && key === 'chargerState' ? '直流充电组合已匹配' : `原值 ${esc(field(key).value)}（不单独判定）`}</strong></div>`).join('')}</div>
+    <div class="energy-charge-time">${row('预计充电剩余时间',remainingTime)}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p>
   </div></section>
   <section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
     <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 实际行驶里程 ÷（标称续航 × 消耗电量百分点 ÷ 100）× 100%。消耗电量为同一行程起点电量减终点电量；里程为行程起止总里程之差。不使用当前剩余续航计算。</p><p>仅使用当前车辆最近一次已结束行程；不完整、跨充电、电量未下降或数据无效时不计算，不回退展示更早行程的结果。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值。</p><p>例如行驶 80 km，电量从 80% 降至 60%，标称 546 km，对应标称里程 109.2 km，达成率约 73.3%。短行程受电量取整影响较大，结果不用于判断电池健康。</p></div></details>

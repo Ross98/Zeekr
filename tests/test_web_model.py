@@ -25,6 +25,28 @@ class WebModelTests(unittest.TestCase):
         self.assertEqual(rows['timeToFullyCharged']['value'], '暂无有效时间估计')
         self.assertNotIn('%', rows['sunroofPos']['value'])
 
+    def test_dc_charging_is_shared_with_monitor_and_remaining_time_has_minutes(self):
+        from zeekr_control.monitor import decode
+        data = {'basicVehicleStatus': {'speed': 0, 'speedValidity': True, 'engineStatus': 'engine_off'},
+                'additionalVehicleStatus': {'electricVehicleStatus': {
+                    'ptReady': 0, 'chargeSts': 0, 'chargerState': 24, 'statusOfChargerConnection': 0,
+                    'chargeLidDcAcStatus': 1, 'dcChargeSts': 12,
+                    'dcChargePileUAct': 380, 'dcChargePileIAct': 210, 'timeToFullyCharged': 8}}}
+        model = self.build(data)
+        self.assertTrue(decode(data)['charging'])
+        self.assertEqual(model['charging']['value'], '直流充电中')
+        self.assertTrue(model['charging']['confirmed'])
+        self.assertEqual(model['charging']['remaining_time'], '8 分钟')
+        data['basicVehicleStatus']['speed'] = 30
+        self.assertFalse(self.build(data)['charging']['confirmed'])
+        self.assertEqual(self.build(data)['charging']['remaining_time'], '未知')
+
+    def test_generic_idle_with_dc_conflict_is_unknown_in_web(self):
+        data = {'additionalVehicleStatus': {'electricVehicleStatus': {
+            'chargeSts': 0, 'chargerState': 0, 'statusOfChargerConnection': 0,
+            'dcChargeSts': 12, 'dcChargePileUAct': 380, 'dcChargePileIAct': 210}}}
+        self.assertFalse(self.build(data)['charging']['confirmed'])
+
     def test_all_doors_windows_and_combination_required(self):
         safety = {'centralLockingStatus': 2}
         climate = {}
