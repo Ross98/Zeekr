@@ -4,6 +4,11 @@
 class ApiError(Exception):
     """User-visible API error."""
 
+    def __init__(self, message, http_status=None, retry_after=None):
+        self.http_status = http_status
+        self.retry_after = retry_after
+        super().__init__(message)
+
 
 class RateLimited(ApiError):
     def __init__(self, seconds):

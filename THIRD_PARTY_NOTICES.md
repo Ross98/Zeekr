@@ -29,8 +29,13 @@ Tile policy: https://operations.osmfoundation.org/policies/tiles/
 
 ## Gateway protocol
 
-Gateway protocol and signing adapted from RexzeLu/zeekr_ha, commit 316ce6e7ea718b3d5ba4597bf87627904add5330.
+GW1/GW2 and read-only GW3 history signing adapted from RexzeLu/zeekr_ha, commit 316ce6e7ea718b3d5ba4597bf87627904add5330.
 Source: https://github.com/RexzeLu/zeekr_ha/blob/316ce6e7ea718b3d5ba4597bf87627904add5330/custom_components/zeekr_ev/api_sms.py
+
+History request methods and parameter contracts also reference Fryyyyy/zeekr_ev_api,
+commit 4dc9e1789e577864003f9e27b293ade8d47e1e70 (MIT, same copyright below).
+Source: https://github.com/Fryyyyy/zeekr_ev_api/blob/4dc9e1789e577864003f9e27b293ade8d47e1e70/src/zeekr_ev_api/client.py
+Domestic compatibility is not established by the overseas implementation.
 
 MIT License
 

@@ -19,10 +19,9 @@ from .tracks import TrackStore
 from .web_model import build_model, parse_location
 from .profiles import vehicle_profile
 from .energy import read_attainment
+from .history import HistoryClient, HistoryError, connection_status, day_window, integer
 
 STATIC = Path(__file__).parent / 'static'
-HISTORY = {'status': 'not_connected', 'message': '云端历史尚未接入',
-           'detail': '已找到社区整理的行程与轨迹点路由，但请求参数、认证和本车副账号权限尚未验证。此状态不代表没有历史行程。'}
 
 
 class RefreshBusy(ValueError):
@@ -37,6 +36,8 @@ class App:
         self.request_key = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
         self.refresh_lock = threading.Lock()
+        self.history_lock = threading.Lock()
+        self.history_selections = {}
         self.stop = threading.Event()
         self.model = None
         self.raw = None
@@ -68,7 +69,8 @@ class App:
             except Exception:
                 monitoring = {'status': 'unavailable', 'online': False, 'events': []}
             try:
-                authenticated = bool(load(self.session_path).get('accessToken'))
+                session = load(self.session_path)
+                authenticated = bool(session.get('accessToken'))
                 session_error = None
             except ApiError as exc:
                 authenticated, session_error = False, str(exc)
@@ -87,9 +89,80 @@ class App:
                                   'status': self.recording_status if self.recording_status != 'never' or not archives else 'paused',
                                   'error': self.recording_error,
                                   'last_sample': updated_at(self.last_sample), 'last_new': updated_at(self.last_new)},
-                    'history': HISTORY, 'monitoring': monitoring,
+                    'history': connection_status(session, self.vehicle_key) if authenticated else
+                               {'status': 'authorization_required', 'message': '请先连接车辆账号。'},
+                    'monitoring': monitoring,
                     'range_attainment': read_attainment(self.database_path, self.vehicle_key, self.profile),
                     'storage_bytes': self.database_path.stat().st_size if self.database_path.exists() else 0}
+
+    def _history_context(self):
+        session = load(self.session_path)
+        with self.lock:
+            key = self.vehicle_key
+        if key is None:
+            raise HistoryError('vehicle_required', '请先刷新车辆状态，选择要查询的车辆。')
+        status = connection_status(session, key)
+        if status['status'] != 'ready':
+            raise HistoryError(status['status'], status['message'])
+        fingerprint = hashlib.sha256(json.dumps(session, sort_keys=True).encode()).hexdigest()
+        return session, key, fingerprint
+
+    def history(self, date, cursor=None):
+        lower, upper = day_window(date)
+        if cursor is not None:
+            cursor = integer(cursor, lower, upper - 1)
+        if not self.history_lock.acquire(blocking=False):
+            return HistoryError('busy', '历史查询正在进行，请稍后重试。').result()
+        try:
+            session, vehicle, fingerprint = self._history_context()
+            result = HistoryClient(session).day(date, cursor)
+            # Do not deliver a result for a vehicle/account changed mid-request.
+            if self._history_context()[1:] != (vehicle, fingerprint):
+                raise HistoryError('selection_changed', '车辆或账号已切换，请重新查询。')
+            now = time.monotonic()
+            with self.lock:
+                self.history_selections = {key: value for key, value in self.history_selections.items()
+                                           if value['expires'] > now}
+                for trip in result['trips']:
+                    key = secrets.token_urlsafe(24)
+                    self.history_selections[key] = {'vehicle': vehicle, 'session': fingerprint,
+                        'id': trip.pop('id'), 'report_time': trip.pop('report_time'), 'expires': now + 3600}
+                    trip['key'] = key
+                while len(self.history_selections) > 200:
+                    del self.history_selections[next(iter(self.history_selections))]
+            return result
+        except HistoryError as exc:
+            return exc.result()
+        except ApiError:
+            return HistoryError('authorization_required', '无法读取本机会话，请检查连接配置。').result()
+        finally:
+            self.history_lock.release()
+
+    def history_points(self, key):
+        if not isinstance(key, str) or not key or len(key) > 100:
+            raise ValueError('请选择已查询到的行程。')
+        if not self.history_lock.acquire(blocking=False):
+            return HistoryError('busy', '历史查询正在进行，请稍后重试。').result()
+        try:
+            session, vehicle, fingerprint = self._history_context()
+            with self.lock:
+                trip = self.history_selections.get(key)
+            if (not trip or trip['vehicle'] != vehicle or trip['session'] != fingerprint
+                    or trip['expires'] <= time.monotonic()):
+                raise ValueError('行程选择已失效，请重新查询。')
+            result = HistoryClient(session).points(trip['id'], trip['report_time'])
+            if self._history_context()[1:] != (vehicle, fingerprint):
+                raise HistoryError('selection_changed', '车辆或账号已切换，请重新查询。')
+            return result
+        except HistoryError as exc:
+            # A changed vehicle must invalidate the old detail selection too.
+            if exc.status == 'vehicle_mismatch':
+                raise ValueError('行程选择已失效，请重新查询。') from None
+            return exc.result()
+        except ApiError:
+            return HistoryError('authorization_required', '无法读取本机会话，请检查连接配置。').result()
+        finally:
+            self.history_lock.release()
 
     def refresh(self, vehicle):
         if type(vehicle) is not int or vehicle < 1:
@@ -314,11 +387,16 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 if url.path == '/api/location':
                     return self.send(200, app.location())
                 if url.path == '/api/history':
-                    return self.send(200, HISTORY)
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.history(query.get('date', [''])[0], query.get('cursor', [None])[0]))
+                if url.path == '/api/history/points':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.history_points(query.get('trip', [''])[0]))
                 if url.path == '/api/tracks':
                     query = parse_qs(url.query)
                     return self.send(200, app.tracks(query.get('date', [''])[0], query.get('vehicle', [None])[0]))
                 assets = {'/': ('index.html', 'text/html; charset=utf-8'),
+                          '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
                           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                           '/app.css': ('app.css', 'text/css; charset=utf-8'),
                           '/vendor/leaflet.js': ('vendor/leaflet.js', 'text/javascript; charset=utf-8'),

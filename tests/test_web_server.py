@@ -117,8 +117,9 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(self.post('/api/recording', {'active': False, 'interval': 300})[0], 200)
 
     def test_history_unavailable_is_not_empty_success_and_bad_dates_fail(self):
+        self.post('/api/refresh', {'vehicle': 1})
         data = self.request('GET', '/api/history?date=2024-01-01')[1]
-        self.assertEqual(data['status'], 'not_connected')
+        self.assertEqual(data['status'], 'authorization_required')
         self.assertNotIn('trips', data)
         self.assertEqual(self.request('GET', '/api/tracks?date=wrong')[0], 400)
 

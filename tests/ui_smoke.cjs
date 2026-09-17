@@ -46,7 +46,7 @@ const path = require('node:path');
     await page.getByRole('button', { name: '隐藏位置', exact: true }).click();
     await page.getByRole('button', { name: '轨迹记录', exact: true }).first().click();
     await page.getByRole('button', { name: '云端历史', exact: true }).click();
-    assert.match(await page.locator('main').innerText(), /尚未接入/);
+    assert.match(await page.locator('main').innerText(), /需要连接云端历史账号/);
     await page.getByRole('button', { name: '设置', exact: true }).first().click();
     await page.getByRole('button', { name: '开始采集', exact: true }).click();
     await page.getByRole('button', { name: '暂停采集', exact: true }).waitFor();

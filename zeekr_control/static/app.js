@@ -267,7 +267,7 @@ function mapPage() {
 function tracksPage() {
   const archives = state?.archived_vehicles || [];
   const toolbar = `<div class="track-toolbar"><div class="tabs" aria-label="轨迹来源"><button class="tab ${trackSource==='local'?'active':''}" data-source="local">本地记录</button><button class="tab ${trackSource==='cloud'?'active':''}" data-source="cloud">云端历史</button></div><label><span class="subtle">北京时间 </span><input type="date" id="track-date" aria-label="轨迹日期" value="${esc(trackDate)}"></label></div>`;
-  if (trackSource === 'cloud') return toolbar + `<section class="card">${empty('云端历史尚未接入',state?.history?.detail || '历史轨迹接口尚未验证。','tracks')}<div class="card-meta">日期已保留，接口接入后用于查询；当前状态不代表没有行程。</div></section>`;
+  if (trackSource === 'cloud') return toolbar + cloudHistoryPage();
   const note = `<div class="notice info">${icon('info')}本地记录仅覆盖采集开启期间。重复缓存不新增定位，不可信点和较长间断不会连接。</div>`;
   if (!state?.model && !archives.length) return toolbar + note + modelRequired();
   if (!showPosition) return toolbar + note + `<section class="card">${privacyGate(true)}</section>`;
@@ -300,7 +300,7 @@ function monitoringPanel() {
 function settings() {
   const recording = state?.recording || {active:false,interval:300,last_sample:'未知',last_new:'未知'};
   return `<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('仅本机访问')}</div><div class="card-body"><div class="settings-row"><div><h3>账号会话</h3><p>${state?.authenticated?'已发现本机会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在终端运行 python3 -m zeekr_control login。'}</p></div>${pill(state?.authenticated?'会话已保存':'未登录',state?.authenticated?'':'warn')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section>${monitoringPanel()}
-  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(recording.active?'采集中':'已暂停',recording.active?'good':'')}</div><div class="card-body"><div class="notice info">${icon('info')}开启后保存当前缓存并定期读取。浏览器关闭不停止后端；Mac 休眠、断网或服务退出期间无法采集。读取失败会暂停，需手动恢复。</div><div class="settings-row"><div><h3>采样间隔</h3><p>默认 300 秒，可设 60–3600 秒。仅控制请求频率，不保证车辆位置按此频率更新。</p></div><div class="settings-control"><label><input type="number" id="interval" aria-label="采样间隔（秒）" min="60" max="3600" step="1" value="${recording.interval}" ${recording.active?'disabled':''}> 秒</label>${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div>${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">保存在本机应用数据目录 ZeekrControl/tracks.sqlite3；默认不自动删除历史记录。</div></div></section><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口','尚未接入')}${row('后端监听','127.0.0.1 · 仅本机')}${row('数据来源','GW2 云端缓存')}</div></section>`;
+  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(recording.active?'采集中':'已暂停',recording.active?'good':'')}</div><div class="card-body"><div class="notice info">${icon('info')}开启后保存当前缓存并定期读取。浏览器关闭不停止后端；Mac 休眠、断网或服务退出期间无法采集。读取失败会暂停，需手动恢复。</div><div class="settings-row"><div><h3>采样间隔</h3><p>默认 300 秒，可设 60–3600 秒。仅控制请求频率，不保证车辆位置按此频率更新。</p></div><div class="settings-control"><label><input type="number" id="interval" aria-label="采样间隔（秒）" min="60" max="3600" step="1" value="${recording.interval}" ${recording.active?'disabled':''}> 秒</label>${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div>${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">保存在本机应用数据目录 ZeekrControl/tracks.sqlite3；默认不自动删除历史记录。</div></div></section><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('后端监听','127.0.0.1 · 仅本机')}${row('数据来源','GW2 云端缓存')}</div></section>`;
 }
 
 function more() { return `<div class="more-grid">${['energy','fields','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
@@ -311,6 +311,7 @@ function render() {
     ? [...document.querySelectorAll('#main details[data-detail][open]')].map(el => el.dataset.detail) : [];
   const carFocusedDetail = ['car','energy'].includes(page) ? document.activeElement?.closest('details[data-detail]')?.dataset.detail : null;
   if (map) { map.remove(); map = null; mapMarker = null; }
+  syncCloudHistory();
   navigation();
   $('#main').dataset.page=page;
   updateConnection();
@@ -322,13 +323,14 @@ function render() {
   if (carFocusedDetail) $(`details[data-detail="${carFocusedDetail}"] > summary`)?.focus({preventScroll:true});
   updateClock();
   if (page === 'fields') renderFields();
+  if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);
   if (page === 'tracks' && trackSource === 'local' && showPosition && (state?.model || state?.archived_vehicles?.length)) loadTracks(generation);
 }
 
-function createMap(center, zoom = 14) {
+function createMap(center, zoom = 14, options = {}) {
   if (!window.L) throw Error('地图组件无法加载，请重启本机服务。');
-  map = L.map('map', { attributionControl:true, scrollWheelZoom:false }).setView(center,zoom);
+  map = L.map('map', { attributionControl:true, scrollWheelZoom:false, ...options }).setView(center,zoom);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { minZoom:2,maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' })
     .on('tileerror', () => { if ($('#map-status')) $('#map-status').textContent = '部分底图未加载，可稍后重试；位置标记仅依据已返回数据。'; }).addTo(map);
   return map;
@@ -384,8 +386,8 @@ function setPlayback(index) {
   if (!point || !map) return;
   if (mapMarker) mapMarker.remove();
   mapMarker = L.circleMarker([point.latitude,point.longitude],{radius:9,color:point.trusted?'#20776e':'#8a9391',fillOpacity:.35,weight:3}).addTo(map);
-  map.panTo([point.latitude,point.longitude]);
-  $('#playback-label').textContent = `${index+1} / ${playback.length} · ${point.time_label} · ${point.time_source} · ${point.trusted?'接口标记可信':'位置未确认'}`;
+  map.panTo([point.latitude,point.longitude],{animate:trackSource!=='cloud'});
+  $('#playback-label').textContent = `${index+1} / ${playback.length} · ${point.time_label} · ${point.time_source} · ${trackSource==='cloud'?'云端轨迹点':point.trusted?'接口标记可信':'位置未确认'}`;
 }
 
 async function refresh() {
@@ -420,13 +422,14 @@ async function toggleRecording() {
 document.addEventListener('click', event => {
   const target = event.target.closest('button');
   if (!target || target.disabled) return;
+  if (handleCloudAction(target)) return;
   if (target.dataset.page) { page=target.dataset.page; render(); window.scrollTo(0,0); return; }
   if (target.dataset.source) { trackSource=target.dataset.source; render(); return; }
   switch(target.dataset.action) {
     case 'refresh': refresh(); break;
     case 'reconnect': pollState(true); break;
     case 'show-position': showPosition=true;render();break;
-    case 'hide-position': showPosition=false;showCoordinates=false;trackData=null;playback=[];render();break;
+    case 'hide-position': showPosition=false;showCoordinates=false;trackData=null;playback=[];if(cloudHistory){cloudHistory.detail=null;cloudHistory.detailBusy=false;cloudHistory.detailRequest++;}render();break;
     case 'coordinates': showCoordinates=!showCoordinates;render();break;
     case 'recenter': if(map && mapMarker) map.setView(mapMarker.getLatLng(),15);break;
     case 'reload-tracks': render();break;
@@ -453,7 +456,8 @@ async function pollState(force = false) {
     const changed=!state || latest.read_time!==state.read_time || latest.error!==state.error ||
       latest.recording.status!==state.recording.status || latest.recording.last_new!==state.recording.last_new ||
       latest.recording.last_sample!==state.recording.last_sample || latest.next_query_at!==state.next_query_at ||
-      latest.request_key!==state.request_key;
+      latest.request_key!==state.request_key || latest.vehicle!==state.vehicle ||
+      JSON.stringify(latest.history)!==JSON.stringify(state.history);
     const restarted=state && latest.request_key!==state.request_key;
     state=latest; connectionFailures=0;
     if(restarted) { transientError='';refreshMessage=''; }

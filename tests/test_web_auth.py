@@ -27,7 +27,7 @@ class AuthTests(unittest.TestCase):
                 c.request(method,path,json.dumps(body) if body is not None else None,headers)
                 r=c.getresponse(); result=(r.status,dict(r.getheaders()),r.read());c.close();return result
             try:
-                for route in ['/api/state','/api/location','/api/tracks','/car.svg','/app.js']:
+                for route in ['/api/state','/api/location','/api/tracks','/api/history?date=2024-01-01','/api/history/points?trip=unknown','/history.js','/car.svg','/app.js']:
                     self.assertEqual(request('GET',route)[0],401)
                 self.assertEqual(request('GET','/')[0],200)
                 self.assertEqual(request('POST','/api/refresh',{'vehicle':1})[0],401)

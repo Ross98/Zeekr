@@ -1,6 +1,7 @@
 """Local interactive login and read-only commands."""
 import argparse
 import getpass
+import hashlib
 import json
 import re
 import sys
@@ -56,6 +57,8 @@ def parser():
         if command == 'status':
             item.add_argument('--json', action='store_true', help='输出脱敏 JSON，便于核对字段')
             item.add_argument('--vehicle', type=int, help='选择车辆列表中的序号，从 1 开始')
+    history = commands.add_parser('history-connect', help='隐藏输入已有 GW3 历史凭据，不重新登录车辆账号')
+    history.add_argument('--vehicle', type=int, help='绑定车辆序号；单车可省略')
     commands.add_parser('logout', help='删除本机会话，不调用云端注销')
     web = commands.add_parser('web', help='启动本机 Web 界面，采集默认关闭')
     web.add_argument('--port', type=int, default=8765, help='本机端口，默认 8765')
@@ -87,6 +90,33 @@ def main(argv=None, session_path=DEFAULT_PATH):
         if args.command == 'logout':
             clear(session_path)
             print('本机会话已删除。')
+            return 0
+        if args.command == 'history-connect':
+            if not sys.stdin.isatty():
+                raise ApiError('请在运行 Web 服务的机器上使用交互终端；不要通过聊天、参数或管道传递凭据。')
+            from .history import validate_session
+            existing = load(session_path)
+            vehicles = Client(existing).vehicles()
+            if not vehicles or args.vehicle is None and len(vehicles) != 1:
+                raise ApiError('请先查看 vehicles，再用 history-connect --vehicle 序号选择车辆。')
+            index = args.vehicle if args.vehicle is not None else 1
+            if index < 1 or index > len(vehicles):
+                raise ApiError('车辆序号超出范围。')
+            vins = find_vins(vehicles[index - 1])
+            if len(vins) != 1:
+                raise ApiError('选中车辆没有唯一有效 VIN。')
+            print('仅导入同一账号、该车辆已有的 GW3 历史会话；GW2 Token 或 JWT 不能替代。')
+            print('凭据在本机隐藏输入并保存。此操作不发送短信、不换取新会话；导入不代表权限已验证。')
+            incoming = dict(existing,
+                historyAccessToken=getpass.getpass('GW3 accessToken / Authorization（输入隐藏）：').strip(),
+                historyDeviceId=getpass.getpass('对应 X-DEVICE-ID（输入隐藏）：').strip(),
+                historyVin=getpass.getpass('该车辆加密后的 X-VIN（输入隐藏）：').strip(),
+                historyVehicleKey=hashlib.sha256(next(iter(vins)).encode()).hexdigest())
+            validate_session(incoming)
+            if load(session_path) != existing:
+                raise ApiError('输入期间车辆会话已变化，未覆盖，请重新连接。')
+            save(session_path, incoming)
+            print('历史凭据已保存。回到云端历史点击查询，验证实际权限；无需重启 Web。')
             return 0
         if args.command == 'login':
             if not sys.stdin.isatty():

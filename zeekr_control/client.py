@@ -61,7 +61,7 @@ def transport(method, url, headers, body):
     except HTTPError as exc:
         if exc.code == 429:
             raise RateLimited(retry_seconds(exc.headers.get('Retry-After') if exc.headers else None)) from None
-        raise ApiError('网关 HTTP %d；未自动重试。' % exc.code) from None
+        raise ApiError('网关 HTTP %d；未自动重试。' % exc.code, http_status=exc.code) from None
     except (URLError, TimeoutError, OSError):
         raise ApiError('网络或 TLS 连接失败；未自动重试。') from None
     except (ValueError, UnicodeError):

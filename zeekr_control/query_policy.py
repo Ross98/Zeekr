@@ -90,7 +90,8 @@ class QueryPolicy:
                     for key in keys:
                         row = connection.execute('SELECT until FROM cooldown WHERE key=?', (key,)).fetchone()
                         if row and row[0] > now:
-                            raise ApiError('本机查询保护：请等待 %d 秒后再查询；未发送网络请求。' % math.ceil(row[0] - now))
+                            wait = math.ceil(row[0] - now)
+                            raise ApiError('本机查询保护：请等待 %d 秒后再查询；未发送网络请求。' % wait, retry_after=wait)
                     if operation == 'status':
                         self.next_query_at = max(self.next_query_at, now + INTERVAL)
                         connection.execute('INSERT OR REPLACE INTO cooldown VALUES (?, ?)', ('status:' + account_key, now + INTERVAL))
@@ -107,7 +108,7 @@ class QueryPolicy:
                         connection.commit()
                         raise
                     self.fetched_at = self.clock()
-                    if operation in ('status', 'vehicles'):
+                    if operation in ('status', 'vehicles', 'history', 'history_points'):
                         self.next_query_at = max(self.next_query_at, self.fetched_at + INTERVAL)
                         connection.execute('INSERT OR REPLACE INTO cache VALUES (?, ?, ?, ?)',
                                            (cache_key, self.fetched_at, self.fetched_at + INTERVAL,
