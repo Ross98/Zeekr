@@ -15,6 +15,7 @@ from .client import Client
 from .cli import find_vins
 from .errors import ApiError, RateLimited
 from .monitor import Monitor
+from .profiles import vehicle_profile
 from .notifications import WeComSender
 from .storage import DEFAULT_PATH, load, save
 
@@ -117,7 +118,9 @@ class Runner:
                 raw = client.status(vin)
                 # Production captures observation time after the potentially slow request.
                 observed = int(time.time() * 1000) if live_clock else now
-                health['status'] = self.monitor.observe(binding, raw, observed)
+                profile = vehicle_profile(binding, choices.index(vin) + 1, len(choices))
+                health['status'] = self.monitor.observe(binding, raw, observed,
+                    battery_capacity_kwh=profile.get('battery_capacity_kwh'))
                 state = self.monitor.status(binding)
                 health.update(error='', last_success=str(observed),
                               trip='waiting' if state['trip'] and state['trip']['stop'] else 'driving' if state['trip'] else 'idle',

@@ -23,6 +23,9 @@ def vehicle_profile(key, number, count, path=DEFAULT_PATH):
         # Reference artwork is local only, never load a URL from a profile.
         if fallback['image'] not in ('', '/car.svg'):
             fallback['image'] = ''
+        capacity = profile.get('battery_capacity_kwh')
+        if type(capacity) in (int, float) and 0 < capacity <= 1000 and math.isfinite(capacity):
+            fallback['battery_capacity_kwh'] = capacity
         rated = profile.get('range_km')
         standard = profile.get('range_standard')
         if (type(rated) in (int, float) and 0 < rated <= 3000 and math.isfinite(rated)

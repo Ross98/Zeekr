@@ -41,7 +41,20 @@ def message_for(kind, data, event_id):
         if kind == 'trip_end':
             lines += ['里程：' + fmt(data['distance_km'], ' km')]
         lines += ['电量：%s → %s' % (fmt(data['start_soc'], '%'), fmt(data['end_soc'], '%')),
-                  '电量变化：' + fmt(data['soc_delta'], ' 个百分点'), 'kWh：暂无可靠数据']
+                  '电量变化：' + fmt(data['soc_delta'], ' 个百分点')]
+        capacity = numeric(data.get('battery_capacity_kwh'), .1, 1000)
+        start = numeric(data.get('start_soc'), 0, 100)
+        end = numeric(data.get('end_soc'), 0, 100)
+        delta = numeric(data.get('soc_delta'), -100, 100)
+        expected = (end - start) if start is not None and end is not None else None
+        amount = delta if kind == 'charge_end' else -delta if delta is not None else None
+        if (capacity is not None and amount is not None and amount >= 0
+                and expected is not None and abs(expected - delta) < .001):
+            label = '估算充入电量' if kind == 'charge_end' else '估算耗电量'
+            lines += [label + '：%.1f kWh' % (capacity * amount / 100),
+                      '按 %s kWh 标称容量与 SOC 变化估算电池净变化；非充电桩计费电量。' % fmt(capacity)]
+        else:
+            lines += ['kWh：暂无可靠数据']
         if data['partial']:
             lines += ['数据不完整：起点或期间观测存在缺口，仅汇总已观测部分。']
     lines += ['来源：车辆云端缓存，时间可能延迟。', '事件编号：' + event_id[:12]]
@@ -73,7 +86,7 @@ class Monitor:
         db.execute('INSERT OR IGNORE INTO monitor_events (id,vehicle,kind,summary,message,created) VALUES (?,?,?,?,?,?)',
                    (event_id, vehicle, kind, json.dumps(data), message_for(kind, data, event_id), now))
 
-    def observe(self, vehicle, raw, now):
+    def observe(self, vehicle, raw, now, battery_capacity_kwh=None):
         point = decode(raw, self.active_codes, self.stopped_codes)
         state = self.status(vehicle)
         previous = state['last']
@@ -108,6 +121,7 @@ class Monitor:
         with self.tracks.connect() as db:
             if trip and trip['stop'] and timestamp - trip['stop']['time'] >= STOP_WAIT and now - trip['stop']['observed'] >= STOP_WAIT:
                 data = summary(trip['start'], trip['stop'], trip['partial'])
+                data['battery_capacity_kwh'] = battery_capacity_kwh
                 if trip.get('charging_time') is not None and trip['charging_time'] <= trip['stop']['time']:
                     data['soc_delta'] = None
                     data['partial'] = True
@@ -117,7 +131,9 @@ class Monitor:
                 charge = {'start': point, 'partial': not continuous or previous['charging'] is not False}
                 self._event(db, vehicle, 'charge_start', summary(point, point, charge['partial']), now)
             elif point['charging'] is False and charge:
-                self._event(db, vehicle, 'charge_end', summary(charge['start'], point, charge['partial']), now)
+                data = summary(charge['start'], point, charge['partial'])
+                data['battery_capacity_kwh'] = battery_capacity_kwh
+                self._event(db, vehicle, 'charge_end', data, now)
                 charge = None
             state.update(last=point, trip=trip, charge=charge)
             db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)', (vehicle, json.dumps(state)))

@@ -259,5 +259,21 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(event['summary']['soc_delta'], -4)
 
 
+class EstimatedEnergyTests(unittest.TestCase):
+    def test_charge_and_trip_estimates_are_labelled(self):
+        from zeekr_control.monitor import message_for
+        data = dict(start_time=BASE, end_time=BASE+60000, duration_seconds=60,
+                    distance_km=9, start_soc=48, end_soc=90, soc_delta=42,
+                    partial=False, battery_capacity_kwh=86)
+        self.assertIn('估算充入电量：36.1 kWh', message_for('charge_end', data, 'test'))
+        data.update(start_soc=90, end_soc=88, soc_delta=-2)
+        self.assertIn('估算耗电量：1.7 kWh', message_for('trip_end', data, 'test'))
+        self.assertIn('非充电桩计费电量', message_for('trip_end', data, 'test'))
+        for changes in ({'soc_delta': None}, {'battery_capacity_kwh': None},
+                        {'soc_delta': 2}, {'start_soc': None}):
+            invalid = dict(data, **changes)
+            self.assertNotIn('估算耗电量：', message_for('trip_end', invalid, 'test'))
+
+
 if __name__ == '__main__':
     unittest.main()
