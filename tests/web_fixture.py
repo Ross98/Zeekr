@@ -33,6 +33,7 @@ class FixtureClient:
                 'position': {'latitude': 111600000, 'longitude': 435600000,
                              'posCanBeTrusted': False, 'marsCoordinates': False},
                 'additionalVehicleStatus': {'drivingSafetyStatus': safety, 'climateStatus': climate,
+                    'pollutionStatus': {'interiorPM25': 15, 'interiorPM25Level': 0},
                     'maintenanceStatus': maintenance,
                     'electricVehicleStatus': {'chargeLevel': 64, 'distanceToEmptyOnBatteryOnly': 302,
                         'chargeSts': 0, 'chargerState': 0, 'statusOfChargerConnection': 0,

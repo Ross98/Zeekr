@@ -168,6 +168,8 @@ function carDisclosure(key, label, fields) {
 function car() {
   if (!state?.model) return modelRequired();
   const m = state.model;
+  const pm25 = m.fields.find(field => field.group === '空气质量' && field.key === 'interiorPM25')?.value;
+  const hasPm25 = (typeof pm25 === 'number' || (typeof pm25 === 'string' && pm25.trim() !== '')) && Number.isFinite(Number(pm25)) && Number(pm25) >= 0;
   const positions = ['左前','右前','左后','右后'];
   const doors = positions.map(name => m.doors.find(d => d.name === name) || {name,door:'未知',lock:'未知',window:'未知',raw:{}});
   const labels = [['door','车门'],['lock','门锁'],['window','车窗']];
@@ -193,7 +195,7 @@ function car() {
     <p class="car-caption car-legend"><span class="state-safe">关闭 / 锁止</span><span class="state-attention">打开 / 未锁</span><span class="state-unknown">未知</span><span>状态以文字为准</span></p>
   </div></section>
   <div class="car-secondary"><section class="card car-tyres"><div class="card-head"><h2>四轮胎压与胎温</h2><span class="car-caption">车头朝上</span></div><div class="card-body"><div class="tyre-grid car-wheel-grid">${positions.map(name => { const t = m.tyres.find(t => t.name === name); return `<div class="car-wheel" data-position="${name}"><span class="car-wheel-name">${name}</span><strong>${esc(t?.pressure ?? '未知')}</strong><span>胎温 ${esc(t?.temperature ?? '未知')}</span></div>`; }).join('')}</div><p class="car-caption car-tyre-note">保留接口精度；暂无已核对的胎压报警阈值。</p></div></section>
-  <section class="card car-cabin"><div class="card-head"><h2>座舱与环境</h2></div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="car-temperature-time">${icon('clock')}${age(m.temperature_updated_time,'温度更新于 ')}</div><p class="car-caption">温度与整车状态可能不同步</p></div></section></div></div>
+  <section class="card car-cabin"><div class="card-head"><h2>座舱与环境</h2></div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="car-temperature-time">${icon('clock')}${age(m.temperature_updated_time,'温度更新于 ')}</div><p class="car-caption">温度与整车状态可能不同步</p><div class="car-pm25"><div class="car-pm25-reading"><span class="small-label">车内 PM2.5</span><strong class="car-pm25-value">${hasPm25 ? esc(pm25) : '暂无数据'}</strong></div><p class="car-caption">${hasPm25 ? '单位待核实 · 独立更新时间未提供' : '未返回有效读数'}</p></div></div></section></div></div>
   <section class="card car-data"><div class="card-head"><h2>参数与数据详情</h2>${link('全部参数','fields')}</div><p class="card-meta">按需展开查看。待核实参数不代表本车配备或正在运行该设备。</p>
     <details class="car-disclosure" data-detail="closures"><summary><span>门窗数据与解释依据</span><span class="car-detail-count">四门 / 中控锁 / 尾门 / 前舱盖</span></summary><p class="car-disclosure-note">原值仅用于核对。只解释本车已核对组合；其他值显示未知，不从单个编码推测开闭或锁止。</p>${table(doorFields)}${table(m.fields.filter(f => /^(winStatus|doorPos)/.test(f.key) || ['centralLockingStatus','trunkOpenStatus','trunkLockStatus','engineHoodOpenStatus'].includes(f.key)),true)}</details>
     ${carDisclosure('climate','空调相关参数',climateFields.filter(f => !equipment(f) && !seat(f)))}

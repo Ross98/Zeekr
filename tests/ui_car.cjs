@@ -37,6 +37,9 @@ const path = require('node:path');
     assert.doesNotMatch(await page.locator('.car-summary').innerText(), /全部正常/);
     const knownCountColor = await page.locator('.car-summary-stats strong').first().evaluate(node => getComputedStyle(node).color);
     assert.match(await page.locator('.car-cabin').innerText(), /温度更新于.*2 小时/);
+    assert.match(await page.locator('.car-pm25').innerText(), /车内 PM2\.5/);
+    assert.equal(await page.locator('.car-pm25-value').innerText(), '15');
+    assert.doesNotMatch(await page.locator('.car-pm25').innerText(), /µg|μg|ppm|温度更新/);
     assert.doesNotMatch(await page.locator('.car-tyres').innerText(), /25\.6°C|23\.1°C/);
     assert.doesNotMatch(await page.locator('main').innerText(), /原值|additionalVehicleStatus|sunroofPos/);
     fs.mkdirSync('/tmp/zeekr-car-qa', {recursive:true});
@@ -125,6 +128,17 @@ const path = require('node:path');
     await page.getByRole('button', {name:'车辆详情',exact:true}).first().click();
     assert.match(await page.locator('.car-summary').innerText(), /更新时间未知/);
     assert.match(await page.locator('.car-summary').innerText(), /未知 15 项/);
+    // Concentration only: never substitute the level code or coerce a missing value to zero.
+    for (const [value, expected] of [['0','0'], ['未知','暂无数据'], ['-1','暂无数据'], [null,'暂无数据']]) {
+      const airState = structuredClone(unknown);
+      airState.model.fields = airState.model.fields.filter(field => field.key !== 'interiorPM25');
+      if (value !== null) airState.model.fields.push({key:'interiorPM25',group:'空气质量',value,evidence:'待核实'});
+      await page.unroute('**/api/state');
+      await page.route('**/api/state', route => route.fulfill({json:airState}));
+      await page.reload();
+      await page.getByRole('button', {name:'车辆详情',exact:true}).first().click();
+      assert.equal(await page.locator('.car-pm25-value').innerText(), expected);
+    }
     assert.equal(await page.locator('.car-summary .state-safe').count(), 0);
     assert.notEqual(await page.locator('.car-summary-stats strong').first().evaluate(node => getComputedStyle(node).color), knownCountColor, 'Unknown counts must not use the confirmed-state color');
     assert.equal(await page.locator('.car-closures .car-state.state-safe, .car-closures .car-part.state-safe').count(), 0);
