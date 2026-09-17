@@ -1,4 +1,4 @@
-// Synthetic state only; catches wrong SOC scaling, vehicle defaults and disclosure loss.
+// Synthetic state only; catches snapshot fallback, missing trip states and disclosure loss.
 const {chromium} = require('playwright');
 const {spawn} = require('node:child_process');
 const assert = require('node:assert/strict');
@@ -29,6 +29,7 @@ const path = require('node:path');
     data.model.metric_details.range.value = 230;
     data.model.metrics.battery = '50%';
     data.model.metrics.range = '230 km';
+    data.range_attainment = {status:'available', ratio:73.26007326, distance_km:80, start_soc:80, end_soc:60, used_soc:20, reference_km:109.2, standard:'CLTC', start_at:'2024-01-01 08:00',end_at:'2024-01-01 09:00'};
     await page.route('**/api/state', route=>route.fulfill({json:data}));
     await page.route('**/api/refresh', route=>route.fulfill({json:data}));
     const refresh = async () => {
@@ -36,7 +37,7 @@ const path = require('node:path');
       await page.waitForFunction(() => !document.querySelector('[data-action="refresh"]').disabled);
     };
     await refresh();
-    assert.match(await page.locator('main').innerText(), /84\.2/,'50% SOC and 230 km must compare to 273 km');
+    assert.match(await page.locator('main').innerText(), /73\.3/,'80 km driven on 20 percentage points must use trip attainment');
     assert.match(await page.locator('.energy-rating').innerText(), /546/);
     assert.match(await page.locator('.energy-rating').innerText(), /CLTC/);
     assert.match(await page.locator('.energy-charge').innerText(), /暂无有效时间估计/);
@@ -58,18 +59,26 @@ const path = require('node:path');
     await page.locator('details[data-detail="energy-low-voltage"] > summary').click();
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),true,'Expanded low-voltage fields fit mobile');
     await page.setViewportSize({width:1440,height:1050});
-    for (const [battery,range,rated,want] of [[100,600,546,'109.9%'],[50,0,546,'0.0%'],[0,230,546,'无法计算'],[null,230,546,'无法计算'],[50,null,546,'无法计算'],[50,230,null,'无法计算'],[-1,230,546,'无法计算'],[101,230,546,'无法计算']]) {
-      data.model.metric_details.battery.value=battery;
-      data.model.metric_details.range.value=range;
-      data.profile.range_km=rated;
+    // Current snapshot changes must not change an already completed trip.
+    data.model.metric_details.battery.value=0;
+    data.model.metric_details.range.value=null;
+    await refresh();
+    assert.match(await page.locator('.energy-achievement').innerText(), /73\.3/);
+    assert.match(await page.locator('.energy-achievement').innerText(), /80.*60/s);
+    for (const status of ['no_trip','incomplete','invalid','no_consumption','no_rating','unavailable']) {
+      data.range_attainment={status};
       await refresh();
-      assert.ok((await page.locator('.energy-achievement').innerText()).includes(want),`${battery}/${range}/${rated}: ${want}`);
+      assert.doesNotMatch(await page.locator('.energy-achievement').innerText(), /73\.3|84\.2|NaN|Infinity/);
+      assert.match(await page.locator('.energy-achievement').innerText(), /暂无可计算行程|无法计算/);
     }
+    delete data.range_attainment;
+    await refresh();
+    assert.match(await page.locator('.energy-achievement').innerText(), /暂无可计算行程/);
     data.model.charging={value:'未知',confirmed:false};
     await refresh();
     assert.match(await page.locator('.energy-charge').innerText(),/充电状态未知/);
     assert.doesNotMatch(await page.locator('.energy-charge').innerText(),/未插枪/);
     assert.deepEqual(errors,[]);
-    console.log('Energy UI passed: range calculations, missing/zero values, unknown charging, keyboard, refresh, 4 widths.');
+    console.log('Energy UI passed: trip attainment, snapshot independence, missing/invalid trips, unknown charging, keyboard, refresh, 4 widths.');
   } finally { if(browser) await browser.close(); server.kill('SIGTERM'); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

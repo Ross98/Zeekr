@@ -212,9 +212,9 @@ function energy() {
   const validRange = Number.isFinite(range) && range >= 0;
   const rated = profile.range_km;
   const validRated = Number.isFinite(rated) && rated > 0 && ['CLTC','WLTP','NEDC','EPA'].includes(profile.range_standard);
-  const reference = validRated && validBattery ? rated * battery / 100 : null;
-  const ratio = reference > 0 && validRange ? range / reference * 100 : null;
-  const canCalculate = Number.isFinite(ratio);
+  const trip = state.range_attainment || {status:'no_trip'};
+  const canCalculate = trip.status === 'available' && Number.isFinite(trip.ratio);
+  const reasons = {no_trip:'等待后台记录并确认一段完整行程。', incomplete:'最近行程存在观测缺口或跨充电，无法计算。', invalid:'最近行程的里程、电量或时间数据无效。', no_consumption:'最近行程耗电为零或电量回升，无法计算。', no_rating:'当前车型缺少有效标称续航。', unavailable:'行程记录暂不可用，请稍后重试。'};
   const format = value => new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value);
   const electric = m.fields.filter(f => f.group === '能源与充电');
   const field = key => electric.find(f => f.key === key);
@@ -231,10 +231,11 @@ function energy() {
       <div class="energy-battery-track" ${validBattery ? `role="meter" aria-label="动力电池电量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${battery}"` : 'aria-label="电量未知"'}><div style="width:${validBattery ? battery : 0}%"></div></div>
       <div class="energy-rating"><div><span>标称续航${validRated ? `（${esc(profile.range_standard)}）` : ''}</span><strong>${validRated ? `${format(rated)} <small>km</small>` : '待配置'}</strong></div><span>${esc(profile.variant || '车型资料待配置')}</span></div>
     </section>
-    <section class="card energy-achievement"><div class="card-head"><h2>续航达成率</h2>${pill('表显估算')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${ratio.toFixed(1)}<small>%</small>` : '<span>无法计算</span>'}</div>
-      <p class="energy-caption">按当前电量折算，与 ${esc(validRated ? profile.range_standard : '标称')} 续航比较</p>
-      <div class="energy-reference">${row('当前电量对应标称续航',reference !== null ? `${format(reference)} km` : '未知')}${row('当前表显剩余续航',validRange ? `${format(range)} km` : '未知')}</div>
-      <p class="energy-caption">${canCalculate ? '基于表显剩余续航估算，不代表实际行驶达成率或电池健康。' : '需要有效电量、剩余续航和车型标称值；电量为 0 时无法计算。'}</p>
+    <section class="card energy-achievement"><div class="card-head"><h2>实际续航达成率</h2>${pill('最近已结束行程')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
+      <p class="energy-caption">${canCalculate ? `按实际行驶里程与耗电量，对比 ${esc(trip.standard)} 标称续航` : esc(reasons[trip.status] || reasons.invalid)}</p>
+      ${canCalculate ? `<div class="energy-reference">${row('实际行驶里程',`${format(trip.distance_km)} km`)}${row('起止电量',`${format(trip.start_soc)}% 至 ${format(trip.end_soc)}%`)}${row('消耗电量',`${format(trip.used_soc)} 个百分点`)}${row('对应标称里程',`${format(trip.reference_km)} km`)}</div>` : ''}
+      ${trip.start_at && trip.end_at ? `<p class="energy-caption energy-trip-time">行程开始：${esc(trip.start_at)}<br>行程结束：${esc(trip.end_at)}</p>` : ''}
+      <p class="energy-caption">基于后台记录的里程与电量变化；下电确认 10 分钟后生成。电量取整及云端缓存延迟会影响精度。</p>
     </div></section>
   </div>
   <section class="card energy-charge"><div class="card-head"><h2>充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body">
@@ -242,7 +243,7 @@ function energy() {
     <div class="energy-charge-time">${row('充满剩余时间',remainingTime)}</div><p class="energy-caption">${m.charging.confirmed ? '三项组合匹配已核对的“未充电”；连接状态仍需单独核实。' : '当前组合尚未核对，无法判断是否正在充电。'}</p>
   </div></section>
   <section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
-    <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 剩余续航 ÷（标称续航 × 电量 ÷ 100）× 100%。使用同一车辆缓存快照的动力电池电量和剩余续航；未使用低压电池数据。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值，实际续航随温度、速度与空调使用变化。</p><p>实际行驶达成率需要行驶距离和消耗电量，不能由当前快照得出。</p></div></details>
+    <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 实际行驶里程 ÷（标称续航 × 消耗电量百分点 ÷ 100）× 100%。消耗电量为同一行程起点电量减终点电量；里程为行程起止总里程之差。不使用当前剩余续航计算。</p><p>仅使用当前车辆最近一次已结束行程；不完整、跨充电、电量未下降或数据无效时不计算，不回退展示更早行程的结果。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值。</p><p>例如行驶 80 km，电量从 80% 降至 60%，标称 546 km，对应标称里程 109.2 km，达成率约 73.3%。短行程受电量取整影响较大，结果不用于判断电池健康。</p></div></details>
     ${carDisclosure('energy-status','充电状态原值',electric.filter(f => primaryKeys.includes(f.key)))}
     ${carDisclosure('energy-electric','电压、电流与高压参数',electric.filter(f => electricKeys.includes(f.key)))}
     ${carDisclosure('energy-strategy','预约、充电口与对外放电',electric.filter(f => strategyKeys.includes(f.key)))}

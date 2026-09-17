@@ -18,6 +18,7 @@ from .summary import updated_at
 from .tracks import TrackStore
 from .web_model import build_model, parse_location
 from .profiles import vehicle_profile
+from .energy import read_attainment
 
 STATIC = Path(__file__).parent / 'static'
 HISTORY = {'status': 'not_connected', 'message': '云端历史尚未接入',
@@ -87,6 +88,7 @@ class App:
                                   'error': self.recording_error,
                                   'last_sample': updated_at(self.last_sample), 'last_new': updated_at(self.last_new)},
                     'history': HISTORY, 'monitoring': monitoring,
+                    'range_attainment': read_attainment(self.database_path, self.vehicle_key, self.profile),
                     'storage_bytes': self.database_path.stat().st_size if self.database_path.exists() else 0}
 
     def refresh(self, vehicle):
