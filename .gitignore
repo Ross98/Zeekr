@@ -1,0 +1,36 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+*session*.json
+*token*.json
+captures/
+private/
+.DS_Store
+*.sqlite3
+*.sqlite3-*
+
+# Local reports and credentials
+.pytest_cache/
+.coverage
+htmlcov/
+playwright-report/
+test-results/
+*.log
+*.pem
+*.key
+
+# Owner-specific notes, profiles, and operational reports (local only)
+/Myconfig.md
+/docs/web-validation.md
+/docs/overview-validation.md
+/zeekr_control/vehicle_profiles.json
+*.db
+*.db-*
+*.har
+*.pcap
+*.pcapng
+*.zip
+*.tar
+*.gz
