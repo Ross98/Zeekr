@@ -87,8 +87,8 @@ class MonitorTests(unittest.TestCase):
 
     def test_charge_begin_stop_and_restart_do_not_duplicate(self):
         self.observe(0)
-        self.observe(60, soc=50, current=16, voltage=220, code=99, charger=99, plug=1)
-        self.observe(120, soc=51, current=16, voltage=220, code=99, charger=99, plug=1)
+        self.observe(60, soc=50, current=16, voltage=220, code='charging', charger=99, plug=1)
+        self.observe(120, soc=51, current=16, voltage=220, code='charging', charger=99, plug=1)
         from zeekr_control.monitor import Monitor
         self.monitor = Monitor(self.path)
         self.observe(180, soc=53)
@@ -103,12 +103,12 @@ class MonitorTests(unittest.TestCase):
         self.observe(0)
         self.observe(60, plug=1, code=7, charger=7)
         self.assertEqual(self.monitor.events(), [])
-        self.observe(120, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.observe(120, current=10, voltage=220, plug=1, code='charging', charger=7)
         self.observe(180, plug=1, code=7, charger=7)
         self.assertEqual([e['kind'] for e in self.monitor.events()], ['charge_start'])
 
     def test_first_observation_charging_marks_unknown_start(self):
-        self.observe(0, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.observe(0, current=10, voltage=220, plug=1, code='charging', charger=7)
         self.assertTrue(self.monitor.events()[0]['summary']['partial'])
         self.assertIn('开始时间未知', self.monitor.events()[0]['message'])
 
@@ -123,7 +123,7 @@ class MonitorTests(unittest.TestCase):
     def test_delivery_success_is_not_repeated_and_failures_back_off(self):
         from zeekr_control.notifications import DeliveryError
         self.observe(0)
-        self.observe(60, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.observe(60, current=10, voltage=220, plug=1, code='charging', charger=7)
         calls = []
         def failing(message):
             calls.append(message)
@@ -138,7 +138,7 @@ class MonitorTests(unittest.TestCase):
 
     def test_uncertain_delivery_is_not_automatically_repeated(self):
         from zeekr_control.notifications import DeliveryError
-        self.observe(0, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.observe(0, current=10, voltage=220, plug=1, code='charging', charger=7)
         def timeout(message):
             raise DeliveryError('unknown', ambiguous=True)
         self.monitor.deliver(timeout, BASE)
@@ -151,11 +151,23 @@ class MonitorTests(unittest.TestCase):
         self.assertIsNotNone(self.monitor.status('test-vehicle')['trip'])
         self.assertIsNone(self.monitor.status('other')['trip'])
 
+    def test_current_and_voltage_alone_do_not_confirm_charging(self):
+        self.observe(0)
+        self.observe(60, current=10, voltage=350, code=99, charger=99, plug=1)
+        self.assertEqual(self.monitor.events(), [])
+
+    def test_driving_overrides_conflicting_charging_telemetry(self):
+        for signal in ({'speed': 30}, {'engine': 'engine_on'}, {'ready': 1}):
+            with self.subTest(signal=signal):
+                from zeekr_control.monitor import decode
+                point = decode(sample(0, current=10, voltage=350, code='charging', **signal))
+                self.assertIsNone(point['charging'])
+
     def test_charging_during_short_stop_invalidates_combined_trip_energy(self):
         self.observe(0)
         self.observe(60, speed=20, engine='engine_on', ready=1)
         self.observe(120, soc=79)
-        self.observe(180, soc=80, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.observe(180, soc=80, current=10, voltage=220, plug=1, code='charging', charger=7)
         self.observe(240, soc=81, speed=20, engine='engine_on', ready=1)
         for t in range(300, 901, 60):
             self.observe(t, soc=80)
@@ -163,7 +175,7 @@ class MonitorTests(unittest.TestCase):
         self.assertIsNone(event['summary']['soc_delta'])
 
     def test_interrupted_sending_is_uncertain_after_restart(self):
-        self.observe(0, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.observe(0, current=10, voltage=220, plug=1, code='charging', charger=7)
         with self.monitor.tracks.connect() as db:
             db.execute("UPDATE monitor_events SET delivery='sending'")
         from zeekr_control.monitor import Monitor
@@ -176,7 +188,7 @@ class MonitorTests(unittest.TestCase):
         self.observe(60, speed=20, engine='engine_on', ready=1)
         self.observe(120, soc=76)
         for t in range(180, 721, 60):
-            self.observe(t, soc=80, current=10, voltage=220, plug=1, code=7, charger=7)
+            self.observe(t, soc=80, current=10, voltage=220, plug=1, code='charging', charger=7)
         event = [e for e in self.monitor.events() if e['kind'] == 'trip_end'][0]
         self.assertEqual(event['summary']['soc_delta'], -4)
 

@@ -27,20 +27,16 @@ def decode(raw, active_codes=(), stopped_codes=()):
     off = True if engine == 'engine_off' and ready == 0 else (
         False if engine == 'engine_on' or ready == 1 else None)
     code = str(electric.get('chargeSts', '')).strip().lower()
-    ac_current = numeric(electric.get('chargeIAct'), 0, 2000)
-    ac_voltage = numeric(electric.get('chargeUAct'), 0, 1500)
-    dc_current = numeric(electric.get('dcChargeIAct'), 0, 2000)
-    dc_voltage = numeric(electric.get('dcChargePileUAct'), 0, 1500)
-    flowing = any(i is not None and v is not None and i > 0 and v > 0
-                  for i, v in ((ac_current, ac_voltage), (dc_current, dc_voltage)))
     idle = all(number(electric.get(k)) == 0 for k in ('chargeSts', 'chargerState', 'statusOfChargerConnection'))
     charging = None
-    if flowing:
-        charging = True
-    elif code in set(active_codes) | {'charging', 'inprogress'}:
+    # Current/voltage may reflect regeneration or cached telemetry. Only an
+    # explicit charging status can establish an external charging session.
+    if code in set(active_codes) | {'charging', 'inprogress'}:
         charging = True
     elif idle or code in set(stopped_codes) | {'stopped', 'finished', 'complete', 'completed', 'notcharging'}:
         charging = False
+    if charging is True and ((speed is not None and speed > 0) or off is False):
+        charging = None  # Conflicting drive-ready evidence requires calibration.
     return {'time': numeric(raw.get('updateTime'), 1, 32503680000000),
             'speed': speed, 'off': off, 'charging': charging,
             'soc': numeric(electric.get('chargeLevel'), 0, 100),
