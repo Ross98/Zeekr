@@ -13,6 +13,7 @@ WorkingDirectory=/opt/zeekr-control/current
 Environment=HOME=/var/lib/zeekr-control
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
+Environment=ZEEKR_AUTH_FILE=/var/lib/zeekr-control/web-auth.json
 ExecStart=/usr/bin/python3 -m zeekr_control web --port 18765
 Restart=on-failure
 RestartSec=10

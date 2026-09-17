@@ -1,5 +1,8 @@
 """Loopback-only Web UI and explicitly enabled cached-position collection."""
 import hashlib
+import os
+from http.cookies import SimpleCookie
+from .auth import WebAuth
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -211,28 +214,74 @@ class App:
         self.worker.join(timeout=1.5)
 
 
-def make_server(app, port=8765):
+def make_server(app, port=8765, auth=None, public_origin=None):
+    if public_origin and (not auth or not public_origin.startswith("https://") or urlsplit(public_origin).path):
+        raise ValueError("Public origin requires HTTPS and authentication")
     class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(15)
+
         def log_message(self, format, *args):
             pass  # URLs and payloads may contain private information.
 
         def permitted(self, mutation=False):
             hosts = {'127.0.0.1:%d' % self.server.server_port, 'localhost:%d' % self.server.server_port}
             host = self.headers.get('Host', '')
+            if public_origin:
+                hosts.add(urlsplit(public_origin).netloc)
             if host not in hosts or self.headers.get('Sec-Fetch-Site') == 'cross-site':
                 return False
+            expected = public_origin if public_origin and host == urlsplit(public_origin).netloc else 'http://' + host
             origin = self.headers.get('Origin')
-            if origin is not None and origin != 'http://' + host:
+            if origin is not None and origin != expected:
                 return False
-            return not mutation or (origin == 'http://' + host and
+            return not mutation or (origin == expected and
                 secrets.compare_digest(self.headers.get('X-Request-Key', ''), app.request_key))
 
-        def send(self, status, value, content_type='application/json; charset=utf-8'):
+        def token(self):
+            try:
+                cookies = SimpleCookie(self.headers.get('Cookie', ''))
+                return cookies['zeekr_session'].value if 'zeekr_session' in cookies else ''
+            except Exception:
+                return ''
+
+        def signed_in(self):
+            return auth is None or auth.valid(self.token())
+
+        def auth_post(self):
+            host = self.headers.get('Host', '')
+            expected = public_origin if public_origin and host == urlsplit(public_origin).netloc else 'http://' + host
+            if not self.permitted() or self.headers.get('Origin') != expected:
+                return self.send(403, {'error': '请求来源无效。'})
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 1024 or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
+                    raise ValueError()
+                data = json.loads(self.rfile.read(length))
+                if not isinstance(data, dict):
+                    raise ValueError()
+            except (ValueError, OSError):
+                return self.send(400, {'error': '请求格式无效。'})
+            secure = '; Secure' if expected.startswith('https://') else ''
+            if self.path == '/auth/logout':
+                auth.logout(self.token())
+                return self.send(200, {}, cookie='zeekr_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + secure)
+            if auth.limited():
+                return self.send(429, {'error': '尝试过多，请五分钟后再试。'})
+            token = auth.login(data.get('password'))
+            if not token:
+                return self.send(401, {'error': '密码错误或尝试过多。'})
+            return self.send(200, {}, cookie='zeekr_session=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200' + secure)
+
+        def send(self, status, value, content_type='application/json; charset=utf-8', cookie=None):
             payload = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
             self.send_response(status)
+            if cookie:
+                self.send_header('Set-Cookie', cookie)
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', str(len(payload)))
-            self.send_header('Cache-Control', 'no-store' if content_type.startswith('application/json') else 'no-cache')
+            self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('X-Frame-Options', 'DENY')
             self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -243,6 +292,13 @@ def make_server(app, port=8765):
         def do_GET(self):
             if not self.permitted():
                 return self.send(403, {'error': '仅允许本机同源访问。'})
+            if auth and self.path in ('/login.js', '/login.css'):
+                name = self.path[1:]
+                return self.send(200, (STATIC / name).read_bytes(), 'text/javascript' if name.endswith('.js') else 'text/css')
+            if not self.signed_in():
+                if self.path == '/':
+                    return self.send(200, (STATIC / 'login.html').read_bytes(), 'text/html; charset=utf-8')
+                return self.send(401, {'error': '请先登录。'})
             url = urlsplit(self.path)
             try:
                 if url.path == '/api/state':
@@ -270,6 +326,10 @@ def make_server(app, port=8765):
                 self.send(500, {'error': '本地数据暂时无法读取。'})
 
         def do_POST(self):
+            if auth and self.path in ('/auth/login', '/auth/logout'):
+                return self.auth_post()
+            if not self.signed_in():
+                return self.send(401, {'error': '请先登录。'})
             if not self.permitted(mutation=True):
                 return self.send(403, {'error': '请求校验失败，请从本机页面操作。'})
             try:
@@ -299,13 +359,19 @@ def make_server(app, port=8765):
 
     server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     server.daemon_threads = True
+    server.timeout = 15
     return server
 
 
 def serve(port=8765):
     app = App()
     try:
-        server = make_server(app, port)
+        auth_path = os.environ.get('ZEEKR_AUTH_FILE')
+        auth = None
+        if auth_path:
+            from .storage import load
+            auth = WebAuth(load(auth_path))
+        server = make_server(app, port, auth=auth, public_origin=os.environ.get('ZEEKR_PUBLIC_ORIGIN'))
         print('Zeekr Web：http://127.0.0.1:%d（仅本机；采集默认关闭；Ctrl+C 退出）' % server.server_port, flush=True)
         try:
             server.serve_forever()

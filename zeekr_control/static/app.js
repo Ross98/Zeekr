@@ -43,6 +43,7 @@ async function api(path, data, timeout = 50000) {
   try {
     const options = data === undefined ? {cache:'no-store'} : {method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':state?.request_key || ''},body:JSON.stringify(data)};
     const response = await fetch(path, {...options,signal:controller.signal});
+    if (response.status === 401) { location.replace("/"); throw new Error("请重新登录。"); }
     let value;
     try { value = await response.json(); } catch { throw Error('本机服务响应无效，请重试。'); }
     if (!response.ok) throw Error(value.error || '请求失败，请稍后重试。');
@@ -355,3 +356,8 @@ async function pollState(force = false) {
 pollState(true);
 setInterval(pollState,5000);
 setInterval(updateClock,1000);
+
+document.querySelector("#logout").addEventListener("click", async () => {
+  const response = await fetch("/auth/logout", {method:"POST", headers:{"Content-Type":"application/json"},body:"{}"});
+  if(response.ok) location.replace("/");
+});
