@@ -62,6 +62,11 @@ class App:
     def state(self):
         with self.lock:
             try:
+                from .monitor_runtime import read_status
+                monitoring = read_status(self.session_path.parent)
+            except Exception:
+                monitoring = {'status': 'unavailable', 'online': False, 'events': []}
+            try:
                 authenticated = bool(load(self.session_path).get('accessToken'))
                 session_error = None
             except ApiError as exc:
@@ -81,7 +86,8 @@ class App:
                                   'status': self.recording_status if self.recording_status != 'never' or not archives else 'paused',
                                   'error': self.recording_error,
                                   'last_sample': updated_at(self.last_sample), 'last_new': updated_at(self.last_new)},
-                    'history': HISTORY, 'storage_bytes': self.database_path.stat().st_size if self.database_path.exists() else 0}
+                    'history': HISTORY, 'monitoring': monitoring,
+                    'storage_bytes': self.database_path.stat().st_size if self.database_path.exists() else 0}
 
     def refresh(self, vehicle):
         if type(vehicle) is not int or vehicle < 1:

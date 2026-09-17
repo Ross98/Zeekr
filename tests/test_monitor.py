@@ -1,0 +1,185 @@
+"""Synthetic transition tests; no vehicle requests or real notifications."""
+import importlib.util
+import tempfile
+import unittest
+from pathlib import Path
+
+BASE = 1704067200000
+
+
+def sample(seconds, speed=0, engine='engine_off', ready=0, soc=80, km=100,
+           current=0, voltage=0, code=0, charger=0, plug=0):
+    return {'updateTime': BASE + seconds * 1000,
+            'basicVehicleStatus': {'speed': speed, 'speedValidity': True, 'engineStatus': engine},
+            'position': {'latitude': 111600000, 'longitude': 435600000,
+                         'posCanBeTrusted': True, 'marsCoordinates': False},
+            'additionalVehicleStatus': {
+                'maintenanceStatus': {'odometer': km},
+                'electricVehicleStatus': {'ptReady': ready, 'chargeLevel': soc,
+                    'chargeSts': code, 'chargerState': charger, 'statusOfChargerConnection': plug,
+                    'chargeIAct': current, 'chargeUAct': voltage}}}
+
+
+class MonitorTests(unittest.TestCase):
+    def setUp(self):
+        self.assertIsNotNone(importlib.util.find_spec('zeekr_control.monitor'), '监控模块尚未实现')
+        from zeekr_control.monitor import Monitor
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / 'private' / 'tracks.sqlite3'
+        self.monitor = Monitor(self.path)
+
+    def observe(self, seconds, **kwargs):
+        return self.monitor.observe('test-vehicle', sample(seconds, **kwargs), BASE + seconds * 1000)
+
+    def test_trip_waits_ten_minutes_freezes_endpoint_and_survives_restart(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, km=110, soc=76)
+        self.assertEqual(self.monitor.events(), [])
+        from zeekr_control.monitor import Monitor
+        self.monitor = Monitor(self.path)
+        for t in range(180, 720, 60):
+            self.observe(t, km=110, soc=79)
+        self.assertEqual(self.monitor.events(), [])
+        self.observe(720, km=110, soc=79)
+        events = self.monitor.events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['kind'], 'trip_end')
+        self.assertEqual(events[0]['summary']['distance_km'], 10)
+        self.assertEqual(events[0]['summary']['soc_delta'], -4)
+        self.assertEqual(events[0]['summary']['duration_seconds'], 120)
+        self.assertIn('kWh：暂无可靠数据', events[0]['message'])
+        self.observe(780, km=110)
+        self.assertEqual(len(self.monitor.events()), 1)
+        self.assertGreater(self.monitor.tracks.day('test-vehicle', '2024-01-01')['count'], 0)
+
+    def test_moving_again_cancels_stop_timer(self):
+        self.observe(0, speed=20, engine='engine_on', ready=1)
+        self.observe(60)
+        self.observe(120, speed=30, engine='engine_on', ready=1, km=102)
+        for t in range(180, 721, 60):
+            self.observe(t, km=102)
+        self.assertEqual(self.monitor.events(), [])
+        self.observe(780, km=102)
+        self.assertEqual(len(self.monitor.events()), 1)
+
+    def test_old_duplicate_future_and_missing_time_do_not_end_trip(self):
+        self.observe(0, speed=20, engine='engine_on', ready=1)
+        self.observe(60)
+        self.monitor.observe('test-vehicle', sample(60), BASE + 900000)
+        self.monitor.observe('test-vehicle', sample(30), BASE + 900000)
+        self.monitor.observe('test-vehicle', sample(1000), BASE + 900000)
+        raw = sample(900)
+        del raw['updateTime']
+        self.monitor.observe('test-vehicle', raw, BASE + 900000)
+        self.assertEqual(self.monitor.events(), [])
+        self.observe(900)
+        self.assertEqual(self.monitor.events(), [])
+
+    def test_unknown_power_interrupts_stop_confirmation(self):
+        self.observe(0, speed=20, engine='engine_on', ready=1)
+        self.observe(60)
+        for t in range(120, 721, 60):
+            self.observe(t, engine='unknown', ready=None)
+        self.observe(780)
+        self.assertEqual(self.monitor.events(), [])
+
+    def test_charge_begin_stop_and_restart_do_not_duplicate(self):
+        self.observe(0)
+        self.observe(60, soc=50, current=16, voltage=220, code=99, charger=99, plug=1)
+        self.observe(120, soc=51, current=16, voltage=220, code=99, charger=99, plug=1)
+        from zeekr_control.monitor import Monitor
+        self.monitor = Monitor(self.path)
+        self.observe(180, soc=53)
+        events = self.monitor.events()
+        self.assertEqual([e['kind'] for e in events], ['charge_start', 'charge_end'])
+        self.assertEqual(events[1]['summary']['soc_delta'], 3)
+        self.assertEqual(events[1]['summary']['duration_seconds'], 120)
+        self.observe(240, soc=53)
+        self.assertEqual(len(self.monitor.events()), 2)
+
+    def test_plug_only_zero_current_and_unknown_codes_are_not_transitions(self):
+        self.observe(0)
+        self.observe(60, plug=1, code=7, charger=7)
+        self.assertEqual(self.monitor.events(), [])
+        self.observe(120, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.observe(180, plug=1, code=7, charger=7)
+        self.assertEqual([e['kind'] for e in self.monitor.events()], ['charge_start'])
+
+    def test_first_observation_charging_marks_unknown_start(self):
+        self.observe(0, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.assertTrue(self.monitor.events()[0]['summary']['partial'])
+        self.assertIn('开始时间未知', self.monitor.events()[0]['message'])
+
+    def test_invalid_speed_and_low_voltage_soc_do_not_create_trip(self):
+        raw = sample(0, speed=60)
+        raw['basicVehicleStatus']['speedValidity'] = 'false'
+        raw['additionalVehicleStatus']['electricVehicleStatus']['chargeLevel'] = None
+        raw['additionalVehicleStatus']['maintenanceStatus']['mainBatteryStatus'] = {'chargeLevel': 99}
+        self.monitor.observe('test-vehicle', raw, BASE)
+        self.assertIsNone(self.monitor.status('test-vehicle')['trip'])
+
+    def test_delivery_success_is_not_repeated_and_failures_back_off(self):
+        from zeekr_control.notifications import DeliveryError
+        self.observe(0)
+        self.observe(60, current=10, voltage=220, plug=1, code=7, charger=7)
+        calls = []
+        def failing(message):
+            calls.append(message)
+            raise DeliveryError('rejected', ambiguous=False)
+        self.monitor.deliver(failing, BASE + 60000)
+        self.monitor.deliver(failing, BASE + 61000)
+        self.assertEqual(len(calls), 1)
+        self.monitor.deliver(calls.append, BASE + 121000)
+        self.monitor.deliver(calls.append, BASE + 180000)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(self.monitor.events()[0]['delivery'], 'sent')
+
+    def test_uncertain_delivery_is_not_automatically_repeated(self):
+        from zeekr_control.notifications import DeliveryError
+        self.observe(0, current=10, voltage=220, plug=1, code=7, charger=7)
+        def timeout(message):
+            raise DeliveryError('unknown', ambiguous=True)
+        self.monitor.deliver(timeout, BASE)
+        self.monitor.deliver(lambda message: self.fail('重复发送'), BASE + 3600000)
+        self.assertEqual(self.monitor.events()[0]['delivery'], 'uncertain')
+
+    def test_two_vehicles_keep_independent_state(self):
+        self.observe(0, speed=20, engine='engine_on', ready=1)
+        self.monitor.observe('other', sample(60), BASE + 60000)
+        self.assertIsNotNone(self.monitor.status('test-vehicle')['trip'])
+        self.assertIsNone(self.monitor.status('other')['trip'])
+
+    def test_charging_during_short_stop_invalidates_combined_trip_energy(self):
+        self.observe(0)
+        self.observe(60, speed=20, engine='engine_on', ready=1)
+        self.observe(120, soc=79)
+        self.observe(180, soc=80, current=10, voltage=220, plug=1, code=7, charger=7)
+        self.observe(240, soc=81, speed=20, engine='engine_on', ready=1)
+        for t in range(300, 901, 60):
+            self.observe(t, soc=80)
+        event = [e for e in self.monitor.events() if e['kind'] == 'trip_end'][0]
+        self.assertIsNone(event['summary']['soc_delta'])
+
+    def test_interrupted_sending_is_uncertain_after_restart(self):
+        self.observe(0, current=10, voltage=220, plug=1, code=7, charger=7)
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET delivery='sending'")
+        from zeekr_control.monitor import Monitor
+        self.monitor = Monitor(self.path)
+        self.monitor.deliver(lambda message: self.fail('不应重发'), BASE + 60000)
+        self.assertEqual(self.monitor.events()[0]['delivery'], 'uncertain')
+
+    def test_charging_after_final_stop_does_not_change_trip_energy(self):
+        self.observe(0)
+        self.observe(60, speed=20, engine='engine_on', ready=1)
+        self.observe(120, soc=76)
+        for t in range(180, 721, 60):
+            self.observe(t, soc=80, current=10, voltage=220, plug=1, code=7, charger=7)
+        event = [e for e in self.monitor.events() if e['kind'] == 'trip_end'][0]
+        self.assertEqual(event['summary']['soc_delta'], -4)
+
+
+if __name__ == '__main__':
+    unittest.main()

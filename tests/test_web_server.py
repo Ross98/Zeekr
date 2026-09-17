@@ -79,6 +79,17 @@ class WebServerTests(unittest.TestCase):
         self.assertNotIn('111600000', str(data))
         self.assertEqual(self.request('GET', '/api/location')[1]['latitude'], 31)
 
+    def test_monitor_status_is_visible_without_exposing_webhook(self):
+        from zeekr_control.storage import save
+        save(self.root / 'private' / 'monitor-health.json',
+             {'status': 'fresh', 'heartbeat': '1704067200000', 'trip': 'driving'})
+        save(self.root / 'private' / 'wecom-webhook.json', {'webhook_url': 'SECRET-WEBHOOK'})
+        code, data = self.request('GET', '/api/state')
+        self.assertEqual(code, 200)
+        self.assertEqual(data['monitoring']['status'], 'fresh')
+        self.assertFalse(data['monitoring']['online'])
+        self.assertNotIn('SECRET-WEBHOOK', json.dumps(data))
+
     def test_cross_origin_mutation_and_rebinding_are_rejected(self):
         self.assertEqual(self.request('POST', '/api/refresh', {}, {'Origin': 'https://evil.invalid',
             'Content-Type': 'application/json', 'X-Request-Key': self.key})[0], 403)

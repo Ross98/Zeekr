@@ -243,9 +243,19 @@ function renderFields() {
   $('#field-results').innerHTML = `<div class="card-head"><h2>车辆参数</h2><span class="subtle">${items.length} 项</span></div>${table(items,true)}`;
 }
 
+function monitoringPanel() {
+  const monitor = state?.monitoring || {status:'not_started',events:[]};
+  const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',unavailable:'状态暂不可用'};
+  const delivery = {pending:'等待发送',sending:'发送中',sent:'已发送',failed:'发送失败',uncertain:'发送结果待确认'};
+  const kinds = {trip_end:'行程总结',charge_start:'开始充电',charge_end:'充电总结'};
+  const activity = {waiting:'下电等待 10 分钟',driving:'行程记录中',idle:'暂无进行中的记录',charging:'充电记录中',unknown:'待确认'};
+  const label = monitor.status === 'not_started' ? labels.not_started : monitor.online ? labels[monitor.status] || '运行中' : '监控未在线';
+  return `<section class="card section-gap"><div class="card-head"><h2>自动行程与充电通知</h2>${pill(label,monitor.online && !['blocked','stale'].includes(monitor.status)?'good':'warn')}</div><div class="card-body"><p class="subtle">后台每 60 秒检查。确认下电后等待 10 分钟发送行程总结；充电开始、停止时发送通知。云端数据延迟或缺失时，确认和通知也会延后。</p>${row('行程',activity[monitor.trip] || '待确认')}${row('充电',activity[monitor.charge] || '待确认')}${row('通知渠道','企业微信群机器人')}${monitor.error?`<p class="unknown">${esc(monitor.error)}</p>`:''}<p class="subtle">独立后台服务运行，关闭浏览器或暂停下方手动采集不会停止自动监控。</p>${(monitor.events || []).length?`<h3>最近通知</h3>${monitor.events.map(event=>row(kinds[event.kind] || '通知',delivery[event.delivery] || '未知')).join('')}`:'<p class="subtle">暂无通知记录。</p>'}</div></section>`;
+}
+
 function settings() {
   const recording = state?.recording || {active:false,interval:300,last_sample:'未知',last_new:'未知'};
-  return `<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('仅本机访问')}</div><div class="card-body"><div class="settings-row"><div><h3>账号会话</h3><p>${state?.authenticated?'已发现本机会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在终端运行 python3 -m zeekr_control login。'}</p></div>${pill(state?.authenticated?'会话已保存':'未登录',state?.authenticated?'':'warn')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section>
+  return `<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('仅本机访问')}</div><div class="card-body"><div class="settings-row"><div><h3>账号会话</h3><p>${state?.authenticated?'已发现本机会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在终端运行 python3 -m zeekr_control login。'}</p></div>${pill(state?.authenticated?'会话已保存':'未登录',state?.authenticated?'':'warn')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section>${monitoringPanel()}
   <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(recording.active?'采集中':'已暂停',recording.active?'good':'')}</div><div class="card-body"><div class="notice info">${icon('info')}开启后保存当前缓存并定期读取。浏览器关闭不停止后端；Mac 休眠、断网或服务退出期间无法采集。读取失败会暂停，需手动恢复。</div><div class="settings-row"><div><h3>采样间隔</h3><p>默认 300 秒，可设 60–3600 秒。仅控制请求频率，不保证车辆位置按此频率更新。</p></div><div class="settings-control"><label><input type="number" id="interval" aria-label="采样间隔（秒）" min="60" max="3600" step="1" value="${recording.interval}" ${recording.active?'disabled':''}> 秒</label>${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div>${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">保存在本机应用数据目录 ZeekrControl/tracks.sqlite3；默认不自动删除历史记录。</div></div></section><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口','尚未接入')}${row('后端监听','127.0.0.1 · 仅本机')}${row('数据来源','GW2 云端缓存')}</div></section>`;
 }
 

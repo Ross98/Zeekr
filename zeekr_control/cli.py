@@ -59,12 +59,26 @@ def parser():
     commands.add_parser('logout', help='删除本机会话，不调用云端注销')
     web = commands.add_parser('web', help='启动本机 Web 界面，采集默认关闭')
     web.add_argument('--port', type=int, default=8765, help='本机端口，默认 8765')
+    monitor = commands.add_parser('monitor', help='后台监控行程和充电，向已配置的企业微信群发送通知')
+    monitor.add_argument('--vehicle', type=int, help='首次绑定车辆序号；单车可省略')
+    monitor.add_argument('--once', action='store_true', help='执行一次检查及待发通知后退出')
+    monitor.add_argument('--charging-active-code', action='append', default=[], help='仅填写本车实测确认的充电中 chargeSts，可重复')
+    monitor.add_argument('--charging-stopped-code', action='append', default=[], help='仅填写本车实测确认的停止 chargeSts，可重复')
+    commands.add_parser('monitor-status', help='查看监控健康状态和最近通知，不请求车辆或发送消息')
     return root
 
 
 def main(argv=None, session_path=DEFAULT_PATH):
     args = parser().parse_args(argv)
     try:
+        if args.command == 'monitor':
+            from .monitor_runtime import run
+            return run(session_path, args.vehicle, args.once, args.charging_active_code, args.charging_stopped_code)
+        if args.command == 'monitor-status':
+            from .monitor_runtime import read_status
+            from pathlib import Path
+            print(json.dumps(read_status(Path(session_path).parent), ensure_ascii=False, indent=2))
+            return 0
         if args.command == 'web':
             if not 1 <= args.port <= 65535:
                 raise ApiError('端口必须为 1–65535。')
@@ -117,6 +131,9 @@ def main(argv=None, session_path=DEFAULT_PATH):
         return 0
     except ApiError as exc:
         print('错误：' + str(exc), file=sys.stderr)
+        return 1
+    except ValueError:
+        print('错误：本地配置或监控参数无效，请检查配置及运行实例。', file=sys.stderr)
         return 1
     except (EOFError, KeyboardInterrupt):
         print('\n操作已取消。', file=sys.stderr)
