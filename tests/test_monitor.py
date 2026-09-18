@@ -55,6 +55,23 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(len(self.monitor.events()), 1)
         self.assertGreater(self.monitor.tracks.day('test-vehicle', '2024-01-01')['count'], 0)
 
+    def test_unchanged_parked_cache_confirms_trip_after_ten_observed_minutes(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, km=110, soc=76)
+        parked = sample(120, km=110, soc=76)
+
+        for observed in range(180, 720, 60):
+            self.monitor.observe('test-vehicle', parked, BASE + observed * 1000)
+        self.assertEqual(self.monitor.events(), [])
+        self.monitor.observe('test-vehicle', parked, BASE + 720000)
+
+        events = self.monitor.events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['kind'], 'trip_end')
+        self.assertEqual(events[0]['summary']['end_time'], BASE + 120000)
+        self.assertEqual(events[0]['summary']['distance_km'], 10)
+
     def test_moving_again_cancels_stop_timer(self):
         self.observe(0, speed=20, engine='engine_on', ready=1)
         self.observe(60)

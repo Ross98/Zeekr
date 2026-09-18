@@ -98,6 +98,30 @@ class Monitor:
         state = self.status(vehicle)
         previous = state['last']
         timestamp = point['time']
+        trip = state['trip']
+        repeated_stop = (previous and trip and trip['stop'] and timestamp == previous['time']
+                         and point['off'] is True and point['charging'] is False
+                         and point['speed'] in (None, 0) and point['km'] == trip['stop']['km'])
+        if repeated_stop:
+            confirmation = trip.get('stop_confirmation') or {
+                'started': trip['stop']['observed'], 'observed': trip['stop']['observed']}
+            if not 0 <= now - confirmation['observed'] <= MAX_AGE:
+                confirmation['started'] = now
+            confirmation['observed'] = now
+            trip['stop_confirmation'] = confirmation
+            with self.tracks.connect() as db:
+                if now - confirmation['started'] >= STOP_WAIT:
+                    data = summary(trip['start'], trip['stop'], trip['partial'])
+                    data['battery_capacity_kwh'] = battery_capacity_kwh
+                    if (trip.get('charging_time') is not None
+                            and trip['charging_time'] <= trip['stop']['time']):
+                        data['soc_delta'] = None
+                        data['partial'] = True
+                    self._event(db, vehicle, 'trip_end', data, now)
+                    state['trip'] = None
+                db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)',
+                           (vehicle, json.dumps(state)))
+            return 'stale' if not -30000 <= now - timestamp <= MAX_AGE else 'unchanged'
         if timestamp is None or not -30000 <= now - timestamp <= MAX_AGE:
             return 'stale'
         if previous and timestamp <= previous['time']:
@@ -107,7 +131,6 @@ class Monitor:
         continuous = previous is not None and timestamp - previous['time'] <= MAX_AGE and 0 <= now - previous['observed'] <= MAX_AGE
         moving = point['speed'] is not None and point['speed'] > 0
         distance_moved = continuous and previous['km'] is not None and point['km'] is not None and point['km'] > previous['km']
-        trip = state['trip']
         if trip and not continuous:
             trip['partial'], trip['stop'] = True, None
         if trip is None and (moving or distance_moved):
@@ -121,8 +144,10 @@ class Monitor:
                 trip['charging_time'] = timestamp
             if moving or point['off'] is not True:
                 trip['stop'] = None
+                trip.pop('stop_confirmation', None)
             elif trip['stop'] is None:
                 trip['stop'] = point
+                trip['stop_confirmation'] = {'started': now, 'observed': now}
         charge = state['charge']
         if charge and not continuous:
             charge['partial'] = True
