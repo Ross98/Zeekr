@@ -14,6 +14,7 @@ const fs = require('node:fs');
     await page.goto(`http://127.0.0.1:${port}`);
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
+    assert.doesNotMatch(await page.locator('.hero').innerText(),/中国国内版|未选装空气悬架|仅有电吸门/);
     assert.match(await page.locator('.hero').innerText(),/车辆数据更新于.*20 分钟前/);
     assert.match(await page.locator('.closure-summary').innerText(),/车门关闭.*车窗关闭.*尾门关闭/s);
     assert.match(await page.locator('main').innerText(),/后台未在线/);
