@@ -18,7 +18,7 @@ const icons = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
 };
-const pages = { overview: '车辆总览', car: '车辆详情', energy: '能源与充电', map: '定位地图', tracks: '轨迹记录', fields: '参数详情', settings: '设置', more: '更多' };
+const pages = { overview: '总览', car: '车辆', energy: '能源与充电', map: '定位地图', tracks: '行程与轨迹', fields: '参数字典', settings: '设置', more: '更多' };
 const descriptions = { overview: '', car: '门窗、轮胎与座舱，逐项查看。', energy: '动力电池与充电参数，清晰分开。', map: '最近返回的位置，保留可信度与时间信息。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -28,6 +28,7 @@ let map = null, mapMarker = null, generation = 0, toastTimer;
 let trackSource = 'local', trackDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year:'numeric',month:'2-digit',day:'2-digit' }).format(new Date());
 let trackData = null, playback = [], search = '', groupFilter = '', unknownOnly = false;
 let archiveVehicle = '';
+let eventCursor = null, eventCursorStack = [], eventRequest = 0;
 let connectionFailures = 0, polling = false;
 let refreshMessage = '';
 const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unchanged:'已读取云端，车辆数据未更新。',new:'已获得新车辆数据。',time_unknown:'已读取云端，车辆更新时间未知。'};
@@ -101,7 +102,7 @@ function action(label, name, kind = '', symbol = '') { return `<button class="bu
 function link(label, target) { return `<button class="text-link" data-page="${target}">${esc(label)}${icon('arrow')}</button>`; }
 function empty(title, text, symbol = 'info') { return `<div class="empty">${icon(symbol)}<h2>${esc(title)}</h2><p>${esc(text)}</p></div>`; }
 function head() {
-  return `<div class="page-head"><div><div class="eyebrow">MY ZEEKR / ${new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit'}).format(new Date())}</div><h1>${pages[page]}</h1><div class="subtle">${descriptions[page]}</div></div><div class="page-actions">${state?.vehicles?.length > 1 ? `<select id="vehicle-select" class="select" aria-label="选择车辆" ${state.recording.active ? 'disabled' : ''}>${state.vehicles.map(v => `<option value="${v.number}" ${v.number === state.vehicle ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>` : ''}<div class="refresh-control">${action(busy ? '读取中…' : '刷新状态','refresh','','refresh')}<span id="refresh-hint" class="subtle"></span></div></div></div>`;
+  return `<div class="page-head"><div><div class="eyebrow">MY ZEEKR / ${new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit'}).format(new Date())}</div><h1>${pages[page]}</h1><div class="subtle">${descriptions[page]}</div></div><div class="page-actions">${state?.vehicles?.length > 1 ? `<select id="vehicle-select" class="select" aria-label="选择车辆" >${state.vehicles.map(v => `<option value="${v.number}" ${v.number === state.vehicle ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>` : ''}<div class="refresh-control">${action(busy ? '读取中…' : '刷新状态','refresh','','refresh')}<span id="refresh-hint" class="subtle"></span></div></div></div>`;
 }
 
 function modelRequired() {
@@ -125,18 +126,30 @@ function tyres(compact = false) {
   return `<div class="tyre-grid">${state.model.tyres.map(t => `<div class="tyre-item"><span class="tyre-name">${esc(t.name)}</span><div><span class="tyre-value">${esc(compact && Number.isFinite(t.pressure_value)?`${t.pressure_value.toFixed(1)} kPa`:t.pressure)}</span><span class="tyre-temp">${esc(t.temperature)}</span></div></div>`).join('')}</div>`;
 }
 
+function eventSummary(event, kind) {
+  if (!event) return `<p class="subtle">暂无已完成记录。</p>`;
+  const format = value => Number.isFinite(value) ? new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value) : '未知';
+  const complete = event.partial ? '部分记录' : '完整记录';
+  if (kind === 'trip_end') return `<div class="event-summary"><strong>${format(event.distance_km)} km</strong><span>${format(event.start_soc)}% 至 ${format(event.end_soc)}%</span><small>${complete} · ${esc(new Date(event.end_time).toLocaleString('zh-CN',{hour12:false}))}</small></div>`;
+  const capacity = Number.isFinite(event.battery_capacity_kwh) && Number.isFinite(event.soc_delta) && event.soc_delta > 0
+    ? `${format(event.battery_capacity_kwh * event.soc_delta / 100)} kWh（估算）` : '充入电量无法估算';
+  return `<div class="event-summary"><strong>${format(event.start_soc)}% 至 ${format(event.end_soc)}%</strong><span>${capacity}</span><small>${complete} · ${esc(new Date(event.end_time).toLocaleString('zh-CN',{hour12:false}))}</small></div>`;
+}
+
 function overview() {
   if (!state?.model) return modelRequired();
   const m = state.model, profile=state.profile || {name:'我的车辆',variant:'',image:''};
   const closure=m.closure || {doors:'未知',windows:'未知',trunk:'未知'};
   const recording=state.recording;
-  const recordingLabel={never:'尚未开启',paused:'已暂停',active:'正在记录',failed:'采集失败'}[recording.status] || (recording.active?'正在记录':'已暂停');
+  const recent=state.recent_events || {};
+  const activity=state.monitoring?.charge==='charging'?'充电记录中':state.monitoring?.trip==='driving'?'行程记录中':state.monitoring?.trip==='waiting'?'等待行程结束确认':'没有进行中活动的证据';
+  const recordingLabel={never:'尚未开启',paused:'已暂停',active:'正在记录',failed:'采集失败',offline:'后台未在线'}[recording.status] || (recording.active?'正在记录':'已暂停');
   return `<section class="hero"><div class="hero-copy"><div class="hero-title">${esc(profile.name)}</div><div class="hero-sub">${esc(profile.variant)}</div><div class="hero-state">${pill(m.lock.confirmed?m.lock.value:'锁车状态未知',m.lock.confirmed?'good':'warn',m.lock.confirmed?'lock':'info')}${pill(m.charging.confirmed?m.charging.value:'充电状态未知',m.charging.confirmed?'':'warn','energy')}</div><div class="freshness">${icon('clock')}<div>${age(m.updated_time,'车辆数据更新于 ')}<span class="subtle">云端缓存 · 不代表实时状态</span></div></div><button class="closure-summary" data-page="car" aria-label="查看门窗详情">${[['doors','车门'],['windows','车窗'],['trunk','尾门']].map(([key,label])=>`<span class="${closure[key]==='未知'?'unknown':''}">${label}${esc(closure[key])}</span>`).join('')}${icon('arrow')}</button></div><div class="hero-car">${profile.image?`<img src="${esc(profile.image)}" alt="${esc(profile.image_alt)}">`:icon('car')}</div></section>
   <section class="metric-grid overview-metrics">${metric('动力电池',m.metric_details?.battery || m.metrics.battery,'battery','',true)}${metric('预估续航',m.metric_details?.range || m.metrics.range,'range','以车辆实际表现为准')}</section>
   <div class="overview-secondary"><span>累计里程 <strong>${esc(m.metrics.odometer)}</strong></span><details class="data-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用动力电池专用字段，与低压电池分开。续航是车辆返回的估计。</p><p>胎压轮位及单位已核对；总览四舍五入至一位小数，车辆详情保留接口精度。未设置未经核对的胎压报警阈值。</p><p>门窗及锁车仅解释本车已验证的组合；未知不代表正常，也不代表异常。车型图片仅供参考。</p>${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}</div></details></div>
   <div class="grid-two"><section class="card"><div class="card-head"><h2>座舱与环境</h2>${link('车辆详情','car')}</div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="divider"></div><div class="subtle">${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</div></div></section>
   <section class="card"><div class="card-head"><h2>轮胎状态</h2>${link('查看详情','car')}</div><div class="card-body">${tyres(true)}</div></section></div>
-  <div class="grid-two grid-equal overview-links"><section class="card"><div class="card-head"><h2>最近位置</h2>${link('打开地图','map')}</div><div class="card-body"><div class="location-preview">${icon('map')}<span>${showPosition?'位置显示已开启 · 前往地图查看':'位置默认隐藏 · 按需打开地图'}</span></div></div></section><section class="card"><div class="card-head"><h2>行程记录</h2>${link('查看轨迹','tracks')}</div><div class="card-body">${row('本地采集',recordingLabel)}${row('最近新增观测',recording.last_new==='未知'?'暂无记录':recording.last_new)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<div class="subtle">仅记录采集开启期间的数据 · ${link('管理采集','settings')}</div></div></section></div>`;
+  <div class="grid-two grid-equal overview-links recent-events"><section class="card"><div class="card-head"><h2>最近观测活动</h2>${link('查看行程','tracks')}</div><div class="card-body">${row('当前活动',activity)}${row('本地采集',recordingLabel)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<p class="subtle">状态来自后台最近观测，不代表车辆实时状态。</p></div></section><section class="card"><div class="card-head"><h2>最近完成行程</h2>${link('行程详情','tracks')}</div><div class="card-body">${eventSummary(recent.trip_end,'trip_end')}</div></section><section class="card"><div class="card-head"><h2>最近完成充电</h2>${link('能源详情','energy')}</div><div class="card-body">${eventSummary(recent.charge_end,'charge_end')}</div></section><section class="card"><div class="card-head"><h2>位置</h2>${link('打开地图','map')}</div><div class="card-body"><div class="location-preview">${icon('map')}<span>${showPosition?'位置显示已开启 · 前往地图查看':'位置默认隐藏 · 按需打开地图'}</span></div></div></section></div>`;
 }
 
 function table(fields, paths = false) {
@@ -244,6 +257,7 @@ function energy() {
     <div class="energy-charge-grid">${[['车辆充电状态',m.charging.value],['充电器工作状态',m.charging.work_state || '未知'],['充电连接状态',m.charging.connection_state || '接口未提供有效连接判断']].map(([label,value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div>
     <div class="energy-charge-time">${row('预计充电剩余时间',remainingTime)}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p>
   </div></section>
+  <section class="card energy-recent"><div class="card-head"><h2>最近充电</h2>${link('查看行程与轨迹','tracks')}</div><div class="card-body">${eventSummary(state.recent_events?.charge_end,'charge_end')}<p class="energy-caption">估算仅使用该次事件保存的电池容量和 SOC 变化；部分记录不视为完整充电量。</p></div></section>
   <section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
     <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 实际行驶里程 ÷（标称续航 × 消耗电量百分点 ÷ 100）× 100%。消耗电量为同一行程起点电量减终点电量；里程为行程起止总里程之差。不使用当前剩余续航计算。</p><p>仅使用当前车辆最近一次已结束行程；不完整、跨充电、电量未下降或数据无效时不计算，不回退展示更早行程的结果。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值。</p><p>例如行驶 80 km，电量从 80% 降至 60%，标称 546 km，对应标称里程 109.2 km，达成率约 73.3%。短行程受电量取整影响较大，结果不用于判断电池健康。</p></div></details>
     ${carDisclosure('energy-status','充电状态原值',electric.filter(f => primaryKeys.includes(f.key)))}
@@ -270,42 +284,32 @@ function tracksPage() {
   if (trackSource === 'cloud') return toolbar + cloudHistoryPage();
   const note = `<div class="notice info">${icon('info')}本地记录仅覆盖采集开启期间。重复缓存不新增定位，不可信点和较长间断不会连接。</div>`;
   if (!state?.model && !archives.length) return toolbar + note + modelRequired();
-  if (!showPosition) return toolbar + note + `<section class="card">${privacyGate(true)}</section>`;
+  const summaries = `<section class="card event-list-card"><div class="card-head"><h2>已结束行程</h2><span class="subtle">北京时间 · 当前车辆</span></div><div id="event-list">${empty('正在读取行程','从本地事件记录读取，不请求车辆云端。','tracks')}</div></section>`;
+  if (!showPosition) return toolbar + note + summaries + `<section class="card section-gap">${privacyGate(true)}</section>`;
   const selector = archives.length ? `<select id="archive-vehicle" class="select" aria-label="已记录车辆"><option value="">${state.model?'当前车辆':'首辆本地车辆'}</option>${archives.map(v=>`<option value="${esc(v.key)}" ${v.key===archiveVehicle?'selected':''}>${esc(v.label)}</option>`).join('')}</select>` : '';
-  return toolbar + note + `<div class="filters">${selector}${action('隐藏位置','hide-position','secondary')}${action('重新查询','reload-tracks','secondary','refresh')}${link('管理采集','settings')}</div><div id="track-content"><section class="card">${empty('正在读取记录','正在查询所选日期。','tracks')}</section></div>`;
-}
-
-function fieldsPage() {
-  if (!state?.model) return modelRequired();
-  const groups = [...new Set(state.model.fields.map(f => f.group))];
-  return `<div class="filters"><input type="search" id="search" aria-label="搜索参数" placeholder="搜索中文名称或字段，如：胎压、chargeLevel" value="${esc(search)}"><select class="select" id="group" aria-label="参数分类"><option value="">全部分类</option>${groups.map(g => `<option ${groupFilter===g?'selected':''}>${esc(g)}</option>`).join('')}</select><label class="check"><input type="checkbox" id="unknown" ${unknownOnly?'checked':''}>仅待核实 / 未知</label></div><p class="section-note">这些是读取参数，不是控制开关。缺失值显示未知，未核实枚举保留原值；身份信息与位置字段不在此页展示。</p><section class="card" id="field-results"></section>`;
-}
-
-function renderFields() {
-  if (!$('#field-results')) return;
-  const items = state.model.fields.filter(f => (!groupFilter||f.group===groupFilter) && (!unknownOnly||['未知','待核实'].includes(f.evidence)) && `${f.name} ${f.path}`.toLowerCase().includes(search.toLowerCase()));
-  $('#field-results').innerHTML = `<div class="card-head"><h2>车辆参数</h2><span class="subtle">${items.length} 项</span></div>${table(items,true)}`;
+  return toolbar + note + summaries + `<div class="filters">${selector}${action('隐藏位置','hide-position','secondary')}${action('重新查询','reload-tracks','secondary','refresh')}${link('管理采集','settings')}</div><div id="track-content"><section class="card">${empty('正在读取记录','正在查询所选日期。','tracks')}</section></div>`;
 }
 
 function monitoringPanel() {
   const monitor = state?.monitoring || {status:'not_started',events:[]};
-  const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',unavailable:'状态暂不可用'};
+  const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',paused:'已暂停',unavailable:'状态暂不可用'};
   const delivery = {pending:'等待发送',sending:'发送中',sent:'已发送',failed:'发送失败',uncertain:'发送结果待确认'};
   const kinds = {trip_end:'行程总结',charge_start:'开始充电',charge_end:'充电总结'};
   const activity = {waiting:'下电等待 10 分钟',driving:'行程记录中',idle:'暂无进行中的记录',charging:'充电记录中',unknown:'待确认'};
   const label = monitor.status === 'not_started' ? labels.not_started : monitor.online ? labels[monitor.status] || '运行中' : '监控未在线';
-  return `<section class="card section-gap"><div class="card-head"><h2>自动行程与充电通知</h2>${pill(label,monitor.online && !['blocked','stale'].includes(monitor.status)?'good':'warn')}</div><div class="card-body"><p class="subtle">后台每 60 秒检查。确认下电后等待 10 分钟发送行程总结；充电开始、停止时发送通知。云端数据延迟或缺失时，确认和通知也会延后。</p>${row('行程',activity[monitor.trip] || '待确认')}${row('充电',activity[monitor.charge] || '待确认')}${row('通知渠道','企业微信群机器人')}${monitor.error?`<p class="unknown">${esc(monitor.error)}</p>`:''}<p class="subtle">独立后台服务运行，关闭浏览器或暂停下方手动采集不会停止自动监控。</p>${(monitor.events || []).length?`<h3>最近通知</h3>${monitor.events.map(event=>row(kinds[event.kind] || '通知',delivery[event.delivery] || '未知')).join('')}`:'<p class="subtle">暂无通知记录。</p>'}</div></section>`;
+  return `<section class="card section-gap"><div class="card-head"><h2>自动行程与充电通知</h2>${pill(label,monitor.online && !['blocked','stale'].includes(monitor.status)?'good':'warn')}</div><div class="card-body"><p class="subtle">后台默认每 60 秒检查，确认停车 10 分钟后降至 300 秒；充电中保持 60 秒。确认下电后等待 10 分钟发送行程总结；充电开始、停止时发送通知。云端数据延迟或缺失时，确认和通知也会延后。</p>${row('行程',activity[monitor.trip] || '待确认')}${row('充电',activity[monitor.charge] || '待确认')}${row('通知渠道','企业微信群机器人')}${monitor.error?`<p class="unknown">${esc(monitor.error)}</p>`:''}<p class="subtle">采集与通知共用一个后台任务。关闭浏览器不停止；下方暂停会同时暂停车辆检查和新事件检测，服务重启后默认恢复。</p>${(monitor.events || []).length?`<h3>最近通知</h3>${monitor.events.map(event=>row(kinds[event.kind] || '通知',delivery[event.delivery] || '未知')).join('')}`:'<p class="subtle">暂无通知记录。</p>'}</div></section>`;
 }
 
 function settings() {
-  const recording = state?.recording || {active:false,interval:300,last_sample:'未知',last_new:'未知'};
-  return `<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('仅本机访问')}</div><div class="card-body"><div class="settings-row"><div><h3>账号会话</h3><p>${state?.authenticated?'已发现本机会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在终端运行 python3 -m zeekr_control login。'}</p></div>${pill(state?.authenticated?'会话已保存':'未登录',state?.authenticated?'':'warn')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section>${monitoringPanel()}
-  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(recording.active?'采集中':'已暂停',recording.active?'good':'')}</div><div class="card-body"><div class="notice info">${icon('info')}开启后保存当前缓存并定期读取。浏览器关闭不停止后端；Mac 休眠、断网或服务退出期间无法采集。读取失败会暂停，需手动恢复。</div><div class="settings-row"><div><h3>采样间隔</h3><p>默认 300 秒，可设 60–3600 秒。仅控制请求频率，不保证车辆位置按此频率更新。</p></div><div class="settings-control"><label><input type="number" id="interval" aria-label="采样间隔（秒）" min="60" max="3600" step="1" value="${recording.interval}" ${recording.active?'disabled':''}> 秒</label>${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div>${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">保存在本机应用数据目录 ZeekrControl/tracks.sqlite3；默认不自动删除历史记录。</div></div></section><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('后端监听','127.0.0.1 · 仅本机')}${row('数据来源','GW2 云端缓存')}</div></section>`;
+  const recording = state?.recording || {active:true,interval:60,last_sample:'未知',last_new:'未知'};
+  return `<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('Web 服务已连接')}</div><div class="card-body"><div class="settings-row"><div><h3>账号会话</h3><p>${state?.authenticated?'已发现车辆会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在运行服务的设备上完成车辆登录。'}</p></div>${pill(state?.authenticated?'会话已保存':'未登录',state?.authenticated?'':'warn')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section>${monitoringPanel()}
+  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会同时停止自动检查与通知处理，已有记录保留。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>自适应采样</h3><p>默认 60 秒；确认下电、静止且未充电满 10 分钟后降至 300 秒。起步最多延迟约 5 分钟发现，可能缺少开头轨迹。充电或状态不明保持 60 秒。</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div>${row('当前采样间隔', `${recording.effective_interval || 60} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section>`;
 }
 
 function more() { return `<div class="more-grid">${['energy','fields','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
 
 function render() {
+  const fieldFocus = page === 'fields' ? reviewFocusSnapshot() : null;
   generation++;
   const carOpenDetails = ['car','energy'].includes(page) && $('#main').dataset.page === page
     ? [...document.querySelectorAll('#main details[data-detail][open]')].map(el => el.dataset.detail) : [];
@@ -322,10 +326,13 @@ function render() {
   carOpenDetails.forEach(key => { const detail = $(`details[data-detail="${key}"]`); if(detail) detail.open = true; });
   if (carFocusedDetail) $(`details[data-detail="${carFocusedDetail}"] > summary`)?.focus({preventScroll:true});
   updateClock();
-  if (page === 'fields') renderFields();
+  if (page === 'fields') {renderFields();reviewRestoreFocus(fieldFocus);}
   if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);
-  if (page === 'tracks' && trackSource === 'local' && showPosition && (state?.model || state?.archived_vehicles?.length)) loadTracks(generation);
+  if (page === 'tracks' && trackSource === 'local') {
+    loadEvents(generation);
+    if (showPosition && (state?.model || state?.archived_vehicles?.length)) loadTracks(generation);
+  }
 }
 
 function createMap(center, zoom = 14, options = {}) {
@@ -381,6 +388,21 @@ async function loadTracks(version) {
   }
 }
 
+async function loadEvents(version) {
+  const request = ++eventRequest;
+  try {
+    const result = await api(`/api/events?date=${encodeURIComponent(trackDate)}&kind=trip_end${eventCursor?`&cursor=${encodeURIComponent(eventCursor)}`:''}`);
+    if (request !== eventRequest || generation !== version || trackSource !== 'local' || !$('#event-list')) return;
+    if (!result.events.length) {
+      $('#event-list').innerHTML = empty('这一天没有已结束行程','本地记录为空；部分或尚未确认结束的行程不会列入。','tracks');
+      return;
+    }
+    $('#event-list').innerHTML = `<div class="event-rows">${result.events.map(event => `<article class="event-row"><div><strong>${esc(new Date(event.end_time).toLocaleString('zh-CN',{hour12:false}))}</strong><span>${event.partial?'部分记录':'完整记录'}</span></div><div><b>${Number.isFinite(event.distance_km)?`${esc(event.distance_km)} km`:'里程未知'}</b><span>${Number.isFinite(event.start_soc)?`${esc(event.start_soc)}%`:'未知'} 至 ${Number.isFinite(event.end_soc)?`${esc(event.end_soc)}%`:'未知'}</span></div></article>`).join('')}</div><div class="event-pagination"><button class="button secondary" data-action="events-prev" ${eventCursorStack.length?'':'disabled'}>上一页</button><button class="button secondary" data-action="events-next" data-cursor="${esc(result.next_cursor || '')}" ${result.next_cursor?'':'disabled'}>下一页</button></div>`;
+  } catch (error) {
+    if (generation === version && $('#event-list')) $('#event-list').innerHTML = empty('行程摘要读取失败',error.message,'tracks');
+  }
+}
+
 function setPlayback(index) {
   const point = playback[index];
   if (!point || !map) return;
@@ -414,7 +436,7 @@ async function toggleRecording() {
   try {
     state = await api('/api/recording',{active:!state.recording.active,interval});
     transientError='';
-    toast(state.recording.active?'采集已开启，后端运行期间持续记录。':'采集已暂停，已有记录保留。');
+    toast(state.recording.active?'已启用统一采集，请查看后台运行状态。':'自动采集与通知检测已暂停，已有记录保留。');
   } catch(error) { transientError=error.message; }
   finally { busy=false;render(); }
 }
@@ -422,6 +444,7 @@ async function toggleRecording() {
 document.addEventListener('click', event => {
   const target = event.target.closest('button');
   if (!target || target.disabled) return;
+  if (handleReviewAction(target)) return;
   if (handleCloudAction(target)) return;
   if (target.dataset.page) { page=target.dataset.page; render(); window.scrollTo(0,0); return; }
   if (target.dataset.source) { trackSource=target.dataset.source; render(); return; }
@@ -433,6 +456,8 @@ document.addEventListener('click', event => {
     case 'coordinates': showCoordinates=!showCoordinates;render();break;
     case 'recenter': if(map && mapMarker) map.setView(mapMarker.getLatLng(),15);break;
     case 'reload-tracks': render();break;
+    case 'events-next': if(target.dataset.cursor){eventCursorStack.push(eventCursor);eventCursor=target.dataset.cursor;render();}break;
+    case 'events-prev': if(eventCursorStack.length){eventCursor=eventCursorStack.pop();render();}break;
     case 'recording': toggleRecording();break;
   }
 });
@@ -443,7 +468,7 @@ document.addEventListener('input', event => {
 document.addEventListener('change', event => {
   if(event.target.id==='group') {groupFilter=event.target.value;renderFields();}
   if(event.target.id==='unknown') {unknownOnly=event.target.checked;renderFields();}
-  if(event.target.id==='track-date') {trackDate=event.target.value;render();}
+  if(event.target.id==='track-date') {trackDate=event.target.value;eventCursor=null;eventCursorStack=[];render();}
   if(event.target.id==='archive-vehicle') {archiveVehicle=event.target.value;render();}
   if(event.target.id==='vehicle-select') refresh();
 });
@@ -454,10 +479,13 @@ async function pollState(force = false) {
   try {
     const latest=await api('/api/state',undefined,8000);
     const changed=!state || latest.read_time!==state.read_time || latest.error!==state.error ||
-      latest.recording.status!==state.recording.status || latest.recording.last_new!==state.recording.last_new ||
+      latest.recording.effective_interval!==state.recording.effective_interval || latest.recording.status!==state.recording.status || latest.recording.last_new!==state.recording.last_new ||
       latest.recording.last_sample!==state.recording.last_sample || latest.next_query_at!==state.next_query_at ||
       latest.request_key!==state.request_key || latest.vehicle!==state.vehicle ||
-      JSON.stringify(latest.history)!==JSON.stringify(state.history);
+      JSON.stringify(latest.history)!==JSON.stringify(state.history) ||
+      latest.snapshot_revision!==state.snapshot_revision ||
+      JSON.stringify(latest.recent_events)!==JSON.stringify(state.recent_events) ||
+      JSON.stringify(latest.field_reviews)!==JSON.stringify(state.field_reviews);
     const restarted=state && latest.request_key!==state.request_key;
     state=latest; connectionFailures=0;
     if(restarted) { transientError='';refreshMessage=''; }

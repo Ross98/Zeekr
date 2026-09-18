@@ -54,7 +54,7 @@ class HistoryWebTests(unittest.TestCase):
 
     def test_cloud_http_failure_does_not_pause_recording_or_discard_state(self):
         self.connect()
-        self.post('/api/recording', {'active': True, 'interval': 300})
+        self.post('/api/recording', {'active': True, 'interval': 60})
         self.responses.append({'code': '079001', 'msg': 'PRIVATE'})
         result = self.request('GET', '/api/history?date=2024-01-01')[1]
         self.assertEqual(result['status'], 'forbidden')

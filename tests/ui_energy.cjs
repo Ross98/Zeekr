@@ -41,6 +41,7 @@ const path = require('node:path');
     assert.match(await page.locator('.energy-rating').innerText(), /546/);
     assert.match(await page.locator('.energy-rating').innerText(), /CLTC/);
     assert.match(await page.locator('.energy-charge').innerText(), /暂无有效时间估计/);
+    assert.match(await page.locator('.energy-recent').innerText(), /最近充电.*40%.*64%.*20\.6 kWh/s);
     assert.doesNotMatch(await page.locator('main').innerText(), /chargeUAct|mainBatteryStatus/);
     const details = page.locator('details[data-detail="energy-electric"]');
     await details.locator('summary').focus();

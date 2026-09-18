@@ -14,10 +14,63 @@ import time
 from .client import Client
 from .cli import find_vins
 from .errors import ApiError, RateLimited
-from .monitor import Monitor
+from .monitor import Monitor, MAX_AGE, STOP_WAIT
+from .vehicle_state import decode
+from .geocoding import AmapGeocoder
 from .profiles import vehicle_profile
 from .notifications import WeComSender
 from .storage import DEFAULT_PATH, load, save
+from .snapshots import SnapshotStore, session_scope
+
+
+def enable_sampling(root):
+    save(Path(root) / 'sampling.json', {'enabled': 'true'})
+
+
+def sampling_enabled(root):
+    return load(Path(root) / 'sampling.json').get('enabled', 'true') != 'false'
+
+
+def collection_loop(runner, stop, once=False):
+    """One owner; control changes are noticed within one second without querying."""
+    deadline = 0
+    previous = None
+    while not stop.is_set():
+        enabled = sampling_enabled(runner.root)
+        if enabled != previous or time.monotonic() >= deadline:
+            delay = runner.tick()
+            deadline = time.monotonic() + delay
+            previous = enabled
+            if once:
+                break
+        stop.wait(1)
+
+
+def background(session_path, stop):
+    """Web fallback shares the monitor lock with the standalone service."""
+    root = Path(session_path).parent
+    while not stop.is_set():
+        try:
+            with process_lock(root / 'monitor.lock'):
+                runner = Runner(session_path)
+                try:
+                    collection_loop(runner, stop)
+                finally:
+                    health = runner.health()
+                    health.update(status='stopped', heartbeat=str(int(time.time() * 1000)))
+                    save(root / 'monitor-health.json', health)
+                return
+        except ValueError as exc:
+            if str(exc) != '监控已经运行，请勿重复启动':
+                raise
+        except Exception:
+            # Publish no secrets; retry storage/network setup without a second owner.
+            try:
+                save(root / 'monitor-health.json', {'status':'blocked',
+                     'heartbeat':str(int(time.time() * 1000)), 'error':'采集后台异常，请检查服务日志与存储权限。'})
+            except Exception:
+                pass
+        stop.wait(5)
 
 
 @contextmanager
@@ -71,13 +124,44 @@ class Runner:
             raise ValueError('充电与停止状态码不可重叠')
         self.vehicle = vehicle
         self.client_factory = client_factory
-        self.monitor = Monitor(self.root / 'tracks.sqlite3', active_codes, stopped_codes)
+        self.monitor = Monitor(self.root / 'tracks.sqlite3', active_codes, stopped_codes,
+                               address_resolver=AmapGeocoder(self.root / 'amap-geocoding.json'))
         self.sender = sender if sender is not None else WeComSender(self.root / 'wecom-webhook.json')
         self.blocked_fingerprint = None
         self.failures = 0
+        self.parked_since = None
+        self.parked_last = None
+        self.sampling_interval = 60
 
     def health(self):
         return load(self.root / 'monitor-health.json')
+
+    def interval_for(self, raw, now, state):
+        point = decode(raw, self.monitor.active_codes, self.monitor.stopped_codes)
+        previous = self.parked_last
+        parked = (point['off'] is True and point['speed'] == 0
+                  and point['charging'] is False and (not state['trip'] or state['trip']['stop'])
+                  and not state['charge'])
+        if previous and (point['km'] is None or previous['km'] is None or point['km'] != previous['km']):
+            parked = False
+        fresh = point['time'] is not None and -30000 <= now - point['time'] <= MAX_AGE
+        if not parked or not fresh:
+            # Stale cache never starts a parking timer, but an already confirmed
+            # parked car can stay slow until a new observation contradicts it.
+            if parked and self.sampling_interval == 300:
+                return 300
+            self.parked_since = self.parked_last = None
+            self.sampling_interval = 60
+            return 60
+        if previous and point['time'] <= previous['time']:
+            return self.sampling_interval
+        continuous = previous and 0 <= now - previous['observed'] <= MAX_AGE and point['time'] - previous['time'] <= MAX_AGE
+        if self.parked_since is None or (not continuous and self.sampling_interval != 300):
+            self.parked_since = (now, point['time'])
+        self.parked_last = dict(point, observed=now)
+        if not state['trip'] and now - self.parked_since[0] >= STOP_WAIT and point['time'] - self.parked_since[1] >= STOP_WAIT:
+            self.sampling_interval = 300
+        return self.sampling_interval
 
     def tick(self, now=None):
         live_clock = now is None
@@ -86,6 +170,12 @@ class Runner:
         health.update(heartbeat=str(now))
         delay = 60
         fingerprint = None
+        if not sampling_enabled(self.root):
+            self.parked_since = self.parked_last = None
+            self.sampling_interval = 60
+            health.update(status='paused', error='', interval='60', next_check=str(now + 60000))
+            save(self.root / 'monitor-health.json', health)
+            return 60
         try:
             session = load(self.session_path)
             fingerprint = hashlib.sha256(json.dumps(session, sort_keys=True).encode()).hexdigest()
@@ -118,10 +208,23 @@ class Runner:
                 raw = client.status(vin)
                 # Production captures observation time after the potentially slow request.
                 observed = int(time.time() * 1000) if live_clock else now
+                fetched = getattr(client, 'last_query_fetched_at', None)
+                fetched_at = int(fetched * 1000) if type(fetched) in (int, float) else observed
+                SnapshotStore(self.root / 'snapshots.sqlite3').publish(
+                    session_scope(session), binding, raw, observed, fetched_at=fetched_at)
                 profile = vehicle_profile(binding, choices.index(vin) + 1, len(choices))
                 health['status'] = self.monitor.observe(binding, raw, observed,
                     battery_capacity_kwh=profile.get('battery_capacity_kwh'))
                 state = self.monitor.status(binding)
+                delay = self.interval_for(raw, observed, state)
+                if health['status'] == 'fresh':
+                    if self.monitor.tracks.record(binding, raw, observed, 180):
+                        health['last_new'] = str(observed)
+                with self.monitor.tracks.connect() as db:
+                    newest = db.execute('SELECT MAX(observed_time) FROM observations WHERE vehicle=?', (binding,)).fetchone()[0]
+                if newest is not None:
+                    health['last_new'] = str(newest)
+                health['interval'] = str(delay)
                 health.update(error='', last_success=str(observed),
                               trip='waiting' if state['trip'] and state['trip']['stop'] else 'driving' if state['trip'] else 'idle',
                               charge='charging' if state['charge'] else 'idle' if state['last'] and state['last']['charging'] is False else 'unknown',
@@ -141,7 +244,7 @@ class Runner:
                 health.update(status='blocked', error=error[:150])
         # Storage errors escape and stop the worker, never inventing transitions.
         self.monitor.deliver(self.sender, now)
-        health['next_check'] = str(now + delay * 1000)
+        health['next_check'] = str((int(time.time() * 1000) if live_clock else now) + delay * 1000)
         save(self.root / 'monitor-health.json', health)
         return delay
 
@@ -149,22 +252,30 @@ class Runner:
 def run(session_path=DEFAULT_PATH, vehicle=None, once=False, active_codes=(), stopped_codes=()):
     root = Path(session_path).parent
     stop = threading.Event()
-    with process_lock(root / 'monitor.lock'):
-        runner = Runner(session_path, vehicle, active_codes=active_codes, stopped_codes=stopped_codes)
-        previous = {}
-        try:
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                previous[sig] = signal.signal(sig, lambda *_: stop.set())
-            print('自动监控已启动：60 秒轮询；行程下电等待 10 分钟；充电起止通知。', flush=True)
-            while not stop.is_set():
-                delay = runner.tick()
-                if once:
+    previous = {}
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            previous[sig] = signal.signal(sig, lambda *_: stop.set())
+        enable_sampling(root)
+        while not stop.is_set():
+            try:
+                with process_lock(root / 'monitor.lock'):
+                    runner = Runner(session_path, vehicle, active_codes=active_codes, stopped_codes=stopped_codes)
+                    try:
+                        print('统一采集已启动：默认 60 秒；确认停车后 300 秒；充电起止通知。', flush=True)
+                        collection_loop(runner, stop, once)
+                    finally:
+                        health = runner.health()
+                        health.update(status='stopped', heartbeat=str(int(time.time() * 1000)))
+                        save(root / 'monitor-health.json', health)
                     break
-                stop.wait(delay)
-        finally:
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
-            health = runner.health()
-            health.update(status='stopped', heartbeat=str(int(time.time() * 1000)))
-            save(root / 'monitor-health.json', health)
+            except ValueError as exc:
+                if str(exc) != '监控已经运行，请勿重复启动' or once:
+                    raise
+                # Web may already own collection. Stay available to take over
+                # after it exits instead of fighting it through service restarts.
+                stop.wait(5)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
     return 0

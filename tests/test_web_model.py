@@ -61,6 +61,22 @@ class WebModelTests(unittest.TestCase):
         safety['doorLockStatusPassengerRear'] = None
         self.assertEqual(self.build(data)['lock']['value'], '未知')
 
+    def test_each_door_and_window_keeps_its_own_known_state(self):
+        safety = {'centralLockingStatus': 2}
+        climate = {}
+        for side in ('Driver', 'Passenger', 'DriverRear', 'PassengerRear'):
+            safety['doorLockStatus' + side] = 1
+            safety['doorOpenStatus' + side] = 0
+            climate['winPos' + side] = 0
+        safety['doorOpenStatusPassenger'] = 9
+        climate['winPosDriverRear'] = 9
+        model = self.build({'additionalVehicleStatus': {
+            'drivingSafetyStatus': safety, 'climateStatus': climate}})
+        self.assertEqual([item['door'] for item in model['doors']], ['关闭', '未知', '关闭', '关闭'])
+        self.assertEqual([item['window'] for item in model['doors']], ['关闭', '关闭', '未知', '关闭'])
+        self.assertEqual(model['closure']['doors'], '已知关闭 3 项，1 项未知')
+        self.assertEqual(model['closure']['windows'], '已知关闭 3 项，1 项未知')
+
     def test_location_scaling_does_not_invent_gps_time_or_trust(self):
         result = self.location({'updateTime': 1704067200000, 'position': {
             'latitude': 111600000, 'longitude': 435600000,
@@ -113,7 +129,7 @@ class WebModelTests(unittest.TestCase):
     def test_summary_never_infers_open_or_closed_from_incomplete_combination(self):
         model = self.build({'additionalVehicleStatus': {'drivingSafetyStatus': {
             'doorOpenStatusDriver': 0, 'trunkOpenStatus': 0}}})
-        self.assertEqual(model.get('closure'), {'doors': '未知', 'windows': '未知', 'trunk': '关闭'})
+        self.assertEqual(model.get('closure'), {'doors': '已知关闭 1 项，3 项未知', 'windows': '未知', 'trunk': '关闭'})
 
     def test_charging_cards_use_observed_combinations(self):
         for charger, dc, amps, lid, expected, work in (

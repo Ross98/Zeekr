@@ -6,6 +6,7 @@ from .notifications import DeliveryError
 from .summary import updated_at
 from .vehicle_state import decode, numeric
 from .tracks import TrackStore
+from .web_model import parse_location
 
 MAX_AGE = 180000
 STOP_WAIT = 600000
@@ -21,6 +22,7 @@ def summary(start, end, partial=False):
             'duration_seconds': (end['time'] - start['time']) / 1000,
             'distance_km': round(distance, 3) if distance is not None else None,
             'start_soc': start['soc'], 'end_soc': end['soc'],
+            'start_location': start.get('location'), 'end_location': end.get('location'),
             'soc_delta': round(delta, 3) if delta is not None else None, 'partial': partial}
 
 
@@ -31,6 +33,11 @@ def fmt(value, unit=''):
 def message_for(kind, data, event_id):
     title = {'trip_end': '本次行程已结束', 'charge_start': '检测到开始充电', 'charge_end': '充电已停止'}[kind]
     lines = [title]
+    if kind == 'trip_end':
+        lines += ['出发地：' + (data.get('start_address') or '位置未知'),
+                  '到达地：' + (data.get('end_address') or '位置未知')]
+    else:
+        lines += ['充电地点：' + (data.get('start_address') or '位置未知')]
     if kind == 'charge_start':
         lines += ['观测时间：' + updated_at(data['start_time']), '电量：' + fmt(data['start_soc'], '%')]
         if data['partial']:
@@ -51,8 +58,7 @@ def message_for(kind, data, event_id):
         if (capacity is not None and amount is not None and amount >= 0
                 and expected is not None and abs(expected - delta) < .001):
             label = '估算充入电量' if kind == 'charge_end' else '估算耗电量'
-            lines += [label + '：%.1f kWh' % (capacity * amount / 100),
-                      '按 %s kWh 标称容量与 SOC 变化估算电池净变化；非充电桩计费电量。' % fmt(capacity)]
+            lines += [label + '：%.1f kWh' % (capacity * amount / 100)]
         else:
             lines += ['kWh：暂无可靠数据']
         if data['partial']:
@@ -62,7 +68,8 @@ def message_for(kind, data, event_id):
 
 
 class Monitor:
-    def __init__(self, database_path, active_codes=(), stopped_codes=()):
+    def __init__(self, database_path, active_codes=(), stopped_codes=(), address_resolver=None):
+        self.address_resolver = address_resolver
         self.tracks = TrackStore(database_path)
         self.active_codes, self.stopped_codes = active_codes, stopped_codes
         with self.tracks.connect() as db:
@@ -96,6 +103,7 @@ class Monitor:
         if previous and timestamp <= previous['time']:
             return 'unchanged'
         point['observed'] = now
+        point['location'] = parse_location(raw)
         continuous = previous is not None and timestamp - previous['time'] <= MAX_AGE and 0 <= now - previous['observed'] <= MAX_AGE
         moving = point['speed'] is not None and point['speed'] > 0
         distance_moved = continuous and previous['km'] is not None and point['km'] is not None and point['km'] > previous['km']
@@ -147,14 +155,29 @@ class Monitor:
     def deliver(self, sender, now):
         # One worker owns the process lock; compare-and-set also guards claims.
         with self.tracks.connect() as db:
-            rows = db.execute("SELECT id,message,attempts FROM monitor_events WHERE delivery='pending' AND next_attempt<=? ORDER BY created,rowid LIMIT 10", (now,)).fetchall()
-        for event_id, message, attempts in rows:
+            rows = db.execute("SELECT id,message,attempts,kind,summary FROM monitor_events WHERE delivery='pending' AND next_attempt<=? ORDER BY created,rowid LIMIT 10", (now,)).fetchall()
+        for event_id, message, attempts, kind, encoded in rows:
             with self.tracks.connect() as db:
                 claimed = db.execute("UPDATE monitor_events SET delivery='sending', attempts=attempts+1 WHERE id=? AND delivery='pending'", (event_id,)).rowcount
             if not claimed:
                 continue
             error, next_attempt, sent_at = None, 0, None
             try:
+                data = json.loads(encoded)
+                if not data.get('addresses_resolved'):
+                    for prefix in ('start', 'end') if kind == 'trip_end' else ('start',):
+                        address = None
+                        if self.address_resolver:
+                            try:
+                                address = self.address_resolver(data.get(prefix + '_location'))
+                            except Exception:
+                                pass
+                        data[prefix + '_address'] = ' '.join(address.split())[:100] if isinstance(address, str) else None
+                    data['addresses_resolved'] = True
+                    message = message_for(kind, data, event_id)
+                    with self.tracks.connect() as db:
+                        db.execute('UPDATE monitor_events SET summary=?,message=? WHERE id=?',
+                                   (json.dumps(data, ensure_ascii=False), message, event_id))
                 sender(message)
                 delivery, sent_at = 'sent', now
             except DeliveryError as exc:

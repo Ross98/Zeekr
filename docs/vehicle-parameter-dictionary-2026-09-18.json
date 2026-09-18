@@ -1,0 +1,2377 @@
+{
+  "status_time": "2026-09-18 12:12:02",
+  "status_fields": 200,
+  "vehicle_metadata_fields": 37,
+  "fields": [
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.usageMode",
+      "name": "使用模式",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.engineStatus",
+      "name": "动力状态",
+      "raw": "engine_off",
+      "unit": "—",
+      "evidence": "本车场景观察",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：动力关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.position.altitude",
+      "name": "海拔高度",
+      "raw": "15",
+      "unit": "m（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.position.posCanBeTrusted",
+      "name": "定位可信标记",
+      "raw": "true",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.position.latitude",
+      "name": "纬度",
+      "raw": "[已隐藏]",
+      "unit": "原始坐标（缩放及坐标系须依解码规则）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "精确位置隐藏；坐标换算与可信性应结合 position 内其他标记。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.position.carLocatorStatUploadEn",
+      "name": "车辆定位状态上传使能",
+      "raw": "true",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.position.marsCoordinates",
+      "name": "火星坐标系标记（GCJ-02 相关）",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "字段名通常指 GCJ-02 标记；false 与坐标系的对应关系尚无官方协议证据。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.position.longitude",
+      "name": "经度",
+      "raw": "[已隐藏]",
+      "unit": "原始坐标（缩放及坐标系须依解码规则）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "精确位置隐藏；坐标换算与可信性应结合 position 内其他标记。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.distanceToEmpty",
+      "name": "通用续航",
+      "raw": "0",
+      "unit": "km（通用）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "本车该通用字段为 0；续航使用 distanceToEmptyOnBatteryOnly。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.carMode",
+      "name": "车辆模式",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.speed",
+      "name": "车速",
+      "raw": "0.0",
+      "unit": "km/h；需 speedValidity 有效",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "当前 speedValidity=false；0.0 不能作为有效瞬时车速或独立停车证据。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.speedValidity",
+      "name": "车速有效性",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "已返回",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：无效。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "basicVehicleStatus.direction",
+      "name": "车辆航向角（推测）",
+      "raw": "0",
+      "unit": "°（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "notification.notifForEmgyCallStatus",
+      "name": "紧急呼叫通知状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "eg.blocked.status",
+      "name": "EG 阻止／禁用状态（具体功能未知）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "parkTime.status",
+      "name": "停车时间戳（推测）",
+      "raw": "1789704235402",
+      "unit": "Unix 毫秒（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "2026-09-18 12:03:55 北京时间；停车触发语义待核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "theftNotification.time",
+      "name": "防盗通知时间",
+      "raw": "1754654998",
+      "unit": "Unix 秒（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "2025-08-08 20:09:58 北京时间（按量级换算）；不证明当前发生防盗事件。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "theftNotification.activated",
+      "name": "防盗通知激活状态",
+      "raw": "3",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "configuration.propulsionType",
+      "name": "动力配置编码",
+      "raw": "4",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "configuration.fuelType",
+      "name": "能源配置编码",
+      "raw": "4",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "configuration.vin",
+      "name": "车辆识别代号（VIN）",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "updateTime",
+      "name": "整车缓存状态更新时间",
+      "raw": "1789704722583",
+      "unit": "Unix 毫秒",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "2026-09-18 12:12:02 北京时间；整车时间不保证所有子字段同步。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.daysToService",
+      "name": "保养剩余天数指标",
+      "raw": "330",
+      "unit": "天（社区）",
+      "evidence": "社区术语／单位；本车统计口径待核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "S1（社区实现，非官方协议）"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.engineHrsToService",
+      "name": "保养运行小时指标",
+      "raw": "0",
+      "unit": "h（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "通用平台兼容字段；纯电车上的零值不代表存在对应燃油部件或有效测量。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.odometer",
+      "name": "总里程",
+      "raw": "44681.000",
+      "unit": "km",
+      "evidence": "已返回",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：44681 km。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.brakeFluidLevelStatus",
+      "name": "制动液液位状态",
+      "raw": "3",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.tyreTempDriverRear",
+      "name": "左后胎温",
+      "raw": "34.000",
+      "unit": "°C",
+      "evidence": "本车已核对",
+      "note": "轮位按本车左舵布局。 本次展示解释：34°C。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.mainBatteryStatus.stateOfCharge",
+      "name": "低压辅助电池荷电状态码",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于低压辅助电池；不是动力电池 SOH。0 不证明电池健康度为 0%。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.mainBatteryStatus.chargeLevel",
+      "name": "低压辅助电池电量",
+      "raw": "98.7",
+      "unit": "%（社区）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于低压辅助电池；不是动力电池 SOH。0 不证明电池健康度为 0%。",
+      "source": "本次接口＋S1"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.mainBatteryStatus.energyLevel",
+      "name": "低压辅助电池能量等级",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于低压辅助电池；不是动力电池 SOH。0 不证明电池健康度为 0%。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.mainBatteryStatus.stateOfHealth",
+      "name": "低压辅助电池健康状态指标",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于低压辅助电池；不是动力电池 SOH。0 不证明电池健康度为 0%。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.mainBatteryStatus.powerLevel",
+      "name": "低压辅助电池功率等级",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于低压辅助电池；不是动力电池 SOH。0 不证明电池健康度为 0%。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.mainBatteryStatus.voltage",
+      "name": "低压辅助电池电压",
+      "raw": "13.150",
+      "unit": "V",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于低压辅助电池；不是动力电池 SOH。0 不证明电池健康度为 0%。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.tyreTempDriver",
+      "name": "左前胎温",
+      "raw": "34.000",
+      "unit": "°C",
+      "evidence": "本车已核对",
+      "note": "轮位按本车左舵布局。 本次展示解释：34°C。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.tyreTempPassengerRear",
+      "name": "右后胎温",
+      "raw": "33.000",
+      "unit": "°C",
+      "evidence": "本车已核对",
+      "note": "轮位按本车左舵布局。 本次展示解释：33°C。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.distanceToService",
+      "name": "保养剩余里程指标",
+      "raw": "18455",
+      "unit": "km（社区）",
+      "evidence": "社区术语／单位；本车统计口径待核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "S1（社区实现，非官方协议）"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.tyreStatusPassengerRear",
+      "name": "右后胎压",
+      "raw": "282.838",
+      "unit": "kPa",
+      "evidence": "本车已核对",
+      "note": "原值÷100 得 bar；轮位按本车左舵布局。 本次展示解释：282.838 kPa。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.tyreStatusPassenger",
+      "name": "右前胎压",
+      "raw": "281.465",
+      "unit": "kPa",
+      "evidence": "本车已核对",
+      "note": "原值÷100 得 bar；轮位按本车左舵布局。 本次展示解释：281.465 kPa。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.tyreStatusDriverRear",
+      "name": "左后胎压",
+      "raw": "284.211",
+      "unit": "kPa",
+      "evidence": "本车已核对",
+      "note": "原值÷100 得 bar；轮位按本车左舵布局。 本次展示解释：284.211 kPa。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.serviceWarningStatus",
+      "name": "保养提醒状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.tyreStatusDriver",
+      "name": "左前胎压",
+      "raw": "281.465",
+      "unit": "kPa",
+      "evidence": "本车已核对",
+      "note": "原值÷100 得 bar；轮位按本车左舵布局。 本次展示解释：281.465 kPa。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.tyreTempPassenger",
+      "name": "右前胎温",
+      "raw": "33.000",
+      "unit": "°C",
+      "evidence": "本车已核对",
+      "note": "轮位按本车左舵布局。 本次展示解释：33°C。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.maintenanceStatus.washerFluidLevelStatus",
+      "name": "玻璃水液位状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.disChargeUAct",
+      "name": "放电电压",
+      "raw": "0.0",
+      "unit": "V",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.disChargeSts",
+      "name": "对外放电状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.chargeLidAcStatus",
+      "name": "交流慢充口盖",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "本车场景观察",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.distanceToEmptyOnBatteryOnly",
+      "name": "电池续航",
+      "raw": "417",
+      "unit": "km",
+      "evidence": "已返回",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：417 km。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.chargeSts",
+      "name": "充电状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "本车直流快充样本中也可为 0；不能单独据此判定未充电／未插枪。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.averPowerConsumption",
+      "name": "平均电耗",
+      "raw": "18.6",
+      "unit": "kWh/100 km（社区）",
+      "evidence": "社区术语／单位；本车统计口径待核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "S1（社区实现，非官方协议）"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.chargerState",
+      "name": "充电器工作状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.timeToTargetDisCharged",
+      "name": "放电剩余时间",
+      "raw": "2047",
+      "unit": "分钟（放电项待核实）；2047 为无有效估计候选",
+      "evidence": "社区解释",
+      "note": "2047 按项目现有规则视为无有效估计；不能显示为 2047 分钟。放电字段分钟单位尚未实车核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.disChargeConnectStatus",
+      "name": "放电连接状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.chargeLidDcAcStatus",
+      "name": "直流快充口盖",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "本车场景观察",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.dcChargeSts",
+      "name": "直流充电状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.ptReady",
+      "name": "动力系统就绪状态（PT Ready）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.chargeLevel",
+      "name": "动力电池荷电量（SOC）",
+      "raw": "86",
+      "unit": "%",
+      "evidence": "已返回",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：86%。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.statusOfChargerConnection",
+      "name": "充电枪连接状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "本车直流快充样本中也可为 0；不能单独据此判定未充电／未插枪。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.dcDcActvd",
+      "name": "DC/DC 激活状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.indPowerConsumption",
+      "name": "瞬时电能消耗指标（功率或电耗待核实）",
+      "raw": "0",
+      "unit": "未知，不能直接写 kW",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.hvTempLevel",
+      "name": "高压系统温度等级（对象待核实）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.dcDcConnectStatus",
+      "name": "DC/DC 连接状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.disChargeIAct",
+      "name": "放电电流",
+      "raw": "0.0",
+      "unit": "A",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.dcChargeIAct",
+      "name": "直流充电电流",
+      "raw": "0.0",
+      "unit": "A",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "快充样本曾为负值，可能采用流入为负的符号约定；不可直接当成对外放电。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.chargeUAct",
+      "name": "充电电压",
+      "raw": "0.0",
+      "unit": "V",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "本车直流快充样本中也可为 0；不能单独据此判定未充电／未插枪。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.bookChargeSts",
+      "name": "预约充电状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.dcChargePileIAct",
+      "name": "桩侧电流",
+      "raw": "0.0",
+      "unit": "A",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：0 A。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.chargeIAct",
+      "name": "充电电流",
+      "raw": "0.000",
+      "unit": "A",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "本车直流快充样本中也可为 0；不能单独据此判定未充电／未插枪。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.timeToFullyCharged",
+      "name": "预计充电剩余时间",
+      "raw": "2047",
+      "unit": "分钟（放电项待核实）；2047 为无有效估计候选",
+      "evidence": "社区解释",
+      "note": "2047 按项目现有规则视为无有效估计；不能显示为 2047 分钟。放电字段分钟单位尚未实车核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.electricVehicleStatus.dcChargePileUAct",
+      "name": "桩侧电压",
+      "raw": "397.2",
+      "unit": "V",
+      "evidence": "本车已核对",
+      "note": "本车快充时已核对为 V；非零可能为保留读数，不能单独证明仍在充电。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.chargeHvSts",
+      "name": "高压充电相关状态",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingBehaviourStatus.gearAutoStatus",
+      "name": "自动挡位状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingBehaviourStatus.gearManualStatus",
+      "name": "手动挡位状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingBehaviourStatus.engineSpeed",
+      "name": "转速字段",
+      "raw": "0.000",
+      "unit": "r/min（通用；非已验证电机转速）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "燃油车兼容字段；未证明能读取本车驱动电机转速。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.ahbc",
+      "name": "自动远光控制（推测）",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "术语映射推测；极氪字段未证实",
+      "note": "不能从当前 0/1 判定功能关闭/开启、装备情况或故障。",
+      "source": "S4，仅支持通用功能术语"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.goodbye",
+      "name": "告别照明",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.homeSafe",
+      "name": "伴我回家",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.cornrgLi",
+      "name": "转角辅助照明（推测）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "术语映射推测；极氪字段未证实",
+      "note": "不能从当前 0/1 判定功能关闭/开启、装备情况或故障。",
+      "source": "S3，仅支持通用功能术语"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.frntFog",
+      "name": "前雾灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.stopLi",
+      "name": "刹车灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.tripMeter1",
+      "name": "小计里程 1",
+      "raw": "6172.4",
+      "unit": "km（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.approach",
+      "name": "接近照明",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.tripMeter2",
+      "name": "小计里程 2",
+      "raw": "9.6",
+      "unit": "km（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.indFuelConsumption",
+      "name": "瞬时油耗通用字段",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "通用平台兼容字段；纯电车上的零值不代表存在对应燃油部件或有效测量。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.hiBeam",
+      "name": "远光灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.engineCoolantLevelStatus",
+      "name": "冷却液通用字段",
+      "raw": "3",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.fuelEnLevel",
+      "name": "燃油能量等级",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "通用平台兼容字段；纯电车上的零值不代表存在对应燃油部件或有效测量。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.loBeam",
+      "name": "近光灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.ltgShow",
+      "name": "灯光秀",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.welcome",
+      "name": "迎宾灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.drl",
+      "name": "日行灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.fuelLevelPct",
+      "name": "燃油比例通用字段",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "通用平台兼容字段；纯电车上的零值不代表存在对应燃油部件或有效测量。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.ahl",
+      "name": "自动大灯调平／自适应前照灯（两种候选）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "术语映射推测；极氪字段未证实",
+      "note": "不能从当前 0/1 判定功能关闭/开启、装备情况或故障。",
+      "source": "字段缩写存在歧义，无直接协议证据"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.fuelEnCns",
+      "name": "燃油消耗通用字段",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "通用平台兼容字段；纯电车上的零值不代表存在对应燃油部件或有效测量。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.trunIndrLe",
+      "name": "左转向灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.trunIndrRi",
+      "name": "右转向灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.afs",
+      "name": "自适应前照灯系统（推测）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "术语映射推测；极氪字段未证实",
+      "note": "不能从当前 0/1 判定功能关闭/开启、装备情况或故障。",
+      "source": "S2，仅支持通用功能术语"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.dbl",
+      "name": "动态弯道照明／随动转向照明（推测）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "术语映射推测；极氪字段未证实",
+      "note": "不能从当前 0/1 判定功能关闭/开启、装备情况或故障。",
+      "source": "S3，仅支持通用功能术语"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.avgSpeed",
+      "name": "平均速度指标",
+      "raw": "26",
+      "unit": "km/h（推测；统计窗口未知）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.reverseLi",
+      "name": "倒车灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.hwl",
+      "name": "高速公路照明模式（推测）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "术语映射推测；极氪字段未证实",
+      "note": "不能从当前 0/1 判定功能关闭/开启、装备情况或故障。",
+      "source": "S2，仅支持通用功能术语"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.reFog",
+      "name": "后雾灯",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.flash",
+      "name": "闪灯字段",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.runningStatus.fuelEnCnsFild",
+      "name": "燃油消耗扩展字段",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "通用平台兼容字段；纯电车上的零值不代表存在对应燃油部件或有效测量。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.trailerStatus.trailerTurningLampSts",
+      "name": "挂车转向灯状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.trailerStatus.trailerFogLampSts",
+      "name": "挂车雾灯状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.trailerStatus.trailerBreakLampSts",
+      "name": "挂车制动灯状态（原字段拼作 Break）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.trailerStatus.trailerReversingLampSts",
+      "name": "挂车倒车灯状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.trailerStatus.trailerPosLampSts",
+      "name": "挂车位置灯状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.drvHeatSts",
+      "name": "主驾加热状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.temperatureUpdateTime",
+      "name": "温度更新时间",
+      "raw": "1789704722583",
+      "unit": "Unix 毫秒",
+      "evidence": "已返回",
+      "note": "2026-09-18 12:12:02 北京时间；整车时间不保证所有子字段同步。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.winPosDriver",
+      "name": "左前车窗位置",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.rrVentDetail",
+      "name": "右后通风档位／细分状态（推测）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "可能是档位或细分状态；不能将 2 直接解释为二挡。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.cabinTempReductionStatus",
+      "name": "座舱降温状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.rlVentSts",
+      "name": "左后通风状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.passVentSts",
+      "name": "副驾通风状态",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.interiorTemp",
+      "name": "车内温度",
+      "raw": "27.7",
+      "unit": "°C",
+      "evidence": "已返回",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：27.7°C。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.passVentDetail",
+      "name": "副驾通风档位／细分状态（推测）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "可能是档位或细分状态；不能将 2 直接解释为二挡。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.sunroofPos",
+      "name": "天窗位置",
+      "raw": "101",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "101 超出普通 0–100% 范围，疑为无效／未配置哨兵；未证实，不解释为 101% 开度。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.cdsClimateActive",
+      "name": "CDS 空调激活标记（CDS 含义未知）",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.sunroofOpenStatus",
+      "name": "天窗状态",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.rrHeatingDetail",
+      "name": "右后加热档位／细分状态（推测）",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "可能是档位或细分状态；不能将 2 直接解释为二挡。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.winStatusPassenger",
+      "name": "右前车窗状态",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.fragActive",
+      "name": "香氛激活标记（推测）",
+      "raw": false,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.winStatusDriver",
+      "name": "左前车窗状态",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.drvVentSts",
+      "name": "主驾通风状态",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.winStatusPassengerRear",
+      "name": "右后车窗状态",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.sunCurtainRearOpenStatus",
+      "name": "后遮阳帘状态",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.preClimateActive",
+      "name": "预调温标记",
+      "raw": false,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.rlHeatingDetail",
+      "name": "左后加热档位／细分状态（推测）",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "可能是档位或细分状态；不能将 2 直接解释为二挡。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.winPosPassengerRear",
+      "name": "右后车窗位置",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.curtainPos",
+      "name": "遮阳帘位置",
+      "raw": "101",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "101 超出普通 0–100% 范围，疑为无效／未配置哨兵；未证实，不解释为 101% 开度。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.rlVentDetail",
+      "name": "左后通风档位／细分状态（推测）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "可能是档位或细分状态；不能将 2 直接解释为二挡。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.curtainOpenStatus",
+      "name": "遮阳帘状态",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.climateOverHeatProActive",
+      "name": "过热保护相关标记",
+      "raw": "true",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.rrVentSts",
+      "name": "右后通风状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.rrHeatingSts",
+      "name": "右后加热状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.winPosPassenger",
+      "name": "右前车窗位置",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.steerWhlHeatingSts",
+      "name": "方向盘加热",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.drvVentDetail",
+      "name": "主驾通风档位／细分状态（推测）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "可能是档位或细分状态；不能将 2 直接解释为二挡。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.winPosDriverRear",
+      "name": "左后车窗位置",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.exteriorTemp",
+      "name": "车外温度",
+      "raw": "31.0",
+      "unit": "°C",
+      "evidence": "已返回",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：31°C。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.rlHeatingSts",
+      "name": "左后加热状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.winStatusDriverRear",
+      "name": "左后车窗状态",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.defrost",
+      "name": "除霜标记",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.drvHeatDetail",
+      "name": "主驾加热档位／细分状态（推测）",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "可能是档位或细分状态；不能将 2 直接解释为二挡。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.passHeatingDetail",
+      "name": "副驾加热档位／细分状态（推测）",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "可能是档位或细分状态；不能将 2 直接解释为二挡。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.airBlowerActive",
+      "name": "鼓风机标记",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.sunCurtainRearPos",
+      "name": "后遮阳帘位置",
+      "raw": "101",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "101 超出普通 0–100% 范围，疑为无效／未配置哨兵；未证实，不解释为 101% 开度。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.climateStatus.passHeatingSts",
+      "name": "副驾加热状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorLockStatusDriverRear",
+      "name": "左后门锁",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "本车已核对（组合）",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：已锁。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.srsCrashStatus",
+      "name": "碰撞系统状态",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorOpenStatusPassengerRear",
+      "name": "右后车门开闭",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorPosPassengerRear",
+      "name": "右后车门位置",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorOpenStatusDriver",
+      "name": "左前车门开闭",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.seatBeltStatusPassenger",
+      "name": "右前安全带标记",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "布尔标记方向及座位占用条件未核实；第三排字段不代表本车具有第三排座椅。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorPosDriver",
+      "name": "左前车门位置",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.seatBeltStatusThPassengerRear",
+      "name": "第三排右侧通用安全带标记",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "布尔标记方向及座位占用条件未核实；第三排字段不代表本车具有第三排座椅。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.electricParkBrakeStatus",
+      "name": "电子驻车",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "本车场景观察",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：停车／充电样本值 1。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorLockStatusDriver",
+      "name": "左前门锁",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "本车已核对（组合）",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：已锁。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.seatBeltStatusThDriverRear",
+      "name": "第三排左侧通用安全带标记",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "布尔标记方向及座位占用条件未核实；第三排字段不代表本车具有第三排座椅。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.tankFlapStatus",
+      "name": "油箱盖通用字段",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "通用平台兼容字段；纯电车上的零值不代表存在对应燃油部件或有效测量。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.seatBeltStatusPassengerRear",
+      "name": "右后安全带标记",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "布尔标记方向及座位占用条件未核实；第三排字段不代表本车具有第三排座椅。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorOpenStatusPassenger",
+      "name": "右前车门开闭",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorPosPassenger",
+      "name": "右前车门位置",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.vehicleAlarm.alrmSt",
+      "name": "报警状态",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.vehicleAlarm.alrmTrgSrc",
+      "name": "报警来源",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorPosDriverRear",
+      "name": "左后车门位置",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.centralLockingStatus",
+      "name": "中控锁",
+      "raw": "2",
+      "unit": "—",
+      "evidence": "本车已核对（组合）",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：已锁车。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.seatBeltStatusDriver",
+      "name": "左前安全带标记",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "布尔标记方向及座位占用条件未核实；第三排字段不代表本车具有第三排座椅。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorLockStatusPassenger",
+      "name": "右前门锁",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "本车已核对（组合）",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：已锁。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.seatBeltStatusMidRear",
+      "name": "后排中间安全带标记",
+      "raw": "true",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "布尔标记方向及座位占用条件未核实；第三排字段不代表本车具有第三排座椅。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.trunkLockStatus",
+      "name": "尾门锁",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.seatBeltStatusDriverRear",
+      "name": "左后安全带标记",
+      "raw": "false",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "布尔标记方向及座位占用条件未核实；第三排字段不代表本车具有第三排座椅。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.engineHoodOpenStatus",
+      "name": "前舱盖",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorOpenStatusDriverRear",
+      "name": "左后车门开闭",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.doorLockStatusPassengerRear",
+      "name": "右后门锁",
+      "raw": "1",
+      "unit": "—",
+      "evidence": "本车已核对（组合）",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：已锁。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.drivingSafetyStatus.trunkOpenStatus",
+      "name": "尾门开闭",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "本车已核对",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 本次展示解释：关闭。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.pollutionStatus.interiorPM25",
+      "name": "车内 PM2.5 指标",
+      "raw": "29",
+      "unit": "μg/m³（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.pollutionStatus.interiorPM25Level",
+      "name": "车内 PM2.5 等级",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.pollutionStatus.relHumSts",
+      "name": "相对湿度指标（推测）",
+      "raw": "48",
+      "unit": "%RH（推测）",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "additionalVehicleStatus.pollutionStatus.exteriorPM25Level",
+      "name": "车外 PM2.5 等级",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.swVersion",
+      "name": "车载通信模块软件版本",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.serialNumber",
+      "name": "通信模块序列号",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.powerSource",
+      "name": "通信模块供电来源",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.networkAccessStatus.mobileNetwork",
+      "name": "移动网络信息",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.networkAccessStatus.simInfo.iccId",
+      "name": "SIM 卡集成电路卡识别码（ICCID）",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.networkAccessStatus.simInfo.imsi",
+      "name": "国际移动用户识别码（IMSI）",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.networkAccessStatus.simInfo.msisdn",
+      "name": "移动用户号码（MSISDN）",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.mcuVersion",
+      "name": "微控制器固件版本",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.mpuVersion",
+      "name": "微处理器软件版本",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.backupBattery.stateOfCharge",
+      "name": "通信模块备用电池荷电状态",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于通信模块备用电池，不能与低压辅助电池或动力电池混用。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.backupBattery.stateOfHealth",
+      "name": "通信模块备用电池健康状态",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于通信模块备用电池，不能与低压辅助电池或动力电池混用。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.backupBattery.voltage",
+      "name": "通信模块备用电池电压",
+      "raw": null,
+      "unit": "V",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "属于通信模块备用电池，不能与低压辅助电池或动力电池混用。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.hwVersion",
+      "name": "通信模块硬件版本",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.powerMode",
+      "name": "通信模块电源模式",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.healthStatus",
+      "name": "通信模块健康状态",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.sleepCycleNextWakeupTime",
+      "name": "休眠周期下次唤醒时间",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.imei",
+      "name": "移动设备识别码（IMEI）",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.state",
+      "name": "通信模块运行状态",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "状态",
+      "path": "temStatus.connectivityStatus",
+      "name": "通信模块连接状态",
+      "raw": null,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。 当前 null，未提供有效值。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "factoryCode",
+      "name": "工厂代码",
+      "raw": "",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。 当前为空字符串。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "colorName",
+      "name": "车身颜色名称",
+      "raw": "",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。 当前为空字符串。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "isIHUConfirm",
+      "name": "车机确认标记（推测）",
+      "raw": false,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "temId",
+      "name": "车载通信模块标识",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "ihuPlatform",
+      "name": "车机平台",
+      "raw": "",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。 当前为空字符串。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "ihuId",
+      "name": "车机标识",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "carProveStatus",
+      "name": "车辆认证状态（推测）",
+      "raw": "N",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "fuelTankCapacity",
+      "name": "油箱容量（通用字段）",
+      "raw": "0",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "seriesCodeVs",
+      "name": "车系版本编码（推测）",
+      "raw": "DC1E",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "iccid",
+      "name": "SIM 卡识别码",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "current",
+      "name": "当前车辆标记（推测）",
+      "raw": false,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "modelCode",
+      "name": "车型编码",
+      "raw": "DC1E-006",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "vehicleOwnerLastTime",
+      "name": "车主关联时间字段（具体业务未知）",
+      "raw": "[hidden]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "vin",
+      "name": "车辆识别代号（VIN）",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "fccode",
+      "name": "内部配置／车型代码（推测）",
+      "raw": "",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。 当前为空字符串。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "id",
+      "name": "车辆记录标识",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "msisdn",
+      "name": "移动用户号码（MSISDN）",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "vehicleType",
+      "name": "车辆类型编码",
+      "raw": 0,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "engineNo",
+      "name": "发动机／动力总成编号（通用字段）",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "temType",
+      "name": "车载通信模块类型",
+      "raw": "",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。 当前为空字符串。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "tboxPlatform",
+      "name": "T-Box 平台",
+      "raw": "tsp",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "plateNo",
+      "name": "车牌号码",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "seriesName",
+      "name": "车系名称／内部车系代号",
+      "raw": "DC1E",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "updateTime",
+      "name": "整车缓存状态更新时间",
+      "raw": "1711639479458",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "vehiclePhotoSmall",
+      "name": "车辆缩略图地址",
+      "raw": "",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。 当前为空字符串。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "modelName",
+      "name": "车型名称／内部配置名称",
+      "raw": "WE版-006",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "接口内部车型名称，不能单凭此项确定完整年款、驱动形式或电池容量。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "proprietaryPlatform",
+      "name": "所属平台编码（推测）",
+      "raw": 1,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "recordTime",
+      "name": "档案记录时间",
+      "raw": "1695103292350",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "createTime",
+      "name": "档案创建时间",
+      "raw": "1695103292350",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "simActivited",
+      "name": "车载 SIM 激活标记",
+      "raw": 1,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "vehiclePhotoBig",
+      "name": "车辆大图地址",
+      "raw": "",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。 当前为空字符串。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "loginInfo.isLogined",
+      "name": "车机账号登录标记（推测）",
+      "raw": 0,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "loginInfo.loginUid",
+      "name": "登录用户标识",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "colorCode",
+      "name": "车身颜色编码",
+      "raw": "",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。 当前为空字符串。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "defaultVehicle",
+      "name": "默认车辆标记",
+      "raw": false,
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "matCode",
+      "name": "物料／配置编码（推测）",
+      "raw": "[已隐藏]",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    },
+    {
+      "category": "档案",
+      "path": "shareStatus",
+      "name": "车辆分享状态",
+      "raw": "Y",
+      "unit": "—",
+      "evidence": "字段直译／缩写推测；枚举未核实",
+      "note": "车辆档案返回项；编码或布尔标记的业务枚举未独立核实。",
+      "source": "本次接口返回＋字段命名"
+    }
+  ]
+}

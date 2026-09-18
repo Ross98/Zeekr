@@ -73,7 +73,8 @@ class WebServerTests(unittest.TestCase):
         code, data = self.post('/api/refresh', {'vehicle': 1})
         self.assertEqual(code, 200)
         self.assertEqual(data['model']['metrics']['battery'], '62%')
-        self.assertFalse(data['recording']['active'])
+        self.assertTrue(data['recording']['active'])
+        self.assertEqual(data['recording']['status'], 'offline')
         self.assertNotIn('NEVER-EXPOSE', str(data))
         self.assertNotIn('L6T79', str(data))
         self.assertNotIn('111600000', str(data))
@@ -106,15 +107,15 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(later['read_at'], original['read_at'])
         self.assertTrue(later['error'])
 
-    def test_recording_requires_loaded_vehicle_and_valid_interval(self):
-        self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 300})[0], 400)
-        self.post('/api/refresh', {'vehicle': 1})
+    def test_recording_controls_shared_backend_and_validates_interval(self):
+        from zeekr_control.storage import load
         self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 0})[0], 400)
-        self.assertEqual(self.post('/api/recording', {'active': 'false', 'interval': 300})[0], 400)
-        self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 300})[0], 200)
-        self.assertTrue(self.request('GET', '/api/state')[1]['recording']['active'])
-        self.assertEqual(self.post('/api/refresh', {'vehicle': 2})[0], 400)
-        self.assertEqual(self.post('/api/recording', {'active': False, 'interval': 300})[0], 200)
+        self.assertEqual(self.post('/api/recording', {'active': 'false', 'interval': 60})[0], 400)
+        self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 60})[0], 200)
+        self.assertEqual(load(self.app.session_path.parent / 'sampling.json')['enabled'], 'true')
+        self.assertEqual(self.post('/api/recording', {'active': False, 'interval': 60})[0], 200)
+        self.assertEqual(load(self.app.session_path.parent / 'sampling.json')['enabled'], 'false')
+
 
     def test_history_unavailable_is_not_empty_success_and_bad_dates_fail(self):
         self.post('/api/refresh', {'vehicle': 1})
@@ -129,9 +130,8 @@ class WebServerTests(unittest.TestCase):
 
     def test_local_tracks_remain_readable_without_cloud_refresh_after_restart(self):
         from zeekr_control.web import App
-        self.post('/api/refresh', {'vehicle': 1})
-        self.post('/api/recording', {'active': True, 'interval': 300})
-        self.post('/api/recording', {'active': False, 'interval': 300})
+        from zeekr_control.tracks import TrackStore
+        TrackStore(self.app.database_path).record('synthetic', FakeClient({}).status('synthetic'), 1704067200000, 180)
         reopened = App(self.app.session_path, self.app.database_path, FakeClient)
         try:
             self.assertIsNone(reopened.model)
@@ -140,19 +140,56 @@ class WebServerTests(unittest.TestCase):
         finally:
             reopened.close()
 
-    def test_background_failure_pauses_collection(self):
-        import time
+    def test_saved_background_snapshot_restores_without_gateway_query(self):
+        from zeekr_control.snapshots import SnapshotStore, session_scope
+        from zeekr_control.storage import load, save
+        from zeekr_control.web import App
+        vehicle_key = __import__('hashlib').sha256(b'L6T79X2Z0NP000001').hexdigest()
+        save(self.app.session_path.parent / 'monitor-binding.json', {'vehicle_key': vehicle_key})
+        SnapshotStore(self.app.session_path.parent / 'snapshots.sqlite3').publish(
+            session_scope(load(self.app.session_path)), vehicle_key,
+            FakeClient({}).status('synthetic'), 1704067201000)
+        class NoGateway(FakeClient):
+            def vehicles(self): raise AssertionError('GET /api/state must stay local')
+            def status(self, vin): raise AssertionError('GET /api/state must stay local')
+        reopened = App(self.app.session_path, self.app.database_path, NoGateway)
+        try:
+            result = reopened.state()
+            self.assertEqual(result['model']['metrics']['battery'], '62%')
+            self.assertEqual(result['snapshot_revision'], 1)
+        finally:
+            reopened.close()
+
+    def test_events_endpoint_filters_current_vehicle_and_redacts_location(self):
+        import json
         self.post('/api/refresh', {'vehicle': 1})
-        self.post('/api/recording', {'active': True, 'interval': 300})
-        FakeClient.fail = True
-        with self.app.lock:
-            self.app.next_due = 0
-        deadline = time.monotonic() + 3
-        while self.app.state()['recording']['active'] and time.monotonic() < deadline:
-            time.sleep(0.02)
-        self.assertFalse(self.app.state()['recording']['active'])
-        self.assertEqual(self.app.state()['model']['metrics']['battery'], '62%')
-        self.assertTrue(self.app.state()['error'])
+        from zeekr_control.monitor import Monitor
+        monitor = Monitor(self.app.database_path)
+        summary = {'start_time': 1704126500000, 'end_time': 1704126600000,
+                   'duration_seconds': 100, 'distance_km': 2.5, 'partial': False,
+                   'start_location': {'latitude': 31}, 'start_address': 'PRIVATE'}
+        with monitor.tracks.connect() as db:
+            db.execute('INSERT INTO monitor_events (id,vehicle,kind,summary,message,created) VALUES (?,?,?,?,?,?)',
+                       ('event-a', self.app.vehicle_key, 'trip_end', json.dumps(summary), 'PRIVATE MESSAGE', 1))
+            db.execute('INSERT INTO monitor_events (id,vehicle,kind,summary,message,created) VALUES (?,?,?,?,?,?)',
+                       ('event-b', 'other', 'trip_end', json.dumps(summary), 'PRIVATE MESSAGE', 2))
+        code, result = self.request('GET', '/api/events?date=2024-01-02&kind=trip_end')
+        self.assertEqual(code, 200)
+        self.assertEqual([event['id'] for event in result['events']], ['event-a'])
+        self.assertNotIn('PRIVATE', str(result))
+
+
+    def test_background_failure_visible_in_shared_recording_state(self):
+        import time
+        from zeekr_control.storage import save
+        self.post('/api/refresh', {'vehicle': 1})
+        save(self.app.session_path.parent / 'monitor-health.json',
+             {'status':'blocked', 'heartbeat':str(int(time.time()*1000)), 'error':'测试：会话失效'})
+        result = self.app.state()
+        self.assertEqual(result['recording']['status'], 'failed')
+        self.assertEqual(result['recording']['error'], '测试：会话失效')
+        self.assertEqual(result['model']['metrics']['battery'], '62%')
+
 
     def test_refresh_distinguishes_cache_unchanged_and_new_data(self):
         first = self.post('/api/refresh', {'vehicle': 1})[1]
@@ -165,31 +202,30 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(cached['refresh_result'], 'cached')
         self.assertEqual(self.post('/api/refresh', {'vehicle': 2})[1]['refresh_result'], 'new')
 
-    def test_recording_lifecycle_distinguishes_never_paused_failed(self):
-        self.assertEqual(self.app.state()['recording'].get('status'), 'never')
-        self.post('/api/refresh', {'vehicle': 1})
-        self.post('/api/recording', {'active': True, 'interval': 300})
+    def test_recording_lifecycle_distinguishes_offline_paused_active(self):
+        import time
+        from zeekr_control.storage import save
+        self.assertEqual(self.app.state()['recording']['status'], 'offline')
+        save(self.app.session_path.parent / 'monitor-health.json',
+             {'status':'fresh', 'heartbeat':str(int(time.time()*1000)), 'interval':'300'})
         self.assertEqual(self.app.state()['recording']['status'], 'active')
-        self.post('/api/recording', {'active': False, 'interval': 300})
+        self.assertEqual(self.app.state()['recording']['effective_interval'], 300)
+        self.post('/api/recording', {'active': False, 'interval': 60})
         self.assertEqual(self.app.state()['recording']['status'], 'paused')
-        self.post('/api/recording', {'active': True, 'interval': 300})
-        FakeClient.fail = True
-        self.post('/api/refresh', {'vehicle': 1})
-        self.assertEqual(self.app.state()['recording']['status'], 'failed')
+
 
     def test_profiles_do_not_apply_same_car_to_multiple_vehicles(self):
         data = self.post('/api/refresh', {'vehicle': 2})[1]
         self.assertEqual(data.get('profile', {}).get('name'), '车辆 2')
         self.assertFalse(data['profile']['image'])
 
-    def test_storage_failure_marks_recording_failed(self):
-        from unittest.mock import patch
-        self.post('/api/refresh', {'vehicle': 1})
-        self.post('/api/recording', {'active': True, 'interval': 300})
-        with patch.object(self.app.store, 'record', side_effect=OSError('disk unavailable')):
-            self.assertEqual(self.post('/api/refresh', {'vehicle': 1})[0], 500)
-        self.assertFalse(self.app.state()['recording']['active'])
-        self.assertEqual(self.app.state()['recording']['status'], 'failed')
+    def test_manual_refresh_failure_does_not_stop_shared_backend(self):
+        from zeekr_control.storage import load
+        self.post('/api/recording', {'active': True, 'interval': 60})
+        FakeClient.fail = True
+        self.assertEqual(self.post('/api/refresh', {'vehicle': 1})[0], 502)
+        self.assertEqual(load(self.app.session_path.parent / 'sampling.json')['enabled'], 'true')
+
 
     def test_missing_and_older_vehicle_time_never_claim_new_data(self):
         from unittest.mock import patch
@@ -206,10 +242,9 @@ class WebServerTests(unittest.TestCase):
             self.post('/api/refresh', {'vehicle': 1})
             self.assertEqual(self.app.state()['next_query_at'], 2000000000)
 
-    def test_initial_recording_storage_failure_reports_failed(self):
+    def test_control_storage_failure_does_not_claim_success(self):
         from unittest.mock import patch
-        self.post('/api/refresh', {'vehicle': 1})
-        with patch.object(self.app, '_record', side_effect=OSError('disk unavailable')):
-            self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 300})[0], 500)
-        self.assertEqual(self.app.state()['recording']['status'], 'failed')
+        self.post('/api/recording', {'active': False, 'interval': 60})
+        with patch('zeekr_control.web.save', side_effect=OSError('disk unavailable')):
+            self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 60})[0], 500)
         self.assertFalse(self.app.state()['recording']['active'])

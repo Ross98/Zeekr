@@ -21,7 +21,7 @@ const fs = require('node:fs');
     await page.goto(`http://127.0.0.1:${port}`);
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
-    await page.getByRole('button',{name:'轨迹记录',exact:true}).first().click();
+    await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();
     await page.getByRole('button',{name:'云端历史',exact:true}).click();
     assert.match(await page.locator('main').innerText(), /需要连接云端历史账号/);
     await page.getByText('如何连接历史账号', {exact:true}).click();

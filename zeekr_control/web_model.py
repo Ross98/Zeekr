@@ -1,6 +1,7 @@
 """Presentation data with conservative, vehicle-specific interpretations."""
 from .summary import SIDES, POSITIONS, display, number, section, updated_at
 from .vehicle_state import decode
+from .parameter_dictionary import definition, reference
 
 
 LABELS = {
@@ -94,10 +95,13 @@ def fields_for(data):
             full = path + '.' + key if path else key
             current = '低压电池' if key == 'mainBatteryStatus' else GROUPS.get(key, group)
             if key == 'position':
-                continue
+                current = '定位状态'
+            elif key == 'backupBattery':
+                current = '通信模块备用电池'
             if isinstance(item, dict):
                 walk(item, full, current)
-            elif key in LABELS:
+            elif definition(full):
+                entry = definition(full)
                 rendered, evidence = scalar(item), '待核实'
                 numeric = number(item)
                 calibrated = None
@@ -153,8 +157,9 @@ def fields_for(data):
                     rendered, evidence = display(item, ' km', 0), '已返回'
                 if rendered == '未知':
                     evidence = '未知'
-                result.append({'key': key, 'path': full, 'name': LABELS[key], 'group': current,
-                               'raw': scalar(item), 'value': rendered, 'evidence': evidence})
+                result.append({'key': key, 'path': full, 'name': entry['name'], 'group': current,
+                               'raw': scalar(item), 'value': rendered, 'evidence': evidence,
+                               'reference': reference(entry)})
     walk(section(data))
     return result
 
@@ -171,7 +176,27 @@ def metric_detail(value, unit, time, minimum=None, maximum=None):
             'updated_time': time, 'evidence': '已返回' if valid is not None else '未知'}
 
 
-def build_model(data):
+def metadata_fields(vehicle):
+    """Expose only known non-sensitive vehicle metadata under a separate namespace."""
+    result = []
+
+    def walk(value, path='vehicleMetadata'):
+        for key, item in section(value).items():
+            full = path + '.' + key
+            if isinstance(item, dict):
+                walk(item, full)
+            else:
+                entry = definition(full)
+                if entry:
+                    raw = scalar(item) if item != '' else '未知'
+                    result.append({'key': key, 'path': full, 'name': entry['name'], 'group': '车辆档案',
+                                   'raw': raw, 'value': raw, 'evidence': '未知' if raw == '未知' else '待核实',
+                                   'reference': reference(entry)})
+    walk(vehicle)
+    return result
+
+
+def build_model(data, vehicle=None):
     data = section(data)
     extra = section(data.get('additionalVehicleStatus'))
     electric = section(extra.get('electricVehicleStatus'))
@@ -180,8 +205,11 @@ def build_model(data):
     safety = section(extra.get('drivingSafetyStatus'))
     locked = number(safety.get('centralLockingStatus')) == 2 and all(
         number(safety.get('doorLockStatus' + side)) == 1 for side in SIDES)
-    doors_closed = all(number(safety.get('doorOpenStatus' + side)) == 0 for side in SIDES)
-    windows_closed = all(number(climate.get('winPos' + side)) == 0 for side in SIDES)
+    door_states = ['关闭' if number(safety.get('doorOpenStatus' + side)) == 0 else '未知' for side in SIDES]
+    window_states = ['关闭' if number(climate.get('winPos' + side)) == 0 else '未知' for side in SIDES]
+    def closure(states):
+        known = states.count('关闭')
+        return '关闭' if known == len(states) else '已知关闭 %d 项，%d 项未知' % (known, len(states) - known) if known else '未知'
     vehicle_state = decode(data)
     charging = vehicle_state['charging']
     stopped = vehicle_state['charging_phase'] == 'stopped'
@@ -199,8 +227,8 @@ def build_model(data):
             'odometer': metric_detail(maintenance.get('odometer'), 'km', status_time, 0),
             'inside': metric_detail(climate.get('interiorTemp'), '°C', temperature_time, -80, 100),
             'outside': metric_detail(climate.get('exteriorTemp'), '°C', temperature_time, -80, 100)},
-        'closure': {'doors': '关闭' if doors_closed else '未知',
-                    'windows': '关闭' if windows_closed else '未知',
+        'closure': {'doors': closure(door_states),
+                    'windows': closure(window_states),
                     'trunk': '关闭' if number(safety.get('trunkOpenStatus')) == 0 else '未知'},
         'updated_at': updated_at(data.get('updateTime')),
         'temperature_updated_at': updated_at(climate.get('temperatureUpdateTime')),
@@ -219,19 +247,19 @@ def build_model(data):
                                '匹配充电证据；数据来自车辆云端缓存。' if charging is True else
                                '匹配未充电证据，已排除直流侧充电冲突；连接码不单独解释。' if charging is False else
                                '证据缺失或冲突，暂无法确认是否正在充电。'},
-        'doors': [{'name': name, 'door': '关闭' if doors_closed else '未知',
-                   'lock': '已锁' if locked else '未知', 'window': '关闭' if windows_closed else '未知',
+        'doors': [{'name': name, 'door': door_states[index],
+                   'lock': '已锁' if locked else '未知', 'window': window_states[index],
                    'raw': {'door': scalar(safety.get('doorOpenStatus' + side)),
                            'lock': scalar(safety.get('doorLockStatus' + side)),
                            'window': scalar(climate.get('winPos' + side))}}
-                  for side, name in zip(SIDES, POSITIONS)],
+                  for index, (side, name) in enumerate(zip(SIDES, POSITIONS))],
         'trunk': '关闭' if number(safety.get('trunkOpenStatus')) == 0 else '未知',
         'hood': '未知',
         'tyres': [{'name': name, 'pressure': display(maintenance.get('tyreStatus' + side), ' kPa', 0),
                    'pressure_value': metric_detail(maintenance.get('tyreStatus' + side), 'kPa', status_time, 0)['value'],
                    'temperature': display(maintenance.get('tyreTemp' + side), '°C', -80, 150)}
                   for side, name in zip(SIDES, POSITIONS)],
-        'fields': fields_for(data),
+        'fields': fields_for(data) + metadata_fields(vehicle),
     }
 
 

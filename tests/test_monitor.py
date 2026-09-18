@@ -268,7 +268,6 @@ class EstimatedEnergyTests(unittest.TestCase):
         self.assertIn('估算充入电量：36.1 kWh', message_for('charge_end', data, 'test'))
         data.update(start_soc=90, end_soc=88, soc_delta=-2)
         self.assertIn('估算耗电量：1.7 kWh', message_for('trip_end', data, 'test'))
-        self.assertIn('非充电桩计费电量', message_for('trip_end', data, 'test'))
         for changes in ({'soc_delta': None}, {'battery_capacity_kwh': None},
                         {'soc_delta': 2}, {'start_soc': None}):
             invalid = dict(data, **changes)
@@ -277,3 +276,48 @@ class EstimatedEnergyTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LocationNotificationTests(unittest.TestCase):
+    setUp = MonitorTests.setUp
+    observe = MonitorTests.observe
+
+    def test_trip_addresses_use_frozen_endpoints_and_persist_for_retry(self):
+        from zeekr_control.monitor import Monitor
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        raw = sample(120, km=110)
+        raw['position']['longitude'] = 432000000
+        self.monitor.observe('test-vehicle', raw, BASE + 120000)
+        self.monitor = Monitor(self.path)
+        for t in range(180, 721, 60):
+            self.observe(t, km=110)
+        calls = []
+        def resolve(location):
+            calls.append(location['longitude'])
+            return {121.0: '上海市测试起点', 120.0: '江苏省测试终点'}[location['longitude']]
+        self.monitor.address_resolver = resolve
+        from zeekr_control.notifications import DeliveryError
+        def reject(message):
+            raise DeliveryError('retry')
+        self.monitor.deliver(reject, BASE + 720000)
+        sent = []
+        self.monitor.deliver(sent.append, BASE + 800000)
+        self.assertEqual(calls, [121.0, 120.0])
+        self.assertIn('出发地：上海市测试起点', sent[0])
+        self.assertIn('到达地：江苏省测试终点', sent[0])
+        self.assertNotIn('121.0', sent[0])
+
+    def test_charge_uses_start_location_and_missing_location_does_not_block_send(self):
+        self.observe(0)
+        self.observe(60, code='charging', dc_lid=1)
+        self.observe(120)
+        self.monitor.address_resolver = lambda location: '上海市测试充电站' if location else None
+        sent = []
+        self.monitor.deliver(sent.append, BASE + 120000)
+        self.assertEqual(len(sent), 2)
+        self.assertTrue(all('充电地点：上海市测试充电站' in m for m in sent))
+        from zeekr_control.monitor import message_for
+        data = self.monitor.events()[1]['summary']
+        data.pop('start_address', None)
+        self.assertIn('充电地点：位置未知', message_for('charge_end', data, 'test'))

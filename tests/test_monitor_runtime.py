@@ -40,6 +40,20 @@ class RuntimeTests(unittest.TestCase):
         runner.tick(BASE + 2000)
         self.assertEqual(runner.health()['status'], 'blocked')
 
+    def test_successful_tick_publishes_shared_snapshot(self):
+        class Client:
+            def __init__(self, session): pass
+            def vehicles(self): return [{'vin': 'L6T79X2Z0NP000001'}]
+            def status(self, vin): return sample(0)
+        runner = self.runner(Client)
+        runner.tick(BASE)
+        from zeekr_control.snapshots import SnapshotStore, session_scope
+        snapshot = SnapshotStore(self.root / 'snapshots.sqlite3').read(
+            session_scope({'accessToken': 'synthetic'}),
+            __import__('hashlib').sha256(b'L6T79X2Z0NP000001').hexdigest())
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot['raw']['updateTime'], BASE)
+
     def test_multiple_vehicles_require_explicit_selection(self):
         class Client:
             def __init__(self, session): pass

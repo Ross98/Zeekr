@@ -45,6 +45,25 @@ if __name__ == '__main__':
         session = Path(directory) / 'private' / 'session.json'
         save(session, {'accessToken': 'TEST-ONLY', 'userId': 'TEST-ONLY'})
         app = App(session, client_factory=FixtureClient)
+        from zeekr_control.tracks import TrackStore
+        import hashlib, time
+        TrackStore(app.database_path).record(hashlib.sha256(b'L6T79X2Z0NP000001').hexdigest(),
+            FixtureClient({}).status('synthetic'), int(time.time()*1000), 180)
+        from zeekr_control.monitor import Monitor
+        import json
+        vehicle_key = hashlib.sha256(b'L6T79X2Z0NP000001').hexdigest()
+        with Monitor(app.database_path).tracks.connect() as db:
+            now = int(time.time() * 1000)
+            trip = {'start_time': now-2400000, 'end_time': now-1800000, 'duration_seconds':600,
+                    'distance_km':8.4, 'start_soc':70, 'end_soc':68, 'soc_delta':-2,
+                    'partial':False, 'battery_capacity_kwh':86}
+            charge = {'start_time':now-9000000, 'end_time':now-7200000, 'duration_seconds':1800,
+                      'distance_km':0, 'start_soc':40, 'end_soc':64, 'soc_delta':24,
+                      'partial':False, 'battery_capacity_kwh':86}
+            db.execute('INSERT INTO monitor_events (id,vehicle,kind,summary,message,created) VALUES (?,?,?,?,?,?)',
+                       ('fixture-trip',vehicle_key,'trip_end',json.dumps(trip),'PRIVATE',now-1800000))
+            db.execute('INSERT INTO monitor_events (id,vehicle,kind,summary,message,created) VALUES (?,?,?,?,?,?)',
+                       ('fixture-charge',vehicle_key,'charge_end',json.dumps(charge),'PRIVATE',now-7200000))
         server = make_server(app, 0)
         print(server.server_port, flush=True)
         try:
