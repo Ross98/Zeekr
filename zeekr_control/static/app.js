@@ -19,7 +19,7 @@ const icons = {
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
 };
 const pages = { overview: '总览', car: '车辆', energy: '能源与充电', map: '定位地图', tracks: '行程与轨迹', fields: '参数字典', settings: '设置', more: '更多' };
-const descriptions = { overview: '', car: '门窗、轮胎与座舱，逐项查看。', energy: '动力电池与充电参数，清晰分开。', map: '最近返回的位置，保留可信度与时间信息。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
+const descriptions = { overview: '', car: '门窗、轮胎与座舱，逐项查看。', energy: '查看当前观测状态、充电记录与计算依据。', map: '最近返回的位置，保留可信度与时间信息。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.info}</svg>`;
@@ -29,6 +29,9 @@ let trackSource = 'local', trackDate = new Intl.DateTimeFormat('en-CA', { timeZo
 let trackData = null, playback = [], search = '', groupFilter = '', unknownOnly = false;
 let archiveVehicle = '';
 let eventCursor = null, eventCursorStack = [], eventRequest = 0;
+const beijingDate = value => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+let chargeDate = beijingDate(Date.now()), chargeDateInitialized = false;
+let chargeEvents = [], chargeSelected = null, chargeCursor = null, chargeCursorStack = [], chargeNextCursor = null, chargeBusy = false, chargeError = '', chargeRequest = 0;
 let connectionFailures = 0, polling = false;
 let refreshMessage = '';
 const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unchanged:'已读取云端，车辆数据未更新。',new:'已获得新车辆数据。',time_unknown:'已读取云端，车辆更新时间未知。'};
@@ -136,6 +139,65 @@ function eventSummary(event, kind) {
   return `<div class="event-summary"><strong>${format(event.start_soc)}% 至 ${format(event.end_soc)}%</strong><span>${capacity}</span><small>${complete} · ${esc(new Date(event.end_time).toLocaleString('zh-CN',{hour12:false}))}</small></div>`;
 }
 
+function eventTime(value) {
+  if (!Number.isFinite(value)) return '未知';
+  return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(value)).replaceAll('/','-');
+}
+
+function eventDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '未知';
+  const minutes=Math.round(seconds/60), hours=Math.floor(minutes/60), rest=minutes%60;
+  if (hours && rest) return `${hours} 小时 ${rest} 分钟`;
+  if (hours) return `${hours} 小时`;
+  return `${minutes} 分钟`;
+}
+
+function chargeDetail(event) {
+  if (!event) return `<section class="card charge-detail" id="charge-detail">${empty('选择一条充电记录','从左侧列表选择记录后，在这里查看起止时间、电量变化和完整性。','energy')}</section>`;
+  const format=value=>Number.isFinite(value)?new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value):'未知';
+  const validDelta=Number.isFinite(event.start_soc)&&Number.isFinite(event.end_soc)&&event.end_soc>event.start_soc;
+  const delta=validDelta?event.end_soc-event.start_soc:null;
+  const estimated=!event.partial&&validDelta&&Number.isFinite(event.battery_capacity_kwh)&&event.battery_capacity_kwh>0
+    ? event.battery_capacity_kwh*delta/100 : null;
+  const estimate=Number.isFinite(estimated)?`${format(estimated)} kWh（估算）`:'充入电量无法估算';
+  const note=event.partial?'这是部分记录，仅表示已观测 SOC 变化，不作为完整充电量。':
+    Number.isFinite(estimated)?'估算使用该事件保存的电池容量与 SOC 变化，不代表充电桩结算电量。':'该事件缺少有效容量或 SOC 数据，未使用当前车型配置补算。';
+  return `<section class="card charge-detail" id="charge-detail"><div class="card-head"><div><h2>充电详情</h2><p class="card-meta">${esc(eventTime(event.end_time))}</p></div>${pill(event.partial?'部分记录':'完整记录',event.partial?'warn':'good')}</div><div class="charge-soc"><div><span>起始 SOC</span><strong>${format(event.start_soc)}${Number.isFinite(event.start_soc)?'<small>%</small>':''}</strong></div><div class="charge-soc-line" aria-hidden="true"><i></i></div><div><span>结束 SOC</span><strong>${format(event.end_soc)}${Number.isFinite(event.end_soc)?'<small>%</small>':''}</strong></div></div><div class="card-body charge-facts">${row('开始时间',eventTime(event.start_time))}${row('结束时间',eventTime(event.end_time))}${row('记录时长',eventDuration(event.duration_seconds))}${row('电量增加',Number.isFinite(delta)?`${format(delta)} 个百分点`:'未知')}${row('估算充入电量',estimate)}</div><div class="charge-note ${event.partial?'warning':''}">${esc(note)}</div></section>`;
+}
+
+function chargeHistoryBody() {
+  if (chargeBusy && !chargeEvents.length) return `<div class="charge-loading" role="status">正在读取充电记录…</div>`;
+  if (chargeError) return `${empty('充电记录读取失败',chargeError,'energy')}<div class="charge-empty-action"><button class="button secondary" data-action="charge-retry">重试</button></div>`;
+  if (!chargeEvents.length) return `${empty('该日期暂无充电记录','已结束的本地充电记录会显示在这里；尚未确认结束的会话不会列入。','energy')}<div class="charge-empty-action"><button class="button secondary" data-action="charge-latest">返回最近记录</button></div>`;
+  return `<div class="charge-records">${chargeEvents.map((event,index)=>`<button class="charge-record ${chargeSelected?.id===event.id?'selected':''}" data-action="charge-select" data-event-id="${esc(event.id)}" aria-label="查看充电记录 ${index+1}" ${chargeSelected?.id===event.id?'aria-current="true"':''}><div><strong>${esc(eventTime(event.end_time))}</strong><span>${event.partial?'部分记录':'完整记录'}</span></div><div><b>${Number.isFinite(event.start_soc)?`${esc(event.start_soc)}%`:'未知'} 至 ${Number.isFinite(event.end_soc)?`${esc(event.end_soc)}%`:'未知'}</b><span>${esc(eventDuration(event.duration_seconds))}</span></div></button>`).join('')}</div><div class="event-pagination"><button class="button secondary" data-action="charge-prev" ${chargeCursorStack.length?'':'disabled'}>上一页</button><button class="button secondary" data-action="charge-next" ${chargeNextCursor?'':'disabled'}>下一页</button></div>`;
+}
+
+function renderChargeHistory() {
+  const list=$('#charge-list');
+  if (!list) return;
+  list.innerHTML=chargeHistoryBody();
+  const detail=$('#charge-detail');
+  if (detail) detail.outerHTML=chargeDetail(chargeSelected);
+}
+
+async function loadChargeEvents(version) {
+  const request=++chargeRequest;
+  chargeBusy=true;chargeError='';renderChargeHistory();
+  try {
+    const result=await api(`/api/events?date=${encodeURIComponent(chargeDate)}&kind=charge_end${chargeCursor?`&cursor=${encodeURIComponent(chargeCursor)}`:''}`);
+    if(request!==chargeRequest||generation!==version||page!=='energy') return;
+    chargeEvents=result.events||[];chargeNextCursor=result.next_cursor||null;
+    const selected=chargeSelected&&chargeEvents.find(item=>item.id===chargeSelected.id);
+    if (selected) chargeSelected=selected;
+    else if (!chargeSelected) chargeSelected=chargeEvents[0]||null;
+  } catch(error) {
+    if(request!==chargeRequest||generation!==version||page!=='energy') return;
+    chargeEvents=[];chargeNextCursor=null;chargeError=error.message;
+  } finally {
+    if(request===chargeRequest&&generation===version&&page==='energy'){chargeBusy=false;renderChargeHistory();}
+  }
+}
+
 function overview() {
   if (!state?.model) return modelRequired();
   const m = state.model, profile=state.profile || {name:'我的车辆',variant:'',image:''};
@@ -221,6 +283,11 @@ function car() {
 
 function energy() {
   if (!state?.model) return modelRequired();
+  if (!chargeDateInitialized) {
+    const latestEnd=state.recent_events?.charge_end?.end_time;
+    chargeDate=beijingDate(Number.isFinite(latestEnd)?latestEnd:Date.now());
+    chargeDateInitialized=true;
+  }
   const m = state.model, profile = state.profile || {};
   const battery = m.metric_details?.battery?.value, range = m.metric_details?.range?.value;
   const validBattery = Number.isFinite(battery) && battery >= 0 && battery <= 100;
@@ -246,18 +313,16 @@ function energy() {
       <div class="energy-battery-track" ${validBattery ? `role="meter" aria-label="动力电池电量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${battery}"` : 'aria-label="电量未知"'}><div style="width:${validBattery ? battery : 0}%"></div></div>
       <div class="energy-rating"><div><span>标称续航${validRated ? `（${esc(profile.range_standard)}）` : ''}</span><strong>${validRated ? `${format(rated)} <small>km</small>` : '待配置'}</strong></div><span>${esc(profile.variant || '车型资料待配置')}</span></div>
     </section>
-    <section class="card energy-achievement"><div class="card-head"><h2>实际续航达成率</h2>${pill('最近已结束行程')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
+    <section class="card energy-charge"><div class="card-head"><h2>当前充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body"><div class="energy-current-soc"><span>当前电量</span><strong>${validBattery?`${format(battery)}%`:'未知'}</strong></div>
+      <div class="energy-charge-grid">${[['充电模式',m.charging.mode==='dc'?'直流充电':m.charging.mode==='ac'?'交流充电':'未知'],['预计剩余时间',remainingTime],['连接状态',m.charging.connection_state || '接口未提供有效连接判断']].map(([label,value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p><p class="energy-caption">状态来自车辆云端缓存；缺少会话起点时不推测充电开始时间。</p></div></section>
+  </div>
+  <section class="charge-history-section" id="charge-history"><div class="charge-history-head"><div><h2>充电记录</h2><p>按结束时间归入北京时间日期，每页显示 20 条。</p></div><label>充电记录日期<input type="date" id="charge-date" value="${esc(chargeDate)}"></label></div><div class="charge-history-layout"><section class="card charge-list-card"><div id="charge-list">${chargeHistoryBody()}</div></section>${chargeDetail(chargeSelected)}</div></section>
+  <section class="card energy-achievement"><div class="card-head"><h2>续航与行程参考</h2>${pill('最近已结束行程')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
       <p class="energy-caption">${canCalculate ? `按实际行驶里程与耗电量，对比 ${esc(trip.standard)} 标称续航` : esc(reasons[trip.status] || reasons.invalid)}</p>
       ${canCalculate ? `<div class="energy-reference">${row('实际行驶里程',`${format(trip.distance_km)} km`)}${row('起止电量',`${format(trip.start_soc)}% 至 ${format(trip.end_soc)}%`)}${row('消耗电量',`${format(trip.used_soc)} 个百分点`)}${row('对应标称里程',`${format(trip.reference_km)} km`)}</div>` : ''}
       ${trip.start_at && trip.end_at ? `<p class="energy-caption energy-trip-time">行程开始：${esc(trip.start_at)}<br>行程结束：${esc(trip.end_at)}</p>` : ''}
       <p class="energy-caption">基于后台记录的里程与电量变化；下电确认 10 分钟后生成。电量取整及云端缓存延迟会影响精度。</p>
     </div></section>
-  </div>
-  <section class="card energy-charge"><div class="card-head"><h2>充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body">
-    <div class="energy-charge-grid">${[['车辆充电状态',m.charging.value],['充电器工作状态',m.charging.work_state || '未知'],['充电连接状态',m.charging.connection_state || '接口未提供有效连接判断']].map(([label,value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div>
-    <div class="energy-charge-time">${row('预计充电剩余时间',remainingTime)}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p>
-  </div></section>
-  <section class="card energy-recent"><div class="card-head"><h2>最近充电</h2>${link('查看行程与轨迹','tracks')}</div><div class="card-body">${eventSummary(state.recent_events?.charge_end,'charge_end')}<p class="energy-caption">估算仅使用该次事件保存的电池容量和 SOC 变化；部分记录不视为完整充电量。</p></div></section>
   <section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
     <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 实际行驶里程 ÷（标称续航 × 消耗电量百分点 ÷ 100）× 100%。消耗电量为同一行程起点电量减终点电量；里程为行程起止总里程之差。不使用当前剩余续航计算。</p><p>仅使用当前车辆最近一次已结束行程；不完整、跨充电、电量未下降或数据无效时不计算，不回退展示更早行程的结果。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值。</p><p>例如行驶 80 km，电量从 80% 降至 60%，标称 546 km，对应标称里程 109.2 km，达成率约 73.3%。短行程受电量取整影响较大，结果不用于判断电池健康。</p></div></details>
     ${carDisclosure('energy-status','充电状态原值',electric.filter(f => primaryKeys.includes(f.key)))}
@@ -329,6 +394,7 @@ function render() {
   if (page === 'fields') {renderFields();reviewRestoreFocus(fieldFocus);}
   if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);
+  if (page === 'energy' && state?.model) loadChargeEvents(generation);
   if (page === 'tracks' && trackSource === 'local') {
     loadEvents(generation);
     if (showPosition && (state?.model || state?.archived_vehicles?.length)) loadTracks(generation);
@@ -458,6 +524,11 @@ document.addEventListener('click', event => {
     case 'reload-tracks': render();break;
     case 'events-next': if(target.dataset.cursor){eventCursorStack.push(eventCursor);eventCursor=target.dataset.cursor;render();}break;
     case 'events-prev': if(eventCursorStack.length){eventCursor=eventCursorStack.pop();render();}break;
+    case 'charge-select': chargeSelected=chargeEvents.find(item=>item.id===target.dataset.eventId)||chargeSelected;renderChargeHistory();break;
+    case 'charge-next': if(chargeNextCursor){chargeCursorStack.push(chargeCursor);chargeCursor=chargeNextCursor;chargeSelected=null;loadChargeEvents(generation);}break;
+    case 'charge-prev': if(chargeCursorStack.length){chargeCursor=chargeCursorStack.pop();chargeSelected=null;loadChargeEvents(generation);}break;
+    case 'charge-retry': loadChargeEvents(generation);break;
+    case 'charge-latest': chargeDate=beijingDate(Number.isFinite(state?.recent_events?.charge_end?.end_time)?state.recent_events.charge_end.end_time:Date.now());chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];render();break;
     case 'recording': toggleRecording();break;
   }
 });
@@ -469,8 +540,9 @@ document.addEventListener('change', event => {
   if(event.target.id==='group') {groupFilter=event.target.value;renderFields();}
   if(event.target.id==='unknown') {unknownOnly=event.target.checked;renderFields();}
   if(event.target.id==='track-date') {trackDate=event.target.value;eventCursor=null;eventCursorStack=[];render();}
+  if(event.target.id==='charge-date') {chargeDate=event.target.value;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];render();}
   if(event.target.id==='archive-vehicle') {archiveVehicle=event.target.value;render();}
-  if(event.target.id==='vehicle-select') refresh();
+  if(event.target.id==='vehicle-select') {chargeDateInitialized=false;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];refresh();}
 });
 
 async function pollState(force = false) {
