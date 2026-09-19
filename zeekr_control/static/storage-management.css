@@ -1,0 +1,21 @@
+#storage-management .storage-health-heading{display:flex;gap:12px;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+#storage-management .storage-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;font-variant-numeric:tabular-nums}
+#storage-management .storage-metrics>div{display:grid;gap:5px;min-width:0;overflow-wrap:anywhere}
+#storage-management .storage-metrics span,#storage-management .storage-metrics small{font-size:12px;color:var(--muted);line-height:1.6}
+#storage-management .storage-metrics strong{font-size:25px}
+#storage-management .storage-progress{height:7px;background:#edf1ef;border-radius:8px;margin:18px 0;overflow:hidden}
+#storage-management .storage-progress span{display:block;height:100%;background:var(--accent,#26785b)}
+#storage-management .storage-observations{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;font-size:12px;color:var(--muted)}
+#storage-management .storage-observations p{margin:0}
+#storage-management hr{border:0;border-top:1px solid var(--line);margin:22px 0}
+#storage-management .storage-archive-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+#storage-management .storage-archive-row p{margin:5px 0 0;color:var(--muted);font-size:12px}
+#storage-management .storage-actions{display:flex;gap:8px;flex-wrap:wrap}
+#storage-management .storage-subhead{margin-top:24px}
+#storage-management .storage-warning{color:#985921}
+#storage-management .storage-danger{color:#a12f2f;background:#fff3f3;border-color:#e7caca}
+#storage-management .storage-confirm{padding:18px;border:1px solid #ddbc8c;border-radius:12px;background:#fffaf3;margin-top:20px;overflow-wrap:anywhere}
+#storage-management .storage-confirm label{display:grid;gap:8px;margin:16px 0}
+#storage-management .storage-confirm input{min-width:0;width:100%;padding:12px;font:inherit;border:1px solid var(--line);border-radius:8px;background:#fff}
+@media(max-width:850px){#storage-management .storage-metrics{grid-template-columns:1fr 1fr}}
+@media(max-width:500px){#storage-management .storage-observations{grid-template-columns:1fr}#storage-management .storage-metrics strong{font-size:21px}#storage-management button{min-height:44px}#storage-management .storage-confirm{padding:12px}#storage-management input{font-size:16px}}

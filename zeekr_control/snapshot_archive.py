@@ -3,7 +3,7 @@
 Payloads are losslessly compressed and deduplicated; every distinct successful
 read retains its own observation/fetch times. No deletion or public raw-data API.
 """
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 import gzip
 import hashlib
@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+import fcntl
 
 
 BEIJING = timezone(timedelta(hours=8))
@@ -39,6 +40,11 @@ class SnapshotArchive:
 
     def append(self, scope_key, vehicle_key, encoded, state_time, observed_at,
                fetched_at, source='unknown'):
+        with archive_lock(self.root):
+            return self._append(scope_key, vehicle_key, encoded, state_time, observed_at, fetched_at, source)
+
+    def _append(self, scope_key, vehicle_key, encoded, state_time, observed_at,
+                fetched_at, source='unknown'):
         validate_timestamp(observed_at)
         validate_timestamp(fetched_at)
         if source not in ('unknown', 'monitor', 'manual'):
@@ -83,3 +89,21 @@ class SnapshotArchive:
                     (scope_key,vehicle_key,state_time,fetched_at,observed_at,source,digest)
                     VALUES (?,?,?,?,?,?,?)''',
                            (scope_key, vehicle_key, state_time, fetched_at, observed_at, source, digest))
+
+
+@contextmanager
+def archive_lock(root):
+    """Writers and maintenance share one cross-process lock; never lock by month."""
+    root = Path(root)
+    root.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    _private_directory(root.parent)
+    _private_directory(root)
+    fd = os.open(root / '.maintenance.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_nlink != 1:
+            raise OSError('归档锁权限不安全。')
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)

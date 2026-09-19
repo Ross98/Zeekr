@@ -140,3 +140,12 @@ class SamplingTests(unittest.TestCase):
         with patch.object(self.runner, 'tick', side_effect=tick), patch.object(stop, 'wait', side_effect=wait):
             collection_loop(self.runner, stop)
         self.assertEqual(calls, ['true', 'false', 'true'])
+
+    def test_storage_check_continues_while_vehicle_sampling_paused(self):
+        from zeekr_control.monitor_runtime import collection_loop
+        import threading
+        save(self.root/'sampling.json', {'enabled':'false'})
+        with patch.object(self.runner.storage_health, 'tick') as health:
+            collection_loop(self.runner, threading.Event(), once=True)
+        health.assert_called_once()
+        self.assertEqual(self.client.calls, 0)

@@ -21,6 +21,7 @@ from .profiles import vehicle_profile
 from .notifications import WeComSender
 from .storage import DEFAULT_PATH, load, save
 from .snapshots import SnapshotStore, session_scope
+from .storage_health import StorageHealth
 
 
 def enable_sampling(root):
@@ -36,6 +37,14 @@ def collection_loop(runner, stop, once=False):
     deadline = 0
     previous = None
     while not stop.is_set():
+        storage_health = getattr(runner, 'storage_health', None)
+        if storage_health is not None:
+            try:
+                storage_health.tick()
+            except Exception:
+                # Health failure is visible in journal + stale Web timestamp,
+                # but does not silently disable unrelated vehicle collection.
+                print('存储健康巡检或预警状态持久化失败，请检查存储。', flush=True)
         enabled = sampling_enabled(runner.root)
         if enabled != previous or time.monotonic() >= deadline:
             delay = runner.tick()
@@ -155,6 +164,7 @@ class Runner:
         self.monitor = Monitor(self.root / 'tracks.sqlite3', active_codes, stopped_codes,
                                address_resolver=AmapGeocoder(self.root / 'amap-geocoding.json'))
         self.sender = sender if sender is not None else WeComSender(self.root / 'wecom-webhook.json')
+        self.storage_health = StorageHealth(self.root, self.sender)
         self.blocked_fingerprint = None
         self.failures = 0
         self.parked_since = None

@@ -23,6 +23,8 @@ from .energy import read_attainment
 from .history import HistoryClient, HistoryError, connection_status, day_window, integer
 from .snapshots import SnapshotStore, session_scope
 from .events import EventStore
+from .storage_management import StorageManager
+from .storage_health import StorageHealth, severity
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -38,6 +40,7 @@ class App:
         self.field_review_store = FieldReviewStore(self.database_path.with_name("field-reviews.sqlite3"))
         self.snapshot_store = SnapshotStore(self.session_path.parent / 'snapshots.sqlite3')
         self.event_store = EventStore(self.database_path)
+        self.storage_manager = StorageManager(self.session_path.parent)
         self.client_factory = client_factory
         self.request_key = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
@@ -302,6 +305,13 @@ class App:
                 raise ValueError('请先选择车辆。')
             return self.event_store.query(self.vehicle_key, date, kind, cursor=cursor)
 
+    def storage_status(self):
+        health = StorageHealth(self.session_path.parent)
+        previous = health.cached()
+        current = health.measure()
+        current['status'] = severity(current, previous.get('status'))
+        return {'current': current, 'monitor': previous}
+
     def close(self):
         self.stop.set()
         if self.monitor_thread is not None:
@@ -397,6 +407,10 @@ def make_server(app, port=8765, auth=None, public_origin=None):
             try:
                 if url.path == '/api/state':
                     return self.send(200, app.state())
+                if url.path == '/api/storage':
+                    return self.send(200, app.storage_status())
+                if url.path == '/api/storage/archives':
+                    return self.send(200, app.storage_manager.inventory())
                 if url.path == '/api/location':
                     return self.send(200, app.location())
                 if url.path == '/api/history':
@@ -417,6 +431,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
                           '/field-reviews.js': ('field-reviews.js', 'text/javascript; charset=utf-8'),
                           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+                          '/storage-management.js': ('storage-management.js', 'text/javascript; charset=utf-8'),
+                          '/storage-management.css': ('storage-management.css', 'text/css; charset=utf-8'),
                           '/app.css': ('app.css', 'text/css; charset=utf-8'),
                           '/vendor/leaflet.js': ('vendor/leaflet.js', 'text/javascript; charset=utf-8'),
                           '/vendor/leaflet.css': ('vendor/leaflet.css', 'text/css; charset=utf-8'),
@@ -448,6 +464,12 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     raise ValueError('请求必须为 JSON 对象。')
                 if self.path == '/api/refresh':
                     return self.send(200, app.refresh(data.get('vehicle', 1)))
+                if self.path == '/api/storage/preview':
+                    owner = hashlib.sha256(self.token().encode()).hexdigest()
+                    return self.send(200, app.storage_manager.preview(data.get('action'), data.get('target'), owner))
+                if self.path == '/api/storage/execute':
+                    owner = hashlib.sha256(self.token().encode()).hexdigest()
+                    return self.send(200, app.storage_manager.execute(data.get('token'), data.get('confirmation'), owner))
                 if self.path == '/api/field-reviews':
                     return self.send(200, app.review_field(data))
                 if self.path == '/api/recording':
