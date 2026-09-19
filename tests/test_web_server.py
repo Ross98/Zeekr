@@ -178,6 +178,14 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual([event['id'] for event in result['events']], ['event-a'])
         self.assertNotIn('PRIVATE', str(result))
 
+    def test_charging_analytics_routes_validate_and_stay_local(self):
+        self.post('/api/refresh', {'vehicle': 1})
+        self.assertEqual(self.request('GET', '/api/charging/session?id=current')[0], 200)
+        self.assertEqual(self.request('GET', '/api/charging/series?id=current&view=wrong')[0], 400)
+        code, result = self.request('GET', '/api/charging/statistics?days=30&mode=all')
+        self.assertEqual(code, 200)
+        self.assertEqual(result['summary']['ended_count'], 0)
+
 
     def test_background_failure_visible_in_shared_recording_state(self):
         import time

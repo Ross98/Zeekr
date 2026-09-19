@@ -25,6 +25,7 @@ from .snapshots import SnapshotStore, session_scope
 from .events import EventStore
 from .storage_management import StorageManager
 from .storage_health import StorageHealth, severity
+from .charging_analytics import ChargingAnalytics
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -41,6 +42,7 @@ class App:
         self.snapshot_store = SnapshotStore(self.session_path.parent / 'snapshots.sqlite3')
         self.event_store = EventStore(self.database_path)
         self.storage_manager = StorageManager(self.session_path.parent)
+        self.charging_analytics = ChargingAnalytics(self.database_path)
         self.client_factory = client_factory
         self.request_key = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
@@ -312,6 +314,22 @@ class App:
         current['status'] = severity(current, previous.get('status'))
         return {'current': current, 'monitor': previous}
 
+    def charging_session(self, selection):
+        with self.lock:
+            return self.charging_analytics.session(self.vehicle_key, selection)
+
+    def charging_series(self, selection, view):
+        with self.lock:
+            return self.charging_analytics.series(self.vehicle_key, selection, view)
+
+    def charging_statistics(self, days, mode):
+        with self.lock:
+            try:
+                parsed = int(days)
+            except (TypeError, ValueError):
+                raise ValueError('充电统计范围无效。') from None
+            return self.charging_analytics.statistics(self.vehicle_key, parsed, mode)
+
     def close(self):
         self.stop.set()
         if self.monitor_thread is not None:
@@ -427,6 +445,17 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     return self.send(200, app.events(query.get('date', [''])[0],
                                                      query.get('kind', [''])[0],
                                                      query.get('cursor', [None])[0]))
+                if url.path == '/api/charging/session':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.charging_session(query.get('id', [''])[0]))
+                if url.path == '/api/charging/series':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.charging_series(query.get('id', [''])[0],
+                                                               query.get('view', [''])[0]))
+                if url.path == '/api/charging/statistics':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.charging_statistics(query.get('days', [''])[0],
+                                                                   query.get('mode', [''])[0]))
                 assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
                           '/field-reviews.js': ('field-reviews.js', 'text/javascript; charset=utf-8'),

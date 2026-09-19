@@ -28,21 +28,43 @@ const path = require('node:path');
       if (chargeFailure) return route.fulfill({status:500,json:{error:'合成记录读取失败'}});
       await route.fulfill({json:chargeResponse});
     });
+    const analyticsPoints=[
+      {time:1704067200000,soc:20,power_kw:6,segment_id:0,quality:'valid'},
+      {time:1704067260000,soc:21,power_kw:6.2,segment_id:0,quality:'valid'},
+      {time:1704067600000,soc:30,power_kw:6.4,segment_id:1,quality:'valid'}
+    ];
+    await page.route('**/api/charging/session?**', route => route.fulfill({json:{id:'current',status:'active',partial:false,start_time:1704067200000,end_time:1704067600000,start_soc:20,end_soc:30,power_kw:6.4,mode:'ac'}}));
+    await page.route('**/api/charging/series?**', route => {
+      const electrical=new URL(route.request().url()).searchParams.get('view')==='electrical';
+      const points=analyticsPoints.map(point=>electrical?{time:point.time,soc:point.soc,voltage:220,current:29,mode:'ac',segment_id:point.segment_id,quality:'valid'}:point);
+      return route.fulfill({json:{id:'current',view:electrical?'electrical':'power-soc',points,segments:[{id:0},{id:1}],raw_count:3,display_count:3,has_gaps:true,downsampled:false}});
+    });
+    await page.route('**/api/charging/statistics?**', route => route.fulfill({json:{days:30,mode:'all',timezone:'Asia/Shanghai',summary:{ended_count:2,complete_count:1,partial_count:1,estimated_kwh:51.6,included_energy_count:1,excluded_energy_count:1,complete_duration_seconds:3600},daily:Array.from({length:30},(_,index)=>({date:`2024-01-${String(index+1).padStart(2,'0')}`,count:index===1?2:0,ac_kwh:index===1?51.6:0,dc_kwh:0,unknown_kwh:0})),records:[{id:'charge-complete',end_time:1704070800000,start_time:1704067200000,date:'2024-01-01',mode:'ac',partial:false,start_soc:20,end_soc:80,duration_seconds:3600,estimated_kwh:51.6},{id:'charge-partial',end_time:1703984400000,date:'2023-12-31',mode:'dc',partial:true,start_soc:70,end_soc:75,duration_seconds:null,estimated_kwh:null}]}}));
     await page.goto(`http://127.0.0.1:${port}`);
     await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
     assert.match(await page.locator('main').innerText(), /尚未读取/);
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
+    await page.getByRole('tab',{name:'本次过程'}).waitFor();
+    assert.match(await page.locator('.charging-tab-panel').innerText(),/本次观测.*观测功率.*有缺口.*动力电池 SOC/s);
+    await page.getByRole('button',{name:'电气细节'}).click();
+    assert.match(await page.locator('.charging-tab-panel').innerText(),/电压.*电流/s);
+    await page.getByRole('tab',{name:'统计趋势'}).click();
+    await page.getByText('估算充入电量',{exact:true}).waitFor();
+    assert.match(await page.locator('.charging-tab-panel').innerText(),/已结束次数.*2.*完整 1.*部分 1.*51\.6/s);
+    await page.getByRole('tab',{name:'本次过程'}).click();
     await page.locator('#charge-history').waitFor();
     assert.match(chargeQueries[0], /kind=charge_end/);
     assert.match(await page.locator('#charge-history').innerText(), /充电记录.*20%.*80%.*完整记录/s);
     assert.match(await page.locator('#charge-detail').innerText(), /开始时间.*结束时间.*1 小时.*60 个百分点.*51\.6 kWh.*估算/s);
     assert.match(await page.locator('#charge-detail').innerText(), /未保存充电参数/);
+    await page.getByRole('tab',{name:'参数详情'}).click();
     const parameterCard=page.locator('#charging-parameters');
     assert.equal(await parameterCard.locator('.charging-parameter').count(),27);
     assert.match(await parameterCard.innerText(), /高压充电相关状态码/);
     assert.match(await parameterCard.innerText(), /预约充电状态码/);
     assert.match(await parameterCard.innerText(), /充电限值.*未提供或未核验/s);
+    await page.getByRole('tab',{name:'本次过程'}).click();
     await page.getByRole('button',{name:/查看充电记录 2/}).click();
     assert.match(await page.locator('#charge-detail').innerText(), /部分记录.*已观测 SOC 变化.*不作为完整充电量/s);
     assert.doesNotMatch(await page.locator('#charge-detail').innerText(), /4\.3 kWh/);
