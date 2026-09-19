@@ -25,7 +25,7 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(report['ac_voltage']['value'], 220)
         self.assertEqual(report['ac_current']['value'], 16)
         self.assertEqual(report['voltage']['value'], 360)
-        self.assertIsNone(report['power_kw'])
+        self.assertAlmostEqual(report['power_kw'], 3.52)
         self.assertEqual(report['ac_lid'], 'open')
         self.assertEqual(capability_registry()['ac_charging']['status'], 'enabled')
 
@@ -92,7 +92,7 @@ class MetricTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
-    def test_ac_start_and_end_never_label_residual_dc_voltage_as_ac_power(self):
+    def test_ac_start_and_end_use_calibrated_ac_power_without_dc_residual(self):
         from test_ac_charging import ac_sample
         start = normalize(ac_sample(chargeUAct=220, chargeIAct=16,
                                     dcChargePileUAct=360), BASE)
@@ -106,7 +106,7 @@ class RenderTests(unittest.TestCase):
         self.assertIn('接口观测电流：16 A', text)
         self.assertNotIn('桩侧', text)
         self.assertNotIn('360 V', text)
-        self.assertNotIn('计算功率', text)
+        self.assertIn('交流观测功率：3.5 kW（电压×电流）', text)
         text, _ = render('charge_end', report, 'synthetic-ac')
         self.assertIn('类型：交流', text)
         self.assertIn('接口电压0 V · 电流0 A', text)

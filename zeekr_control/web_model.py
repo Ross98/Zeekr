@@ -245,7 +245,7 @@ def build_model(data, vehicle=None):
                      'work_state': '已停止' if stopped else '工作中' if charging is True else '空闲' if charging is False else '未知',
                      'connection_state': '接口未提供有效连接判断',
                      'detail': '匹配本车已观察的直流停止组合；不能仅据此判断停止原因或是否已拔枪。' if stopped else '直流口盖、充电状态与桩侧电压电流组合已核对；通用零值不代表未充电。' if dc_charging else
-                               '匹配本车交流充电实测组合；连接码不单独解释，充电功率口径仍待核验。' if ac_charging else
+                               '匹配本车交流充电实测组合，电压电流已对照本车App；连接码不单独解释。' if ac_charging else
                                '匹配充电证据；数据来自车辆云端缓存。' if charging is True else
                                '匹配未充电证据，已排除充电冲突；连接码不单独解释。' if charging is False else
                                '证据缺失或冲突，暂无法确认是否正在充电。'},

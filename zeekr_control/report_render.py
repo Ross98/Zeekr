@@ -167,13 +167,14 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         if partial:
             lines.append('实际开始时间未知；首次观测时已在充电。')
         start = report.get('start', {})
-        if start.get('power_kw') is not None:
+        if start.get('charging_mode') == 'ac':
+            lines += ['接口观测电压：%s V' % _num(start.get('ac_voltage', {}).get('value')),
+                      '接口观测电流：%s A' % _num(start.get('ac_current', {}).get('value'))]
+            if start.get('power_kw') is not None:
+                lines.append('交流观测功率：%s kW（电压×电流）' % _num(start['power_kw']))
+        elif start.get('power_kw') is not None:
             lines += ['桩侧观测电压：%s V' % _num(start['voltage']['value']), '桩侧观测电流：%s A' % _num(start['current']['value']),
                       '按电压×电流计算功率：%s kW' % _num(start['power_kw'])]
-        elif start.get('charging_mode') == 'ac':
-            lines += ['接口观测电压：%s V' % _num(start.get('ac_voltage', {}).get('value')),
-                      '接口观测电流：%s A' % _num(start.get('ac_current', {}).get('value')),
-                      '测量口径未完整核验，暂不估算交流功率。']
         if start.get('remaining_minutes') is not None:
             lines.append('截至%s，车辆估计剩余%s分钟。' % (_time(start.get('state_time')).split()[-1], _num(start['remaining_minutes'], 0)))
             estimated_end = start.get('state_time') + start['remaining_minutes']*60000
@@ -197,6 +198,8 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
             lines.append('云端续航：%s → %s 公里（增加%s公里）' % (_num(report['start'].get('range_km')), _num(report['end'].get('range_km')), _num(m['range_delta_km'])))
         lines += ['', '【充电过程】', '类型：%s' %
                   {'dc': '直流', 'ac': '交流'}.get(report.get('start', {}).get('charging_mode'), '未确认')]
+        if report.get('start', {}).get('charging_mode') == 'ac':
+            lines.append('交流功率由同次接口电压×电流计算。')
         if m.get('sampled_peak_kw') is not None:
             lines.append('最高采样功率：%s kW' % _num(m['sampled_peak_kw']))
         if m.get('average_power_kw') is not None:

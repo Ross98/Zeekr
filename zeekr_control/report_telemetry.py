@@ -72,9 +72,15 @@ def normalize(raw, observed_at, capabilities=(), active_codes=(), stopped_codes=
                          source=('additionalVehicleStatus.electricVehicleStatus.chargeUAct',))
     ac_current = _metric(electric.get('chargeIAct'), 'A', state_time, -2000, 2000,
                          source=('additionalVehicleStatus.electricVehicleStatus.chargeIAct',))
-    power = None
+    power = power_source = None
     if point['charging'] is True and point['charging_mode'] == 'dc' and voltage['value'] and current['value'] and current['value'] > 0:
         power = voltage['value'] * current['value'] / 1000
+        power_source = 'dc_pile_ui'
+    elif point['charging'] is True and point['charging_mode'] == 'ac' and ac_voltage['value'] and ac_current['value'] and ac_current['value'] > 0:
+        # The owner cross-checked this vehicle's AC U/I against its official app.
+        # This is one observation's calculated power, not metered energy.
+        power = ac_voltage['value'] * ac_current['value'] / 1000
+        power_source = 'ac_ui'
     return {'schema_version': 2, 'decoder_version': DECODER_VERSION, 'state_time': state_time,
             'observed_at': observed_at, 'soc': point['soc'], 'odometer': point['km'],
             'speed': point['speed'], 'off': point['off'], 'charging': point['charging'],
@@ -90,7 +96,7 @@ def normalize(raw, observed_at, capabilities=(), active_codes=(), stopped_codes=
                        'pressure': _metric(maintenance.get('tyreStatus' + side), 'kPa', state_time, 0),
                        'temperature': _metric(maintenance.get('tyreTemp' + side), '°C', state_time, -80, 150)}
                       for side, name in zip(SIDES, POSITIONS)],
-            'voltage': voltage, 'current': current, 'power_kw': power,
+            'voltage': voltage, 'current': current, 'power_kw': power, 'power_source': power_source,
             'ac_voltage': ac_voltage, 'ac_current': ac_current,
             'remaining_minutes': numeric(electric.get('timeToFullyCharged'), 0, 2046) if point['charging'] is True else None,
             'capabilities': {name: ('enabled' if name in enabled else 'pending_evidence') for name in PENDING_CAPABILITIES}}
