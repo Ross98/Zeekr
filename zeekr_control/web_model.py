@@ -106,8 +106,8 @@ def fields_for(data):
                 numeric = number(item)
                 calibrated = None
                 if path == 'additionalVehicleStatus.electricVehicleStatus':
-                    if key == 'chargeLidAcStatus' and numeric == 2:
-                        calibrated = ('关闭', '本车场景观察')
+                    if key == 'chargeLidAcStatus' and numeric in (1, 2):
+                        calibrated = ('打开' if numeric == 1 else '关闭', '本车场景观察')
                     elif key == 'chargeLidDcAcStatus' and numeric in (1, 2):
                         calibrated = ('打开' if numeric == 1 else '关闭', '本车场景观察')
                     elif key in ('dcChargePileUAct', 'dcChargePileIAct'):
@@ -214,6 +214,7 @@ def build_model(data, vehicle=None):
     charging = vehicle_state['charging']
     stopped = vehicle_state['charging_phase'] == 'stopped'
     dc_charging = charging is True and vehicle_state['charging_mode'] == 'dc'
+    ac_charging = charging is True and vehicle_state['charging_mode'] == 'ac'
     remaining = number(electric.get('timeToFullyCharged'), 0, 2046)
     remaining_time = ('暂无有效时间估计' if number(electric.get('timeToFullyCharged')) == 2047
                       else display(electric.get('timeToFullyCharged'), ' 分钟') if charging is True and remaining is not None else '未知')
@@ -238,14 +239,15 @@ def build_model(data, vehicle=None):
                     'inside': display(climate.get('interiorTemp'), '°C', -80, 100),
                     'outside': display(climate.get('exteriorTemp'), '°C', -80, 100)},
         'lock': {'value': '已锁车' if locked else '未知', 'confirmed': locked},
-        'charging': {'value': '充电已停止' if stopped else '直流充电中' if dc_charging else '充电中' if charging is True else '未充电' if charging is False else '未知',
+        'charging': {'value': '充电已停止' if stopped else '直流充电中' if dc_charging else '交流充电中' if ac_charging else '充电中' if charging is True else '未充电' if charging is False else '未知',
                      'confirmed': charging is not None, 'mode': vehicle_state['charging_mode'],
                      'remaining_time': remaining_time,
                      'work_state': '已停止' if stopped else '工作中' if charging is True else '空闲' if charging is False else '未知',
                      'connection_state': '接口未提供有效连接判断',
                      'detail': '匹配本车已观察的直流停止组合；不能仅据此判断停止原因或是否已拔枪。' if stopped else '直流口盖、充电状态与桩侧电压电流组合已核对；通用零值不代表未充电。' if dc_charging else
+                               '匹配本车交流充电实测组合；连接码不单独解释，充电功率口径仍待核验。' if ac_charging else
                                '匹配充电证据；数据来自车辆云端缓存。' if charging is True else
-                               '匹配未充电证据，已排除直流侧充电冲突；连接码不单独解释。' if charging is False else
+                               '匹配未充电证据，已排除充电冲突；连接码不单独解释。' if charging is False else
                                '证据缺失或冲突，暂无法确认是否正在充电。'},
         'doors': [{'name': name, 'door': door_states[index],
                    'lock': '已锁' if locked else '未知', 'window': window_states[index],

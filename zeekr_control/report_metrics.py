@@ -9,7 +9,8 @@ def trip_metrics(start, end, samples, profile, *, partial=False, charge_overlap=
     duration = (end['state_time'] - start['state_time']) / 1000 if None not in (start.get('state_time'), end.get('state_time')) else None
     if duration is not None and duration < 0:
         duration, partial = None, True
-    delta = end.get('soc') - start.get('soc') if None not in (start.get('soc'), end.get('soc')) else None
+    delta = (end.get('soc') - start.get('soc')
+             if not charge_overlap and None not in (start.get('soc'), end.get('soc')) else None)
     capacity = profile.get('battery_capacity_kwh')
     used = capacity * -delta / 100 if capacity and delta is not None and delta <= 0 and not charge_overlap else None
     consumption = used / distance * 100 if used is not None and distance is not None and distance >= 10 and -delta >= 3 and not partial else None

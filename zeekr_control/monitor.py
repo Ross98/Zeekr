@@ -143,6 +143,12 @@ class Monitor:
 
     def _report(self, kind, start, end, samples, profile, partial, charge_overlap=False, parking=None,
                 upgrade_mid_session=False, samples_truncated=False, decoder_changed=False, parking_samples=0):
+        # Keep short-stop observations if driving resumes, but exclude the final
+        # parking confirmation window from the frozen trip's statistics.
+        if start.get('state_time') is not None and end.get('state_time') is not None:
+            samples = [sample for sample in samples
+                       if sample.get('state_time') is not None
+                       and start['state_time'] <= sample['state_time'] <= end['state_time']]
         metrics = (trip_metrics(start, end, samples, profile, partial=partial, charge_overlap=charge_overlap)
                    if kind == 'trip_end' else charge_metrics(start, end, samples, profile, partial=partial)
                    if kind == 'charge_end' else {})
@@ -170,6 +176,23 @@ class Monitor:
                                                (['decoder_changed_mid_session'] if decoder_changed else []) +
                                                (['late_start'] if partial else []) +
                                                (['charge_overlap'] if charge_overlap else [])}}
+
+    def _finish_trip(self, db, vehicle, trip, now, battery_capacity_kwh, profile):
+        data = summary(trip['start'], trip['stop'], trip['partial'])
+        data['battery_capacity_kwh'] = battery_capacity_kwh
+        charge_overlap = (trip.get('charging_time') is not None
+                          and trip['charging_time'] <= trip['stop']['time'])
+        if charge_overlap:
+            data['soc_delta'] = None
+            data['partial'] = True
+        data['report_v2'] = self._report(
+            'trip_end', trip['report_start'], trip['report_end'], trip.get('samples', []),
+            trip.get('profile', profile), data['partial'], charge_overlap,
+            parking=trip.get('parking'), upgrade_mid_session=trip.get('report_upgrade', False),
+            samples_truncated=trip.get('samples_truncated', False),
+            decoder_changed=trip.get('decoder_changed', False),
+            parking_samples=trip.get('parking_samples', 0))
+        self._event(db, vehicle, 'trip_end', data, now)
 
     def observe(self, vehicle, raw, now, battery_capacity_kwh=None, profile=None):
         point = decode(raw, self.active_codes, self.stopped_codes)
@@ -206,20 +229,7 @@ class Monitor:
             trip['stop_confirmation'] = confirmation
             with self.tracks.connect() as db:
                 if now - confirmation['started'] >= STOP_WAIT:
-                    data = summary(trip['start'], trip['stop'], trip['partial'])
-                    data['battery_capacity_kwh'] = battery_capacity_kwh
-                    if (trip.get('charging_time') is not None
-                            and trip['charging_time'] <= trip['stop']['time']):
-                        data['soc_delta'] = None
-                        data['partial'] = True
-                    data['report_v2'] = self._report('trip_end', trip['report_start'], trip['report_end'],
-                        trip.get('samples', []), trip.get('profile', profile), data['partial'],
-                        trip.get('charging_time') is not None and trip['charging_time'] <= trip['stop']['time'],
-                        parking=trip.get('parking'), upgrade_mid_session=trip.get('report_upgrade', False),
-                        samples_truncated=trip.get('samples_truncated', False),
-                        decoder_changed=trip.get('decoder_changed', False),
-                        parking_samples=trip.get('parking_samples', 0))
-                    self._event(db, vehicle, 'trip_end', data, now)
+                    self._finish_trip(db, vehicle, trip, now, battery_capacity_kwh, profile)
                     state['trip'] = None
                 db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)',
                            (vehicle, json.dumps(state)))
@@ -235,7 +245,12 @@ class Monitor:
         seed_telemetry = None
         moving = point['speed'] is not None and point['speed'] > 0
         distance_moved = continuous and previous['km'] is not None and point['km'] is not None and point['km'] > previous['km']
-        if trip and not continuous:
+        confirmation = trip.get('stop_confirmation') if trip else None
+        parking_continuous = (trip and trip['stop'] and confirmation
+                              and 0 <= now - confirmation['observed'] <= MAX_AGE
+                              and point['off'] is True and not moving
+                              and point['km'] == trip['stop']['km'])
+        if trip and not continuous and not parking_continuous:
             trip['partial'], trip['stop'] = True, None
         if trip is None and (moving or distance_moved):
             start = previous if continuous else point
@@ -245,14 +260,26 @@ class Monitor:
                     'report_start': start_raw, 'report_end': telemetry, 'samples': [start_raw],
                     'profile': profile, 'parking': None}
         if trip:
-            if trip['stop'] is None or moving or point['off'] is not True:
+            # The first arrival can include the last driven distance. Once a
+            # stop is frozen, further distance is evidence of resumed motion.
+            resumed_motion = moving or (trip['stop'] is not None and distance_moved)
+            if trip['stop'] is None or resumed_motion or point['off'] is not True:
+                # A short stop only belongs to the trip if driving resumes.
+                # Final parking must not evict driving samples at the cap.
+                parking_buffer = trip.pop('parking_buffer', {})
+                for sample in parking_buffer.get('samples', []):
+                    _append_sample(trip, sample)
+                if parking_buffer.get('samples_truncated'):
+                    trip['samples_truncated'] = True
                 _append_sample(trip, telemetry)
+            else:
+                _append_sample(trip.setdefault('parking_buffer', {}), telemetry)
             # TrackStore deduplicates replays if state commit is interrupted.
-            if trip['stop'] is None or moving:
+            if trip['stop'] is None or resumed_motion:
                 self.tracks.record(vehicle, raw, now, 180)
             if point['charging'] is True and trip.get('charging_time') is None:
                 trip['charging_time'] = timestamp
-            if moving or point['off'] is not True:
+            if resumed_motion or point['off'] is not True:
                 trip['stop'] = None
                 trip['parking'] = None
                 trip['parking_samples'] = 0
@@ -266,23 +293,18 @@ class Monitor:
             elif point['off'] is True:
                 trip['parking'] = telemetry
                 trip['parking_samples'] = trip.get('parking_samples', 0) + 1
-        if charge and not continuous:
-            charge['partial'] = True
+                trip.setdefault('stop_confirmation', {
+                    'started': trip['stop']['observed']})['observed'] = now
+        if charge:
+            if not continuous:
+                charge['partial'] = True
+            # Unknown or conflicting observations must break interpolation;
+            # they do not independently end or restart the charge session.
+            _append_sample(charge, telemetry)
         with self.tracks.connect() as db:
-            if trip and trip['stop'] and timestamp - trip['stop']['time'] >= STOP_WAIT and now - trip['stop']['observed'] >= STOP_WAIT:
-                data = summary(trip['start'], trip['stop'], trip['partial'])
-                data['battery_capacity_kwh'] = battery_capacity_kwh
-                if trip.get('charging_time') is not None and trip['charging_time'] <= trip['stop']['time']:
-                    data['soc_delta'] = None
-                    data['partial'] = True
-                data['report_v2'] = self._report('trip_end', trip['report_start'], trip['report_end'],
-                    trip.get('samples', []), trip.get('profile', profile), data['partial'],
-                    trip.get('charging_time') is not None and trip['charging_time'] <= trip['stop']['time'],
-                    parking=trip.get('parking'), upgrade_mid_session=trip.get('report_upgrade', False),
-                    samples_truncated=trip.get('samples_truncated', False),
-                    decoder_changed=trip.get('decoder_changed', False),
-                    parking_samples=trip.get('parking_samples', 0))
-                self._event(db, vehicle, 'trip_end', data, now)
+            if (trip and trip['stop'] and timestamp - trip['stop']['time'] >= STOP_WAIT
+                    and now - trip['stop_confirmation']['started'] >= STOP_WAIT):
+                self._finish_trip(db, vehicle, trip, now, battery_capacity_kwh, profile)
                 trip = None
             if point['charging'] is True and charge is None:
                 charge = {'start': point, 'partial': not continuous or previous['charging'] is not False,
@@ -290,12 +312,10 @@ class Monitor:
                 start_data = summary(point, point, charge['partial'])
                 start_data['report_v2'] = self._report('charge_start', telemetry, telemetry, [telemetry], profile, charge['partial'])
                 self._event(db, vehicle, 'charge_start', start_data, now)
-            elif charge and point['charging'] is True:
-                _append_sample(charge, telemetry)
             elif point['charging'] is False and charge:
                 data = summary(charge['start'], point, charge['partial'])
                 data['battery_capacity_kwh'] = battery_capacity_kwh
-                samples = charge.get('samples', []) + [telemetry]
+                samples = charge.get('samples', [])
                 data['report_v2'] = self._report('charge_end', charge['report_start'], telemetry,
                                                  samples, charge.get('profile', profile), charge['partial'],
                                                  upgrade_mid_session=charge.get('report_upgrade', False),

@@ -23,6 +23,7 @@ test-results/
 
 # Owner-specific notes, profiles, and operational reports (local only)
 /Myconfig.md
+/Key.md
 /docs/web-validation.md
 /docs/overview-validation.md
 /zeekr_control/vehicle_profiles.json

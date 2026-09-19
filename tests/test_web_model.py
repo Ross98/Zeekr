@@ -10,6 +10,17 @@ class WebModelTests(unittest.TestCase):
         self.build = build_model
         self.location = parse_location
 
+    def test_verified_ac_combination_is_displayed_without_claiming_connector_state(self):
+        from test_ac_charging import ac_sample
+        model = self.build(ac_sample(timeToFullyCharged=120))
+        self.assertEqual(model['charging']['value'], '交流充电中')
+        self.assertEqual(model['charging']['mode'], 'ac')
+        self.assertEqual(model['charging']['remaining_time'], '120 分钟')
+        self.assertEqual(model['charging']['connection_state'], '接口未提供有效连接判断')
+        self.assertIn('交流', model['charging']['detail'])
+        fields = {field['key']: field for field in model['fields']}
+        self.assertEqual(fields['chargeLidAcStatus']['value'], '打开')
+
     def test_battery_separation_unknown_enums_and_private_data(self):
         model = self.build({'vin': 'PRIVATE', 'updateTime': 1704067200000,
             'additionalVehicleStatus': {
@@ -174,8 +185,12 @@ class WebModelTests(unittest.TestCase):
         data['additionalVehicleStatus']['electricVehicleStatus']['chargeLidAcStatus'] = 1
         data['additionalVehicleStatus']['drivingBehaviourStatus']['gearAutoStatus'] = 0
         rows = {r['key']: r for r in fields_for(data)}
-        self.assertEqual(rows['chargeLidAcStatus']['evidence'], '待核实')
+        self.assertEqual(rows['chargeLidAcStatus']['value'], '打开')
+        self.assertEqual(rows['chargeLidAcStatus']['evidence'], '本车场景观察')
         self.assertEqual(rows['gearAutoStatus']['value'], '0')
+        data['additionalVehicleStatus']['electricVehicleStatus']['chargeLidAcStatus'] = 99
+        rows = {r['key']: r for r in fields_for(data)}
+        self.assertEqual(rows['chargeLidAcStatus']['evidence'], '待核实')
 
     def test_running_power_conflicts_with_cached_charging(self):
         from zeekr_control.vehicle_state import decode

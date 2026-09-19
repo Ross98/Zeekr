@@ -212,7 +212,7 @@ class MonitorTests(unittest.TestCase):
         electric = raw['additionalVehicleStatus']['electricVehicleStatus']
         electric.update(chargeLidAcStatus=2, chargeLidDcAcStatus=2)
         self.assertIsNone(decode(raw)['charging'])
-        electric['chargeLidAcStatus'] = 1  # AC open code has not been verified.
+        electric['chargeLidAcStatus'] = 1  # An open AC lid alone is not active charging.
         self.assertIsNone(decode(raw)['charging'])
 
     def test_explicit_stop_with_open_lid_is_allowed_without_active_dc_evidence(self):

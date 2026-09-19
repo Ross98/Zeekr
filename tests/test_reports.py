@@ -17,6 +17,18 @@ except ImportError:
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_ac_report_keeps_generic_electrical_values_separate_from_dc(self):
+        from test_ac_charging import ac_sample
+        raw = ac_sample(chargeUAct=220, chargeIAct=16, dcChargePileUAct=360)
+        report = normalize(raw, BASE)
+        self.assertEqual(report['charging_mode'], 'ac')
+        self.assertEqual(report['ac_voltage']['value'], 220)
+        self.assertEqual(report['ac_current']['value'], 16)
+        self.assertEqual(report['voltage']['value'], 360)
+        self.assertIsNone(report['power_kw'])
+        self.assertEqual(report['ac_lid'], 'open')
+        self.assertEqual(capability_registry()['ac_charging']['status'], 'enabled')
+
     def test_numeric_confusion_and_pending_capabilities_are_conservative(self):
         raw = sample(0, soc=80)
         raw['additionalVehicleStatus']['electricVehicleStatus']['chargeLevel'] = True
@@ -80,6 +92,47 @@ class MetricTests(unittest.TestCase):
 
 
 class RenderTests(unittest.TestCase):
+    def test_ac_start_and_end_never_label_residual_dc_voltage_as_ac_power(self):
+        from test_ac_charging import ac_sample
+        start = normalize(ac_sample(chargeUAct=220, chargeIAct=16,
+                                    dcChargePileUAct=360), BASE)
+        end = normalize(ac_sample(60, chargeUAct=0, chargeIAct=0,
+                                  chargerState=0, statusOfChargerConnection=0), BASE + 60000)
+        report = {'start_time': BASE, 'end_time': BASE + 60000,
+                  'start': start, 'end': end, 'partial': True, 'metrics': {}}
+        text, _ = render('charge_start', report, 'synthetic-ac')
+        self.assertIn('开始充电｜交流', text)
+        self.assertIn('接口观测电压：220 V', text)
+        self.assertIn('接口观测电流：16 A', text)
+        self.assertNotIn('桩侧', text)
+        self.assertNotIn('360 V', text)
+        self.assertNotIn('计算功率', text)
+        text, _ = render('charge_end', report, 'synthetic-ac')
+        self.assertIn('类型：交流', text)
+        self.assertIn('接口电压0 V · 电流0 A', text)
+        self.assertNotIn('桩侧', text)
+        self.assertIn('停止原因：未确认', text)
+
+    def test_whole_minutes_and_percentages_keep_trailing_zeroes(self):
+        start = {'state_time': BASE, 'observed_at': BASE, 'soc': 50,
+                 'remaining_minutes': 30}
+        report = {'start_time': BASE, 'end_time': BASE + 600000,
+                  'start': start, 'end': {'soc': 60}, 'partial': False,
+                  'metrics': {'duration_seconds': 600, 'distance_km': 10,
+                              'soc_delta': 10, 'power_covered_seconds': 480,
+                              'power_coverage': .8, 'max_gap_seconds': 60},
+                  'quality': {'observation_count': 10}}
+        text, _ = render('charge_start', report, 'synthetic-id')
+        self.assertIn('车辆估计剩余30分钟', text)
+        text, _ = render('trip_end', report, 'synthetic-id')
+        self.assertIn('10 公里 · 10 分钟', text)
+        self.assertIn('最大间隔60秒', text)
+        text, _ = render('charge_end', report, 'synthetic-id')
+        self.assertIn('功率有效覆盖：8/10分钟（80%）', text)
+        start['remaining_minutes'] = 0
+        text, _ = render('charge_start', report, 'synthetic-id')
+        self.assertIn('车辆估计剩余0分钟', text)
+
     def test_control_text_is_flat_and_message_is_bounded(self):
         self.assertEqual(clean_text('站点\n伪造标题\x00'), '站点 伪造标题')
         report = {'start_time': BASE, 'end_time': BASE+60000, 'start': {'soc': 10},

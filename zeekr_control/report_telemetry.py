@@ -2,7 +2,7 @@
 from .summary import section
 from .vehicle_state import decode, numeric
 
-DECODER_VERSION = 'we86-v1'
+DECODER_VERSION = 'we86-v2-ac'
 SIDES = ('Driver', 'Passenger', 'DriverRear', 'PassengerRear')
 POSITIONS = ('左前', '右前', '左后', '右后')
 PENDING_CAPABILITIES = frozenset(('target_soc', 'connector_state', 'stop_reason',
@@ -16,6 +16,12 @@ CAPABILITIES.update({'dc_charging': {'status': 'enabled',
               'additionalVehicleStatus.electricVehicleStatus.dcChargePileUAct',
               'additionalVehicleStatus.electricVehicleStatus.dcChargePileIAct'),
     'decoder': DECODER_VERSION, 'vehicle_scope': 'current_vehicle_only'}})
+CAPABILITIES['ac_charging'] = {'status': 'enabled',
+    'paths': tuple('additionalVehicleStatus.electricVehicleStatus.' + key for key in (
+        'chargeLidAcStatus', 'chargeLidDcAcStatus', 'chargeSts', 'chargerState',
+        'statusOfChargerConnection', 'chargeUAct', 'chargeIAct', 'dcChargeSts',
+        'dcChargePileIAct', 'ptReady')),
+    'decoder': DECODER_VERSION, 'vehicle_scope': 'current_vehicle_only'}
 
 
 def capability_registry():
@@ -62,6 +68,10 @@ def normalize(raw, observed_at, capabilities=(), active_codes=(), stopped_codes=
                       source=('additionalVehicleStatus.electricVehicleStatus.dcChargePileUAct',))
     current = _metric(electric.get('dcChargePileIAct'), 'A', state_time, -2000, 2000,
                       source=('additionalVehicleStatus.electricVehicleStatus.dcChargePileIAct',))
+    ac_voltage = _metric(electric.get('chargeUAct'), 'V', state_time, 0, 1500,
+                         source=('additionalVehicleStatus.electricVehicleStatus.chargeUAct',))
+    ac_current = _metric(electric.get('chargeIAct'), 'A', state_time, -2000, 2000,
+                         source=('additionalVehicleStatus.electricVehicleStatus.chargeIAct',))
     power = None
     if point['charging'] is True and point['charging_mode'] == 'dc' and voltage['value'] and current['value'] and current['value'] > 0:
         power = voltage['value'] * current['value'] / 1000
@@ -72,7 +82,7 @@ def normalize(raw, observed_at, capabilities=(), active_codes=(), stopped_codes=
             'range_km': numeric(electric.get('distanceToEmptyOnBatteryOnly'), 0),
             'closures': closures, 'locked': True if locked else None,
             'trunk': 'closed' if numeric(safety.get('trunkOpenStatus')) == 0 else 'unknown',
-            'ac_lid': 'closed' if numeric(electric.get('chargeLidAcStatus')) == 2 else 'unknown',
+            'ac_lid': 'open' if numeric(electric.get('chargeLidAcStatus')) == 1 else 'closed' if numeric(electric.get('chargeLidAcStatus')) == 2 else 'unknown',
             'dc_lid': 'open' if numeric(electric.get('chargeLidDcAcStatus')) == 1 else 'closed' if numeric(electric.get('chargeLidDcAcStatus')) == 2 else 'unknown',
             'inside_temp': _metric(climate.get('interiorTemp'), '°C', state_time, -80, 100, field_time=temp_time, time_validity=temp_validity),
             'outside_temp': _metric(climate.get('exteriorTemp'), '°C', state_time, -80, 100, field_time=temp_time, time_validity=temp_validity),
@@ -81,5 +91,6 @@ def normalize(raw, observed_at, capabilities=(), active_codes=(), stopped_codes=
                        'temperature': _metric(maintenance.get('tyreTemp' + side), '°C', state_time, -80, 150)}
                       for side, name in zip(SIDES, POSITIONS)],
             'voltage': voltage, 'current': current, 'power_kw': power,
+            'ac_voltage': ac_voltage, 'ac_current': ac_current,
             'remaining_minutes': numeric(electric.get('timeToFullyCharged'), 0, 2046) if point['charging'] is True else None,
             'capabilities': {name: ('enabled' if name in enabled else 'pending_evidence') for name in PENDING_CAPABILITIES}}

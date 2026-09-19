@@ -20,7 +20,10 @@ def _time(value, full=False):
 
 
 def _num(value, digits=1):
-    return '未知' if value is None else (('%.*f' % (digits, value)).rstrip('0').rstrip('.'))
+    if value is None:
+        return '未知'
+    rendered = '%.*f' % (digits, value)
+    return rendered.rstrip('0').rstrip('.') if digits else rendered
 
 
 def _range(start, end):
@@ -133,6 +136,8 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
                   '到达地：%s' % _place((address or {}).get('end')),
                   _range(report.get('start_time'), report.get('end_time')), '', '【电量与续航】',
                   '电量：%s%% → %s%%（变化 %s 个百分点）' % (_num(report.get('start', {}).get('soc')), _num(report.get('end', {}).get('soc')), _num(m.get('soc_delta')))]
+        if m.get('charge_overlap'):
+            lines.append('途中有充电，电量变化不用于驾驶耗电统计。')
         if m.get('estimated_kwh') is not None:
             lines.append('估算耗电：约 %s kWh' % _num(m['estimated_kwh']))
         else:
@@ -155,7 +160,7 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         if not updated: lines.append('未取得更新停车状态。')
         lines += _temperatures(report)
     elif kind == 'charge_start':
-        mode = '｜直流' if report.get('start', {}).get('charging_mode') == 'dc' else ''
+        mode = {'dc': '｜直流', 'ac': '｜交流'}.get(report.get('start', {}).get('charging_mode'), '')
         location = _place((address or {}).get('start'))
         lines = ['⚡ 检测到开始充电%s%s' % (mode, suffix), '充电地点：%s' % location,
                  '首次检测：' + _time(report.get('start_time')), '电量：%s%%' % _num(report.get('start', {}).get('soc'))]
@@ -165,6 +170,10 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         if start.get('power_kw') is not None:
             lines += ['桩侧观测电压：%s V' % _num(start['voltage']['value']), '桩侧观测电流：%s A' % _num(start['current']['value']),
                       '按电压×电流计算功率：%s kW' % _num(start['power_kw'])]
+        elif start.get('charging_mode') == 'ac':
+            lines += ['接口观测电压：%s V' % _num(start.get('ac_voltage', {}).get('value')),
+                      '接口观测电流：%s A' % _num(start.get('ac_current', {}).get('value')),
+                      '测量口径未完整核验，暂不估算交流功率。']
         if start.get('remaining_minutes') is not None:
             lines.append('截至%s，车辆估计剩余%s分钟。' % (_time(start.get('state_time')).split()[-1], _num(start['remaining_minutes'], 0)))
             estimated_end = start.get('state_time') + start['remaining_minutes']*60000
@@ -174,8 +183,8 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         lines += ['目标电量：暂未取得', '充电枪连接：未确认']
         lines += ['', '【车辆状态 · %s】' % _time(start.get('state_time')).split()[-1]] + _status(start)
         lines.append('直流口盖%s · 交流口盖%s' %
-                     ('打开' if start.get('dc_lid')=='open' else '关闭' if start.get('dc_lid')=='closed' else '未确认',
-                      '关闭' if start.get('ac_lid')=='closed' else '未确认'))
+                      ('打开' if start.get('dc_lid')=='open' else '关闭' if start.get('dc_lid')=='closed' else '未确认',
+                      '打开' if start.get('ac_lid')=='open' else '关闭' if start.get('ac_lid')=='closed' else '未确认'))
         lines += _temperatures(report)
     else:
         lines = ['🔋 充电已停止%s｜电量%s%%' % (suffix, _num(report.get('end', {}).get('soc'))),
@@ -186,7 +195,8 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
             lines.append(('%s估算充入：约%s kWh' % ('已记录区间' if partial else '', _num(m['estimated_kwh']))))
         if m.get('range_delta_km') is not None:
             lines.append('云端续航：%s → %s 公里（增加%s公里）' % (_num(report['start'].get('range_km')), _num(report['end'].get('range_km')), _num(m['range_delta_km'])))
-        lines += ['', '【充电过程】', '类型：%s' % ('直流' if report.get('start', {}).get('charging_mode') == 'dc' else '未确认')]
+        lines += ['', '【充电过程】', '类型：%s' %
+                  {'dc': '直流', 'ac': '交流'}.get(report.get('start', {}).get('charging_mode'), '未确认')]
         if m.get('sampled_peak_kw') is not None:
             lines.append('最高采样功率：%s kW' % _num(m['sampled_peak_kw']))
         if m.get('average_power_kw') is not None:
@@ -197,9 +207,12 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         lines += ['功率有效覆盖：%s/%s分钟（%s%%）' % (_num(covered/60 if covered is not None else None, 0), _num(total/60 if total is not None else None, 0), _num(100*ratio if ratio is not None else None, 0)),
                   '目标电量：暂未取得', '停止原因：未确认', '充电枪连接：未确认']
         stopped=report.get('end',{})
-        if stopped.get('voltage',{}).get('value') is not None or stopped.get('current',{}).get('value') is not None:
-            lines.append('停止观测：桩侧电压%s V · 电流%s A' %
-                         (_num(stopped.get('voltage',{}).get('value')),_num(stopped.get('current',{}).get('value'))))
+        ac = report.get('start', {}).get('charging_mode') == 'ac'
+        voltage = stopped.get('ac_voltage' if ac else 'voltage', {}).get('value')
+        current = stopped.get('ac_current' if ac else 'current', {}).get('value')
+        if voltage is not None or current is not None:
+            lines.append('停止观测：%s电压%s V · 电流%s A' %
+                         ('接口' if ac else '桩侧', _num(voltage), _num(current)))
         lines += ['', '【停止状态 · %s】' % _time(stopped.get('state_time')).split()[-1]] + _status(stopped)
         lines += _temperatures(report)
     lines += _comparison(report)
