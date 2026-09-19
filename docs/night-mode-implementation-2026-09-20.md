@@ -33,4 +33,13 @@
 
 ## 发布
 
-待完成候选版本和线上检查后记录。
+- 代码提交：`ed95255 feat(web): add readable night mode and theme preferences`，已推送 origin/main。
+- 活跃版本：`/opt/zeekr-control/releases/20260920-night-mode-ed95255`。
+- 兼容回滚：`/opt/zeekr-control/releases/20260919-profile-guard-685103e`。
+- 停服务后数据备份：`/opt/zeekr-control/backups/20260920-night-mode-ed95255`；本次没有数据库结构变更。
+- 候选从 `current/.` 保留配置与文件权限，只覆盖这次 20 个已提交文件。候选目录不是符号链接。
+- 候选服务器全量 282 项通过，候选及上线后均通过真实服务用户的车型图片发布检查。
+- 20 个发布文件 SHA-256 全部与提交一致；Web 与监控进程工作目录均指向新版本。
+- zeekr-control、zeekr-monitor、nginx 为 active；两个 Python 服务 NRestarts=0；检查时最近三分钟没有 error 级别服务日志。
+- 线上登录页 HTTP 200，未登录 /api/state 为 401；实际浏览器验证系统夜间、日夜切换、刷新持久化，无脚本异常，四个公开登录/主题资源与本地字节一致。
+- 服务重启使旧网页登录会话失效，需要重新登录。未绕过认证检查真实车辆仪表盘；仪表盘视觉证据来自合成数据，线上车型图片由服务用户发布门禁验证。
