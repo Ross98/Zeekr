@@ -174,25 +174,35 @@ function chargingCurrent(details) {
   return `<section class="card" id="charging-parameters"><div class="card-head"><div><h2>充电状态参数</h2><p class="card-meta">当前缓存观测 · ${esc(eventTime(details?.state_time))}</p></div>${pill('只读')}</div><div class="card-body"><div class="charging-power">${row('当前观测功率',chargeNumber(details?.power_kw,'kW'))}<p class="energy-caption">${details?.power_source==='ac_ui'?'交流充电电压 × 电流':details?.power_source==='dc_pile_ui'?'直流桩侧电压 × 电流':'缺少可确认的充电与电气证据，暂不计算功率'}；同一观测计算值，不是实时保证或桩端结算值。</p></div>${chargingParameterGroups(details)}${chargingUnavailable()}</div></section>`;
 }
 
-function chartPath(points, key, width=760, height=160) {
+function chartGeometry(points, key) {
   const valid=points.filter(point=>Number.isFinite(point.time)&&Number.isFinite(point[key]));
-  if(!valid.length) return '';
+  if(!valid.length) return null;
   const times=valid.map(point=>point.time), values=valid.map(point=>point[key]);
-  const minX=Math.min(...times), spanX=Math.max(1,Math.max(...times)-minX);
-  const minY=Math.min(...values), spanY=Math.max(1,Math.max(...values)-minY);
-  let previousSegment=null;
-  return valid.map(point=>{
-    const x=20+(point.time-minX)/spanX*(width-40), y=height-20-(point[key]-minY)/spanY*(height-40);
-    const command=previousSegment===point.segment_id?'L':'M'; previousSegment=point.segment_id;
-    return `${command}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+  const minX=Math.min(...times), maxX=Math.max(...times);
+  let minY=Math.min(...values), maxY=Math.max(...values);
+  if(minY===maxY) { const pad=Math.max(1,Math.abs(minY)*.05);minY-=pad;maxY+=pad; }
+  const x=time=>minX===maxX?400:64+(time-minX)/(maxX-minX)*672;
+  const y=value=>180-(value-minY)/(maxY-minY)*156;
+  let previous=null;
+  const dots=[],commands=[];
+  points.forEach(point=>{
+    if(!Number.isFinite(point.time)||!Number.isFinite(point[key])) { previous=null;return; }
+    const px=x(point.time),py=y(point[key]);
+    commands.push(`${previous&&previous.segment_id===point.segment_id?'L':'M'}${px.toFixed(1)},${py.toFixed(1)}`);
+    dots.push({x:px,y:py});previous=point;
+  });
+  return {path:commands.join(' '),dots,minX,maxX,minY,maxY,x,y};
 }
 
 function chargingChart(title, key, unit) {
-  const points=chargingSeries?.points || [], path=chartPath(points,key);
-  if(!points.length||!path) return `<section class="charging-chart"><h3>${esc(title)}</h3><div class="chart-empty">该记录未保存过程采样</div></section>`;
-  const values=points.map(point=>point[key]).filter(Number.isFinite);
-  return `<section class="charging-chart"><div class="charging-chart-head"><h3>${esc(title)}</h3><span>${values.length} 个有效点 · ${esc(unit)}</span></div><svg viewBox="0 0 760 160" role="img" aria-label="${esc(title)}折线图"><path class="chart-grid" d="M20 20H740M20 80H740M20 140H740"/><path class="chart-line" d="${path}"/></svg></section>`;
+  const chart=chartGeometry(chargingSeries?.points || [],key);
+  if(!chart) return `<section class="charging-chart"><h3>${esc(title)}</h3><div class="chart-empty">该记录未保存有效过程采样</div></section>`;
+  const ticks=[chart.maxY,(chart.minY+chart.maxY)/2,chart.minY];
+  const number=value=>Number(value.toPrecision(4)).toString();
+  const time=value=>new Date(value).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const labels=ticks.map(value=>`<text class="chart-axis" x="56" y="${chart.y(value)+5}" text-anchor="end">${esc(number(value))}</text>`).join('');
+  const dots=chart.dots.map(point=>`<circle class="chart-point" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.5"/>`).join('');
+  return `<section class="charging-chart"><div class="charging-chart-head"><h3>${esc(title)}</h3><span>${chart.dots.length} 个有效点 · ${esc(unit)}</span></div><div class="charging-chart-scroll" tabindex="0" role="region" aria-label="${esc(title)}图表，可横向滚动"><svg viewBox="0 0 760 225" role="img" aria-label="${esc(title)}折线图，单位 ${esc(unit)}，横轴为北京时间；缺失采样不连线"><path class="chart-grid" d="M64 24H736M64 102H736M64 180H736"/>${labels}<text class="chart-axis" x="64" y="216">${esc(time(chart.minX))}</text><text class="chart-axis" x="736" y="216" text-anchor="end">${esc(time(chart.maxX))} 北京时间</text><path class="chart-line" d="${chart.path}"/>${dots}</svg></div></section>`;
 }
 
 function selectedChargingPoint() {
@@ -223,7 +233,7 @@ function chargingStatistics() {
   const bars=stats.daily.map(day=>{const total=day.ac_kwh+day.dc_kwh+day.unknown_kwh;return `<div class="charging-day" title="${esc(day.date)} · ${chargingFormat(total)} kWh"><div class="charging-bar"><i class="ac" style="height:${day.ac_kwh/max*100}%"></i><i class="dc" style="height:${day.dc_kwh/max*100}%"></i><i class="unknown" style="height:${day.unknown_kwh/max*100}%"></i></div><span>${day.date.slice(5)}</span></div>`}).join('');
   const records=stats.records.length?stats.records.map(record=>`<button class="charging-stat-record" data-action="stats-detail" data-event-id="${esc(record.id)}"><span>${esc(eventTime(record.end_time))}</span><b>${record.mode==='ac'?'AC':record.mode==='dc'?'DC':'未知'} · ${chargeNumber(record.start_soc,'%')} → ${chargeNumber(record.end_soc,'%')}</b><small>${record.partial?'部分记录':eventDuration(record.duration_seconds)} · ${Number.isFinite(record.estimated_kwh)?chargingFormat(record.estimated_kwh)+' kWh（估算）':'不计入完整电量'}</small></button>`).join(''):`<div class="chart-empty">所选范围没有已记录事件；不代表车辆没有充电。</div>`;
   const current=stats.current?`<div class="notice info">${icon('energy')}进行中会话：${stats.current.mode==='ac'?'AC':stats.current.mode==='dc'?'DC':'模式未知'} · ${chargeNumber(stats.current.start_soc,'%')} → ${chargeNumber(stats.current.end_soc,'%')}。单列展示，不计入已结束次数。</div>`:'';
-  return `<div class="charging-stat-controls"><div><button data-action="stats-days" data-days="7" class="${chargingDays===7?'active':''}">最近 7 天</button><button data-action="stats-days" data-days="30" class="${chargingDays===30?'active':''}">最近 30 天</button></div><label>模式筛选<select id="charging-mode"><option value="all" ${chargingMode==='all'?'selected':''}>全部</option><option value="ac" ${chargingMode==='ac'?'selected':''}>AC</option><option value="dc" ${chargingMode==='dc'?'selected':''}>DC</option></select></label></div>${current}<div class="charging-stat-summary"><div><span>已结束次数</span><strong>${s.ended_count}</strong><small>完整 ${s.complete_count} · 部分 ${s.partial_count}</small></div><div><span>估算充入电量</span><strong>${chargingFormat(s.estimated_kwh)}<small> kWh</small></strong><small>纳入 ${s.included_energy_count} · 排除 ${s.excluded_energy_count}</small></div><div><span>完整记录时长</span><strong>${eventDuration(s.complete_duration_seconds)}</strong><small>不是插枪总时长</small></div></div><section class="card charging-daily"><div class="card-head"><h2>每日估算充入电量</h2><span class="charging-legend">AC / DC / 未知</span></div><div class="charging-bars">${bars}</div><p class="energy-caption">按充电结束日归档；空位只表示无已记录事件。部分记录不进入电量与完整时长。</p></section><section class="card"><div class="card-head"><h2>单次记录</h2>${pill(`${stats.records.length} 条`)}</div><div class="charging-stat-records">${records}</div></section>`;
+  return `<div class="charging-stat-controls"><div><button data-action="stats-days" data-days="7" class="${chargingDays===7?'active':''}">最近 7 天</button><button data-action="stats-days" data-days="30" class="${chargingDays===30?'active':''}">最近 30 天</button></div><label>模式筛选<select id="charging-mode"><option value="all" ${chargingMode==='all'?'selected':''}>全部</option><option value="ac" ${chargingMode==='ac'?'selected':''}>AC</option><option value="dc" ${chargingMode==='dc'?'selected':''}>DC</option></select></label></div>${current}<div class="charging-stat-summary"><div><span>已结束次数</span><strong>${s.ended_count}</strong><small>完整 ${s.complete_count} · 部分 ${s.partial_count}</small></div><div><span>估算充入电量</span><strong>${chargingFormat(s.estimated_kwh)}<small> kWh</small></strong><small>纳入 ${s.included_energy_count} · 排除 ${s.excluded_energy_count}</small></div><div><span>完整记录时长</span><strong>${eventDuration(s.complete_duration_seconds)}</strong><small>不是插枪总时长</small></div></div><section class="card charging-daily"><div class="card-head"><h2>每日估算充入电量</h2><span class="charging-legend"><span><i aria-hidden="true"></i>AC</span><span><i class="dc" aria-hidden="true"></i>DC</span><span><i class="unknown" aria-hidden="true"></i>未知</span></span></div><div class="charging-bars">${bars}</div><p class="energy-caption">按充电结束日归档；空位只表示无已记录事件。部分记录不进入电量与完整时长。</p></section><section class="card"><div class="card-head"><h2>单次记录</h2>${pill(`${stats.records.length} 条`)}</div><div class="charging-stat-records">${records}</div></section>`;
 }
 
 function chargingWorkspace(details) {
@@ -522,6 +532,11 @@ function render() {
 
 function createMap(center, zoom = 14, options = {}) {
   if (!window.L) throw Error('地图组件无法加载，请重启本机服务。');
+  if (!$('#map').parentElement.querySelector('.map-theme-note')) {
+    const note=document.createElement('p');note.className='map-theme-note';
+    note.textContent='地图底图保持原配色，以保证道路与地名可读。';
+    $('#map').after(note);
+  }
   map = L.map('map', { attributionControl:true, scrollWheelZoom:false, ...options }).setView(center,zoom);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { minZoom:2,maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' })
     .on('tileerror', () => { if ($('#map-status')) $('#map-status').textContent = '部分底图未加载，可稍后重试；位置标记仅依据已返回数据。'; }).addTo(map);

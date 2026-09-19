@@ -30,6 +30,12 @@ class AuthTests(unittest.TestCase):
                 for route in ['/api/state','/api/location','/api/tracks','/api/history?date=2024-01-01','/api/history/points?trip=unknown','/history.js','/car.svg','/app.js']:
                     self.assertEqual(request('GET',route)[0],401)
                 self.assertEqual(request('GET','/')[0],200)
+                for asset in ('/theme.js', '/theme.css', '/login.js', '/login.css'):
+                    status, headers, body = request('GET', asset)
+                    self.assertEqual(status, 200, asset)
+                    self.assertTrue(body)
+                    self.assertNotIn('text/html', headers['Content-Type'])
+                self.assertEqual(request('GET','/theme.js/../app.js')[0],401)
                 self.assertEqual(request('POST','/api/refresh',{'vehicle':1})[0],401)
                 self.assertEqual(request('POST','/api/recording',{'active':True})[0],401)
                 self.assertEqual(request('GET','/api/state',cookie='zeekr_session=forged')[0],401)

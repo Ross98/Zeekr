@@ -57,6 +57,8 @@ const path = require('node:path');
     await page.screenshot({ path: '/tmp/zeekr-web-qa/settings-unified.png', fullPage: true });
     await page.getByRole('button', { name: '行程与轨迹', exact: true }).first().click();
     await page.getByRole('button', { name: '本地记录', exact: true }).click();
+    // Fixture's cached sample is 20 minutes old; near midnight it belongs to yesterday.
+    await page.getByLabel('轨迹日期').fill(await page.evaluate(() => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(Date.now()-20*60*1000))));
     await page.getByRole('button', { name: '显示位置并加载地图', exact: true }).click();
     await page.getByLabel('轨迹回看位置').waitFor();
     assert.match(await page.locator('#playback-label').innerText(), /缓存状态时间/);

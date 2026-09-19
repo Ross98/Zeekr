@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
+  <script src="/theme.js"></script>
   <title>Zeekr · 我的车辆</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/vendor/leaflet.css">
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/storage-management.css">
+  <link rel="stylesheet" href="/theme.css">
   <script src="/vendor/leaflet.js" defer></script>
   <script src="/history.js" defer></script>
   <script src="/field-reviews.js" defer></script>
@@ -24,7 +26,7 @@
     <div class="sidebar-bottom"><span id="local-connection">正在连接本机…</span><div>只读车辆数据 · 本机保存</div></div>
   </aside>
   <div class="workspace">
-    <header class="topbar"><span class="breadcrumb">我的车库</span><div class="topbar-right"><span id="connection" class="connection">检查会话…</span><button id="logout" class="button secondary">退出登录</button><span class="avatar" aria-hidden="true">Z</span></div></header>
+    <header class="topbar"><span class="breadcrumb">我的车库</span><div class="topbar-right"><label class="theme-control">外观<select data-theme-select aria-label="外观"><option value="system">跟随系统</option><option value="light">日间</option><option value="dark">夜间</option></select></label><span id="connection" class="connection">检查会话…</span><button id="logout" class="button secondary">退出登录</button><span class="avatar" aria-hidden="true">Z</span></div></header>
     <div id="connectivity-notice" class="notice error connection-notice" role="alert" hidden><span>本机服务已断开，保留上次数据与原时间。</span><button class="button secondary" data-action="reconnect">重新连接</button></div>
     <main id="main" tabindex="-1"><div class="empty">正在连接本机服务…</div></main>
     <footer class="footer">ZEEKR · 本地车辆仪表盘<span>数据来自云端缓存，可能存在延迟</span></footer>

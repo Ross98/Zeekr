@@ -1,1 +1,26 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>登录 · 我的车辆</title><link rel="stylesheet" href="/login.css"><script src="/login.js" defer></script></head><body><main><h1>我的车辆</h1><p>登录后查看车辆状态与轨迹。</p><form><label for="password">访问密码</label><input id="password" type="password" autocomplete="current-password" maxlength="256" required><button>登录</button><p id="error" role="alert"></p></form></main></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <script src="/theme.js"></script>
+  <title>登录 · 我的车辆</title>
+  <link rel="stylesheet" href="/login.css">
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/login.js" defer></script>
+</head>
+<body>
+  <main>
+    <label class="theme-control">外观<select data-theme-select aria-label="外观"><option value="system">跟随系统</option><option value="light">日间</option><option value="dark">夜间</option></select></label>
+    <h1>我的车辆</h1>
+    <p>登录后查看车辆状态与轨迹。</p>
+    <form>
+      <label for="password">访问密码</label>
+      <input id="password" type="password" autocomplete="current-password" maxlength="256" required>
+      <button>登录</button>
+      <p id="error" role="alert"></p>
+    </form>
+  </main>
+</body>
+</html>

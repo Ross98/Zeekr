@@ -414,7 +414,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
         def do_GET(self):
             if not self.permitted():
                 return self.send(403, {'error': '仅允许本机同源访问。'})
-            if auth and self.path in ('/login.js', '/login.css'):
+            if self.path in ('/login.js', '/login.css', '/theme.js', '/theme.css'):
                 name = self.path[1:]
                 return self.send(200, (STATIC / name).read_bytes(), 'text/javascript' if name.endswith('.js') else 'text/css')
             if not self.signed_in():
