@@ -1,5 +1,6 @@
 """Synthetic transition tests; no vehicle requests or real notifications."""
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -265,6 +266,56 @@ class MonitorTests(unittest.TestCase):
         self.monitor = Monitor(self.path)
         self.monitor.deliver(lambda message: self.fail('不应重发'), BASE + 60000)
         self.assertEqual(self.monitor.events()[0]['delivery'], 'uncertain')
+
+    def test_v2_observations_deduplicate_and_report_is_private(self):
+        self.observe(0)
+        self.observe(60, speed=20, engine='engine_on', ready=1)
+        self.observe(120)
+        self.monitor.observe('test-vehicle', sample(120), BASE+180000)
+        with self.monitor.tracks.connect() as db:
+            count = db.execute('SELECT COUNT(*) FROM report_observations WHERE vehicle=?',('test-vehicle',)).fetchone()[0]
+        self.assertEqual(count,3)
+
+    def test_completed_event_has_one_bounded_metric_index_row(self):
+        self.observe(0,current=10,voltage=220,plug=1,code='charging',dc_lid=1,charger=7)
+        self.observe(60,soc=82)
+        with self.monitor.tracks.connect() as db:
+            rows=db.execute('SELECT metrics FROM report_metric_index').fetchall()
+        self.assertEqual(len(rows),2)  # charge_start and charge_end each have one row
+        self.assertIsInstance(json.loads(rows[-1][0]),dict)
+
+    def test_frozen_v2_pending_reuses_exact_message_after_restart(self):
+        self.observe(0, current=10, voltage=220, plug=1, code='charging', dc_lid=1, charger=7)
+        event=self.monitor.events()[0]
+        event['summary']['addresses_resolved']=True
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET message='FROZEN-BYTES', summary=?",(json.dumps(event['summary']),))
+        from zeekr_control.monitor import Monitor
+        self.monitor = Monitor(self.path)
+        sent=[]; self.monitor.deliver(sent.append,BASE)
+        self.assertEqual(sent,['FROZEN-BYTES'])
+
+    def test_unknown_future_report_version_is_not_sent_as_v1(self):
+        self.observe(0, current=10, voltage=220, plug=1, code='charging', dc_lid=1, charger=7)
+        event=self.monitor.events()[0]
+        event['summary']['report_v2']['schema_version']=99
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET summary=?",(json.dumps(event['summary']),))
+        sent=[]; self.monitor.deliver(sent.append,BASE)
+        self.assertEqual(sent,[])
+        self.assertEqual(self.monitor.events()[0]['delivery'],'failed')
+
+    def test_v1_active_state_upgrades_without_inventing_full_session(self):
+        self.observe(0, speed=20, engine='engine_on', ready=1)
+        state = self.monitor.status('test-vehicle')
+        for key in ('report_start','report_end','samples','profile','parking'):
+            state['trip'].pop(key,None)
+        with self.monitor.tracks.connect() as db:
+            db.execute('UPDATE monitor_state SET payload=? WHERE vehicle=?',(json.dumps(state),'test-vehicle'))
+        for t in range(60,721,60): self.observe(t)
+        report = self.monitor.events()[0]['summary']['report_v2']
+        self.assertTrue(report['partial'])
+        self.assertTrue(report['quality']['upgrade_mid_session'])
 
     def test_charging_after_final_stop_does_not_change_trip_energy(self):
         self.observe(0)

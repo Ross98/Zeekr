@@ -93,6 +93,25 @@ class RuntimeTests(unittest.TestCase):
         args = parser().parse_args(['monitor-status'])
         self.assertEqual(args.command, 'monitor-status')
 
+    def test_public_status_filters_vehicle_and_never_returns_private_summary(self):
+        import sqlite3
+        from zeekr_control.monitor import Monitor
+        from zeekr_control.monitor_runtime import read_status
+        Monitor(self.root / 'tracks.sqlite3')
+        with sqlite3.connect(self.root / 'tracks.sqlite3') as db:
+            for vehicle in ('car-a','car-b'):
+                db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
+                    (vehicle,vehicle,'trip_end',json.dumps({'report_v2':{'secret':'PRIVATE'},'start_location':[1,2]}),'PRIVATE',1))
+        save(self.root/'monitor-health.json', {'status':'fresh','heartbeat':str(BASE),'next_check':str(BASE+60000),
+             'signals':'PRIVATE-SIGNALS','raw_future':'PRIVATE-FUTURE'})
+        result = read_status(self.root,'car-a',public=True)
+        encoded = json.dumps(result)
+        self.assertEqual(len(result['events']),1)
+        self.assertNotIn('summary',result['events'][0])
+        self.assertNotIn('PRIVATE',encoded)
+        self.assertNotIn('signals',result)
+        self.assertEqual(read_status(self.root,None,public=True)['events'],[])
+
 
 class SenderTests(unittest.TestCase):
     def setUp(self):
@@ -136,3 +155,13 @@ class SenderTests(unittest.TestCase):
                 WeComSender(self.path)('测试')
         self.assertTrue(caught.exception.ambiguous)
         self.assertNotIn('SECRET', str(caught.exception))
+
+    def test_utf8_hard_limit_allows_2048_and_rejects_2049(self):
+        import io
+        class Opener:
+            def open(self, request, timeout): return io.BytesIO(b'{"errcode":0}')
+        from zeekr_control.notifications import WeComSender, DeliveryError
+        with patch('zeekr_control.notifications.build_opener', return_value=Opener()):
+            WeComSender(self.path)('a'*2047)
+            WeComSender(self.path)('a'*2048)
+            with self.assertRaises(DeliveryError): WeComSender(self.path)('a'*2049)

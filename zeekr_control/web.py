@@ -70,17 +70,19 @@ class App:
     def state(self):
         with self.lock:
             try:
-                from .monitor_runtime import read_status
-                monitoring = read_status(self.session_path.parent)
-            except Exception:
-                monitoring = {'status': 'unavailable', 'online': False, 'events': []}
-            try:
                 session = load(self.session_path)
                 authenticated = bool(session.get('accessToken'))
                 session_error = None
             except ApiError as exc:
                 authenticated, session_error = False, str(exc)
                 session = None
+            try:
+                from .monitor_runtime import read_status
+                monitoring = read_status(self.session_path.parent,
+                                         self.vehicle_key if authenticated and self.vehicle_key else None,
+                                         public=True)
+            except Exception:
+                monitoring = {'status': 'unavailable', 'online': False, 'events': []}
             if authenticated:
                 self._restore_snapshot(session)
             try:
@@ -98,7 +100,9 @@ class App:
                 field_reviews = {'vehicle': self.vehicle_key, 'revision': None, 'records': [],
                                  'error': '核实记录暂不可用，请重试；未修改已有记录。'}
             try:
-                recent_events = self.event_store.latest(self.vehicle_key)
+                recent_events = (self.event_store.latest(self.vehicle_key)
+                                 if authenticated and self.vehicle_key else
+                                 {'trip_end': None, 'charge_end': None})
             except Exception:
                 recent_events = {'trip_end': None, 'charge_end': None, 'error': '本地事件暂不可用。'}
             return {'field_reviews': field_reviews, 'request_key': self.request_key, 'authenticated': authenticated,

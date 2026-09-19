@@ -94,20 +94,48 @@ def process_lock(path):
         os.close(fd)
 
 
-def read_status(root):
+PUBLIC_HEALTH_FIELDS = ('status', 'heartbeat', 'next_check', 'interval', 'last_success',
+                        'last_new', 'trip', 'charge')
+
+
+def _safe_error(value):
+    if not value:
+        return ''
+    text = str(value)
+    for category, tokens in (
+        ('认证状态异常，请检查车辆连接。', ('登录', '认证', '401', '403', 'token')),
+        ('接口暂不可用，后台将按策略处理。', ('网络', 'TLS', 'HTTP 5', '限流', '冷却')),
+        ('采集后台异常，请检查服务状态。', ())):
+        if not tokens or any(token.lower() in text.lower() for token in tokens):
+            return category
+
+
+def read_status(root, vehicle=None, public=False):
     root = Path(root)
     health = load(root / 'monitor-health.json')
     if not health:
         return {'status': 'not_started', 'events': []}
     heartbeat = float(health.get('heartbeat', '0'))
     allowed = max(180000, float(health.get('next_check', '0')) - heartbeat + 60000)
-    result = dict(health, online=health.get('status') != 'stopped' and 0 <= time.time() * 1000 - heartbeat <= allowed, events=[])
+    source = ({key: health[key] for key in PUBLIC_HEALTH_FIELDS if key in health}
+              if public else dict(health))
+    if public:
+        source['error'] = _safe_error(health.get('error'))
+    result = dict(source, online=health.get('status') != 'stopped' and 0 <= time.time() * 1000 - heartbeat <= allowed, events=[])
     path = root / 'tracks.sqlite3'
     if path.exists():
         db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=5)
         try:
-            rows = db.execute('SELECT kind,summary,delivery,error,created FROM monitor_events ORDER BY created DESC,rowid DESC LIMIT 10').fetchall()
-            result['events'] = [dict(kind=r[0], summary=json.loads(r[1]), delivery=r[2], error=r[3], created=r[4]) for r in rows]
+            if public and not vehicle:
+                rows = []
+            elif public:
+                rows = db.execute('SELECT kind,delivery,error,created FROM monitor_events WHERE vehicle=? ORDER BY created DESC,rowid DESC LIMIT 10', (vehicle,)).fetchall()
+            else:
+                rows = db.execute('SELECT kind,summary,delivery,error,created FROM monitor_events ORDER BY created DESC,rowid DESC LIMIT 10').fetchall()
+            if public:
+                result['events'] = [dict(kind=r[0], delivery=r[1], error=_safe_error(r[2]), created=r[3]) for r in rows]
+            else:
+                result['events'] = [dict(kind=r[0], summary=json.loads(r[1]), delivery=r[2], error=r[3], created=r[4]) for r in rows]
         finally:
             db.close()
     return result
@@ -214,7 +242,7 @@ class Runner:
                     session_scope(session), binding, raw, observed, fetched_at=fetched_at)
                 profile = vehicle_profile(binding, choices.index(vin) + 1, len(choices))
                 health['status'] = self.monitor.observe(binding, raw, observed,
-                    battery_capacity_kwh=profile.get('battery_capacity_kwh'))
+                    battery_capacity_kwh=profile.get('battery_capacity_kwh'), profile=profile)
                 state = self.monitor.status(binding)
                 delay = self.interval_for(raw, observed, state)
                 if health['status'] == 'fresh':

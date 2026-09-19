@@ -68,6 +68,11 @@ def parser():
     monitor.add_argument('--charging-active-code', action='append', default=[], help='仅填写本车实测确认的充电中 chargeSts，可重复')
     monitor.add_argument('--charging-stopped-code', action='append', default=[], help='仅填写本车实测确认的停止 chargeSts，可重复')
     commands.add_parser('monitor-status', help='查看监控健康状态和最近通知，不请求车辆或发送消息')
+    preview = commands.add_parser('report-preview', help='离线预览合成fixture或已存私有v2事件；不采集、不发送')
+    source = preview.add_mutually_exclusive_group(required=True)
+    source.add_argument('--fixture', help='合成报告 JSON 文件')
+    source.add_argument('--event', help='私有数据库中的完整事件 ID')
+    preview.add_argument('--target-bytes', type=int, default=1900, help='预览裁剪目标，256–1900，默认1900')
     return root
 
 
@@ -81,6 +86,14 @@ def main(argv=None, session_path=DEFAULT_PATH):
             from .monitor_runtime import read_status
             from pathlib import Path
             print(json.dumps(read_status(Path(session_path).parent), ensure_ascii=False, indent=2))
+            return 0
+        if args.command == 'report-preview':
+            from .report_preview import preview
+            from pathlib import Path
+            result = preview(Path(session_path).parent / 'tracks.sqlite3', args.event, args.fixture, args.target_bytes)
+            print(result['text'])
+            print('\n[UTF-8: %d bytes; omitted: %s]' %
+                  (result['utf8_bytes'], ','.join(result['omitted']) or 'none'))
             return 0
         if args.command == 'web':
             if not 1 <= args.port <= 65535:

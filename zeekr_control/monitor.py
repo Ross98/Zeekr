@@ -7,9 +7,25 @@ from .summary import updated_at
 from .vehicle_state import decode, numeric
 from .tracks import TrackStore
 from .web_model import parse_location
+from .report_telemetry import normalize, DECODER_VERSION
+from .report_metrics import trip_metrics, charge_metrics
+from .report_render import render
+from .report_history import compare
+from .report_attention import build as build_attention
 
 MAX_AGE = 180000
 STOP_WAIT = 600000
+MAX_SESSION_SAMPLES = 1000
+
+
+def _append_sample(activity, telemetry):
+    samples = activity.setdefault('samples', [])
+    if samples and telemetry.get('state_time') == samples[-1].get('state_time'):
+        return
+    samples.append(telemetry)
+    if len(samples) > MAX_SESSION_SAMPLES:
+        samples[1:2] = []
+        activity['samples_truncated'] = True
 
 
 def summary(start, end, partial=False):
@@ -80,6 +96,16 @@ class Monitor:
                 attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0,
                 error TEXT, sent_at INTEGER)''')
             db.execute('CREATE INDEX IF NOT EXISTS monitor_delivery ON monitor_events(delivery, next_attempt)')
+            db.execute('''CREATE TABLE IF NOT EXISTS report_metric_index (
+                event_id TEXT PRIMARY KEY, vehicle TEXT NOT NULL, kind TEXT NOT NULL,
+                end_time INTEGER NOT NULL, decoder_version TEXT NOT NULL,
+                partial INTEGER NOT NULL, metrics TEXT NOT NULL)''')
+            db.execute('CREATE INDEX IF NOT EXISTS report_metric_lookup ON report_metric_index(vehicle,kind,end_time DESC)')
+            db.execute('''CREATE TABLE IF NOT EXISTS report_observations (
+                vehicle TEXT NOT NULL, state_time INTEGER NOT NULL, observed_at INTEGER NOT NULL,
+                normalized_payload TEXT NOT NULL, decoder_version TEXT NOT NULL,
+                PRIMARY KEY(vehicle,state_time))''')
+            db.execute('CREATE INDEX IF NOT EXISTS report_observation_time ON report_observations(vehicle,state_time)')
             db.execute("UPDATE monitor_events SET delivery='uncertain', error='发送期间进程中断，需人工确认' WHERE delivery='sending'")
 
     def status(self, vehicle):
@@ -90,15 +116,84 @@ class Monitor:
     def _event(self, db, vehicle, kind, data, now):
         identity = '%s:%s:%s' % (vehicle, kind, data['start_time'])
         event_id = hashlib.sha256(identity.encode()).hexdigest()
+        message = message_for(kind, data, event_id)
+        if data.get('report_v2'):
+            report = data['report_v2']
+            report['event_created_at'] = now
+            report['attention'] = build_attention(kind, report.get('end'), report.get('parking'), now)
+            report['parking_changes'] = report['attention'].get('changes', [])
+            if kind in ('trip_end', 'charge_end'):
+                try:
+                    report['comparison'] = compare(db, vehicle, report)
+                except Exception:
+                    report['comparison'] = {'version': 'history-v1', 'available': False, 'reason': 'unavailable'}
+            message, omitted = render(kind, data['report_v2'], event_id)
+            data['report_v2']['render'] = {'version': 'zh-text-v2', 'omitted': omitted,
+                                           'message_frozen': False}
         db.execute('INSERT OR IGNORE INTO monitor_events (id,vehicle,kind,summary,message,created) VALUES (?,?,?,?,?,?)',
-                   (event_id, vehicle, kind, json.dumps(data), message_for(kind, data, event_id), now))
+                   (event_id, vehicle, kind, json.dumps(data, ensure_ascii=False), message, now))
+        report = data.get('report_v2')
+        if report:
+            approved = {key:value for key,value in report.get('metrics',{}).items()
+                        if type(value) in (int,float)}
+            db.execute('INSERT OR IGNORE INTO report_metric_index VALUES (?,?,?,?,?,?,?)',
+                       (event_id, vehicle, kind, int(report.get('end_time') or now),
+                        report.get('decoder_version',''), int(bool(report.get('partial'))),
+                        json.dumps(approved, separators=(',',':'))))
 
-    def observe(self, vehicle, raw, now, battery_capacity_kwh=None):
+    def _report(self, kind, start, end, samples, profile, partial, charge_overlap=False, parking=None,
+                upgrade_mid_session=False, samples_truncated=False, decoder_changed=False, parking_samples=0):
+        metrics = (trip_metrics(start, end, samples, profile, partial=partial, charge_overlap=charge_overlap)
+                   if kind == 'trip_end' else charge_metrics(start, end, samples, profile, partial=partial)
+                   if kind == 'charge_end' else {})
+        if decoder_changed:
+            for key in ('estimated_kwh_100km', 'range_attainment_percent', 'inside_temp_delta',
+                        'outside_temp_delta', 'average_power_kw', 'tail_power_drop_percent'):
+                if key in metrics: metrics[key] = None
+        coverage = {'accepted_samples': len(samples), 'window_seconds': metrics.get('duration_seconds'),
+                    'max_state_gap_s': metrics.get('max_state_gap_seconds'),
+                    'max_observed_gap_s': metrics.get('max_observed_gap_seconds'),
+                    'max_observation_gap_s': metrics.get('max_gap_seconds'),
+                    'power_covered_seconds': metrics.get('power_covered_seconds'),
+                    'power_coverage': metrics.get('power_coverage'),
+                    'charging_time_coverage': metrics.get('charging_time_coverage')}
+        return {'schema_version': 2, 'metric_version': 'metrics-v1', 'decoder_version': DECODER_VERSION, 'kind': kind,
+                'start_time': start.get('state_time'), 'end_time': end.get('state_time'),
+                'start': start, 'end': end, 'parking': parking, 'metrics': metrics,
+                'statistics': metrics, 'coverage': coverage,
+                'partial': partial, 'profile_snapshot': profile,
+                'quality': {'observation_count': len(samples), 'upgrade_mid_session': upgrade_mid_session,
+                            'parking_samples': parking_samples,
+                            'samples_truncated': samples_truncated,
+                            'decoder_changed_mid_session': decoder_changed,
+                            'quality_reasons': (['upgrade_mid_session'] if upgrade_mid_session else []) +
+                                               (['decoder_changed_mid_session'] if decoder_changed else []) +
+                                               (['late_start'] if partial else []) +
+                                               (['charge_overlap'] if charge_overlap else [])}}
+
+    def observe(self, vehicle, raw, now, battery_capacity_kwh=None, profile=None):
         point = decode(raw, self.active_codes, self.stopped_codes)
+        profile = {key:value for key,value in dict(profile or {}).items()
+                   if key in ('battery_capacity_kwh','range_km','range_standard','range_source')}
+        if battery_capacity_kwh is not None:
+            profile.setdefault('battery_capacity_kwh', battery_capacity_kwh)
+        telemetry = normalize(raw, now, active_codes=self.active_codes, stopped_codes=self.stopped_codes)
         state = self.status(vehicle)
         previous = state['last']
         timestamp = point['time']
         trip = state['trip']
+        if trip and 'report_start' not in trip:
+            trip.update(report_start=telemetry, report_end=telemetry, samples=[telemetry],
+                        profile=profile, parking=None, report_upgrade=True, partial=True)
+        charge = state['charge']
+        had_activity = bool(trip or charge)
+        if charge and 'report_start' not in charge:
+            charge.update(report_start=telemetry, samples=[telemetry], profile=profile,
+                          report_upgrade=True, partial=True)
+        for activity in (trip, charge):
+            if activity and activity.get('report_start', {}).get('decoder_version') != telemetry.get('decoder_version'):
+                activity['decoder_changed'] = True
+                activity['partial'] = True
         repeated_stop = (previous and trip and trip['stop'] and timestamp == previous['time']
                          and point['off'] is True and point['charging'] is False
                          and point['speed'] in (None, 0) and point['km'] == trip['stop']['km'])
@@ -117,6 +212,13 @@ class Monitor:
                             and trip['charging_time'] <= trip['stop']['time']):
                         data['soc_delta'] = None
                         data['partial'] = True
+                    data['report_v2'] = self._report('trip_end', trip['report_start'], trip['report_end'],
+                        trip.get('samples', []), trip.get('profile', profile), data['partial'],
+                        trip.get('charging_time') is not None and trip['charging_time'] <= trip['stop']['time'],
+                        parking=trip.get('parking'), upgrade_mid_session=trip.get('report_upgrade', False),
+                        samples_truncated=trip.get('samples_truncated', False),
+                        decoder_changed=trip.get('decoder_changed', False),
+                        parking_samples=trip.get('parking_samples', 0))
                     self._event(db, vehicle, 'trip_end', data, now)
                     state['trip'] = None
                 db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)',
@@ -128,15 +230,23 @@ class Monitor:
             return 'unchanged'
         point['observed'] = now
         point['location'] = parse_location(raw)
+        point['_report'] = telemetry
         continuous = previous is not None and timestamp - previous['time'] <= MAX_AGE and 0 <= now - previous['observed'] <= MAX_AGE
+        seed_telemetry = None
         moving = point['speed'] is not None and point['speed'] > 0
         distance_moved = continuous and previous['km'] is not None and point['km'] is not None and point['km'] > previous['km']
         if trip and not continuous:
             trip['partial'], trip['stop'] = True, None
         if trip is None and (moving or distance_moved):
             start = previous if continuous else point
-            trip = {'start': start, 'stop': None, 'partial': not continuous, 'charging_time': None}
+            start_raw = start.get('_report', telemetry)
+            seed_telemetry = start_raw
+            trip = {'start': start, 'stop': None, 'partial': not continuous, 'charging_time': None,
+                    'report_start': start_raw, 'report_end': telemetry, 'samples': [start_raw],
+                    'profile': profile, 'parking': None}
         if trip:
+            if trip['stop'] is None or moving or point['off'] is not True:
+                _append_sample(trip, telemetry)
             # TrackStore deduplicates replays if state commit is interrupted.
             if trip['stop'] is None or moving:
                 self.tracks.record(vehicle, raw, now, 180)
@@ -144,11 +254,18 @@ class Monitor:
                 trip['charging_time'] = timestamp
             if moving or point['off'] is not True:
                 trip['stop'] = None
+                trip['parking'] = None
+                trip['parking_samples'] = 0
                 trip.pop('stop_confirmation', None)
             elif trip['stop'] is None:
                 trip['stop'] = point
+                trip['report_end'] = telemetry
+                trip['parking'] = telemetry
+                trip['parking_samples'] = 0
                 trip['stop_confirmation'] = {'started': now, 'observed': now}
-        charge = state['charge']
+            elif point['off'] is True:
+                trip['parking'] = telemetry
+                trip['parking_samples'] = trip.get('parking_samples', 0) + 1
         if charge and not continuous:
             charge['partial'] = True
         with self.tracks.connect() as db:
@@ -158,17 +275,44 @@ class Monitor:
                 if trip.get('charging_time') is not None and trip['charging_time'] <= trip['stop']['time']:
                     data['soc_delta'] = None
                     data['partial'] = True
+                data['report_v2'] = self._report('trip_end', trip['report_start'], trip['report_end'],
+                    trip.get('samples', []), trip.get('profile', profile), data['partial'],
+                    trip.get('charging_time') is not None and trip['charging_time'] <= trip['stop']['time'],
+                    parking=trip.get('parking'), upgrade_mid_session=trip.get('report_upgrade', False),
+                    samples_truncated=trip.get('samples_truncated', False),
+                    decoder_changed=trip.get('decoder_changed', False),
+                    parking_samples=trip.get('parking_samples', 0))
                 self._event(db, vehicle, 'trip_end', data, now)
                 trip = None
             if point['charging'] is True and charge is None:
-                charge = {'start': point, 'partial': not continuous or previous['charging'] is not False}
-                self._event(db, vehicle, 'charge_start', summary(point, point, charge['partial']), now)
+                charge = {'start': point, 'partial': not continuous or previous['charging'] is not False,
+                          'report_start': telemetry, 'samples': [telemetry], 'profile': profile}
+                start_data = summary(point, point, charge['partial'])
+                start_data['report_v2'] = self._report('charge_start', telemetry, telemetry, [telemetry], profile, charge['partial'])
+                self._event(db, vehicle, 'charge_start', start_data, now)
+            elif charge and point['charging'] is True:
+                _append_sample(charge, telemetry)
             elif point['charging'] is False and charge:
                 data = summary(charge['start'], point, charge['partial'])
                 data['battery_capacity_kwh'] = battery_capacity_kwh
+                samples = charge.get('samples', []) + [telemetry]
+                data['report_v2'] = self._report('charge_end', charge['report_start'], telemetry,
+                                                 samples, charge.get('profile', profile), charge['partial'],
+                                                 upgrade_mid_session=charge.get('report_upgrade', False),
+                                                 samples_truncated=charge.get('samples_truncated', False),
+                                                 decoder_changed=charge.get('decoder_changed', False))
                 self._event(db, vehicle, 'charge_end', data, now)
                 charge = None
             state.update(last=point, trip=trip, charge=charge)
+            active_or_transition = had_activity or bool(trip or charge)
+            if active_or_transition:
+                if seed_telemetry and seed_telemetry.get('state_time') is not None:
+                    db.execute('INSERT OR IGNORE INTO report_observations VALUES (?,?,?,?,?)',
+                               (vehicle, int(seed_telemetry['state_time']), seed_telemetry['observed_at'],
+                                json.dumps(seed_telemetry, ensure_ascii=False), DECODER_VERSION))
+                db.execute('INSERT OR IGNORE INTO report_observations VALUES (?,?,?,?,?)',
+                           (vehicle, int(telemetry['state_time']), now,
+                            json.dumps(telemetry, ensure_ascii=False), DECODER_VERSION))
             db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)', (vehicle, json.dumps(state)))
         return 'fresh'
 
@@ -187,9 +331,16 @@ class Monitor:
             if not claimed:
                 continue
             error, next_attempt, sent_at = None, 0, None
+            sender_called = False
             try:
                 data = json.loads(encoded)
-                if not data.get('addresses_resolved'):
+                if data.get('report_v2') and data['report_v2'].get('schema_version') != 2:
+                    raise ValueError('未知报告版本')
+                frozen = data.get('report_v2', {}).get('render', {}).get('message_frozen') is True
+                if not data.get('addresses_resolved') and not frozen:
+                    if (data.get('report_v2') and
+                            data['report_v2'].get('render', {}).get('version') not in (None, 'zh-text-v2')):
+                        raise ValueError('未知渲染器版本')
                     for prefix in ('start', 'end') if kind == 'trip_end' else ('start',):
                         address = None
                         if self.address_resolver:
@@ -199,10 +350,19 @@ class Monitor:
                                 pass
                         data[prefix + '_address'] = ' '.join(address.split())[:100] if isinstance(address, str) else None
                     data['addresses_resolved'] = True
-                    message = message_for(kind, data, event_id)
+                    if data.get('report_v2'):
+                        message, omitted = render(kind, data['report_v2'], event_id,
+                            {'start': data.get('start_address'), 'end': data.get('end_address')})
+                        data['report_v2']['render'] = {'version': 'zh-text-v2', 'omitted': omitted,
+                                                       'message_frozen': True, 'bytes': len(message.encode()),
+                                                       'frozen_at': now,
+                                                       'sha256': hashlib.sha256(message.encode()).hexdigest()}
+                    else:
+                        message = message_for(kind, data, event_id)
                     with self.tracks.connect() as db:
                         db.execute('UPDATE monitor_events SET summary=?,message=? WHERE id=?',
                                    (json.dumps(data, ensure_ascii=False), message, event_id))
+                sender_called = True
                 sender(message)
                 delivery, sent_at = 'sent', now
             except DeliveryError as exc:
@@ -210,7 +370,10 @@ class Monitor:
                 error = str(exc)[:100]
                 next_attempt = now + min(3600, 60 * 2 ** attempts) * 1000
             except Exception:
-                delivery, error = 'uncertain', '发送结果未确认'
+                if sender_called:
+                    delivery, error = 'uncertain', '发送结果未确认'
+                else:
+                    delivery, error = 'failed', '报告准备失败，未调用发送器'
             with self.tracks.connect() as db:
                 db.execute('UPDATE monitor_events SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE id=?',
                            (delivery, error, next_attempt, sent_at, event_id))

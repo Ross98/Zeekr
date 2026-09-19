@@ -187,7 +187,7 @@ class WebServerTests(unittest.TestCase):
              {'status':'blocked', 'heartbeat':str(int(time.time()*1000)), 'error':'测试：会话失效'})
         result = self.app.state()
         self.assertEqual(result['recording']['status'], 'failed')
-        self.assertEqual(result['recording']['error'], '测试：会话失效')
+        self.assertEqual(result['recording']['error'], '采集后台异常，请检查服务状态。')
         self.assertEqual(result['model']['metrics']['battery'], '62%')
 
 
