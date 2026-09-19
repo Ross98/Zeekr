@@ -56,6 +56,22 @@ sudo systemctl enable --now zeekr-control
 
 部署检查包括本机与服务器单元测试、服务资源限制、回环监听、网页与状态接口、停止/恢复演练，以及部署前后既有服务状态和配置校验。单元测试使用合成车辆响应，不证明真实车辆查询成功。真实账号查询及采集应另行记录实测结果。
 
+### 车型图片发布硬检查
+
+已有车型图片的服务器，必须保留 `zeekr_control/vehicle_profiles.json` 的所有权和权限。复制候选使用 `cp -a /opt/zeekr-control/current/. <候选目录>/`；禁止使用丢失属主/组的普通复制后仅凭 root 读取成功放行。该文件不进 Git、不随代码包覆盖。推荐 `zeekr-control:zeekr-control 640`（或 `root:zeekr-control 640`），不要把整棵代码或数据目录递归改成宽松权限。
+
+每次切换 `current` **之前**，用真实服务用户执行候选检查；失败停止发布，不先停旧服务：
+
+```bash
+sudo -u zeekr-control python3 /opt/zeekr-control/check-release.py <候选目录> --require-image --service-user zeekr-control
+```
+
+检查真实读取车型配置、合法图片关联、PNG 和 SVG 可读性，以及概览 SVG 内嵌图片与详情 PNG 一致性。不访问车辆接口、不读取凭据、不发送通知；错误不打印私有配置内容。单元测试和文件哈希不能替代这一步。
+
+首次启用门禁：将已验收版本的 `zeekr_control/release_check.py` 用 `install -o root -g root -m 644` 安装到 `/opt/zeekr-control/check-release.py`；在 `/etc/systemd/system/zeekr-control.service.d/` 安装 `deploy/zeekr-profile-check.conf` 为 `profile-check.conf`，再 `systemctl daemon-reload`。`ExecStartPre` 自动以 Web 服务用户执行；配置读不了时 Web 启动失败，不再悄悄显示无车图页面。图片故障不应阻止独立监控服务采集数据，因此不向监控 unit 添加图片检查。独立检查脚本放在版本目录之外，兼容回滚到没有此模块的旧代码。启用之前先修好、验证当前版本。
+
+上线后仍需用服务账户检查真实缓存车况的 `profile.image`，以及浏览器概览、车辆详情图片是否加载。不要为了验图主动调用车辆刷新接口。Web 启动时可能缓存过错误的空车型资料：修权限后需重新加载配置；重启 Web 会注销现有网页登录，但不应删除车况数据。若候选检查失败，旧版本继续服务；若切换后启动检查失败，恢复兼容旧版本并重新验收。
+
 ## 登录保护
 
 服务通过 `ZEEKR_AUTH_FILE` 指定权限 600、归服务用户所有的 JSON 密码哈希文件，字段为 salt 和 digest，使用 PBKDF2-HMAC-SHA256（600000 次）。配置缺失或格式错误时启动失败，不降级为免登录。未设置此环境变量的本地开发服务仍是原来的本机模式，不得公开。
