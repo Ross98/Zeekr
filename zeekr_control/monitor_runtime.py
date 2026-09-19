@@ -239,7 +239,7 @@ class Runner:
                 fetched = getattr(client, 'last_query_fetched_at', None)
                 fetched_at = int(fetched * 1000) if type(fetched) in (int, float) else observed
                 SnapshotStore(self.root / 'snapshots.sqlite3').publish(
-                    session_scope(session), binding, raw, observed, fetched_at=fetched_at)
+                    session_scope(session), binding, raw, observed, fetched_at=fetched_at, source='monitor')
                 profile = vehicle_profile(binding, choices.index(vin) + 1, len(choices))
                 health['status'] = self.monitor.observe(binding, raw, observed,
                     battery_capacity_kwh=profile.get('battery_capacity_kwh'), profile=profile)

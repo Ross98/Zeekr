@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+from .snapshot_archive import SnapshotArchive, validate_timestamp
 
 
 def _time(raw):
@@ -32,7 +33,7 @@ class SnapshotStore:
         db.commit()
         return db
 
-    def publish(self, scope_key, vehicle_key, raw, observed_at, fetched_at=None):
+    def publish(self, scope_key, vehicle_key, raw, observed_at, fetched_at=None, source='unknown'):
         if not all(isinstance(value, str) and value for value in (scope_key, vehicle_key)):
             raise ValueError('快照作用域或车辆无效。')
         if not isinstance(raw, dict) or type(observed_at) is not int:
@@ -40,9 +41,17 @@ class SnapshotStore:
         fetched_at = observed_at if fetched_at is None else fetched_at
         if type(fetched_at) is not int:
             raise ValueError('车辆读取时间无效。')
-        encoded = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        validate_timestamp(observed_at)
+        validate_timestamp(fetched_at)
+        encoded = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
         state_time = _time(raw)
+        # Archive first, including unchanged/older/unknown-time successful reads.
+        # If the archive fails, do not advance latest state or downstream events.
+        # A later latest-store failure may leave an authentic archived read;
+        # retries are idempotent and never delete that evidence.
+        SnapshotArchive(self.path.parent / 'snapshot-archive').append(
+            scope_key, vehicle_key, encoded, state_time, observed_at, fetched_at, source)
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT state_time,revision,digest FROM snapshots WHERE scope_key=? AND vehicle_key=?',

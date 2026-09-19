@@ -241,7 +241,7 @@ class App:
                 observed_at = int(time.time() * 1000)
                 snapshot = self.snapshot_store.publish(
                     session_scope(load(self.session_path)), key, raw, observed_at,
-                    fetched_at=int((fetched_at if fetched_at is not None else time.time()) * 1000))
+                    fetched_at=int((fetched_at if fetched_at is not None else time.time()) * 1000), source='manual')
                 self.snapshot_revision = snapshot['revision']
                 self.query_cached = bool(getattr(client, 'last_query_cached', False))
                 self.next_query_at = getattr(client, 'next_query_at', None)

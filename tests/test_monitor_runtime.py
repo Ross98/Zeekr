@@ -53,6 +53,14 @@ class RuntimeTests(unittest.TestCase):
             __import__('hashlib').sha256(b'L6T79X2Z0NP000001').hexdigest())
         self.assertIsNotNone(snapshot)
         self.assertEqual(snapshot['raw']['updateTime'], BASE)
+        import sqlite3
+        archive = list((self.root / 'snapshot-archive').glob('*/*.sqlite3'))
+        self.assertEqual(len(archive), 1)
+        runner.tick(BASE + 60000)  # Same cached vehicle response, distinct read.
+        with sqlite3.connect(archive[0]) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM reads').fetchone()[0], 2)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM payloads').fetchone()[0], 1)
+            self.assertEqual(db.execute('SELECT DISTINCT source FROM reads').fetchall(), [('monitor',)])
 
     def test_multiple_vehicles_require_explicit_selection(self):
         class Client:
