@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sqlite3
+from .charging_details import history_details
 
 
 ALLOWED_KINDS = {'trip_end', 'charge_end'}
@@ -66,6 +67,9 @@ class EventStore:
         events = [dict({'id': event_id, 'kind': kind},
                        **{key: summary.get(key) for key in PUBLIC_FIELDS})
                   for event_id, _, summary in page]
+        if kind == 'charge_end':
+            for event, (_, _, summary) in zip(events, page):
+                event['charging_details'] = history_details(summary.get('report_v2'))
         next_cursor = _cursor(page[-1][1], page[-1][0]) if len(selected) > limit and page else None
         return {'events': events, 'next_cursor': next_cursor, 'date': date, 'kind': kind}
 

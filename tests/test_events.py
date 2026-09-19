@@ -45,6 +45,17 @@ class EventStoreTests(unittest.TestCase):
         second = store.query('vehicle-a', '2024-01-02', 'trip_end', cursor=first['next_cursor'], limit=2)
         self.assertEqual([item['id'] for item in second['events']], ['0'])
 
+    def test_charge_details_projection_does_not_expose_private_report(self):
+        from zeekr_control.events import EventStore
+        self.add('charge', 'vehicle-a', 'charge_end', 1704126600000,
+                 report_v2={'schema_version': 2, 'start': {'soc': 52, 'location': 'SECRET'},
+                            'end': {'soc': 80}, 'metrics': {'sampled_peak_kw': 6.5},
+                            'render': {'message': 'SECRET'}})
+        result = EventStore(self.path).query('vehicle-a', '2024-01-02', 'charge_end')
+        self.assertEqual(result['events'][0]['charging_details']['metrics']['sampled_peak_kw'], 6.5)
+        self.assertNotIn('SECRET', json.dumps(result))
+        self.assertNotIn('report_v2', json.dumps(result))
+
     def test_latest_returns_each_completed_kind_for_one_vehicle(self):
         from zeekr_control.events import EventStore
         self.add('old-trip', 'vehicle-a', 'trip_end', 1000, created=1, distance_km=1)

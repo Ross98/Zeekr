@@ -2,6 +2,8 @@
 from .summary import SIDES, POSITIONS, display, number, section, updated_at
 from .vehicle_state import decode
 from .parameter_dictionary import definition, reference
+from .report_telemetry import normalize
+from .charging_details import snapshot_details
 
 
 LABELS = {
@@ -222,6 +224,7 @@ def build_model(data, vehicle=None):
     temperature_time = timestamp(climate.get('temperatureUpdateTime'))
     return {
         'updated_time': status_time, 'temperature_updated_time': temperature_time,
+        'charging_details': snapshot_details(normalize(data, None)),
         'metric_details': {
             'battery': metric_detail(electric.get('chargeLevel'), '%', status_time, 0, 100),
             'range': metric_detail(electric.get('distanceToEmptyOnBatteryOnly'), 'km', status_time, 0),

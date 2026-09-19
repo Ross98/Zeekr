@@ -1,6 +1,7 @@
 """Versioned, conservative report telemetry. Pure: no I/O or network."""
 from .summary import section
 from .vehicle_state import decode, numeric
+from .charging_details import capture_parameters
 
 DECODER_VERSION = 'we86-v2-ac'
 SIDES = ('Driver', 'Passenger', 'DriverRear', 'PassengerRear')
@@ -85,6 +86,7 @@ def normalize(raw, observed_at, capabilities=(), active_codes=(), stopped_codes=
             'observed_at': observed_at, 'soc': point['soc'], 'odometer': point['km'],
             'speed': point['speed'], 'off': point['off'], 'charging': point['charging'],
             'charging_mode': point['charging_mode'],
+            'charging_parameters': capture_parameters(extra, electric),
             'range_km': numeric(electric.get('distanceToEmptyOnBatteryOnly'), 0),
             'closures': closures, 'locked': True if locked else None,
             'trunk': 'closed' if numeric(safety.get('trunkOpenStatus')) == 0 else 'unknown',

@@ -152,6 +152,34 @@ function eventDuration(seconds) {
   return `${minutes} 分钟`;
 }
 
+function chargeNumber(value, unit='') {
+  return Number.isFinite(value)?`${new Intl.NumberFormat('zh-CN',{maximumFractionDigits:3}).format(value)}${unit?' '+unit:''}`:'未提供 / 未记录';
+}
+
+function chargingParameterGroups(start, end=null) {
+  const rows=start?.parameters || end?.parameters || [];
+  const endRows=new Map((end?.parameters || []).map(item=>[item.key,item]));
+  const display=item=>`${chargeNumber(item?.value,item?.unit)}${item?.note?' · '+item.note:''}`;
+  return [...new Set(rows.map(item=>item.group))].map(group=>`<section class="charging-parameter-group"><h3>${esc(group)}</h3><div class="charging-parameter-grid">${rows.filter(item=>item.group===group).map(item=>`<div class="charging-parameter"><span>${esc(item.label)}</span>${end?`<small>起点：${esc(display(item))}</small><small>终点：${esc(display(endRows.get(item.key)))}</small>`:`<strong>${esc(chargeNumber(item.value,item.unit))}</strong>${item.note?`<small>${esc(item.note)}</small>`:''}`}</div>`).join('')}</div></section>`).join('');
+}
+
+function chargingUnavailable() {
+  return `<p class="energy-caption">充电限值、停止原因、电池包温度、桩端结算电量与费用、预约时段：接口未提供或未核验。充电枪连接码不单独推断插拔；高压温度等级不是电池温度。</p>`;
+}
+
+function chargingCurrent(details) {
+  return `<section class="card" id="charging-parameters"><div class="card-head"><div><h2>充电状态参数</h2><p class="card-meta">当前缓存观测 · ${esc(eventTime(details?.state_time))}</p></div>${pill('只读')}</div><div class="card-body"><div class="charging-power">${row('当前观测功率',chargeNumber(details?.power_kw,'kW'))}<p class="energy-caption">${details?.power_source==='ac_ui'?'交流充电电压 × 电流':details?.power_source==='dc_pile_ui'?'直流桩侧电压 × 电流':'缺少可确认的充电与电气证据，暂不计算功率'}；同一观测计算值，不是实时保证或桩端结算值。</p></div>${chargingParameterGroups(details)}${chargingUnavailable()}</div></section>`;
+}
+
+function chargeHistoricalParameters(details) {
+  if (!details) return `<p class="charge-note">这条旧记录未保存充电参数；不使用当前车辆状态补填。</p>`;
+  const metrics=details.metrics || {};
+  const stats=[['采样峰值功率',metrics.sampled_peak_kw,'kW'],['时间加权平均功率',metrics.average_power_kw,'kW'],['有效功率样本',metrics.power_sample_count,'个'],['功率覆盖率',Number.isFinite(metrics.power_coverage)?metrics.power_coverage*100:null,'%'],['功率覆盖时长',metrics.power_covered_seconds,'秒'],['确认充电覆盖时长',metrics.charging_time_covered_seconds,'秒'],['充电时间覆盖率',Number.isFinite(metrics.charging_time_coverage)?metrics.charging_time_coverage*100:null,'%'],['续航增加',metrics.range_delta_km,'km'],['最大车辆数据间隔',metrics.max_state_gap_seconds,'秒'],['最大采集间隔',metrics.max_observed_gap_seconds,'秒'],['停止检测数据间隔',metrics.stop_detection_state_gap_seconds,'秒'],['停止检测采集间隔',metrics.stop_detection_observed_gap_seconds,'秒'],['尾段功率下降',metrics.tail_power_drop_percent,'%']];
+  const mode=snapshot=>snapshot?.mode==='ac'?'交流':snapshot?.mode==='dc'?'直流':'未知';
+  const status=snapshot=>snapshot?.charging===true?'充电中':snapshot?.charging===false?'未充电 / 已停止':'未知';
+  return `<div class="charge-saved-details"><h3>已保存充电参数</h3>${row('起止充电模式',`${mode(details.start)} → ${mode(details.end)}`)}${row('起止充电状态',`${status(details.start)} → ${status(details.end)}`)}${row('起止观测功率',`${chargeNumber(details.start?.power_kw,'kW')} → ${chargeNumber(details.end?.power_kw,'kW')}`)}<div class="charging-parameter-grid">${stats.slice(0,4).map(([label,value,unit])=>`<div class="charging-parameter"><span>${label}</span><strong>${esc(chargeNumber(value,unit))}</strong></div>`).join('')}</div><details class="car-disclosure" data-detail="charge-saved-parameters"><summary><span>全部起止参数与采样质量</span></summary><div class="charge-saved-body">${row('起点车辆数据时间',eventTime(details.start?.state_time))}${row('终点车辆数据时间',eventTime(details.end?.state_time))}${row('起点采集时间',eventTime(details.start?.observed_at))}${row('终点采集时间',eventTime(details.end?.observed_at))}${stats.slice(4).map(([label,value,unit])=>row(label,chargeNumber(value,unit))).join('')}${chargingParameterGroups(details.start,details.end)}${chargingUnavailable()}</div></details><p class="energy-caption">仅比较该次充电已保存观测；部分记录的起点是首次观测，不是实际开始。峰值仅为采样峰值；平均功率需足够样本与覆盖率，缺失不等于零。</p></div>`;
+}
+
 function chargeDetail(event) {
   if (!event) return `<section class="card charge-detail" id="charge-detail">${empty('选择一条充电记录','从左侧列表选择记录后，在这里查看起止时间、电量变化和完整性。','energy')}</section>`;
   const format=value=>Number.isFinite(value)?new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value):'未知';
@@ -162,7 +190,7 @@ function chargeDetail(event) {
   const estimate=Number.isFinite(estimated)?`${format(estimated)} kWh（估算）`:'充入电量无法估算';
   const note=event.partial?'这是部分记录，仅表示已观测 SOC 变化，不作为完整充电量。':
     Number.isFinite(estimated)?'估算使用该事件保存的电池容量与 SOC 变化，不代表充电桩结算电量。':'该事件缺少有效容量或 SOC 数据，未使用当前车型配置补算。';
-  return `<section class="card charge-detail" id="charge-detail"><div class="card-head"><div><h2>充电详情</h2><p class="card-meta">${esc(eventTime(event.end_time))}</p></div>${pill(event.partial?'部分记录':'完整记录',event.partial?'warn':'good')}</div><div class="charge-soc"><div><span>起始 SOC</span><strong>${format(event.start_soc)}${Number.isFinite(event.start_soc)?'<small>%</small>':''}</strong></div><div class="charge-soc-line" aria-hidden="true"><i></i></div><div><span>结束 SOC</span><strong>${format(event.end_soc)}${Number.isFinite(event.end_soc)?'<small>%</small>':''}</strong></div></div><div class="card-body charge-facts">${row('开始时间',eventTime(event.start_time))}${row('结束时间',eventTime(event.end_time))}${row('记录时长',eventDuration(event.duration_seconds))}${row('电量增加',Number.isFinite(delta)?`${format(delta)} 个百分点`:'未知')}${row('估算充入电量',estimate)}</div><div class="charge-note ${event.partial?'warning':''}">${esc(note)}</div></section>`;
+  return `<section class="card charge-detail" id="charge-detail"><div class="card-head"><div><h2>充电详情</h2><p class="card-meta">${esc(eventTime(event.end_time))}</p></div>${pill(event.partial?'部分记录':'完整记录',event.partial?'warn':'good')}</div><div class="charge-soc"><div><span>起始 SOC</span><strong>${format(event.start_soc)}${Number.isFinite(event.start_soc)?'<small>%</small>':''}</strong></div><div class="charge-soc-line" aria-hidden="true"><i></i></div><div><span>结束 SOC</span><strong>${format(event.end_soc)}${Number.isFinite(event.end_soc)?'<small>%</small>':''}</strong></div></div><div class="card-body charge-facts">${row('开始时间',eventTime(event.start_time))}${row('结束时间',eventTime(event.end_time))}${row('记录时长',eventDuration(event.duration_seconds))}${row('电量增加',Number.isFinite(delta)?`${format(delta)} 个百分点`:'未知')}${row('估算充入电量',estimate)}</div><div class="charge-note ${event.partial?'warning':''}">${esc(note)}</div>${chargeHistoricalParameters(event.charging_details)}</section>`;
 }
 
 function chargeHistoryBody() {
@@ -177,7 +205,12 @@ function renderChargeHistory() {
   if (!list) return;
   list.innerHTML=chargeHistoryBody();
   const detail=$('#charge-detail');
-  if (detail) detail.outerHTML=chargeDetail(chargeSelected);
+  if (detail) {
+    const opened=detail.querySelector('details[open]')!==null;
+    detail.outerHTML=chargeDetail(chargeSelected);
+    const saved=$('#charge-detail details');
+    if (saved && opened) saved.open=true;
+  }
 }
 
 async function loadChargeEvents(version) {
@@ -298,9 +331,7 @@ function energy() {
   const canCalculate = trip.status === 'available' && Number.isFinite(trip.ratio);
   const reasons = {no_trip:'等待后台记录并确认一段完整行程。', incomplete:'最近行程存在观测缺口或跨充电，无法计算。', invalid:'最近行程的里程、电量或时间数据无效。', no_consumption:'最近行程耗电为零或电量回升，无法计算。', no_rating:'当前车型缺少有效标称续航。', unavailable:'行程记录暂不可用，请稍后重试。'};
   const format = value => new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value);
-  const electric = m.fields.filter(f => f.group === '能源与充电');
-  const field = key => electric.find(f => f.key === key);
-  const time = field('timeToFullyCharged');
+  const electric = m.fields.filter(f => f.group === '能源与充电' || f.path === 'additionalVehicleStatus.chargeHvSts');
   const remainingTime = m.charging.remaining_time || '未知';
   const electricKeys = ['chargeUAct','chargeIAct','dcChargeSts','dcChargeIAct','dcChargePileUAct','dcChargePileIAct','chargeHvSts','hvTempLevel','ptReady'];
   const strategyKeys = ['bookChargeSts','chargeLidAcStatus','chargeLidDcAcStatus','disChargeSts','disChargeConnectStatus','disChargeUAct','disChargeIAct','timeToTargetDisCharged'];
@@ -316,6 +347,7 @@ function energy() {
     <section class="card energy-charge"><div class="card-head"><h2>当前充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body"><div class="energy-current-soc"><span>当前电量</span><strong>${validBattery?`${format(battery)}%`:'未知'}</strong></div>
       <div class="energy-charge-grid">${[['充电模式',m.charging.mode==='dc'?'直流充电':m.charging.mode==='ac'?'交流充电':'未知'],['预计剩余时间',remainingTime],['连接状态',m.charging.connection_state || '接口未提供有效连接判断']].map(([label,value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p><p class="energy-caption">状态来自车辆云端缓存；缺少会话起点时不推测充电开始时间。</p></div></section>
   </div>
+  ${chargingCurrent(m.charging_details)}
   <section class="charge-history-section" id="charge-history"><div class="charge-history-head"><div><h2>充电记录</h2><p>按结束时间归入北京时间日期，每页显示 20 条。</p></div><label>充电记录日期<input type="date" id="charge-date" value="${esc(chargeDate)}"></label></div><div class="charge-history-layout"><section class="card charge-list-card"><div id="charge-list">${chargeHistoryBody()}</div></section>${chargeDetail(chargeSelected)}</div></section>
   <section class="card energy-achievement"><div class="card-head"><h2>续航与行程参考</h2>${pill('最近已结束行程')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
       <p class="energy-caption">${canCalculate ? `按实际行驶里程与耗电量，对比 ${esc(trip.standard)} 标称续航` : esc(reasons[trip.status] || reasons.invalid)}</p>
