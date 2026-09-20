@@ -140,10 +140,33 @@ def seed_demo(app,session):
         note='演示如何保留研究线索；不能据此确认字段语义。'),scope)
 
 
+def seed_automatic(app, session):
+    """Optional analysis examples; never run a monitor or call a cloud client."""
+    import time
+    from zeekr_control.usage_reports import DAY, date_label
+    now = int(time.time()*1000)
+    today, _ = day_bounds(date_label(now))
+    vehicle = hashlib.sha256(b'insights-fixture-car').hexdigest()
+    with Monitor(app.database_path).tracks.connect() as db:
+        for index in range(18):
+            kind = 'trip_end' if index < 8 else 'charge_end'
+            start = today-(12 if index < 5 else 1)*DAY + index*60000
+            a, b = (70, 60) if kind == 'trip_end' else (20+(index%5)*5, 80)
+            summary = dict(start_time=start, end_time=start+3600000, duration_seconds=3600,
+                distance_km=40 if index < 5 else 35, start_soc=a, end_soc=b, soc_delta=b-a,
+                partial=index in (5, 8), battery_capacity_kwh=86,
+                report_v2={'start': {'charging_mode': 'ac' if index < 13 else 'dc'}})
+            db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
+                ('auto-demo-%d'%index, vehicle, kind, json.dumps(summary), 'SYNTHETIC', start+3600000))
+    report = app.automatic_analyzer.build(session_scope(session), vehicle, now)
+    app.automatic_cache.success(session_scope(session), vehicle, now, report)
+
+
 if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--demo',action='store_true',help='Preload synthetic bills, tags, tasks and an experiment.')
     parser.add_argument('--partial-charge',action='store_true',help='Use a partial charge for observed-metric acceptance.')
+    parser.add_argument('--automatic',action='store_true',help='Preload synthetic automatic analysis results.')
     parser.add_argument('--port',type=int,default=0,help='Loopback port; default chooses an available port.')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
@@ -159,6 +182,8 @@ if __name__ == '__main__':
         seed_charge_curves(app)
         if args.demo:
             seed_demo(app,session)
+        if args.automatic:
+            seed_automatic(app,session)
         server = make_server(app, args.port)
         print(server.server_port, flush=True)
         try:

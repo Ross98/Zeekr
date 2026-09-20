@@ -25,6 +25,8 @@ from .personal_store import PersonalStore, account_scope
 from .custom_reminders import Reminders
 from .sampling import read_settings, save_settings
 from .query_policy import QueryPolicy
+from .archive_reader import ArchiveReader
+from .automatic_insights import Analyzer, InsightCache, InsightWorker
 
 
 def enable_sampling(root):
@@ -59,6 +61,7 @@ def collection_loop(runner, stop, once=False):
         previous_interval = interval
         if enabled != previous or time.monotonic() >= deadline:
             delay = runner.tick()
+            runner.start_analysis()
             normal_wait = delay == interval and runner.health().get('status') not in ('cooldown', 'retrying', 'blocked')
             finished_at = time.monotonic()
             deadline = finished_at + delay
@@ -78,6 +81,7 @@ def background(session_path, stop):
                 try:
                     collection_loop(runner, stop)
                 finally:
+                    runner.insight_worker.close()
                     health = runner.health()
                     health.update(status='stopped', heartbeat=str(int(time.time() * 1000)))
                     save(root / 'monitor-health.json', health)
@@ -183,11 +187,27 @@ class Runner:
         self.reminders.recover()
         self.blocked_fingerprint = None
         self.failures = 0
+        self.analysis_input = None
+        self.insight_worker = InsightWorker(
+            Analyzer(self.root / 'tracks.sqlite3', ArchiveReader(self.root / 'snapshot-archive')),
+            InsightCache(self.root / 'automatic-insights.json'))
+
+    def start_analysis(self):
+        if self.analysis_input is None:
+            return False
+        scope, vehicle, observed = self.analysis_input
+        self.analysis_input = None
+        def guard():
+            return (sampling_enabled(self.root)
+                    and session_scope(load(self.session_path)) == scope
+                    and load(self.root / 'monitor-binding.json').get('vehicle_key') == vehicle)
+        return self.insight_worker.start(scope, vehicle, observed, guard)
 
     def health(self):
         return load(self.root / 'monitor-health.json')
 
     def tick(self, now=None):
+        self.analysis_input = None
         live_clock = now is None
         now = int(time.time() * 1000) if now is None else now
         health = self.health()
@@ -258,6 +278,7 @@ class Runner:
                         raise ApiError('账号会话或绑定车辆已变化，本次自定义提醒已取消')
                 self.reminders.observe(account_scope(session), binding, raw, observed,
                                        sender=self.sender, guard=reminder_guard)
+                self.analysis_input = (session_scope(session), binding, observed)
         except RateLimited as exc:
             delay = max(60, exc.seconds)
             health.update(status='cooldown', error='接口限流，等待冷却')
@@ -297,6 +318,7 @@ def run(session_path=DEFAULT_PATH, vehicle=None, once=False, active_codes=(), st
                         print('统一采集已启动：正常采集每 %d 秒（含停车）；充电起止通知。' % read_settings(root)[1], flush=True)
                         collection_loop(runner, stop, once)
                     finally:
+                        runner.insight_worker.close()
                         health = runner.health()
                         health.update(status='stopped', heartbeat=str(int(time.time() * 1000)))
                         save(root / 'monitor-health.json', health)

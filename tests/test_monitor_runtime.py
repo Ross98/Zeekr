@@ -94,6 +94,50 @@ class RuntimeTests(unittest.TestCase):
         runner.tick(BASE)
         self.assertEqual(runner.health()['status'], 'blocked')
 
+    def test_successful_collection_schedules_analysis_without_extra_vehicle_query(self):
+        from zeekr_control.monitor_runtime import collection_loop
+        from zeekr_control.snapshots import session_scope
+        import hashlib
+        import threading
+        class Client:
+            calls = 0
+            def __init__(self, session): pass
+            def vehicles(self): return [{'vin': 'L6T79X2Z0NP000001'}]
+            def status(self, vin):
+                Client.calls += 1
+                return sample(0)
+        runner = self.runner(Client)
+        self.addCleanup(lambda: runner.insight_worker.close())
+        with patch('zeekr_control.monitor_runtime.time.time', return_value=BASE/1000):
+            collection_loop(runner, threading.Event(), once=True)
+        self.assertEqual(Client.calls, 1)
+        self.assertIsNotNone(runner.insight_worker.thread)
+        runner.insight_worker.thread.join(2)
+        data = runner.insight_worker.cache.query(session_scope({'accessToken': 'synthetic'}),
+            hashlib.sha256(b'L6T79X2Z0NP000001').hexdigest(), BASE, 0)
+        self.assertEqual(data['status'], 'ready')
+        self.assertEqual(data['report']['quality']['reads'], 1)
+        save(self.root/'sampling.json', {'enabled': 'false'})
+        runner.tick(BASE+3600000)
+        self.assertFalse(runner.start_analysis())
+
+    def test_analysis_context_guard_rejects_changed_session_and_pause(self):
+        class Client:
+            def __init__(self, session): pass
+            def vehicles(self): return [{'vin': 'L6T79X2Z0NP000001'}]
+            def status(self, vin): return sample(0)
+        runner = self.runner(Client)
+        runner.tick(BASE)
+        with patch.object(runner.insight_worker, 'start', return_value=True) as start:
+            self.assertTrue(runner.start_analysis())
+            guard = start.call_args.args[3]
+            self.assertTrue(guard())
+            save(self.root/'sampling.json', {'enabled': 'false'})
+            self.assertFalse(guard())
+            save(self.root/'sampling.json', {'enabled': 'true'})
+            save(self.root/'session.json', {'accessToken': 'different'})
+            self.assertFalse(guard())
+
     def test_credentials_error_waits_for_session_change_without_requery(self):
         from zeekr_control.errors import ApiError
         class Client:

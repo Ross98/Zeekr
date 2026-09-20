@@ -90,6 +90,37 @@ class InsightsApiTests(unittest.TestCase):
         for query in ('start=2026-09-20&end=2026-09-19', 'start=2026-01-01&end=2026-09-20', 'start=&end='):
             self.assertEqual(self.get('/api/insights/parking?' + query)[0], 400)
 
+    def test_automatic_insights_reads_cache_only_and_rejects_switched_account(self):
+        route = '/api/insights/automatic'
+        status, data = self.get(route)
+        self.assertEqual(status, 200)
+        self.assertEqual(data['status'], 'waiting')
+        self.assertFalse(self.app.automatic_cache.path.exists())
+        report = self.app.automatic_analyzer.build(session_scope(self.session), self.vehicle, self.start+60000)
+        self.app.automatic_cache.success(session_scope(self.session), self.vehicle, self.start+60000, report)
+        with patch.object(self.app.automatic_analyzer, 'build', side_effect=AssertionError('GET must not analyze')):
+            self.assertEqual(self.get(route)[1]['report']['quality']['reads'], 2)
+        original = self.app.automatic_cache.query
+        def switched(*args):
+            result = original(*args)
+            save(self.path, {'accessToken': 'DIFFERENT-OWNER'})
+            return result
+        with patch.object(self.app.automatic_cache, 'query', side_effect=switched):
+            self.assertEqual(self.get(route)[0], 400)
+        self.assertNotIn('report', self.get(route)[1])
+
+    def test_automatic_analysis_and_script_require_auth(self):
+        from zeekr_control.auth import WebAuth, password_record
+        protected = make_server(self.app, 0, auth=WebAuth(password_record('synthetic-password')))
+        thread = threading.Thread(target=protected.serve_forever, daemon=True); thread.start()
+        try:
+            for path in ('/api/insights/automatic', '/automatic-insights.js'):
+                conn = http.client.HTTPConnection('127.0.0.1', protected.server_port)
+                conn.request('GET', path); response = conn.getresponse()
+                self.assertEqual(response.status, 401); response.read(); conn.close()
+        finally:
+            protected.shutdown(); protected.server_close(); thread.join()
+
     def test_period_report_has_scope_and_validates_period(self):
         code, data = self.get('/api/insights/report?period=month&date=2026-09-20')
         self.assertEqual(code, 200)

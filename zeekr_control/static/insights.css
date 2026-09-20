@@ -148,3 +148,12 @@
  .research-tabs,.research-detail-tabs{gap:14px}.research-detail-head .insight-heading{display:block}.research-detail-head .insight-heading>.button{margin-top:12px}
  .research-detail-stats{gap:8px}.research-detail-stats .research-stat strong{font-size:24px}
 }
+.auto-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.auto-grid > :last-child { grid-column: 1 / -1; }
+.auto-grid .insight-panel { margin: 0; min-width: 0; }
+.auto-grid .insight-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#auto-quality .insight-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.auto-conclusion { font-size: 1.08rem; font-weight: 600; line-height: 1.7; }
+.auto-charge-group { margin-top: 18px; }
+.auto-charge-group h4 { margin-bottom: 6px; }
+@media (max-width: 800px) { .auto-grid { grid-template-columns: minmax(0, 1fr); } #auto-quality .insight-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
