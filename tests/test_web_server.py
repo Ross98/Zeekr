@@ -137,12 +137,22 @@ class WebServerTests(unittest.TestCase):
 
     def test_recording_controls_shared_backend_and_validates_interval(self):
         from zeekr_control.storage import load
-        self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 0})[0], 400)
+        self.assertEqual(self.app.state()['recording']['interval'], 30)
+        for invalid in (0, 9, 61, True, 30.5, '30'):
+            self.assertEqual(self.post('/api/recording', {'active': True, 'interval': invalid})[0], 400)
         self.assertEqual(self.post('/api/recording', {'active': 'false', 'interval': 60})[0], 400)
         self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 60})[0], 200)
         self.assertEqual(load(self.app.session_path.parent / 'sampling.json')['enabled'], 'true')
         self.assertEqual(self.post('/api/recording', {'active': False, 'interval': 60})[0], 200)
         self.assertEqual(load(self.app.session_path.parent / 'sampling.json')['enabled'], 'false')
+        for interval in (10, 15, 30, 60):
+            code, result = self.post('/api/recording', {'active': False, 'interval': interval})
+            self.assertEqual(code, 200)
+            self.assertEqual(result['recording']['interval'], interval)
+            self.assertFalse(result['recording']['active'])
+        self.post('/api/recording', {'active': True, 'interval': 10})
+        self.assertEqual(self.post('/api/recording', {'active': False})[1]['recording']['interval'], 10)
+        self.assertEqual(load(self.app.session_path.parent / 'sampling.json')['interval'], '10')
 
 
     def test_history_unavailable_is_not_empty_success_and_bad_dates_fail(self):
@@ -288,6 +298,6 @@ class WebServerTests(unittest.TestCase):
     def test_control_storage_failure_does_not_claim_success(self):
         from unittest.mock import patch
         self.post('/api/recording', {'active': False, 'interval': 60})
-        with patch('zeekr_control.web.save', side_effect=OSError('disk unavailable')):
+        with patch('zeekr_control.sampling.save', side_effect=OSError('disk unavailable')):
             self.assertEqual(self.post('/api/recording', {'active': True, 'interval': 60})[0], 500)
         self.assertFalse(self.app.state()['recording']['active'])

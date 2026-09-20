@@ -21,7 +21,7 @@ class HistoryWebTests(unittest.TestCase):
             self.calls.append(url)
             return self.responses.pop(0)
         self.patch = patch('zeekr_control.web.HistoryClient',
-                           side_effect=lambda session: HistoryClient(session, transport=transport), create=True)
+                           side_effect=lambda session, **kwargs: HistoryClient(session, transport=transport), create=True)
         self.patch.start()
         self.addCleanup(self.patch.stop)
 

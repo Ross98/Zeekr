@@ -16,6 +16,7 @@ import stat
 import time
 
 from .errors import ApiError, RateLimited
+from .sampling import read_settings
 
 DEFAULT_PATH = Path.home() / 'Library' / 'Application Support' / 'ZeekrControl' / 'queries.sqlite3'
 INTERVAL = 60
@@ -73,28 +74,33 @@ class QueryPolicy:
                 try:
                     connection.execute('CREATE TABLE IF NOT EXISTS cooldown (key TEXT PRIMARY KEY, until REAL NOT NULL)')
                     connection.execute('CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, fetched REAL NOT NULL, expires REAL NOT NULL, data TEXT NOT NULL)')
+                    connection.execute('CREATE TABLE IF NOT EXISTS status_attempts (key TEXT PRIMARY KEY, attempted REAL NOT NULL)')
+                    interval = read_settings(self.path.parent)[1] if operation == 'status' else INTERVAL
                     now = self.clock()
                     connection.execute('DELETE FROM cache WHERE expires <= ?', (now,))
                     keys = ['gateway'] + (['status:' + account_key] if operation == 'status' else [])
                     deadlines = [connection.execute('SELECT until FROM cooldown WHERE key=?', (key,)).fetchone() for key in keys]
+                    if operation == 'status':
+                        attempt = connection.execute('SELECT attempted FROM status_attempts WHERE key=?', (account_key,)).fetchone()
+                        if attempt:
+                            deadlines[-1] = (attempt[0] + interval,)
                     self.next_query_at = max([now] + [row[0] for row in deadlines if row])
                     row = connection.execute('SELECT fetched, data FROM cache WHERE key=?', (cache_key,)).fetchone()
-                    if row and 0 <= now - row[0] < INTERVAL:
+                    if row and 0 <= now - row[0] < interval:
                         self.cache_hit, self.fetched_at = True, row[0]
-                        self.next_query_at = max(self.next_query_at, row[0] + INTERVAL)
+                        self.next_query_at = max(self.next_query_at, row[0] + interval)
                         result = json.loads(row[1])
                         connection.commit()
                         return result
                     # A 429 pauses every gateway and login operation in this
                     # local profile. Valid cached results remain readable.
-                    for key in keys:
-                        row = connection.execute('SELECT until FROM cooldown WHERE key=?', (key,)).fetchone()
-                        if row and row[0] > now:
-                            wait = math.ceil(row[0] - now)
-                            raise ApiError('本机查询保护：请等待 %d 秒后再查询；未发送网络请求。' % wait, retry_after=wait)
+                    if self.next_query_at > now:
+                        wait = math.ceil(self.next_query_at - now)
+                        raise ApiError('本机查询保护：请等待 %d 秒后再查询；未发送网络请求。' % wait, retry_after=wait)
                     if operation == 'status':
-                        self.next_query_at = max(self.next_query_at, now + INTERVAL)
-                        connection.execute('INSERT OR REPLACE INTO cooldown VALUES (?, ?)', ('status:' + account_key, now + INTERVAL))
+                        self.next_query_at = max(self.next_query_at, now + interval)
+                        connection.execute('INSERT OR REPLACE INTO status_attempts VALUES (?, ?)', (account_key, now))
+                        connection.execute('INSERT OR REPLACE INTO cooldown VALUES (?, ?)', ('status:' + account_key, now + interval))
                     try:
                         result = fetch()
                     except RateLimited as exc:
@@ -109,7 +115,9 @@ class QueryPolicy:
                         raise
                     self.fetched_at = self.clock()
                     if operation in ('status', 'vehicles', 'history', 'history_points'):
-                        self.next_query_at = max(self.next_query_at, self.fetched_at + INTERVAL)
+                        self.next_query_at = max(self.next_query_at, self.fetched_at + interval)
+                        # Retain up to 60 seconds so increasing the status interval
+                        # can reuse the original response, with its original time.
                         connection.execute('INSERT OR REPLACE INTO cache VALUES (?, ?, ?, ?)',
                                            (cache_key, self.fetched_at, self.fetched_at + INTERVAL,
                                             json.dumps(result, ensure_ascii=False, allow_nan=False)))

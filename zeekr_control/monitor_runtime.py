@@ -23,20 +23,25 @@ from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
 from .personal_store import PersonalStore, account_scope
 from .custom_reminders import Reminders
+from .sampling import read_settings, save_settings
+from .query_policy import QueryPolicy
 
 
 def enable_sampling(root):
-    save(Path(root) / 'sampling.json', {'enabled': 'true'})
+    save_settings(root, True)
 
 
 def sampling_enabled(root):
-    return load(Path(root) / 'sampling.json').get('enabled', 'true') != 'false'
+    return read_settings(root)[0]
 
 
 def collection_loop(runner, stop, once=False):
     """One owner; control changes are noticed within one second without querying."""
     deadline = 0
     previous = None
+    previous_interval = None
+    finished_at, delay = 0, None
+    normal_wait = False
     while not stop.is_set():
         storage_health = getattr(runner, 'storage_health', None)
         if storage_health is not None:
@@ -46,10 +51,17 @@ def collection_loop(runner, stop, once=False):
                 # Health failure is visible in journal + stale Web timestamp,
                 # but does not silently disable unrelated vehicle collection.
                 print('存储健康巡检或预警状态持久化失败，请检查存储。', flush=True)
-        enabled = sampling_enabled(runner.root)
+        enabled, interval = read_settings(runner.root)
+        if interval != previous_interval and normal_wait:
+            # Reschedule normal collection only; a setting change cannot shorten
+            # network backoff or a server cooldown.
+            deadline = finished_at + interval
+        previous_interval = interval
         if enabled != previous or time.monotonic() >= deadline:
             delay = runner.tick()
-            deadline = time.monotonic() + delay
+            normal_wait = delay == interval and runner.health().get('status') not in ('cooldown', 'retrying', 'blocked')
+            finished_at = time.monotonic()
+            deadline = finished_at + delay
             previous = enabled
             if once:
                 break
@@ -161,7 +173,8 @@ class Runner:
         if set(active_codes) & set(stopped_codes):
             raise ValueError('充电与停止状态码不可重叠')
         self.vehicle = vehicle
-        self.client_factory = client_factory
+        self.client_factory = ((lambda session: Client(session, query_policy=QueryPolicy(self.root / 'queries.sqlite3')))
+                               if client_factory is Client else client_factory)
         self.monitor = Monitor(self.root / 'tracks.sqlite3', active_codes, stopped_codes,
                                address_resolver=AmapGeocoder(self.root / 'amap-geocoding.json'))
         self.sender = sender if sender is not None else WeComSender(self.root / 'wecom-webhook.json')
@@ -179,12 +192,13 @@ class Runner:
         now = int(time.time() * 1000) if now is None else now
         health = self.health()
         health.update(heartbeat=str(now))
-        delay = 60
+        enabled, interval = read_settings(self.root)
+        delay = interval
         fingerprint = None
-        if not sampling_enabled(self.root):
-            health.update(status='paused', error='', interval='60', next_check=str(now + 60000))
+        if not enabled:
+            health.update(status='paused', error='', interval=str(interval), next_check=str(now + interval * 1000))
             save(self.root / 'monitor-health.json', health)
-            return 60
+            return interval
         try:
             session = load(self.session_path)
             fingerprint = hashlib.sha256(json.dumps(session, sort_keys=True).encode()).hexdigest()
@@ -225,8 +239,7 @@ class Runner:
                 health['status'] = self.monitor.observe(binding, raw, observed,
                     battery_capacity_kwh=profile.get('battery_capacity_kwh'), profile=profile)
                 state = self.monitor.status(binding)
-                # Keep parking start detection within the same 60-second cadence.
-                delay = 60
+                # Parking uses the same cadence, so starting a trip stays visible.
                 if health['status'] == 'fresh':
                     if self.monitor.tracks.record(binding, raw, observed, 180):
                         health['last_new'] = str(observed)
@@ -234,7 +247,6 @@ class Runner:
                     newest = db.execute('SELECT MAX(observed_time) FROM observations WHERE vehicle=?', (binding,)).fetchone()[0]
                 if newest is not None:
                     health['last_new'] = str(newest)
-                health['interval'] = str(delay)
                 health.update(error='', last_success=str(observed),
                               trip='waiting' if state['trip'] and state['trip']['stop'] else 'driving' if state['trip'] else 'idle',
                               charge='charging' if state['charge'] else 'idle' if state['last'] and state['last']['charging'] is False else 'unknown',
@@ -251,7 +263,10 @@ class Runner:
             health.update(status='cooldown', error='接口限流，等待冷却')
         except ApiError as exc:
             error = str(exc)
-            if any(token in error for token in ('网络或 TLS', 'HTTP 5', '并发锁')):
+            if exc.retry_after:
+                delay = max(interval, exc.retry_after)
+                health.update(status='cooldown', error=error[:150])
+            elif any(token in error for token in ('网络或 TLS', 'HTTP 5', '并发锁')):
                 self.failures += 1
                 delay = min(900, 60 * 2 ** min(self.failures, 4))
                 health.update(status='retrying', error=error[:150])
@@ -260,6 +275,7 @@ class Runner:
                 health.update(status='blocked', error=error[:150])
         # Storage errors escape and stop the worker, never inventing transitions.
         self.monitor.deliver(self.sender, now)
+        health['interval'] = str(delay)
         health['next_check'] = str((int(time.time() * 1000) if live_clock else now) + delay * 1000)
         save(self.root / 'monitor-health.json', health)
         return delay
@@ -278,7 +294,7 @@ def run(session_path=DEFAULT_PATH, vehicle=None, once=False, active_codes=(), st
                 with process_lock(root / 'monitor.lock'):
                     runner = Runner(session_path, vehicle, active_codes=active_codes, stopped_codes=stopped_codes)
                     try:
-                        print('统一采集已启动：正常采集每 60 秒（含停车）；充电起止通知。', flush=True)
+                        print('统一采集已启动：正常采集每 %d 秒（含停车）；充电起止通知。' % read_settings(root)[1], flush=True)
                         collection_loop(runner, stop, once)
                     finally:
                         health = runner.health()

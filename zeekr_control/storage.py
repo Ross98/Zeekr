@@ -5,7 +5,7 @@ from pathlib import Path
 import stat
 import tempfile
 
-from .client import ApiError
+from .errors import ApiError
 
 DEFAULT_PATH = Path.home() / 'Library' / 'Application Support' / 'ZeekrControl' / 'session.json'
 

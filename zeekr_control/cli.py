@@ -3,12 +3,14 @@ import argparse
 import getpass
 import hashlib
 import json
+from pathlib import Path
 import re
 import sys
 
 from .client import Client, ApiError
 from .storage import DEFAULT_PATH, load, save, clear
 from .summary import format_status
+from .query_policy import QueryPolicy
 
 
 def redact(value, full=False):
@@ -84,12 +86,10 @@ def main(argv=None, session_path=DEFAULT_PATH):
             return run(session_path, args.vehicle, args.once, args.charging_active_code, args.charging_stopped_code)
         if args.command == 'monitor-status':
             from .monitor_runtime import read_status
-            from pathlib import Path
             print(json.dumps(read_status(Path(session_path).parent), ensure_ascii=False, indent=2))
             return 0
         if args.command == 'report-preview':
             from .report_preview import preview
-            from pathlib import Path
             result = preview(Path(session_path).parent / 'tracks.sqlite3', args.event, args.fixture, args.target_bytes)
             print(result['text'])
             print('\n[UTF-8: %d bytes; omitted: %s]' %
@@ -109,7 +109,7 @@ def main(argv=None, session_path=DEFAULT_PATH):
                 raise ApiError('请在运行 Web 服务的机器上使用交互终端；不要通过聊天、参数或管道传递凭据。')
             from .history import validate_session
             existing = load(session_path)
-            vehicles = Client(existing).vehicles()
+            vehicles = Client(existing, query_policy=QueryPolicy(Path(session_path).parent / 'queries.sqlite3')).vehicles()
             if not vehicles or args.vehicle is None and len(vehicles) != 1:
                 raise ApiError('请先查看 vehicles，再用 history-connect --vehicle 序号选择车辆。')
             index = args.vehicle if args.vehicle is not None else 1
@@ -135,7 +135,7 @@ def main(argv=None, session_path=DEFAULT_PATH):
             if not sys.stdin.isatty():
                 raise ApiError('请在本机交互终端运行登录；不要通过聊天、命令参数或管道传递凭据。')
             # A fresh client prevents old tokens contaminating a new account login.
-            client = Client()
+            client = Client(query_policy=QueryPolicy(Path(session_path).parent / 'queries.sqlite3'))
             print('请使用已分享车辆的副账号。新登录可能使该账号的官方 App 下线。')
             if args.token:
                 client.login_jwt(getpass.getpass('粘贴 JWT（输入隐藏）：').strip())
@@ -148,7 +148,7 @@ def main(argv=None, session_path=DEFAULT_PATH):
             save(session_path, client.session)
             print('认证完成，会话已保存。请运行 python3 -m zeekr_control vehicles 验证车辆访问。')
             return 0
-        client = Client(load(session_path))
+        client = Client(load(session_path), query_policy=QueryPolicy(Path(session_path).parent / 'queries.sqlite3'))
         vehicles = client.vehicles()
         if args.command == 'vehicles':
             result = [{'number': index, 'vehicle': entry} for index, entry in enumerate(vehicles, 1)]
@@ -165,7 +165,7 @@ def main(argv=None, session_path=DEFAULT_PATH):
                 raise ApiError('选中车辆没有唯一有效 VIN；需要核对响应字段。')
             result = client.status(next(iter(vins)))
             if client.last_query_cached:
-                print("来源：本机 60 秒共享缓存，本次未重新请求车辆状态。", file=sys.stderr)
+                print("来源：本机共享缓存，本次未重新请求车辆状态。", file=sys.stderr)
             if not args.json:
                 print(format_status(result))
                 return 0

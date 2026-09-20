@@ -13,6 +13,7 @@ import time
 from urllib.parse import parse_qs, urlsplit
 
 from .client import ApiError, Client
+from .query_policy import QueryPolicy
 from .cli import find_vins
 from .storage import DEFAULT_PATH, load, save
 from .summary import updated_at
@@ -74,7 +75,9 @@ class App:
         self.vehicle_life = VehicleLife(self.personal_store)
         self.data_quality = DataQuality(self.archive_reader)
         self.trip_cards = TripCards(self.database_path)
-        self.client_factory = client_factory
+        self.query_path = self.session_path.parent / 'queries.sqlite3'
+        self.client_factory = ((lambda session: Client(session, query_policy=QueryPolicy(self.query_path)))
+                               if client_factory is Client else client_factory)
         self.request_key = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
         self.refresh_lock = threading.Lock()
@@ -149,8 +152,8 @@ class App:
                 storage_error = None
             except Exception:
                 archives, storage_error = [], '本地轨迹存储暂不可用。'
-            from .monitor_runtime import sampling_enabled
-            enabled = sampling_enabled(self.session_path.parent)
+            from .sampling import read_settings
+            enabled, interval = read_settings(self.session_path.parent)
             status = ('paused' if not enabled else 'offline' if not monitoring.get('online') else
                       'failed' if monitoring.get('status') in ('blocked', 'unavailable') else 'active')
             try:
@@ -177,8 +180,8 @@ class App:
                     'snapshot_revision': self.snapshot_revision,
                     'next_query_at': self.next_query_at, 'profile': self.profile, 'archived_vehicles': archives,
                     'error': self.error or session_error or storage_error,
-                    'recording': {'active': enabled, 'interval': 60,
-                                  'effective_interval': int(monitoring.get('interval', 60)),
+                    'recording': {'active': enabled, 'interval': interval,
+                                  'effective_interval': int(monitoring.get('interval', interval)),
                                   'status': status, 'error': monitoring.get('error'),
                                   'last_sample': updated_at(monitoring.get('last_success')),
                                   'last_new': updated_at(monitoring.get('last_new'))},
@@ -231,7 +234,7 @@ class App:
             return HistoryError('busy', '历史查询正在进行，请稍后重试。').result()
         try:
             session, vehicle, fingerprint = self._history_context()
-            result = HistoryClient(session).day(date, cursor)
+            result = HistoryClient(session, query_policy=QueryPolicy(self.query_path)).day(date, cursor)
             # Do not deliver a result for a vehicle/account changed mid-request.
             if self._history_context()[1:] != (vehicle, fingerprint):
                 raise HistoryError('selection_changed', '车辆或账号已切换，请重新查询。')
@@ -266,7 +269,7 @@ class App:
             if (not trip or trip['vehicle'] != vehicle or trip['session'] != fingerprint
                     or trip['expires'] <= time.monotonic()):
                 raise ValueError('行程选择已失效，请重新查询。')
-            result = HistoryClient(session).points(trip['id'], trip['report_time'])
+            result = HistoryClient(session, query_policy=QueryPolicy(self.query_path)).points(trip['id'], trip['report_time'])
             if self._history_context()[1:] != (vehicle, fingerprint):
                 raise HistoryError('selection_changed', '车辆或账号已切换，请重新查询。')
             return result
@@ -454,10 +457,9 @@ class App:
             self.store = TrackStore(self.database_path)
         return self.store
 
-    def recording(self, active, interval):
-        if type(active) is not bool or type(interval) is not int or interval != 60:
-            raise ValueError('统一采集默认间隔为 60 秒，确认停车后自动降至 300 秒。')
-        save(self.session_path.parent / 'sampling.json', {'enabled': 'true' if active else 'false'})
+    def recording(self, active, interval=None):
+        from .sampling import save_settings
+        save_settings(self.session_path.parent, active, interval)
         return self.state()
 
     def location(self):
@@ -801,7 +803,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 if self.path == '/api/field-reviews':
                     return self.send(200, app.review_field(data))
                 if self.path == '/api/recording':
-                    return self.send(200, app.recording(data.get('active'), data.get('interval', 60)))
+                    return self.send(200, app.recording(data.get('active'), data.get('interval')))
                 return self.send(404, {'error': '操作不存在。'})
             except ValueError as exc:
                 self.send(400, {'error': str(exc)[:150]})
