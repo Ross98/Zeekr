@@ -27,8 +27,6 @@ let state = null, page = 'overview', busy = false, transientError = '', showPosi
 let map = null, mapMarker = null, generation = 0, toastTimer;
 let trackSource = 'local', trackDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year:'numeric',month:'2-digit',day:'2-digit' }).format(new Date());
 let trackData = null, playback = [], search = '', groupFilter = '', unknownOnly = false;
-let archiveVehicle = '';
-let eventCursor = null, eventCursorStack = [], eventRequest = 0;
 const beijingDate = value => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
 let chargeDate = beijingDate(Date.now()), chargeDateInitialized = false;
 let chargeEvents = [], chargeSelected = null, chargeCursor = null, chargeCursorStack = [], chargeNextCursor = null, chargeBusy = false, chargeError = '', chargeRequest = 0;
@@ -109,7 +107,7 @@ function action(label, name, kind = '', symbol = '') { return `<button class="bu
 function link(label, target) { return `<button class="text-link" data-page="${target}">${esc(label)}${icon('arrow')}</button>`; }
 function empty(title, text, symbol = 'info') { return `<div class="empty">${icon(symbol)}<h2>${esc(title)}</h2><p>${esc(text)}</p></div>`; }
 function head() {
-  return `<div class="page-head"><div><div class="eyebrow">MY ZEEKR / ${new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit'}).format(new Date())}</div><h1>${pages[page]}</h1><div class="subtle">${descriptions[page]}</div></div><div class="page-actions">${state?.vehicles?.length > 1 ? `<select id="vehicle-select" class="select" aria-label="选择车辆" >${state.vehicles.map(v => `<option value="${v.number}" ${v.number === state.vehicle ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>` : ''}<div class="refresh-control">${action(busy ? '读取中…' : '刷新状态','refresh','','refresh')}<span id="refresh-hint" class="subtle"></span></div></div></div>`;
+  return `<div class="page-head"><div><div class="eyebrow">MY ZEEKR / ${new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit'}).format(new Date())}</div><h1>${pages[page]}</h1><div class="subtle">${descriptions[page]}</div></div><div class="page-actions">${page!=='tracks' && state?.vehicles?.length > 1 ? `<select id="vehicle-select" class="select" aria-label="选择车辆" >${state.vehicles.map(v => `<option value="${v.number}" ${v.number === state.vehicle ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>` : ''}<div class="refresh-control">${action(busy ? '读取中…' : '刷新状态','refresh','','refresh')}<span id="refresh-hint" class="subtle"></span></div></div></div>`;
 }
 
 function modelRequired() {
@@ -508,15 +506,8 @@ function mapPage() {
 }
 
 function tracksPage() {
-  const archives = state?.archived_vehicles || [];
   const toolbar = `<div class="track-toolbar"><div class="tabs" aria-label="轨迹来源"><button class="tab ${trackSource==='local'?'active':''}" data-source="local">本地记录</button><button class="tab ${trackSource==='cloud'?'active':''}" data-source="cloud">云端历史</button></div><label><span class="subtle">北京时间 </span><input type="date" id="track-date" aria-label="轨迹日期" value="${esc(trackDate)}"></label></div>`;
-  if (trackSource === 'cloud') return toolbar + cloudHistoryPage();
-  const note = `<div class="notice info">${icon('info')}本地记录仅覆盖采集开启期间。重复缓存不新增定位，不可信点和较长间断不会连接。</div>`;
-  if (!state?.model && !archives.length) return toolbar + note + modelRequired();
-  const summaries = `<section class="card event-list-card"><div class="card-head"><h2>已结束行程</h2><span class="subtle">北京时间 · 当前车辆</span></div><div id="event-list">${empty('正在读取行程','从本地事件记录读取，不请求车辆云端。','tracks')}</div></section>`;
-  if (!showPosition) return toolbar + note + summaries + `<section class="card section-gap">${privacyGate(true)}</section>`;
-  const selector = archives.length ? `<select id="archive-vehicle" class="select" aria-label="已记录车辆"><option value="">${state.model?'当前车辆':'首辆本地车辆'}</option>${archives.map(v=>`<option value="${esc(v.key)}" ${v.key===archiveVehicle?'selected':''}>${esc(v.label)}</option>`).join('')}</select>` : '';
-  return toolbar + note + summaries + `<div class="filters">${selector}${action('隐藏位置','hide-position','secondary')}${action('重新查询','reload-tracks','secondary','refresh')}${link('管理采集','settings')}</div><div id="track-content"><section class="card">${empty('正在读取记录','正在查询所选日期。','tracks')}</section></div>`;
+  return toolbar + (trackSource === 'cloud' ? cloudHistoryPage() : localTripsPage());
 }
 
 function monitoringPanel() {
@@ -538,6 +529,7 @@ function settings() {
 function more() { return `<div class="more-grid">${['energy','fields','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
 
 function render() {
+  prepareLocalTripRender();
   const fieldFocus = page === 'fields' ? reviewFocusSnapshot() : null;
   generation++;
   const carOpenDetails = ['car','energy'].includes(page) && $('#main').dataset.page === page
@@ -560,10 +552,7 @@ function render() {
   if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);
   if (page === 'energy' && state?.model) { loadChargeEvents(generation); ensureChargingAnalytics(chargingSelection); }
-  if (page === 'tracks' && trackSource === 'local') {
-    loadEvents(generation);
-    if (showPosition && (state?.model || state?.archived_vehicles?.length)) loadTracks(generation);
-  }
+  if (page === 'tracks' && trackSource === 'local') mountLocalTrips();
 }
 
 function createMap(center, zoom = 14, options = {}) {
@@ -600,51 +589,12 @@ async function loadLocation(version) {
   }
 }
 
-async function loadTracks(version) {
-  try {
-    const result = await api(`/api/tracks?date=${encodeURIComponent(trackDate)}${archiveVehicle?'&vehicle='+encodeURIComponent(archiveVehicle):''}`);
-    if (generation !== version || !showPosition) return;
-    trackData = result;
-    playback = result.observations.filter(point => point.plottable);
-    if (!result.count) {
-      $('#track-content').innerHTML = `<section class="card">${empty('这一天还没有本地记录',state.recording.active?'采集正在运行，新的缓存观测将在此显示。':'开启采集后，新的位置观测将保存在本机。此前未采集的路段无法补回。','tracks')}<div class="card-meta">${link('前往采集设置','settings')}</div></section>`;
-      return;
-    }
-    $('#track-content').innerHTML = `<div class="map-layout"><section class="card"><div id="map" class="map-canvas" aria-label="本地采样轨迹地图"></div><div id="map-status" class="map-status">${result.count} 条观测 · ${result.segments.length} 个可信片段 · ${result.truncated?'仅显示前 5000 条，请缩小范围':'时间以缓存状态时间为准，缺失时使用本机观测时间'}</div><div class="track-timeline"><div id="playback-label" class="subtle">拖动滑块逐点回看</div><input id="playback" type="range" aria-label="轨迹回看位置" min="0" max="${Math.max(0,playback.length-1)}" value="0" ${playback.length?'':'disabled'}></div></section><section class="card"><div class="card-head"><h2>采样时间线</h2>${pill('本地记录')}</div><div class="point-list">${result.observations.map(point=>`<div class="point"><span>${esc(point.time_label.replace('（北京时间）',''))}<span class="field-path">${esc(point.time_source)}</span></span>${pill(point.trusted?'接口标记可信':'位置未确认',point.trusted?'':'warn')}</div>`).join('')}</div></section></div>`;
-    if (!playback.length) { $('#map').innerHTML = empty('没有可绘制的位置','观测已保存，但坐标无效或坐标系尚未适配。','map'); return; }
-    createMap([playback[0].latitude,playback[0].longitude],13);
-    result.segments.forEach(segment => {
-      if (segment.length>1) L.polyline(segment.map(p=>[p.latitude,p.longitude]),{color:'#20776e',weight:4}).addTo(map);
-    });
-    playback.forEach(point => L.circleMarker([point.latitude,point.longitude],{radius:4,color:point.trusted?'#20776e':'#9aa4a2',fillOpacity:.7,weight:1}).addTo(map));
-    if (playback.length>1) map.fitBounds(playback.map(p=>[p.latitude,p.longitude]),{padding:[30,30],maxZoom:16});
-    setPlayback(0);
-  } catch (error) {
-    if (generation === version) $('#track-content').innerHTML = `<section class="card">${empty('记录读取失败',error.message,'tracks')}</section>`;
-  }
-}
-
-async function loadEvents(version) {
-  const request = ++eventRequest;
-  try {
-    const result = await api(`/api/events?date=${encodeURIComponent(trackDate)}&kind=trip_end${eventCursor?`&cursor=${encodeURIComponent(eventCursor)}`:''}`);
-    if (request !== eventRequest || generation !== version || trackSource !== 'local' || !$('#event-list')) return;
-    if (!result.events.length) {
-      $('#event-list').innerHTML = empty('这一天没有已结束行程','本地记录为空；部分或尚未确认结束的行程不会列入。','tracks');
-      return;
-    }
-    $('#event-list').innerHTML = `<div class="event-rows">${result.events.map(event => `<article class="event-row"><div><strong>${esc(new Date(event.end_time).toLocaleString('zh-CN',{hour12:false}))}</strong><span>${event.partial?'部分记录':'完整记录'}</span></div><div><b>${Number.isFinite(event.distance_km)?`${esc(event.distance_km)} km`:'里程未知'}</b><span>${Number.isFinite(event.start_soc)?`${esc(event.start_soc)}%`:'未知'} 至 ${Number.isFinite(event.end_soc)?`${esc(event.end_soc)}%`:'未知'}</span></div></article>`).join('')}</div><div class="event-pagination"><button class="button secondary" data-action="events-prev" ${eventCursorStack.length?'':'disabled'}>上一页</button><button class="button secondary" data-action="events-next" data-cursor="${esc(result.next_cursor || '')}" ${result.next_cursor?'':'disabled'}>下一页</button></div>`;
-  } catch (error) {
-    if (generation === version && $('#event-list')) $('#event-list').innerHTML = empty('行程摘要读取失败',error.message,'tracks');
-  }
-}
-
-function setPlayback(index) {
+function setPlayback(index, {pan=true} = {}) {
   const point = playback[index];
   if (!point || !map) return;
   if (mapMarker) mapMarker.remove();
   mapMarker = L.circleMarker([point.latitude,point.longitude],{radius:9,color:point.trusted?'#20776e':'#8a9391',fillOpacity:.35,weight:3}).addTo(map);
-  map.panTo([point.latitude,point.longitude],{animate:trackSource!=='cloud'});
+  if (pan) map.panTo([point.latitude,point.longitude],{animate:trackSource!=='cloud'});
   $('#playback-label').textContent = `${index+1} / ${playback.length} · ${point.time_label} · ${point.time_source} · ${trackSource==='cloud'?'云端轨迹点':point.trusted?'接口标记可信':'位置未确认'}`;
 }
 
@@ -682,6 +632,7 @@ document.addEventListener('click', event => {
   if (!target || target.disabled) return;
   if (handleReviewAction(target)) return;
   if (handleCloudAction(target)) return;
+  if (handleLocalTripAction(target)) return;
   if (target.dataset.page) { page=target.dataset.page; render(); window.scrollTo(0,0); return; }
   if (target.dataset.source) { trackSource=target.dataset.source; render(); return; }
   switch(target.dataset.action) {
@@ -692,8 +643,6 @@ document.addEventListener('click', event => {
     case 'coordinates': showCoordinates=!showCoordinates;render();break;
     case 'recenter': if(map && mapMarker) map.setView(mapMarker.getLatLng(),15);break;
     case 'reload-tracks': render();break;
-    case 'events-next': if(target.dataset.cursor){eventCursorStack.push(eventCursor);eventCursor=target.dataset.cursor;render();}break;
-    case 'events-prev': if(eventCursorStack.length){eventCursor=eventCursorStack.pop();render();}break;
     case 'charge-select': chargeSelected=chargeEvents.find(item=>item.id===target.dataset.eventId)||chargeSelected;chargingSelection=chargeSelected.id;renderChargeHistory();if(chargingTab==='process')loadChargingAnalytics(chargingSelection);break;
     case 'charge-next': if(chargeNextCursor){chargeCursorStack.push(chargeCursor);chargeCursor=chargeNextCursor;chargeSelected=null;loadChargeEvents(generation);}break;
     case 'charge-prev': if(chargeCursorStack.length){chargeCursor=chargeCursorStack.pop();chargeSelected=null;loadChargeEvents(generation);}break;
@@ -709,16 +658,22 @@ document.addEventListener('click', event => {
 });
 document.addEventListener('input', event => {
   if(event.target.id==='search') {search=event.target.value;renderFields();}
-  if(event.target.id==='playback') setPlayback(Number(event.target.value));
+  if(event.target.id==='playback') {
+    if (trackSource==='local') {stopLocalPlayback();displayLocalPoint(Number(event.target.value));}
+    else setPlayback(Number(event.target.value));
+  }
   if(event.target.id==='charging-point') {chargingPoint=Number(event.target.value);renderChargingWorkspace();}
 });
 document.addEventListener('change', event => {
   if(event.target.id==='group') {groupFilter=event.target.value;renderFields();}
   if(event.target.id==='unknown') {unknownOnly=event.target.checked;renderFields();}
-  if(event.target.id==='track-date') {trackDate=event.target.value;eventCursor=null;eventCursorStack=[];render();}
+  if(event.target.id==='track-date') {trackDate=event.target.value;render();}
+  if(event.target.id==='local-playback-speed') {
+    const playing=!!localTrips.timer;localTrips.speed=Number(event.target.value);
+    if(playing)startLocalPlayback();
+  }
   if(event.target.id==='charge-date') {chargeDate=event.target.value;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];render();}
   if(event.target.id==='charging-mode') {chargingMode=event.target.value;chargingStats=null;loadChargingAnalytics();}
-  if(event.target.id==='archive-vehicle') {archiveVehicle=event.target.value;render();}
   if(event.target.id==='vehicle-select') {chargeDateInitialized=false;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];chargingSelection='current';chargingSession=null;chargingSeries=null;chargingStats=null;chargingAnalyticsLoadedKey='';chargingAnalyticsLoadingKey='';refresh();}
 });
 
@@ -738,7 +693,10 @@ async function pollState(force = false) {
     const restarted=state && latest.request_key!==state.request_key;
     state=latest; connectionFailures=0;
     if(restarted) { transientError='';refreshMessage=''; }
-    if(changed) render();
+    if(changed) {
+      if(page==='tracks' && trackSource==='local' && refreshLocalTrips()) {updateConnection();updateClock();}
+      else render();
+    }
     else { updateConnection();updateClock(); }
   } catch(error) {
     connectionFailures=state?connectionFailures+1:2;

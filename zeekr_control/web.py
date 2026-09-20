@@ -15,7 +15,8 @@ from .client import ApiError, Client
 from .cli import find_vins
 from .storage import DEFAULT_PATH, load, save
 from .summary import updated_at
-from .tracks import TrackStore
+from .tracks import TrackStore, day_bounds, empty_route
+from .trips import TripStore
 from .web_model import build_model, parse_location
 from .field_reviews import FieldReviewStore
 from .profiles import vehicle_profile
@@ -41,6 +42,7 @@ class App:
         self.field_review_store = FieldReviewStore(self.database_path.with_name("field-reviews.sqlite3"))
         self.snapshot_store = SnapshotStore(self.session_path.parent / 'snapshots.sqlite3')
         self.event_store = EventStore(self.database_path)
+        self.trip_store = TripStore(self.database_path)
         self.storage_manager = StorageManager(self.session_path.parent)
         self.charging_analytics = ChargingAnalytics(self.database_path)
         self.client_factory = client_factory
@@ -284,22 +286,38 @@ class App:
             result['read_at'] = updated_at(self.read_at)
             return result
 
-    def tracks(self, date, archive=None):
+    def _local_vehicle(self, archive=None):
+        selected = self.vehicle_key
+        if not selected:
+            try:
+                selected = load(self.session_path.parent / 'monitor-binding.json').get('vehicle_key')
+            except ApiError:
+                raise ValueError('本地车辆绑定无法读取。') from None
+        if selected is not None and not isinstance(selected, str):
+            raise ValueError('本地车辆绑定无效。')
+        if not selected:
+            vehicles = self.trip_store.vehicles()
+            if len(vehicles) > 1:
+                raise ValueError('本地存在多辆车辆，无法确定当前车辆。')
+            selected = next(iter(vehicles), None)
+        if archive is not None and (not archive or archive != selected):
+            raise ValueError('所选本地车辆不是当前车辆。')
+        return selected
+
+    def tracks(self, date, archive=None, trip=None):
         with self.lock:
-            # Validate dates even before a database or a selected vehicle exists.
-            from datetime import datetime
-            parsed = datetime.strptime(date, '%Y-%m-%d')
-            if parsed.strftime('%Y-%m-%d') != date:
-                raise ValueError('日期格式无效。')
+            day_bounds(date)
+            selected = self._local_vehicle(archive)
+            if trip is not None:
+                start, end = self.trip_store.bounds(selected, trip, date)
+                return self.trip_store.tracks.between(selected, start, end, date)
             if not self.database_path.exists():
-                return {'observations': [], 'segments': [], 'count': 0, 'date': date,
-                        'source': '本地采样', 'truncated': False}
-            vehicles = self._store().vehicles()
-            keys = {item['key'] for item in vehicles}
-            if archive and archive not in keys:
-                raise ValueError('所选本地车辆不存在。')
-            selected = archive or self.vehicle_key or (vehicles[0]['key'] if vehicles else '')
-            return self._store().day(selected, date)
+                return empty_route(date)
+            return self.trip_store.tracks.day(selected, date)
+
+    def trips(self, date, cursor=None):
+        with self.lock:
+            return self.trip_store.query(self._local_vehicle(), date, cursor)
 
     def events(self, date, kind, cursor=None):
         with self.lock:
@@ -442,8 +460,12 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.history_points(query.get('trip', [''])[0]))
                 if url.path == '/api/tracks':
-                    query = parse_qs(url.query)
-                    return self.send(200, app.tracks(query.get('date', [''])[0], query.get('vehicle', [None])[0]))
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.tracks(query.get('date', [''])[0], query.get('vehicle', [None])[0],
+                                                     trip=query.get('trip', [None])[0]))
+                if url.path == '/api/trips':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.trips(query.get('date', [''])[0], query.get('cursor', [None])[0]))
                 if url.path == '/api/events':
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.events(query.get('date', [''])[0],
@@ -466,6 +488,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                                                                    query.get('mode', [''])[0]))
                 assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
+                          '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),
+                          '/trips.css': ('trips.css', 'text/css; charset=utf-8'),
                           '/field-reviews.js': ('field-reviews.js', 'text/javascript; charset=utf-8'),
                           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                           '/storage-management.js': ('storage-management.js', 'text/javascript; charset=utf-8'),

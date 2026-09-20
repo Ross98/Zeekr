@@ -27,7 +27,7 @@ class AuthTests(unittest.TestCase):
                 c.request(method,path,json.dumps(body) if body is not None else None,headers)
                 r=c.getresponse(); result=(r.status,dict(r.getheaders()),r.read());c.close();return result
             try:
-                for route in ['/api/state','/api/location','/api/tracks','/api/history?date=2024-01-01','/api/history/points?trip=unknown','/api/charging/process?id=current&view=power-soc','/history.js','/car.svg','/app.js']:
+                for route in ['/api/state','/api/location','/api/tracks','/api/trips?date=2024-01-02','/api/tracks?date=2024-01-02&trip=current','/api/history?date=2024-01-01','/api/history/points?trip=unknown','/api/charging/process?id=current&view=power-soc','/history.js','/car.svg','/app.js','/trips.js','/trips.css']:
                     self.assertEqual(request('GET',route)[0],401)
                 self.assertEqual(request('GET','/')[0],200)
                 for asset in ('/theme.js', '/theme.css', '/login.js', '/login.css'):
@@ -46,6 +46,10 @@ class AuthTests(unittest.TestCase):
                 self.assertIn('HttpOnly',headers['Set-Cookie']);self.assertIn('Secure',headers['Set-Cookie'])
                 cookie=headers['Set-Cookie'].split(';')[0]
                 self.assertEqual(request('GET','/api/state',cookie=cookie)[0],200)
+                for asset in ('/trips.js', '/trips.css'):
+                    status, headers, body = request('GET', asset, cookie=cookie)
+                    self.assertEqual(status, 200, asset)
+                    self.assertTrue(body)
                 self.assertEqual(request('POST','/api/recording',{'active':True},cookie,'https://zeekr.example.com')[0],403)
                 self.assertFalse(WebAuth(password_record('test password 12345')).valid(cookie.split('=',1)[1]))
                 self.assertEqual(request('POST','/auth/logout',{},cookie, 'https://zeekr.example.com')[0],200)
