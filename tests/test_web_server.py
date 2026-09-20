@@ -29,6 +29,34 @@ class FakeClient:
 
 
 class WebServerTests(unittest.TestCase):
+    def test_vehicle_parameters_are_cached_complete_and_keep_failed_snapshot(self):
+        from unittest.mock import patch
+        with patch.object(FakeClient, 'status', side_effect=AssertionError('must not query vehicle')):
+            code, empty = self.request('GET', '/api/vehicle/parameters')
+        self.assertEqual(code, 200)
+        self.assertEqual(empty['counts']['missing'], 217)
+        initial = self.post('/api/refresh', {'vehicle': 1})[1]
+        with patch.object(FakeClient, 'status', side_effect=AssertionError('must not query vehicle')):
+            code, data = self.request('GET', '/api/vehicle/parameters')
+        self.assertEqual(code, 200)
+        self.assertEqual(data['snapshot_revision'], initial['snapshot_revision'])
+        self.assertEqual(data['vehicle'], 1)
+        self.assertNotIn('NEVER-EXPOSE', json.dumps(data))
+        FakeClient.fail = True
+        self.assertEqual(self.post('/api/refresh', {'vehicle': 1})[0], 502)
+        failed = self.request('GET', '/api/vehicle/parameters')[1]
+        self.assertEqual(data['fields'], failed['fields'])
+        self.assertEqual(data['read_time'], failed['read_time'])
+
+    def test_vehicle_parameters_follow_current_vehicle_and_assets_load(self):
+        self.post('/api/refresh', {'vehicle': 1})
+        self.post('/api/refresh', {'vehicle': 2})
+        code, data = self.request('GET', '/api/vehicle/parameters')
+        self.assertEqual(code, 200)
+        self.assertEqual(data['vehicle'], 2)
+        for asset in ('/vehicle.js', '/vehicle.css'):
+            self.assertEqual(self.request('GET', asset)[0], 200)
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('zeekr_control.web'), 'Web 服务尚未实现')
         from zeekr_control.web import App, make_server

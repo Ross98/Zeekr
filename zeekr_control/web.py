@@ -27,6 +27,7 @@ from .events import EventStore
 from .storage_management import StorageManager
 from .storage_health import StorageHealth, severity
 from .charging_analytics import ChargingAnalytics
+from .vehicle_parameters import parameters
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -269,6 +270,15 @@ class App:
             paths = {field['path'] for field in (self.model or {}).get('fields', [])}
             return self.field_review_store.update(self.vehicle_key, data, paths)
 
+    def vehicle_parameters(self):
+        with self.lock:
+            current = self.state()  # Restore only the shared local snapshot; never refresh the cloud.
+            result = parameters(self.raw, self.model)
+            result.update(vehicle=current['vehicle'], vehicle_key=current['field_reviews']['vehicle'],
+                          snapshot_revision=current['snapshot_revision'],
+                          read_time=current['read_time'])
+            return result
+
     def _store(self):
         if self.store is None:
             self.store = TrackStore(self.database_path)
@@ -447,6 +457,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
             try:
                 if url.path == '/api/state':
                     return self.send(200, app.state())
+                if url.path == '/api/vehicle/parameters':
+                    return self.send(200, app.vehicle_parameters())
                 if url.path == '/api/storage':
                     return self.send(200, app.storage_status())
                 if url.path == '/api/storage/archives':
@@ -487,6 +499,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     return self.send(200, app.charging_statistics(query.get('days', [''])[0],
                                                                    query.get('mode', [''])[0]))
                 assets = {'/': ('index.html', 'text/html; charset=utf-8'),
+                          '/vehicle.js': ('vehicle.js', 'text/javascript; charset=utf-8'),
+                          '/vehicle.css': ('vehicle.css', 'text/css; charset=utf-8'),
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
                           '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),
                           '/trips.css': ('trips.css', 'text/css; charset=utf-8'),

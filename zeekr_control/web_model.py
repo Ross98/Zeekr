@@ -4,6 +4,7 @@ from .vehicle_state import decode
 from .parameter_dictionary import definition, reference
 from .report_telemetry import normalize
 from .charging_details import snapshot_details
+from .vehicle_parameters import raw_text
 
 
 LABELS = {
@@ -192,7 +193,8 @@ def metadata_fields(vehicle):
                 if entry:
                     raw = scalar(item) if item != '' else '未知'
                     result.append({'key': key, 'path': full, 'name': entry['name'], 'group': '车辆档案',
-                                   'raw': raw, 'value': raw, 'evidence': '未知' if raw == '未知' else '待核实',
+                                   'raw': raw, 'raw_json': raw_text(item), 'value': raw,
+                                   'evidence': '未知' if raw == '未知' else '待核实',
                                    'reference': reference(entry)})
     walk(vehicle)
     return result

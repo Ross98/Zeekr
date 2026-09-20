@@ -19,7 +19,7 @@ const icons = {
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
 };
 const pages = { overview: '总览', car: '车辆', energy: '能源与充电', map: '定位地图', tracks: '行程与轨迹', fields: '参数字典', settings: '设置', more: '更多' };
-const descriptions = { overview: '', car: '门窗、轮胎与座舱，逐项查看。', energy: '查看当前观测状态、充电记录与计算依据。', map: '最近返回的位置，保留可信度与时间信息。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
+const descriptions = { overview: '', car: '完整参数与状态总览，保留原值、解释依据和来源时间。', energy: '查看当前观测状态、充电记录与计算依据。', map: '最近返回的位置，保留可信度与时间信息。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.info}</svg>`;
@@ -37,6 +37,8 @@ let chargingAnalyticsLoadedKey = '', chargingAnalyticsLoadingKey = '';
 let connectionFailures = 0, polling = false;
 let refreshMessage = '';
 const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unchanged:'已读取云端，车辆数据未更新。',new:'已获得新车辆数据。',time_unknown:'已读取云端，车辆更新时间未知。'};
+
+const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,redraw:render,escape:esc,age,active:()=>page==='car'});
 
 function navigation() {
   $('#navigation').innerHTML = Object.entries(pages).filter(([key]) => key !== 'more').map(([key, label]) => `<button class="nav-item ${page === key ? 'active' : ''}" data-page="${key}" ${page === key ? 'aria-current="page"' : ''}>${icon(key)}${label}</button>`).join('');
@@ -404,7 +406,8 @@ function carDisclosure(key, label, fields) {
   const uncertain = fields.filter(f => ['未知','待核实'].includes(f.evidence)).length;
   return `<details class="car-disclosure" data-detail="${key}"><summary><span>${label}</span><span class="car-detail-count">${fields.length ? `${fields.length} 项${uncertain ? ` · ${uncertain} 项待核实 / 未知` : ''}` : '暂无返回数据'}</span></summary>${table(fields,true)}</details>`;
 }
-function car() {
+function car() { return vehiclePage.render(carOverview,modelRequired); }
+function carOverview() {
   if (!state?.model) return modelRequired();
   const m = state.model;
   const pm25 = m.fields.find(field => field.group === '空气质量' && field.key === 'interiorPM25')?.value;
@@ -413,29 +416,31 @@ function car() {
   const doors = positions.map(name => m.doors.find(d => d.name === name) || {name,door:'未知',lock:'未知',window:'未知',raw:{}});
   const labels = [['door','车门'],['lock','门锁'],['window','车窗']];
   const lock = m.lock.confirmed ? m.lock.value : '未知';
-  const statuses = doors.flatMap(d => labels.map(([key,label]) => ({name:d.name+label,value:d[key]})))
-    .concat([{name:'中控锁',value:lock},{name:'尾门',value:m.trunk},{name:'前舱盖',value:m.hood}]);
+  const statuses = doors.flatMap((d,i) => labels.map(([key,label]) => ({name:d.name+label,value:d[key],target:'car-door-'+i})))
+    .concat([{name:'中控锁',value:lock,target:'car-center-lock'},{name:'尾门',value:m.trunk,target:'car-trunk'},{name:'前舱盖',value:m.hood,target:'car-hood'}]);
   const attention = statuses.filter(item => carStateKind(item.value) === 'attention');
   const unknown = statuses.filter(item => carStateKind(item.value) === 'unknown');
-  const doorCards = doors.map((d,i) => `<article class="car-door car-door-${i}" data-position="${d.name}"><h3>${d.name}<span>${['主驾','副驾','后排','后排'][i]}</span></h3>${labels.map(([key,label]) => `<div class="inline-row"><span>${label}</span>${carState(d[key])}</div>`).join('')}</article>`).join('');
+  const doorCards = doors.map((d,i) => `<article id="car-door-${i}" tabindex="-1" class="car-door car-door-${i}" data-position="${d.name}"><h3>${d.name}<span>${['主驾','副驾','后排','后排'][i]}</span></h3>${labels.map(([key,label]) => `<div class="inline-row"><span>${label}</span>${carState(d[key])}</div>`).join('')}</article>`).join('');
   const doorFields = doors.flatMap(d => labels.map(([key,label]) => ({name:d.name+label,value:d.raw?.[key] ?? '未知',evidence:carStateKind(d[key]) === 'unknown' ? '待核实' : '本车已核对'})));
   const climateFields = m.fields.filter(f => f.group === '空调与舒适' && !/^(winPos|winStatus)/.test(f.key) && !['interiorTemp','exteriorTemp','temperatureUpdateTime'].includes(f.key));
   const equipment = f => /sunroof|curtain/i.test(f.key) || /^(rl|rr)Vent/.test(f.key);
   const seat = f => /^(drv|pass|rl|rr|steerWhl)/.test(f.key);
   return `<section class="car-summary" aria-label="车辆状态摘要">
+    <div class="car-summary-heading"><div><h2>门窗与锁止状态</h2><p class="car-caption">以下计数仅含门窗与锁止，共 15 项</p></div><div class="car-art">${carPhoto()}</div></div>
     <div class="car-summary-top"><div class="car-freshness">${icon('clock')}<strong>${age(m.updated_time,'车辆数据更新于 ')}</strong><span>云端缓存 · 不代表实时状态</span></div><div class="car-summary-counts"><span class="car-state state-${attention.length ? 'attention' : 'neutral'}">需关注 ${attention.length} 项</span><span class="car-state state-${unknown.length ? 'unknown' : 'neutral'}">未知 ${unknown.length} 项</span></div></div>
     <div class="car-summary-stats">${labels.map(([key,label]) => { const count = doors.filter(d => carStateKind(d[key]) === 'safe').length; return `<div><span>${label}</span><strong class="state-${count === 4 ? 'safe' : 'unknown'}">${count}<small> / 4</small></strong><span>${key === 'lock' ? '已确认锁止' : '已确认关闭'}</span></div>`; }).join('')}</div>
     ${attention.length ? `<div class="car-attention-list">${attention.map(item => `<span>${esc(item.name)} · ${esc(item.value)}</span>`).join('')}</div>` : ''}
+    ${unknown.length || attention.length ? `<details class="car-pending" data-detail="car-pending"><summary>定位未知与需关注项 · ${unknown.length+attention.length} 项</summary><div class="car-pending-list">${[...attention,...unknown].map(item=>`<button data-vehicle="locate" data-target="${item.target}">${esc(item.name)} · ${carStateKind(item.value)==='unknown'?'未知':esc(item.value)}</button>`).join('')}</div></details>` : ''}
     <p class="car-summary-note">${unknown.length ? '未知项请在下方逐项查看；未知不代表正常或异常。' : '以上为缓存快照中的门窗状态。'}</p>
   </section>
   <div class="car-main-grid"><section class="card car-closures"><div class="card-head"><h2>门锁、车门与车窗</h2><span class="car-caption">左舵车辆 · 只读状态</span></div><div class="card-body">
-    <div class="car-vehicle-grid"><div class="car-end car-hood"><span>车头 · 前舱盖</span>${carState(m.hood)}</div>${doorCards}<div class="car-art">${carPhoto()}</div><div class="car-end car-trunk"><span>车尾 · 尾门</span>${carState(m.trunk)}</div></div>
-    <div class="car-lock-row"><span>${icon('lock')}中控锁</span>${carState(lock)}</div>
+    <div class="car-vehicle-grid"><div id="car-hood" tabindex="-1" class="car-end car-hood"><span>车头 · 前舱盖</span>${carState(m.hood)}</div>${doorCards}<div id="car-trunk" tabindex="-1" class="car-end car-trunk"><span>车尾 · 尾门</span>${carState(m.trunk)}</div></div>
+    <div id="car-center-lock" tabindex="-1" class="car-lock-row"><span>${icon('lock')}中控锁</span>${carState(lock)}</div>
     <p class="car-caption car-legend"><span class="state-safe">关闭 / 锁止</span><span class="state-attention">打开 / 未锁</span><span class="state-unknown">未知</span><span>状态以文字为准</span></p>
   </div></section>
-  <div class="car-secondary"><section class="card car-tyres"><div class="card-head"><h2>四轮胎压与胎温</h2><span class="car-caption">车头朝上</span></div><div class="card-body"><div class="tyre-grid car-wheel-grid">${positions.map(name => { const t = m.tyres.find(t => t.name === name); return `<div class="car-wheel" data-position="${name}"><span class="car-wheel-name">${name}</span><strong>${esc(t?.pressure ?? '未知')}</strong><span>胎温 ${esc(t?.temperature ?? '未知')}</span></div>`; }).join('')}</div><p class="car-caption car-tyre-note">保留接口精度；暂无已核对的胎压报警阈值。</p></div></section>
+  <div class="car-secondary"><section class="card car-tyres"><div class="card-head"><h2>四轮胎压与胎温</h2><span class="car-caption">车头朝上</span></div><div class="card-body"><div class="tyre-grid car-wheel-grid">${positions.map(name => { const t = m.tyres.find(t => t.name === name); return `<div class="car-wheel" data-position="${name}"><span class="car-wheel-name">${name}</span><strong>${esc(t?.pressure ?? '未知')}</strong><span>胎温 ${esc(t?.temperature ?? '未知')}</span></div>`; }).join('')}</div><div class="car-tyre-time">${age(m.updated_time,'整车快照更新于 ')} · 轮胎独立时间未提供</div><p class="car-caption car-tyre-note">保留接口精度；暂无已核对的胎压报警阈值。</p></div></section>
   <section class="card car-cabin"><div class="card-head"><h2>座舱与环境</h2></div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="car-temperature-time">${icon('clock')}${age(m.temperature_updated_time,'温度更新于 ')}</div><p class="car-caption">温度与整车状态可能不同步</p><div class="car-pm25"><div class="car-pm25-reading"><span class="small-label">车内 PM2.5</span><strong class="car-pm25-value">${hasPm25 ? esc(pm25) : '暂无数据'}</strong></div><p class="car-caption">${hasPm25 ? '单位待核实 · 独立更新时间未提供' : '未返回有效读数'}</p></div></div></section></div></div>
-  <section class="card car-data"><div class="card-head"><h2>参数与数据详情</h2>${link('全部参数','fields')}</div><p class="card-meta">按需展开查看。待核实参数不代表本车配备或正在运行该设备。</p>
+  <section class="card car-data"><div class="card-head"><h2>参数与数据详情</h2><button class="text-link" data-vehicle="parameters">全部参数${icon('arrow')}</button></div><p class="card-meta">按需展开查看。待核实参数不代表本车配备或正在运行该设备。</p>
     <details class="car-disclosure" data-detail="closures"><summary><span>门窗数据与解释依据</span><span class="car-detail-count">四门 / 中控锁 / 尾门 / 前舱盖</span></summary><p class="car-disclosure-note">原值仅用于核对。只解释本车已核对组合；其他值显示未知，不从单个编码推测开闭或锁止。</p>${table(doorFields)}${table(m.fields.filter(f => /^(winStatus|doorPos)/.test(f.key) || ['centralLockingStatus','trunkOpenStatus','trunkLockStatus','engineHoodOpenStatus'].includes(f.key)),true)}</details>
     ${carDisclosure('climate','空调相关参数',climateFields.filter(f => !equipment(f) && !seat(f)))}
     ${carDisclosure('seats','座椅与方向盘',climateFields.filter(f => !equipment(f) && seat(f)))}
@@ -529,6 +534,7 @@ function settings() {
 function more() { return `<div class="more-grid">${['energy','fields','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
 
 function render() {
+  const vehicleFocus = page === 'car' ? vehiclePage.focusSnapshot() : null;
   prepareLocalTripRender();
   const fieldFocus = page === 'fields' ? reviewFocusSnapshot() : null;
   generation++;
@@ -547,6 +553,7 @@ function render() {
   carOpenDetails.forEach(key => { const detail = $(`details[data-detail="${key}"]`); if(detail) detail.open = true; });
   if (carFocusedDetail) $(`details[data-detail="${carFocusedDetail}"] > summary`)?.focus({preventScroll:true});
   updateClock();
+  if (page === 'car') {vehiclePage.restoreFocus(vehicleFocus);vehiclePage.ensure();}
   if (page === 'settings' && window.StorageManagement) window.StorageManagement.mount($('#main'),api);
   if (page === 'fields') {renderFields();reviewRestoreFocus(fieldFocus);}
   if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
@@ -628,6 +635,7 @@ async function toggleRecording() {
 }
 
 document.addEventListener('click', event => {
+  if (vehiclePage.handle(event)) return;
   const target = event.target.closest('button');
   if (!target || target.disabled) return;
   if (handleReviewAction(target)) return;
@@ -657,6 +665,7 @@ document.addEventListener('click', event => {
   }
 });
 document.addEventListener('input', event => {
+  if (vehiclePage.handle(event)) return;
   if(event.target.id==='search') {search=event.target.value;renderFields();}
   if(event.target.id==='playback') {
     if (trackSource==='local') {stopLocalPlayback();displayLocalPoint(Number(event.target.value));}
@@ -665,6 +674,7 @@ document.addEventListener('input', event => {
   if(event.target.id==='charging-point') {chargingPoint=Number(event.target.value);renderChargingWorkspace();}
 });
 document.addEventListener('change', event => {
+  if (vehiclePage.handle(event)) return;
   if(event.target.id==='group') {groupFilter=event.target.value;renderFields();}
   if(event.target.id==='unknown') {unknownOnly=event.target.checked;renderFields();}
   if(event.target.id==='track-date') {trackDate=event.target.value;render();}
