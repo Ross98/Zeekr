@@ -4,7 +4,7 @@ import time
 
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
-from .usage_events import UsageEvents
+from .usage_events import UsageEvents, total
 
 DAY = 86400000
 
@@ -31,18 +31,13 @@ def period_window(period, date):
             'days': (end-start).days}
 
 
-def total(values):
-    values = [value for value in values if value is not None]
-    return round(sum(values), 6) if values else None
-
-
 def aggregate(events, window, as_of):
     events = [row for row in events if window['start'] <= row['end_time'] < min(window['end'], as_of+1)]
     trips = [row for row in events if row['kind'] == 'trip_end']
     charges = [row for row in events if row['kind'] == 'charge_end']
     complete = [row for row in trips if not row['partial']]
     partial = [row for row in trips if row['partial']]
-    energy = [row for row in complete if row['estimated_kwh'] is not None]
+    energy = [row for row in trips if row['estimated_kwh'] is not None]
     efficiency = [row for row in energy if row['distance_km'] is not None and row['distance_km'] >= 10
                   and row['soc_delta'] is not None and -row['soc_delta'] >= 3]
     charge_energy = [row for row in charges if row['estimated_kwh'] is not None]
@@ -51,14 +46,19 @@ def aggregate(events, window, as_of):
     totals = {'trip_count':len(trips), 'complete_trip_count':len(complete), 'partial_trip_count':len(partial),
         'charge_count':len(charges), 'complete_charge_count':sum(not row['partial'] for row in charges),
         'partial_charge_count':sum(row['partial'] for row in charges),
-        'distance_km':total(row['distance_km'] for row in complete),
+        'distance_km':total(row['distance_km'] for row in trips),
+        'complete_distance_km':total(row['distance_km'] for row in complete),
         'partial_distance_km':total(row['distance_km'] for row in partial),
-        'duration_seconds':total(row['duration_seconds'] for row in complete),
+        'duration_seconds':total(row['duration_seconds'] for row in trips),
+        'complete_duration_seconds':total(row['duration_seconds'] for row in complete),
+        'partial_duration_seconds':total(row['duration_seconds'] for row in partial),
         'trip_estimated_kwh':total(row['estimated_kwh'] for row in energy),
         'charge_estimated_kwh':total(row['estimated_kwh'] for row in charge_energy),
         'estimated_kwh_per_100km':round(efficiency_energy/efficiency_distance*100,6) if efficiency_distance else None}
-    samples = {'distance':sum(row['distance_km'] is not None for row in complete),
-        'duration':sum(row['duration_seconds'] is not None for row in complete),
+    samples = {'distance':sum(row['distance_km'] is not None for row in trips),
+        'partial_distance':sum(row['distance_km'] is not None for row in partial),
+        'duration':sum(row['duration_seconds'] is not None for row in trips),
+        'partial_duration':sum(row['duration_seconds'] is not None for row in partial),
         'trip_energy':len(energy), 'charge_energy':len(charge_energy), 'efficiency':len(efficiency)}
     days = [{'date':date_label(window['start']+i*DAY), 'trip_count':0, 'charge_count':0,
              'distance_km':None,'partial_trip_count':0,'coverage':'future' if window['start']+i*DAY > as_of else 'missing'}
@@ -69,7 +69,7 @@ def aggregate(events, window, as_of):
         day['trip_count' if row['kind']=='trip_end' else 'charge_count'] += 1
         if row['kind']=='trip_end':
             day['partial_trip_count'] += int(row['partial'])
-            if not row['partial'] and row['distance_km'] is not None:
+            if row['distance_km'] is not None:
                 day['distance_km'] = round((day['distance_km'] or 0)+row['distance_km'],6)
             if row['start_time'] is not None:
                 hours[datetime.fromtimestamp(row['start_time']/1000,BEIJING).hour] += 1

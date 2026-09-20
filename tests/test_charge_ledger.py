@@ -51,6 +51,19 @@ class ChargeLedgerTests(unittest.TestCase):
         self.assertEqual(row['estimate_basis'],'soc_price')
         self.assertEqual(row['event']['battery_capacity_kwh'],86)
 
+    def test_partial_trip_distance_is_included_in_monthly_cost_reference(self):
+        self.save(amount='30')
+        with sqlite3.connect(self.db) as db:
+            summary=json.loads(db.execute("SELECT summary FROM monitor_events WHERE id='trip'").fetchone()[0])
+            summary.update(partial=True,distance_km=50)
+            db.execute("INSERT INTO monitor_events VALUES ('partial','car','trip_end',?,?)",
+                       (json.dumps(summary),self.start))
+        cost=self.query()['cost_per_km']
+        self.assertEqual(cost['distance_km'],150)
+        self.assertEqual(cost['distance_samples'],2)
+        self.assertEqual(cost['partial_distance_samples'],1)
+        self.assertEqual(cost['actual_yuan'],.2)
+
     def test_manual_unlinked_entry_and_zero_cost_are_valid(self):
         self.save(event_id='',amount='0',metered_kwh='10',source='public')
         data=self.query();row=data['entries'][0]

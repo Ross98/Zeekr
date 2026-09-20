@@ -94,7 +94,7 @@ class ChargingAnalyticsTests(unittest.TestCase):
         self.assertEqual(process['session']['status'], 'active')
         self.assertEqual(process['series']['raw_count'], 2)
 
-    def test_statistics_use_all_events_and_conservative_complete_totals(self):
+    def test_statistics_include_partial_observations_and_retain_complete_subtotal(self):
         day = 86400000
         complete = {'duration_seconds': 3600, 'soc_delta': 60, 'estimated_kwh': 51.6,
                     'sampled_peak_kw': 6.5, 'average_power_kw': 6.2,
@@ -109,9 +109,11 @@ class ChargingAnalyticsTests(unittest.TestCase):
         self.assertEqual(result['summary']['ended_count'], 2)
         self.assertEqual(result['summary']['complete_count'], 1)
         self.assertEqual(result['summary']['partial_count'], 1)
-        self.assertEqual(result['summary']['estimated_kwh'], 51.6)
-        self.assertEqual(result['summary']['included_energy_count'], 1)
-        self.assertEqual(result['summary']['excluded_energy_count'], 1)
+        self.assertEqual(result['summary']['estimated_kwh'], 103.2)
+        self.assertEqual(result['summary']['duration_seconds'], 5400)
+        self.assertEqual(result['summary']['partial_energy_count'], 1)
+        self.assertEqual(result['summary']['included_energy_count'], 2)
+        self.assertEqual(result['summary']['excluded_energy_count'], 0)
         self.assertEqual(result['summary']['complete_duration_seconds'], 3600)
         self.assertEqual(len(result['records']), 2)
         self.assertEqual(self.analytics.statistics('car-a', 30, 'ac', now=BASE+2*day)['summary']['ended_count'], 1)

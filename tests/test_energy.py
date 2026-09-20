@@ -47,14 +47,16 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(self.result()['distance_km'], 80)
         self.assertEqual(self.result(None)['status'], 'no_trip')
 
-    def test_latest_incomplete_trip_does_not_silently_use_older_trip(self):
+    def test_latest_partial_trip_uses_its_own_observed_endpoints(self):
         self.add()
-        self.add(dict(self.trip, partial=True), created=2)
-        self.assertEqual(self.result()['status'], 'incomplete')
-        self.assertIsNone(self.result().get('ratio'))
+        self.add(dict(self.trip, partial=True, distance_km=40), created=2)
+        self.assertEqual(self.result()['status'], 'available')
+        self.assertTrue(self.result()['partial'])
+        self.assertAlmostEqual(self.result()['ratio'], 36.63003663)
 
     def test_rejects_missing_invalid_and_charging_contaminated_data(self):
-        cases = [dict(partial=True), dict(partial=None), dict(soc_delta=None),
+        cases = [dict(report_v2={'metrics':{'charge_overlap':True}}),
+                 dict(report_v2={'quality':{'decoder_changed_mid_session':True}}), dict(soc_delta=None),
                  dict(start_soc=None), dict(end_soc=81, soc_delta=1),
                  dict(end_soc=80, soc_delta=0), dict(distance_km=-1),
                  dict(distance_km=None), dict(distance_km=True), dict(start_soc=101),

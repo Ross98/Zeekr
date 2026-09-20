@@ -7,19 +7,19 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../zeekr_control/static
 const analyze = sandbox.window.UsageReportPage.analyze;
 assert.equal(typeof analyze, 'function', 'Report observations have a testable calculation boundary');
 const current = {
-  totals: {distance_km: 60, partial_trip_count: 1, partial_distance_km: 7},
-  samples: {distance: 2},
+  totals: {distance_km: 67, partial_trip_count: 1, partial_distance_km: 7},
+  samples: {distance: 3},
   days: [
     {date: '2026-09-15', distance_km: 40, coverage: 'missing'},
     {date: '2026-09-16', distance_km: null, coverage: 'observed'},
     {date: '2026-09-17', distance_km: 0, coverage: 'observed'},
-    {date: '2026-09-18', distance_km: 20, coverage: 'observed'},
+    {date: '2026-09-18', distance_km: 27, coverage: 'observed'},
     {date: '2026-09-19', distance_km: null, coverage: 'missing'},
     {date: '2026-09-20', distance_km: null, coverage: 'future'}
   ]
 };
 const result = analyze(current);
-assert.equal(result.averageDistance, 30, 'Only valid complete-trip distance samples form the mean');
+assert.equal(result.averageDistance, 67/3, 'All valid recorded-distance samples form the mean, including partials');
 assert.equal(result.peakDistance, 40, 'Events remain usable without archive coverage');
 assert.deepEqual(Array.from(result.peakDates), ['2026-09-15']);
 assert.equal(result.elapsedDays, 5, 'Future dates do not dilute archive coverage');
@@ -29,7 +29,7 @@ assert.equal(result.days[2].distance, 0, 'A measured zero remains a zero');
 assert.equal(result.days[2].ratio, 0);
 assert.equal(result.days[1].distance, null, 'A missing value is never a zero');
 assert.equal(result.days[1].ratio, null, 'No fabricated bar for missing observations');
-assert.equal(result.days[3].ratio, .5);
+assert.equal(result.days[3].ratio, .675);
 
 const tied = analyze({...current, days: [...current.days, {date: '2026-09-21', distance_km: 40, coverage: 'observed'}]});
 assert.deepEqual(Array.from(tied.peakDates), ['2026-09-15', '2026-09-21']);

@@ -376,7 +376,7 @@ class VehicleResearch:
                        outside_mean=round(outside, 3) if outside is not None else None,
                        range_partial=start is None or start < lower)
             rows.append(row)
-            usable = not event['partial'] and not row['range_partial'] and event['estimated_kwh'] is not None
+            usable = event['estimated_kwh'] is not None
             consumption = None
             if usable and event['kind'] == 'trip_end' and (event['distance_km'] or 0) >= 10 and (event['soc_delta'] or 0) <= -3:
                 consumption = event['estimated_kwh']/event['distance_km']*100

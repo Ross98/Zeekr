@@ -29,7 +29,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByLabel('行程标签（逗号分隔）',{exact:true}).fill('通勤');
     await page.getByRole('button',{name:'保存行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#tag-comparison')?.textContent.includes('片段 1'));
-    assert.match(await page.locator('#tag-comparison').innerText(),/30/);
+    assert.match(await page.locator('#tag-comparison').innerText(),/22.33/);
     await page.locator('[data-tag-event="report-trip"] [data-tag="delete"]').click();
     await page.getByRole('button',{name:'恢复行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"]')?.textContent.includes('接娃'));

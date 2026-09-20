@@ -150,8 +150,8 @@ function eventSummary(event, kind) {
   const format = value => Number.isFinite(value) ? new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value) : '未知';
   const complete = event.partial ? '部分记录' : '完整记录';
   if (kind === 'trip_end') return `<div class="event-summary"><strong>${format(event.distance_km)} km</strong><span>${format(event.start_soc)}% 至 ${format(event.end_soc)}%</span><small>${complete} · ${esc(new Date(event.end_time).toLocaleString('zh-CN',{hour12:false}))}</small></div>`;
-  const capacity = Number.isFinite(event.battery_capacity_kwh) && Number.isFinite(event.soc_delta) && event.soc_delta > 0
-    ? `${format(event.battery_capacity_kwh * event.soc_delta / 100)} kWh（估算）` : '充入电量无法估算';
+  const capacity = Number.isFinite(event.estimated_kwh)
+    ? `${format(event.estimated_kwh)} kWh（估算）` : '充入电量无法估算';
   return `<div class="event-summary"><strong>${format(event.start_soc)}% 至 ${format(event.end_soc)}%</strong><span>${capacity}</span><small>${complete} · ${esc(new Date(event.end_time).toLocaleString('zh-CN',{hour12:false}))}</small></div>`;
 }
 
@@ -272,11 +272,11 @@ function chargingStatistics() {
   if(chargingAnalyticsError) return empty('充电统计读取失败',chargingAnalyticsError,'energy');
   const stats=chargingStats;
   if(!stats) return empty('暂无统计数据','本地统计尚未读取。','energy');
-  const s=stats.summary, max=Math.max(1,...stats.daily.map(day=>day.ac_kwh+day.dc_kwh+day.unknown_kwh));
-  const bars=stats.daily.map(day=>{const total=day.ac_kwh+day.dc_kwh+day.unknown_kwh;return `<div class="charging-day" title="${esc(day.date)} · ${chargingFormat(total)} kWh"><div class="charging-bar"><i class="ac" style="height:${day.ac_kwh/max*100}%"></i><i class="dc" style="height:${day.dc_kwh/max*100}%"></i><i class="unknown" style="height:${day.unknown_kwh/max*100}%"></i></div><span>${day.date.slice(5)}</span></div>`}).join('');
-  const records=stats.records.length?stats.records.map(record=>`<button class="charging-stat-record" data-action="stats-detail" data-event-id="${esc(record.id)}"><span>${esc(eventTime(record.end_time))}</span><b>${record.mode==='ac'?'AC':record.mode==='dc'?'DC':'未知'} · ${chargeNumber(record.start_soc,'%')} → ${chargeNumber(record.end_soc,'%')}</b><small>${record.partial?'部分记录':eventDuration(record.duration_seconds)} · ${Number.isFinite(record.estimated_kwh)?chargingFormat(record.estimated_kwh)+' kWh（估算）':'不计入完整电量'}</small></button>`).join(''):`<div class="chart-empty">所选范围没有已记录事件；不代表车辆没有充电。</div>`;
+  const s=stats.summary, max=Math.max(1,...stats.daily.map(day=>day.estimated_kwh||0));
+  const bars=stats.daily.map(day=>{const total=day.estimated_kwh;return `<div class="charging-day" title="${esc(day.date)} · ${chargingFormat(total)} kWh"><div class="charging-bar"><i class="ac" style="height:${day.ac_kwh/max*100}%"></i><i class="dc" style="height:${day.dc_kwh/max*100}%"></i><i class="unknown" style="height:${day.unknown_kwh/max*100}%"></i></div><span>${day.date.slice(5)}</span></div>`}).join('');
+  const records=stats.records.length?stats.records.map(record=>`<button class="charging-stat-record" data-action="stats-detail" data-event-id="${esc(record.id)}"><span>${esc(eventTime(record.end_time))}</span><b>${record.mode==='ac'?'AC':record.mode==='dc'?'DC':'未知'} · ${chargeNumber(record.start_soc,'%')} → ${chargeNumber(record.end_soc,'%')}</b><small>${record.partial?'部分记录 · ':''}${eventDuration(record.duration_seconds)} · ${Number.isFinite(record.estimated_kwh)?chargingFormat(record.estimated_kwh)+' kWh（估算）':'电量估算条件不足'}</small></button>`).join(''):`<div class="chart-empty">所选范围没有已记录事件；不代表车辆没有充电。</div>`;
   const current=stats.current?`<div class="notice info">${icon('energy')}进行中会话：${stats.current.mode==='ac'?'AC':stats.current.mode==='dc'?'DC':'模式未知'} · ${chargeNumber(stats.current.start_soc,'%')} → ${chargeNumber(stats.current.end_soc,'%')}。单列展示，不计入已结束次数。</div>`:'';
-  return `<div class="charging-stat-controls"><div><button data-action="stats-days" data-days="7" class="${chargingDays===7?'active':''}">最近 7 天</button><button data-action="stats-days" data-days="30" class="${chargingDays===30?'active':''}">最近 30 天</button></div><label>模式筛选<select id="charging-mode"><option value="all" ${chargingMode==='all'?'selected':''}>全部</option><option value="ac" ${chargingMode==='ac'?'selected':''}>AC</option><option value="dc" ${chargingMode==='dc'?'selected':''}>DC</option></select></label></div>${current}<div class="charging-stat-summary"><div><span>已结束次数</span><strong>${s.ended_count}</strong><small>完整 ${s.complete_count} · 部分 ${s.partial_count}</small></div><div><span>估算充入电量</span><strong>${chargingFormat(s.estimated_kwh)}<small> kWh</small></strong><small>纳入 ${s.included_energy_count} · 排除 ${s.excluded_energy_count}</small></div><div><span>完整记录时长</span><strong>${eventDuration(s.complete_duration_seconds)}</strong><small>不是插枪总时长</small></div></div><section class="card charging-daily"><div class="card-head"><h2>每日估算充入电量</h2><span class="charging-legend"><span><i aria-hidden="true"></i>AC</span><span><i class="dc" aria-hidden="true"></i>DC</span><span><i class="unknown" aria-hidden="true"></i>未知</span></span></div><div class="charging-bars">${bars}</div><p class="energy-caption">按充电结束日归档；空位只表示无已记录事件。部分记录不进入电量与完整时长。</p></section><section class="card"><div class="card-head"><h2>单次记录</h2>${pill(`${stats.records.length} 条`)}</div><div class="charging-stat-records">${records}</div></section>`;
+  return `<div class="charging-stat-controls"><div><button data-action="stats-days" data-days="7" class="${chargingDays===7?'active':''}">最近 7 天</button><button data-action="stats-days" data-days="30" class="${chargingDays===30?'active':''}">最近 30 天</button></div><label>模式筛选<select id="charging-mode"><option value="all" ${chargingMode==='all'?'selected':''}>全部</option><option value="ac" ${chargingMode==='ac'?'selected':''}>AC</option><option value="dc" ${chargingMode==='dc'?'selected':''}>DC</option></select></label></div>${current}<div class="charging-stat-summary"><div><span>已结束次数</span><strong>${s.ended_count}</strong><small>完整 ${s.complete_count} · 部分 ${s.partial_count}</small></div><div><span>估算充入电量</span><strong>${chargingFormat(s.estimated_kwh)}<small> kWh</small></strong><small>纳入 ${s.included_energy_count}（含片段 ${s.partial_energy_count}）· 条件不足 ${s.excluded_energy_count}</small></div><div><span>观测时段</span><strong>${eventDuration(s.duration_seconds)}</strong><small>${s.included_duration_count} 条有效时段 · 非连续充电时长</small></div></div><section class="card charging-daily"><div class="card-head"><h2>每日估算充入电量</h2><span class="charging-legend"><span><i aria-hidden="true"></i>AC</span><span><i class="dc" aria-hidden="true"></i>DC</span><span><i class="unknown" aria-hidden="true"></i>未知</span></span></div><div class="charging-bars">${bars}</div><p class="energy-caption">按充电结束日归档，完整与片段的有效观测均计入。空位表示无可用估算，不代表未充电；片段不补算未观测部分，SOC 电量不代表桩端计量。</p></section><section class="card"><div class="card-head"><h2>单次记录</h2>${pill(`${stats.records.length} 条`)}</div><div class="charging-stat-records">${records}</div></section>`;
 }
 
 function chargingWorkspace(details) {
@@ -340,13 +340,13 @@ function chargeHistoricalParameters(details) {
 function chargeDetail(event) {
   if (!event) return `<section class="card charge-detail" id="charge-detail">${empty('选择一条充电记录','从左侧列表选择记录后，在这里查看起止时间、电量变化和完整性。','energy')}</section>`;
   const format=value=>Number.isFinite(value)?new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value):'未知';
-  const validDelta=Number.isFinite(event.start_soc)&&Number.isFinite(event.end_soc)&&event.end_soc>event.start_soc;
+  const validDelta=Number.isFinite(event.start_soc)&&Number.isFinite(event.end_soc)&&event.end_soc>=event.start_soc;
   const delta=validDelta?event.end_soc-event.start_soc:null;
-  const estimated=!event.partial&&validDelta&&Number.isFinite(event.battery_capacity_kwh)&&event.battery_capacity_kwh>0
-    ? event.battery_capacity_kwh*delta/100 : null;
+  const estimated=event.estimated_kwh;
   const estimate=Number.isFinite(estimated)?`${format(estimated)} kWh（估算）`:'充入电量无法估算';
-  const note=event.partial?'这是部分记录，仅表示已观测 SOC 变化，不作为完整充电量。':
-    Number.isFinite(estimated)?'估算使用该事件保存的电池容量与 SOC 变化，不代表充电桩结算电量。':'该事件缺少有效容量或 SOC 数据，未使用当前车型配置补算。';
+  const note=Number.isFinite(estimated)
+    ? `${event.partial?'部分记录的已观测电量已计入统计，未观测部分不补算。':''}估算使用该事件保存的电池容量与 SOC 变化，不代表充电桩结算电量。`
+    : '该记录的起止时间、SOC 端点、容量或数据口径不满足估算条件，已有观测保留；未使用当前车型配置补算。';
   return `<section class="card charge-detail" id="charge-detail"><div class="card-head"><div><h2>充电详情</h2><p class="card-meta">${esc(eventTime(event.end_time))}</p></div>${pill(event.partial?'部分记录':'完整记录',event.partial?'warn':'good')}</div><div class="charge-soc"><div><span>起始 SOC</span><strong>${format(event.start_soc)}${Number.isFinite(event.start_soc)?'<small>%</small>':''}</strong></div><div class="charge-soc-line" aria-hidden="true"><i></i></div><div><span>结束 SOC</span><strong>${format(event.end_soc)}${Number.isFinite(event.end_soc)?'<small>%</small>':''}</strong></div></div><div class="card-body charge-facts">${row('记录起点',eventTime(event.start_time))}${row('结束时间',eventTime(event.end_time))}${row('记录时长',eventDuration(event.duration_seconds))}${row('电量增加',Number.isFinite(delta)?`${format(delta)} 个百分点`:'未知')}${row('估算充入电量',estimate)}</div><div class="charge-note ${event.partial?'warning':''}">${esc(note)}</div>${startEvidenceView(event.start_evidence)}${chargeHistoricalParameters(event.charging_details)}</section>`;
 }
 
@@ -489,7 +489,7 @@ function energy() {
   const validRated = Number.isFinite(rated) && rated > 0 && ['CLTC','WLTP','NEDC','EPA'].includes(profile.range_standard);
   const trip = state.range_attainment || {status:'no_trip'};
   const canCalculate = trip.status === 'available' && Number.isFinite(trip.ratio);
-  const reasons = {no_trip:'等待后台记录并确认一段完整行程。', incomplete:'最近行程存在观测缺口或跨充电，无法计算。', invalid:'最近行程的里程、电量或时间数据无效。', no_consumption:'最近行程耗电为零或电量回升，无法计算。', no_rating:'当前车型缺少有效标称续航。', unavailable:'行程记录暂不可用，请稍后重试。'};
+  const reasons = {no_trip:'等待后台确认一条已结束记录。', incomplete:'最近记录缺少可比较的端点，无法计算。', invalid:'最近记录的里程、电量或时间无效，或存在充电混入与口径变化。', no_consumption:'最近行程耗电为零或电量回升，无法计算。', no_rating:'当前车型缺少有效标称续航。', unavailable:'行程记录暂不可用，请稍后重试。'};
   const format = value => new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value);
   const electric = m.fields.filter(f => f.group === '能源与充电' || f.path === 'additionalVehicleStatus.chargeHvSts');
   const remainingTime = m.charging.remaining_time || '未知';
@@ -508,14 +508,14 @@ function energy() {
       <div class="energy-charge-grid">${[['充电模式',m.charging.mode==='dc'?'直流充电':m.charging.mode==='ac'?'交流充电':'未知'],['预计剩余时间',remainingTime],['连接状态',m.charging.connection_state || '接口未提供有效连接判断']].map(([label,value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p><p class="energy-caption">状态来自车辆云端缓存；缺少会话起点时不推测充电开始时间。</p></div></section>
   </div>
   ${chargingWorkspace(m.charging_details)}
-  <section class="card energy-achievement"><div class="card-head"><h2>续航与行程参考</h2>${pill('最近已结束行程')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
-      <p class="energy-caption">${canCalculate ? `按实际行驶里程与耗电量，对比 ${esc(trip.standard)} 标称续航` : esc(reasons[trip.status] || reasons.invalid)}</p>
-      ${canCalculate ? `<div class="energy-reference">${row('实际行驶里程',`${format(trip.distance_km)} km`)}${row('起止电量',`${format(trip.start_soc)}% 至 ${format(trip.end_soc)}%`)}${row('消耗电量',`${format(trip.used_soc)} 个百分点`)}${row('对应标称里程',`${format(trip.reference_km)} km`)}</div>` : ''}
+  <section class="card energy-achievement"><div class="card-head"><h2>续航与行程参考</h2>${pill(trip.partial?'最近已结束记录 · 片段':'最近已结束记录')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
+      <p class="energy-caption">${canCalculate ? `按已观测里程与 SOC 下降，对比 ${esc(trip.standard)} 标称续航${trip.partial?'；仅代表这个片段':''}` : esc(reasons[trip.status] || reasons.invalid)}</p>
+      ${canCalculate ? `<div class="energy-reference">${row('已观测里程',`${format(trip.distance_km)} km`)}${row('起止电量',`${format(trip.start_soc)}% 至 ${format(trip.end_soc)}%`)}${row('消耗电量',`${format(trip.used_soc)} 个百分点`)}${row('对应标称里程',`${format(trip.reference_km)} km`)}</div>` : ''}
       ${trip.start_at && trip.end_at ? `<p class="energy-caption energy-trip-time">行程开始：${esc(trip.start_at)}<br>行程结束：${esc(trip.end_at)}</p>` : ''}
       <p class="energy-caption">基于后台记录的里程与电量变化；下电确认 10 分钟后生成。电量取整及云端缓存延迟会影响精度。</p>
     </div></section>
   <section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
-    <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 实际行驶里程 ÷（标称续航 × 消耗电量百分点 ÷ 100）× 100%。消耗电量为同一行程起点电量减终点电量；里程为行程起止总里程之差。不使用当前剩余续航计算。</p><p>仅使用当前车辆最近一次已结束行程；不完整、跨充电、电量未下降或数据无效时不计算，不回退展示更早行程的结果。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值。</p><p>例如行驶 80 km，电量从 80% 降至 60%，标称 546 km，对应标称里程 109.2 km，达成率约 73.3%。短行程受电量取整影响较大，结果不用于判断电池健康。</p></div></details>
+    <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 实际行驶里程 ÷（标称续航 × 消耗电量百分点 ÷ 100）× 100%。消耗电量为同一行程起点电量减终点电量；里程为行程起止总里程之差。不使用当前剩余续航计算。</p><p>使用当前车辆最近一条已结束记录的有效端点，片段也可计算，仅代表已观测区间。充电混入、解码口径变化、电量未下降或数据无效时不计算；不回退展示更早记录。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值。</p><p>例如行驶 80 km，电量从 80% 降至 60%，标称 546 km，对应标称里程 109.2 km，达成率约 73.3%。短行程受电量取整影响较大，结果不用于判断电池健康。</p></div></details>
     ${carDisclosure('energy-status','充电状态原值',electric.filter(f => primaryKeys.includes(f.key)))}
     ${carDisclosure('energy-electric','电压、电流与高压参数',electric.filter(f => electricKeys.includes(f.key)))}
     ${carDisclosure('energy-strategy','预约、充电口与对外放电',electric.filter(f => strategyKeys.includes(f.key)))}

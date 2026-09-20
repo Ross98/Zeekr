@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sqlite3
 from .start_evidence import from_summary as start_evidence
+from .usage_events import project, total
 
 
 BEIJING = timezone(timedelta(hours=8))
@@ -211,26 +212,23 @@ class ChargingAnalytics:
                         continue
                     if not isinstance(summary, dict):
                         continue
-                    ended = _number(summary.get('end_time'))
-                    if ended is None or not lower <= ended < upper:
+                    event = project(event_id, 'charge_end', summary)
+                    if event is None:
+                        continue
+                    ended = event['end_time']
+                    if not lower <= ended < upper or ended > now:
                         continue
                     report = summary.get('report_v2') if isinstance(summary.get('report_v2'), dict) else {}
                     event_mode = _mode(report)
                     if mode != 'all' and event_mode != mode:
                         continue
                     metrics = report.get('metrics') if isinstance(report.get('metrics'), dict) else {}
-                    partial = bool(summary.get('partial'))
-                    delta = _number(summary.get('soc_delta'))
-                    capacity = _number(summary.get('battery_capacity_kwh'))
-                    estimate = capacity*delta/100 if not partial and capacity and delta is not None and delta >= 0 else None
-                    duration = _number(summary.get('duration_seconds')) if not partial else None
-                    records.append({'id': event_id, 'end_time': ended, 'start_time': _number(summary.get('start_time')),
+                    records.append({'id': event_id, 'end_time': ended, 'start_time': event['start_time'],
                                     'date': datetime.fromtimestamp(ended/1000, BEIJING).strftime('%Y-%m-%d'),
-                                    'mode': event_mode, 'partial': partial,
-                                    'start_soc': _number(summary.get('start_soc')),
-                                    'end_soc': _number(summary.get('end_soc')),
-                                    'soc_delta': delta, 'duration_seconds': duration,
-                                    'estimated_kwh': estimate,
+                                    'mode': event_mode, 'partial': event['partial'],
+                                    'start_soc': event['start_soc'], 'end_soc': event['end_soc'],
+                                    'soc_delta': event['soc_delta'], 'duration_seconds': event['duration_seconds'],
+                                    'estimated_kwh': event['estimated_kwh'],
                                     'sampled_peak_kw': _number(metrics.get('sampled_peak_kw')),
                                     'average_power_kw': _number(metrics.get('average_power_kw'))})
         daily = []
@@ -238,9 +236,10 @@ class ChargingAnalytics:
             date = (end_day-timedelta(days=days-1-offset)).strftime('%Y-%m-%d')
             same = [r for r in records if r['date'] == date]
             daily.append({'date': date, 'count': len(same),
-                          'ac_kwh': sum(r['estimated_kwh'] or 0 for r in same if r['mode'] == 'ac'),
-                          'dc_kwh': sum(r['estimated_kwh'] or 0 for r in same if r['mode'] == 'dc'),
-                          'unknown_kwh': sum(r['estimated_kwh'] or 0 for r in same if r['mode'] == 'unknown')})
+                          'estimated_kwh': total(r['estimated_kwh'] for r in same),
+                          'ac_kwh': total(r['estimated_kwh'] for r in same if r['mode'] == 'ac'),
+                          'dc_kwh': total(r['estimated_kwh'] for r in same if r['mode'] == 'dc'),
+                          'unknown_kwh': total(r['estimated_kwh'] for r in same if r['mode'] == 'unknown')})
         complete = [r for r in records if not r['partial']]
         energy = [r['estimated_kwh'] for r in records if r['estimated_kwh'] is not None]
         try:
@@ -250,7 +249,10 @@ class ChargingAnalytics:
         return {'days': days, 'mode': mode, 'timezone': 'Asia/Shanghai', 'daily': daily,
                 'current': current if current.get('status') == 'active' else None,
                 'summary': {'ended_count': len(records), 'complete_count': len(complete),
-                            'partial_count': len(records)-len(complete), 'estimated_kwh': sum(energy),
+                            'partial_count': len(records)-len(complete), 'estimated_kwh': total(energy),
                             'included_energy_count': len(energy), 'excluded_energy_count': len(records)-len(energy),
-                            'complete_duration_seconds': sum(r['duration_seconds'] or 0 for r in complete)},
+                            'partial_energy_count': sum(r['partial'] and r['estimated_kwh'] is not None for r in records),
+                            'duration_seconds': total(r['duration_seconds'] for r in records),
+                            'included_duration_count': sum(r['duration_seconds'] is not None for r in records),
+                            'complete_duration_seconds': total(r['duration_seconds'] for r in complete)},
                 'records': records}

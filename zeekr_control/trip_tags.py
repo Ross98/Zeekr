@@ -16,14 +16,14 @@ def describe(values):
 
 def comparison(tag,events):
     complete=[row for row in events if not row['partial']]
-    eligible=[row for row in complete if row['estimated_kwh'] is not None and row['distance_km'] is not None
+    eligible=[row for row in events if row['estimated_kwh'] is not None and row['distance_km'] is not None
               and row['distance_km']>=10 and row['soc_delta'] is not None and -row['soc_delta']>=3]
     distance=sum(row['distance_km'] for row in eligible)
     return dict(tag=tag,count=len(events),complete_count=len(complete),partial_count=len(events)-len(complete),
-        distance_km=describe(row['distance_km'] for row in complete),
-        duration_seconds=describe(row['duration_seconds'] for row in complete),
-        soc_consumed=describe(-row['soc_delta'] if row['soc_delta'] is not None and row['soc_delta']<=0 else None for row in complete),
-        estimated_kwh=describe(row['estimated_kwh'] for row in complete),
+        distance_km=describe(row['distance_km'] for row in events),
+        duration_seconds=describe(row['duration_seconds'] for row in events),
+        soc_consumed=describe(-row['soc_delta'] if row['soc_delta'] is not None and row['soc_delta']<=0 else None for row in events),
+        estimated_kwh=describe(row['estimated_kwh'] for row in events),
         efficiency=dict(value=round(sum(row['estimated_kwh'] for row in eligible)/distance*100,6) if distance else None,
                         samples=len(eligible),distance_km=round(distance,6) if eligible else None))
 

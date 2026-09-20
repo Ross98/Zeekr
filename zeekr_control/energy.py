@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .summary import updated_at
 from .trip_visibility import visible_clause
+from .usage_events import project
 
 
 def _number(value, low, high):
@@ -39,10 +40,12 @@ def read_attainment(database_path, vehicle, profile):
             and end_time > start_time):
         return result
     result.update(start_at=updated_at(start_time), end_at=updated_at(end_time))
-    if trip.get('partial') is not False:
-        return dict(result, status='incomplete')
-    start, end = trip.get('start_soc'), trip.get('end_soc')
-    distance, delta = trip.get('distance_km'), trip.get('soc_delta')
+    observed = project('latest', 'trip_end', trip)
+    if observed is None:
+        return result
+    result['partial'] = observed['partial']
+    start, end = observed['start_soc'], observed['end_soc']
+    distance, delta = observed['distance_km'], observed['energy_soc_delta']
     if not (_number(start, 0, 100) and _number(end, 0, 100)
             and _number(distance, 0, 1e9) and _number(delta, -100, 100)):
         return result

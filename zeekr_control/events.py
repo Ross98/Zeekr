@@ -7,11 +7,18 @@ import sqlite3
 from .charging_details import history_details
 from .trip_visibility import visible_clause
 from .start_evidence import from_summary as start_evidence
+from .usage_events import project
 
 
 ALLOWED_KINDS = {'trip_end', 'charge_end'}
 PUBLIC_FIELDS = ('start_time', 'end_time', 'duration_seconds', 'distance_km',
                  'start_soc', 'end_soc', 'soc_delta', 'partial', 'battery_capacity_kwh')
+
+
+def public_event(event_id, kind, summary):
+    observed = project(event_id, kind, summary) or {}
+    return dict(id=event_id, kind=kind, **{key: summary.get(key) for key in PUBLIC_FIELDS},
+                start_evidence=start_evidence(summary, kind), estimated_kwh=observed.get('estimated_kwh'))
 
 
 def _cursor(created, event_id):
@@ -69,9 +76,7 @@ class EventStore:
         finally:
             db.close()
         page = selected[:limit]
-        events = [dict({'id': event_id, 'kind': kind},
-                       **{key: summary.get(key) for key in PUBLIC_FIELDS}, start_evidence=start_evidence(summary, kind))
-                  for event_id, _, summary in page]
+        events = [public_event(event_id, kind, summary) for event_id, _, summary in page]
         if kind == 'charge_end':
             for event, (_, _, summary) in zip(events, page):
                 event['charging_details'] = history_details(summary.get('report_v2'))
@@ -97,8 +102,7 @@ class EventStore:
                         continue
                     if not isinstance(summary, dict):
                         continue
-                    result[kind] = dict({'id': event_id, 'kind': kind},
-                                        **{key: summary.get(key) for key in PUBLIC_FIELDS}, start_evidence=start_evidence(summary, kind))
+                    result[kind] = public_event(event_id, kind, summary)
                     break
         finally:
             db.close()

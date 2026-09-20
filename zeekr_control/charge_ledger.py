@@ -108,7 +108,7 @@ class ChargeLedger:
         trash=[row for row in entries if row['date'].startswith(month) and row['deleted']]
         current.sort(key=lambda row:(row['date'],row['updated_at'],row['id']),reverse=True)
         events=self.events.between(vehicle,window['start'],window['end'])['events']
-        trips=[row for row in events if row['kind']=='trip_end' and not row['partial'] and row['distance_km'] is not None]
+        trips=[row for row in events if row['kind']=='trip_end' and row['distance_km'] is not None]
         distance=total(row['distance_km'] for row in trips)
         totals=self.totals(current)
         actual=totals['actual_cents']
@@ -125,6 +125,6 @@ class ChargeLedger:
                 'entries':current,'trash':trash,'events':choices,'totals':totals,'trend':list(reversed(trend)),
                 'sources':{key:self.totals([row for row in current if row['source']==key]) for key in ('home','public','unknown')},
                 'cost_per_km':{'distance_km':distance,'distance_samples':len(trips),
-                    'partial_trips_excluded':sum(row['kind']=='trip_end' and row['partial'] for row in events),
+                    'partial_distance_samples':sum(row['partial'] for row in trips),
                     'actual_yuan':round(actual/100/distance,6) if actual is not None and distance and distance>0 else None,
                     'including_estimates_yuan':round(combined/100/distance,6) if combined is not None and distance and distance>0 else None}}

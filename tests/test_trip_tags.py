@@ -47,15 +47,15 @@ class TripTagTests(unittest.TestCase):
         reopened=TripTags(PersonalStore(self.store.path),self.db).query('owner','car','2026-09-20')
         self.assertEqual(reopened['revision'],1)
 
-    def test_group_comparison_keeps_partial_out_of_metrics(self):
+    def test_group_comparison_includes_partial_observed_metrics(self):
         self.save();self.save('b',revision=1);self.save('partial',revision=2)
         group=self.query()['groups'][0]
         self.assertEqual(group['count'],3);self.assertEqual(group['complete_count'],2)
-        self.assertEqual(group['distance_km']['mean'],30)
-        self.assertEqual(group['distance_km']['median'],30)
-        self.assertEqual(group['soc_consumed']['mean'],7.5)
-        self.assertAlmostEqual(group['efficiency']['value'],21.5)
-        self.assertEqual(group['efficiency']['samples'],2)
+        self.assertEqual(group['distance_km']['mean'],53.333333)
+        self.assertEqual(group['distance_km']['median'],40)
+        self.assertEqual(group['soc_consumed']['mean'],11.666667)
+        self.assertAlmostEqual(group['efficiency']['value'],18.8125)
+        self.assertEqual(group['efficiency']['samples'],3)
 
     def test_efficiency_uses_only_same_eligible_energy_distance_pairs(self):
         self.save();self.save('short',revision=1)

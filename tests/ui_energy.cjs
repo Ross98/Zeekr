@@ -20,8 +20,8 @@ const path = require('node:path');
     const chargeQueries = [];
     let chargeFailure = false;
     let chargeResponse = {events:[
-      {id:'charge-complete',kind:'charge_end',start_time:1704067200000,end_time:1704070800000,duration_seconds:3600,start_soc:20,end_soc:80,soc_delta:60,partial:false,battery_capacity_kwh:86},
-      {id:'charge-partial',kind:'charge_end',start_time:null,end_time:1703984400000,duration_seconds:1200,start_soc:70,end_soc:75,soc_delta:5,partial:true,battery_capacity_kwh:86}
+      {id:'charge-complete',kind:'charge_end',start_time:1704067200000,end_time:1704070800000,duration_seconds:3600,start_soc:20,end_soc:80,soc_delta:60,partial:false,battery_capacity_kwh:86,estimated_kwh:51.6},
+      {id:'charge-partial',kind:'charge_end',start_time:null,end_time:1703984400000,duration_seconds:1200,start_soc:70,end_soc:75,soc_delta:5,partial:true,battery_capacity_kwh:86,estimated_kwh:null}
     ],next_cursor:'next-page'};
     await page.route('**/api/events?**', async route => {
       chargeQueries.push(route.request().url());
@@ -40,7 +40,7 @@ const path = require('node:path');
       const points=analyticsPoints.map(point=>electrical?{time:point.time,soc:point.soc,voltage:220,current:29,mode:'ac',segment_id:point.segment_id,quality:'valid'}:point);
       return route.fulfill({json:{session:{id:'current',status:'active',partial:false,start_time:1704067200000,end_time:1704067600000,start_soc:20,end_soc:30,power_kw:6.4,mode:'ac'},series:{id:'current',view:electrical?'electrical':'power-soc',points,segments:[{id:0},{id:1}],raw_count:3,display_count:3,has_gaps:true,downsampled:false}}});
     });
-    await page.route('**/api/charging/statistics?**', route => route.fulfill({json:{days:30,mode:'all',timezone:'Asia/Shanghai',summary:{ended_count:2,complete_count:1,partial_count:1,estimated_kwh:51.6,included_energy_count:1,excluded_energy_count:1,complete_duration_seconds:3600},daily:Array.from({length:30},(_,index)=>({date:`2024-01-${String(index+1).padStart(2,'0')}`,count:index===1?2:0,ac_kwh:index===1?51.6:0,dc_kwh:0,unknown_kwh:0})),records:[{id:'charge-complete',end_time:1704070800000,start_time:1704067200000,date:'2024-01-01',mode:'ac',partial:false,start_soc:20,end_soc:80,duration_seconds:3600,estimated_kwh:51.6},{id:'charge-partial',end_time:1703984400000,date:'2023-12-31',mode:'dc',partial:true,start_soc:70,end_soc:75,duration_seconds:null,estimated_kwh:null}]}}));
+    await page.route('**/api/charging/statistics?**', route => route.fulfill({json:{days:30,mode:'all',timezone:'Asia/Shanghai',summary:{ended_count:2,complete_count:1,partial_count:1,estimated_kwh:51.6,included_energy_count:1,excluded_energy_count:1,complete_duration_seconds:3600,duration_seconds:3600,included_duration_count:1,partial_energy_count:0},daily:Array.from({length:30},(_,index)=>({date:`2024-01-${String(index+1).padStart(2,'0')}`,count:index===1?2:0,estimated_kwh:index===1?51.6:null,ac_kwh:index===1?51.6:0,dc_kwh:0,unknown_kwh:0})),records:[{id:'charge-complete',end_time:1704070800000,start_time:1704067200000,date:'2024-01-01',mode:'ac',partial:false,start_soc:20,end_soc:80,duration_seconds:3600,estimated_kwh:51.6},{id:'charge-partial',end_time:1703984400000,date:'2023-12-31',mode:'dc',partial:true,start_soc:70,end_soc:75,duration_seconds:null,estimated_kwh:null}]}}));
     await page.goto(`http://127.0.0.1:${port}`);
     await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
     assert.match(await page.locator('main').innerText(), /尚未读取/);
@@ -79,7 +79,7 @@ const path = require('node:path');
     await page.getByRole('tab',{name:'本次过程'}).click();
     await page.getByRole('button',{name:/查看充电记录 2/}).click();
     assert.equal(new URL(analyticsQueries.at(-1)).searchParams.get('id'),'charge-partial','an explicit history selection changes the process chart');
-    assert.match(await page.locator('#charge-detail').innerText(), /部分记录.*已观测 SOC 变化.*不作为完整充电量/s);
+    assert.match(await page.locator('#charge-detail').innerText(), /部分记录.*起止时间.*不满足估算条件.*已有观测保留/s);
     assert.doesNotMatch(await page.locator('#charge-detail').innerText(), /4\.3 kWh/);
     await page.evaluate(() => render());
     await page.getByRole('button',{name:/查看充电记录 2/}).waitFor();
@@ -98,11 +98,11 @@ const path = require('node:path');
     assert.ok(Math.abs(chargingColumns.listHeight-chargingColumns.detailHeight)<2,'charging list and detail cards must have equal height');
     assert.ok(Math.abs(chargingColumns.listBottom-chargingColumns.paginationBottom)<2,'pagination must sit at the bottom of the charging list card');
     await page.screenshot({path:'/tmp/zeekr-energy-qa/charging-detail-1280.png',fullPage:true});
-    chargeResponse={events:[{id:'charge-complete',kind:'charge_end',start_time:1704067200000,end_time:1704070800000,duration_seconds:3600,start_soc:20,end_soc:80,soc_delta:60,partial:false,battery_capacity_kwh:86}],next_cursor:'next-page'};
+    chargeResponse={events:[{id:'charge-complete',kind:'charge_end',start_time:1704067200000,end_time:1704070800000,duration_seconds:3600,start_soc:20,end_soc:80,soc_delta:60,partial:false,battery_capacity_kwh:86,estimated_kwh:51.6}],next_cursor:'next-page'};
     await page.evaluate(() => render());
     await page.getByRole('button',{name:/查看充电记录 1/}).waitFor();
     assert.match(await page.locator('#charge-detail').innerText(), /部分记录/,'new first-page record must not replace a detail the user is reading');
-    chargeResponse={events:[{id:'page-two',kind:'charge_end',start_time:1704067200000,end_time:1704070800000,duration_seconds:3600,start_soc:30,end_soc:60,soc_delta:30,partial:false,battery_capacity_kwh:null}],next_cursor:null};
+    chargeResponse={events:[{id:'page-two',kind:'charge_end',start_time:1704067200000,end_time:1704070800000,duration_seconds:3600,start_soc:30,end_soc:60,soc_delta:30,partial:false,battery_capacity_kwh:null,estimated_kwh:null}],next_cursor:null};
     await page.getByRole('button',{name:'下一页',exact:true}).click();
     await page.getByText('充入电量无法估算',{exact:true}).waitFor();
     chargeResponse={events:[],next_cursor:null};
@@ -140,7 +140,7 @@ const path = require('node:path');
     data.model.metric_details.range.value = 230;
     data.model.metrics.battery = '50%';
     data.model.metrics.range = '230 km';
-    data.range_attainment = {status:'available', ratio:73.26007326, distance_km:80, start_soc:80, end_soc:60, used_soc:20, reference_km:109.2, standard:'CLTC', start_at:'2024-01-01 08:00',end_at:'2024-01-01 09:00'};
+    data.range_attainment = {status:'available', partial:true, ratio:73.26007326, distance_km:80, start_soc:80, end_soc:60, used_soc:20, reference_km:109.2, standard:'CLTC', start_at:'2024-01-01 08:00',end_at:'2024-01-01 09:00'};
     await page.route('**/api/state', route=>route.fulfill({json:data}));
     await page.route('**/api/refresh', route=>route.fulfill({json:data}));
     const refresh = async () => {
@@ -149,6 +149,7 @@ const path = require('node:path');
     };
     await refresh();
     assert.match(await page.locator('main').innerText(), /73\.3/,'80 km driven on 20 percentage points must use trip attainment');
+    assert.match(await page.locator('.energy-achievement').innerText(), /片段/);
     assert.match(await page.locator('.energy-rating').innerText(), /546/);
     assert.match(await page.locator('.energy-rating').innerText(), /CLTC/);
     assert.match(await page.locator('.energy-charge').innerText(), /暂无有效时间估计/);

@@ -57,7 +57,7 @@ def seed(app, session):
         app.snapshot_store.publish(session_scope(session), vehicle, raw, stamp, source='monitor')
 
 
-def seed_events(app):
+def seed_events(app, partial_charge=False):
     vehicle = hashlib.sha256(b'insights-fixture-car').hexdigest()
     entries = [('report-trip','2026-09-15','trip_end',40,False,70,60),
                ('report-partial','2026-09-16','trip_end',7,True,70,69),
@@ -69,12 +69,15 @@ def seed_events(app):
             day,_=day_bounds(date)
             start,end=(day-1800000,day+1800000) if identity.endswith('night') else (day+8*3600000,day+9*3600000)
             summary={'start_time':start,'end_time':end,'duration_seconds':3600,'distance_km':distance,
-                     'start_soc':a,'end_soc':b,'soc_delta':b-a,'partial':partial,'battery_capacity_kwh':86,
+                     'start_soc':a,'end_soc':b,'soc_delta':b-a,'partial':partial or (partial_charge and identity=='report-charge'),'battery_capacity_kwh':86,
                      'address':'PRIVATE-ADDRESS','vin':'NEVER-EXPORT-IDENTITY'}
             db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
                        (identity,vehicle,kind,json.dumps(summary),'PRIVATE-MESSAGE',end+600000))
     fixed_now,_=day_bounds('2026-10-05')
     app.usage_reports.clock=lambda:fixed_now
+    if partial_charge:
+        statistics=app.charging_analytics.statistics
+        app.charging_analytics.statistics=lambda vehicle,days=7,mode='all',now=None:statistics(vehicle,days,mode,fixed_now)
     calendar_now,_=day_bounds('2026-09-20')
     app.usage_calendar.clock=lambda:calendar_now+12*3600000
     app.vehicle_life.clock=lambda:calendar_now+12*3600000
@@ -140,6 +143,7 @@ def seed_demo(app,session):
 if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--demo',action='store_true',help='Preload synthetic bills, tags, tasks and an experiment.')
+    parser.add_argument('--partial-charge',action='store_true',help='Use a partial charge for observed-metric acceptance.')
     parser.add_argument('--port',type=int,default=0,help='Loopback port; default chooses an available port.')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
@@ -150,7 +154,7 @@ if __name__ == '__main__':
             raise AssertionError('Cloud client is forbidden in the history fixture')
         app = App(session_path, client_factory=forbidden)
         seed(app, session)
-        seed_events(app)
+        seed_events(app,args.partial_charge)
         seed_reminders(app,session)
         seed_charge_curves(app)
         if args.demo:

@@ -6,6 +6,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'充电账本',exact:true}).click();
     await page.getByLabel('账本月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取账本',exact:true}).click();
+    assert.match(await page.getByText(/本期已录充电费用 ÷/).innerText(),/67 km，含 1 条片段/);
     await page.getByLabel('关联充电记录',{exact:true}).selectOption('report-charge');
     await page.getByLabel('充电来源',{exact:true}).selectOption('home');
     await page.getByLabel('实际账单金额（元）',{exact:true}).fill('30.10');

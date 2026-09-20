@@ -160,8 +160,22 @@ class VehicleResearchTests(unittest.TestCase):
         self.assertEqual(result['total'],2)
         temp=next(g for g in result['groups'] if g['dimension']=='temperature')
         self.assertEqual(temp['label'],'温度缺样')
-        self.assertEqual(temp['consumption']['count'],1)
+        self.assertEqual(temp['consumption']['count'],2)
         self.assertEqual(temp['consumption']['mean'],21.5)
+
+    def test_event_start_outside_range_keeps_observed_energy_and_range_flag(self):
+        from zeekr_control.usage_events import project
+        from unittest.mock import Mock
+        event=project('cross-range','trip_end',dict(start_time=self.start-3600000,
+            end_time=self.start+3600000,duration_seconds=7200,distance_km=40,
+            start_soc=70,end_soc=60,soc_delta=-10,battery_capacity_kwh=86,partial=True))
+        self.api.events=Mock()
+        self.api.events.between.return_value={'events':[event]}
+        result=self.query()['event_conditions']
+        self.assertTrue(result['events'][0]['range_partial'])
+        self.assertTrue(result['events'][0]['partial'])
+        self.assertEqual(result['groups'][0]['usable_events'],1)
+        self.assertEqual(result['groups'][0]['energy']['mean'],8.6)
 
     def test_rate_and_cadence_exclude_gaps(self):
         self.append(soc=70);self.append(60000,soc=69);self.append(1800000,soc=60)

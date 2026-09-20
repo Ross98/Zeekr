@@ -51,7 +51,7 @@ class UsageReportsTests(unittest.TestCase):
         for period,date in [('year','2026-09-20'),('week','2026-9-20'),('month','2026-02-30')]:
             with self.assertRaises(ValueError):period_window(period,date)
 
-    def test_complete_and_partial_metrics_have_separate_denominators(self):
+    def test_complete_and_partial_metrics_share_valid_sample_totals(self):
         self.add()
         self.add('partial',partial=True,distance_km=7)
         self.add('charge','charge_end',distance_km=0,start_soc=40,end_soc=80,soc_delta=40)
@@ -59,13 +59,16 @@ class UsageReportsTests(unittest.TestCase):
         data=self.report()['current']
         self.assertEqual(data['totals']['trip_count'],2)
         self.assertEqual(data['totals']['complete_trip_count'],1)
-        self.assertEqual(data['totals']['distance_km'],40)
+        self.assertEqual(data['totals']['distance_km'],47)
+        self.assertEqual(data['totals']['complete_distance_km'],40)
+        self.assertEqual(data['samples']['distance'],2)
+        self.assertEqual(data['totals']['duration_seconds'],7200)
         self.assertEqual(data['totals']['partial_distance_km'],7)
-        self.assertAlmostEqual(data['totals']['trip_estimated_kwh'],8.6)
+        self.assertAlmostEqual(data['totals']['trip_estimated_kwh'],17.2)
         self.assertAlmostEqual(data['totals']['estimated_kwh_per_100km'],21.5)
-        self.assertAlmostEqual(data['totals']['charge_estimated_kwh'],34.4)
-        self.assertEqual(data['samples']['trip_energy'],1)
-        self.assertEqual(data['samples']['charge_energy'],1)
+        self.assertAlmostEqual(data['totals']['charge_estimated_kwh'],38.7)
+        self.assertEqual(data['samples']['trip_energy'],2)
+        self.assertEqual(data['samples']['charge_energy'],2)
         self.assertEqual(data['departure_hours'][8],2)
 
     def test_date_belongs_to_end_time_and_other_vehicles_are_excluded(self):

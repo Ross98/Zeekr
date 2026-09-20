@@ -20,6 +20,11 @@ def number(value, low=0, high=1e12):
     return value if type(value) in (int, float) and math.isfinite(value) and low <= value <= high else None
 
 
+def total(values):
+    values = [value for value in values if value is not None]
+    return round(sum(values), 6) if values else None
+
+
 def _object(value):
     return value if isinstance(value, dict) else {}
 
@@ -34,7 +39,9 @@ def project(identity, kind, summary):
         return None
     report = _object(summary.get('report_v2'))
     metrics, quality = _object(report.get('metrics')), _object(report.get('quality'))
-    overlap = metrics.get('charge_overlap') is True or 'charge_overlap' in (quality.get('quality_reasons') or [])
+    reasons = quality.get('quality_reasons')
+    reasons = reasons if isinstance(reasons, list) else []
+    overlap = metrics.get('charge_overlap') is True or 'charge_overlap' in reasons
     complete = (summary.get('partial') is False and report.get('partial') is not True
                 and start is not None and end > start and not overlap)
     duration = number(summary.get('duration_seconds'), 0, 366*86400)
@@ -43,19 +50,24 @@ def project(identity, kind, summary):
     distance = number(summary.get('distance_km'), 0, 1e7)
     a, b = (number(summary.get(key), 0, 100) for key in ('start_soc', 'end_soc'))
     delta = number(summary.get('soc_delta'), -100, 100)
+    if a is None or b is None or delta is None or abs(b-a-delta) > .001:
+        delta = None
     source = _object(report.get('profile_snapshot')) if 'profile_snapshot' in report else summary
     capacity = number(source.get('battery_capacity_kwh'), .001, 1000)
     estimated = None
-    if (complete and a is not None and b is not None and delta is not None and capacity is not None
-            and abs(b-a-delta) <= .001 and not quality.get('decoder_changed_mid_session')):
-        change = -delta if kind == 'trip_end' else delta
+    # Completeness describes the whole event, not the validity of its observed endpoints.
+    energy_delta = (delta if start is not None and end > start and not overlap
+                    and not quality.get('decoder_changed_mid_session') else None)
+    if energy_delta is not None and capacity is not None:
+        change = -energy_delta if kind == 'trip_end' else energy_delta
         if change >= 0:
             estimated = round(change*capacity/100, 6)
     mode = _object(report.get('start')).get('charging_mode')
     return {'id': identity, 'kind': kind, 'start_time': start, 'end_time': end,
             'start_evidence': start_evidence(summary, kind),
             'duration_seconds': duration, 'distance_km': distance, 'start_soc': a, 'end_soc': b,
-            'soc_delta': delta, 'partial': not complete, 'battery_capacity_kwh': capacity,
+            'soc_delta': delta, 'energy_soc_delta': energy_delta,
+            'partial': not complete, 'battery_capacity_kwh': capacity,
             'estimated_kwh': estimated, 'charge_mode': mode if mode in ('ac', 'dc') else None,
             'energy_source': 'soc_capacity_estimate' if estimated is not None else None}
 
