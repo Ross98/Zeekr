@@ -72,9 +72,9 @@ function localTripFacts() {
   const endLabel = trip.status==='ended'?'结束时间':trip.status==='waiting'?'停车观测':'最近观测';
   const delta = Number.isFinite(trip.start_soc)&&Number.isFinite(trip.end_soc) ? trip.end_soc-trip.start_soc : null;
   return `<div class="local-trip-intro"><div class="local-trip-title"><h2>单趟行程</h2>${pill(tripStatusLabels[trip.status]||'已结束')}</div>
-    <div class="local-trip-times"><span>开始 ${esc(tripTime(trip.start_time))}</span><span>${endLabel} ${esc(tripTime(trip.end_time))}</span></div>
+    <div class="local-trip-times"><span>记录起点 ${esc(tripTime(trip.start_time))}</span><span>${endLabel} ${esc(tripTime(trip.end_time))}</span></div>
     <div class="local-trip-facts"><div><span>行驶里程</span><strong>${esc(tripNumber(trip.distance_km,' km'))}</strong></div><div><span>观测时长</span><strong>${esc(tripDuration(trip.duration_seconds))}</strong></div><div><span>起止电量</span><strong>${esc(tripNumber(trip.start_soc,'%'))} → ${esc(tripNumber(trip.end_soc,'%'))}</strong></div><div><span>电量变化</span><strong>${delta===null?'未知':`${delta>0?'+':''}${esc(tripNumber(delta))} 个百分点`}</strong></div></div>
-    <p class="subtle local-record-note">${trip.partial?'行程记录：部分记录，起止或过程存在缺失。':'行程记录：未标记为部分记录。'}路线采样情况另列，不代表 GPS 路线完整。</p></div>`;
+    ${startEvidenceView(trip.start_evidence)}<p class="subtle local-record-note">${trip.partial?'行程记录：部分记录，起止或过程存在缺失。':'行程记录：未标记为部分记录。'}路线采样情况另列，不代表 GPS 路线完整。</p></div>`;
 }
 
 function renderLocalTripDetail() {

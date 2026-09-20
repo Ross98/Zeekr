@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 from .charging_details import history_details
 from .trip_visibility import visible_clause
+from .start_evidence import from_summary as start_evidence
 
 
 ALLOWED_KINDS = {'trip_end', 'charge_end'}
@@ -69,7 +70,7 @@ class EventStore:
             db.close()
         page = selected[:limit]
         events = [dict({'id': event_id, 'kind': kind},
-                       **{key: summary.get(key) for key in PUBLIC_FIELDS})
+                       **{key: summary.get(key) for key in PUBLIC_FIELDS}, start_evidence=start_evidence(summary, kind))
                   for event_id, _, summary in page]
         if kind == 'charge_end':
             for event, (_, _, summary) in zip(events, page):
@@ -97,7 +98,7 @@ class EventStore:
                     if not isinstance(summary, dict):
                         continue
                     result[kind] = dict({'id': event_id, 'kind': kind},
-                                        **{key: summary.get(key) for key in PUBLIC_FIELDS})
+                                        **{key: summary.get(key) for key in PUBLIC_FIELDS}, start_evidence=start_evidence(summary, kind))
                     break
         finally:
             db.close()

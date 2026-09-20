@@ -8,6 +8,7 @@ import sqlite3
 
 from .archive_reader import _private
 from .trip_visibility import visible_clause
+from .start_evidence import from_summary as start_evidence
 
 MAX_SUMMARY_BYTES = 2 * 1024 * 1024
 MAX_SCAN = 250000
@@ -52,6 +53,7 @@ def project(identity, kind, summary):
             estimated = round(change*capacity/100, 6)
     mode = _object(report.get('start')).get('charging_mode')
     return {'id': identity, 'kind': kind, 'start_time': start, 'end_time': end,
+            'start_evidence': start_evidence(summary, kind),
             'duration_seconds': duration, 'distance_km': distance, 'start_soc': a, 'end_soc': b,
             'soc_delta': delta, 'partial': not complete, 'battery_capacity_kwh': capacity,
             'estimated_kwh': estimated, 'charge_mode': mode if mode in ('ac', 'dc') else None,

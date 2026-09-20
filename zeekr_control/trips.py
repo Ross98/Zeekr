@@ -6,6 +6,7 @@ import re
 from .events import EventStore, PUBLIC_FIELDS, _decode
 from .tracks import TrackStore, day_bounds, valid_timestamp
 from .trip_visibility import visible_clause, revision
+from .start_evidence import from_summary as start_evidence
 
 
 VALID_ID = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
@@ -25,7 +26,7 @@ def _object(value):
 def _summary(value, identity, status):
     result = {key: _number(value.get(key)) for key in PUBLIC_FIELDS if key != 'partial'}
     result.update(id=identity, kind='trip_end' if status == 'ended' else 'trip', status=status,
-                  partial=value.get('partial') is not False)
+                  partial=value.get('partial') is not False, start_evidence=start_evidence(value))
     return result
 
 
@@ -78,7 +79,8 @@ class TripStore:
                  'start_soc': start_soc, 'end_soc': end_soc,
                  'soc_delta': round(end_soc - start_soc, 3) if start_soc is not None and end_soc is not None else None,
                  'partial': trip.get('partial') is not False or negative_distance,
-                 'battery_capacity_kwh': _object(trip.get('profile')).get('battery_capacity_kwh')}
+                 'battery_capacity_kwh': _object(trip.get('profile')).get('battery_capacity_kwh'),
+                 'start_evidence': start_evidence(trip, 'trip')}
         return _summary(value, 'current', 'waiting' if stop else 'driving')
 
     def query(self, vehicle, date, cursor=None):

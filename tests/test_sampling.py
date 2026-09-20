@@ -30,11 +30,11 @@ class SamplingTests(unittest.TestCase):
         self.client.raw = sample(t, **kwargs)
         return self.runner.tick(BASE + t * 1000)
 
-    def test_parked_ten_minutes_slows_then_drive_wakes(self):
+    def test_parked_ten_minutes_and_drive_keep_sixty_seconds(self):
         for t in range(0, 600, 60):
             self.assertEqual(self.tick(t), 60)
-        self.assertEqual(self.tick(600), 300)
-        self.assertEqual(self.tick(900), 300)
+        self.assertEqual(self.tick(600), 60)
+        self.assertEqual(self.tick(900), 60)
         self.assertEqual(self.tick(1200, speed=30, engine='engine_on', ready=1, km=101), 60)
 
     def test_stale_stationary_does_not_confirm_parking(self):
@@ -82,16 +82,16 @@ class SamplingTests(unittest.TestCase):
         for t in range(0, 1200, 60):
             self.assertEqual(self.tick(t, engine='engine_on', ready=1), 60)
 
-    def test_confirmed_parking_keeps_slow_for_replayed_cache(self):
+    def test_confirmed_parking_and_replayed_cache_keep_sixty_seconds(self):
         for t in range(0, 601, 60):
             self.tick(t)
-        self.assertEqual(self.runner.tick(BASE + 1200000), 300)
+        self.assertEqual(self.runner.tick(BASE + 1200000), 60)
 
-    def test_trip_end_confirmation_completes_before_slowing(self):
+    def test_trip_end_confirmation_completes_at_sixty_seconds(self):
         self.tick(0, speed=30, engine='engine_on', ready=1)
         for t in range(60, 660, 60):
             self.assertEqual(self.tick(t), 60)
-        self.assertEqual(self.tick(660), 300)
+        self.assertEqual(self.tick(660), 60)
         self.assertEqual([e['kind'] for e in self.runner.monitor.events()], ['trip_end'])
 
     def test_web_fallback_does_not_create_runner_when_owner_exists(self):

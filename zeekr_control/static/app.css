@@ -98,3 +98,9 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 @media(max-width:360px){.charging-tabs button{font-size:13px}.charging-process-summary{grid-template-columns:1fr 1fr;gap:8px}.charging-process-summary>div{padding:12px}.charging-view-switch{width:100%}.charging-view-switch button{flex:1;padding:9px 6px}}
 @media(max-width:700px){.event-row{padding:14px;flex-direction:column}.event-row>div:last-child{text-align:left}}
 .chart-cursor{stroke:var(--night-secondary,#536b73);stroke-width:1.5;stroke-dasharray:4 4}.chart-gap{stroke:var(--night-warning,#936a32);stroke-width:2;stroke-dasharray:2 5;opacity:.9}.chart-point.selected{fill:var(--night-paper,#fff);stroke:var(--night-accent,#438a75);stroke-width:3}
+
+/* Start evidence preserves the distinction between samples and real activity. */
+.start-evidence{margin:16px 0;padding:14px;border:1px solid var(--line);border-radius:12px;min-width:0;overflow-wrap:anywhere}
+.start-evidence p{margin:8px 0;color:var(--muted);font-size:12px;line-height:1.6}
+.charge-detail>.start-evidence{margin:16px}
+.start-evidence .inline-row{flex-wrap:wrap;gap:6px}

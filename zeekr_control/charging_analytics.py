@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import re
 import sqlite3
+from .start_evidence import from_summary as start_evidence
 
 
 BEIJING = timezone(timedelta(hours=8))
@@ -54,6 +55,7 @@ class ChargingAnalytics:
             samples = charge.get('samples') if isinstance(charge.get('samples'), list) else []
             end = samples[-1] if samples and isinstance(samples[-1], dict) else start
             return {'id': 'current', 'status': 'active', 'partial': bool(charge.get('partial')),
+                    'start_evidence': start_evidence(charge, 'charge'),
                     'start_time': _number(start.get('state_time')),
                     'end_time': _number(end.get('state_time')),
                     'start': start, 'end': end, 'metrics': {}, 'mode': start.get('charging_mode')}
@@ -69,6 +71,7 @@ class ChargingAnalytics:
         start = report.get('start') if isinstance(report.get('start'), dict) else {}
         end = report.get('end') if isinstance(report.get('end'), dict) else {}
         return {'id': selection, 'status': 'ended', 'partial': bool(summary.get('partial')),
+                'start_evidence': start_evidence(summary, 'charge'),
                 'start_time': _number(summary.get('start_time')),
                 'end_time': _number(summary.get('end_time')),
                 'start': start, 'end': end,

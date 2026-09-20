@@ -12,8 +12,10 @@ from .report_metrics import trip_metrics, charge_metrics
 from .report_render import render
 from .report_history import compare
 from .report_attention import build as build_attention
+from .start_evidence import build as start_evidence, project as project_start
+from .start_evidence import from_summary as saved_start_evidence, MAX_GAP
 
-MAX_AGE = 180000
+MAX_AGE = MAX_GAP
 STOP_WAIT = 600000
 MAX_SESSION_SAMPLES = 1000
 
@@ -146,7 +148,8 @@ class Monitor:
                         json.dumps(approved, separators=(',',':'))))
 
     def _report(self, kind, start, end, samples, profile, partial, charge_overlap=False, parking=None,
-                upgrade_mid_session=False, samples_truncated=False, decoder_changed=False, parking_samples=0):
+                upgrade_mid_session=False, samples_truncated=False, decoder_changed=False, parking_samples=0,
+                start_timing=None):
         # Keep short-stop observations if driving resumes, but exclude the final
         # parking confirmation window from the frozen trip's statistics.
         if start.get('state_time') is not None and end.get('state_time') is not None:
@@ -169,6 +172,7 @@ class Monitor:
                     'charging_time_coverage': metrics.get('charging_time_coverage')}
         return {'schema_version': 2, 'metric_version': 'metrics-v1', 'decoder_version': DECODER_VERSION, 'kind': kind,
                 'start_time': start.get('state_time'), 'end_time': end.get('state_time'),
+                'start_evidence': project_start(start_timing),
                 'start': start, 'end': end, 'parking': parking, 'metrics': metrics,
                 'statistics': metrics, 'coverage': coverage,
                 'partial': partial, 'profile_snapshot': profile,
@@ -183,6 +187,7 @@ class Monitor:
 
     def _finish_trip(self, db, vehicle, trip, now, battery_capacity_kwh, profile):
         data = summary(trip['start'], trip['stop'], trip['partial'])
+        data['start_evidence'] = saved_start_evidence(trip, 'trip')
         data['battery_capacity_kwh'] = battery_capacity_kwh
         charge_overlap = (trip.get('charging_time') is not None
                           and trip['charging_time'] <= trip['stop']['time'])
@@ -195,7 +200,7 @@ class Monitor:
             parking=trip.get('parking'), upgrade_mid_session=trip.get('report_upgrade', False),
             samples_truncated=trip.get('samples_truncated', False),
             decoder_changed=trip.get('decoder_changed', False),
-            parking_samples=trip.get('parking_samples', 0))
+            parking_samples=trip.get('parking_samples', 0), start_timing=data['start_evidence'])
         self._event(db, vehicle, 'trip_end', data, now)
 
     def observe(self, vehicle, raw, now, battery_capacity_kwh=None, profile=None):
@@ -272,7 +277,8 @@ class Monitor:
             seed_telemetry = start_raw
             trip = {'start': start, 'stop': None, 'partial': not continuous, 'charging_time': None,
                     'report_start': start_raw, 'report_end': telemetry, 'samples': [start_raw],
-                    'profile': profile, 'parking': None}
+                    'profile': profile, 'parking': None,
+                    'start_evidence': start_evidence('trip', previous, point, continuous)}
         if trip:
             # The first arrival can include the last driven distance. Once a
             # stop is frozen, further distance is evidence of resumed motion.
@@ -322,19 +328,24 @@ class Monitor:
                 trip = None
             if point['charging'] is True and charge is None:
                 charge = {'start': point, 'partial': not continuous or previous['charging'] is not False,
-                          'report_start': telemetry, 'samples': [telemetry], 'profile': profile}
+                          'report_start': telemetry, 'samples': [telemetry], 'profile': profile,
+                          'start_evidence': start_evidence('charge', previous, point, continuous)}
                 start_data = summary(point, point, charge['partial'])
-                start_data['report_v2'] = self._report('charge_start', telemetry, telemetry, [telemetry], profile, charge['partial'])
+                start_data['start_evidence'] = charge['start_evidence']
+                start_data['report_v2'] = self._report('charge_start', telemetry, telemetry, [telemetry], profile,
+                    charge['partial'], start_timing=charge['start_evidence'])
                 self._event(db, vehicle, 'charge_start', start_data, now)
             elif point['charging'] is False and charge:
                 data = summary(charge['start'], point, charge['partial'])
+                data['start_evidence'] = saved_start_evidence(charge, 'charge')
                 data['battery_capacity_kwh'] = battery_capacity_kwh
                 samples = charge.get('samples', [])
                 data['report_v2'] = self._report('charge_end', charge['report_start'], telemetry,
                                                  samples, charge.get('profile', profile), charge['partial'],
                                                  upgrade_mid_session=charge.get('report_upgrade', False),
                                                  samples_truncated=charge.get('samples_truncated', False),
-                                                 decoder_changed=charge.get('decoder_changed', False))
+                                                 decoder_changed=charge.get('decoder_changed', False),
+                                                 start_timing=data['start_evidence'])
                 self._event(db, vehicle, 'charge_end', data, now)
                 charge = None
             state.update(last=point, trip=trip, charge=charge)

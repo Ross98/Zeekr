@@ -68,7 +68,7 @@ const path = require('node:path');
     await page.locator('#charge-history').waitFor();
     assert.match(chargeQueries[0], /kind=charge_end/);
     assert.match(await page.locator('#charge-history').innerText(), /充电记录.*20%.*80%.*完整记录/s);
-    assert.match(await page.locator('#charge-detail').innerText(), /开始时间.*结束时间.*1 小时.*60 个百分点.*51\.6 kWh.*估算/s);
+    assert.match(await page.locator('#charge-detail').innerText(), /记录起点.*结束时间.*1 小时.*60 个百分点.*51\.6 kWh.*估算/s);
     assert.match(await page.locator('#charge-detail').innerText(), /未保存充电参数/);
     await page.getByRole('tab',{name:'参数详情'}).click();
     const parameterCard=page.locator('#charging-parameters');

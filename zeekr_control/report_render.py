@@ -2,6 +2,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import re
+from .start_evidence import project as project_start
 
 TARGET_BYTES = 1900
 HARD_BYTES = 2048
@@ -38,6 +39,24 @@ def _place(value):
     text=clean_text(value,100)
     if not text: return '位置未知'
     return text if text.endswith('附近') else text+'附近'
+
+
+def _start_timing(report):
+    value = project_start(report.get('start_evidence'))
+    def clock(stamp):
+        return datetime.fromtimestamp(stamp/1000, ZoneInfo('Asia/Shanghai')).strftime('%m月%d日 %H:%M:%S')
+    if value['basis'] == 'legacy':
+        return ['起点证据未保存，实际开始时间未知。']
+    lines = (['可能开始范围：%s—%s（相邻观测）' % (clock(value['earliest_time']), clock(value['latest_time']))]
+             if value['basis'] == 'bounded' else ['实际开始时间未知；首次看到时已开始。'])
+    lines.append('首次活动样本：%s；系统首次发现：%s' % (clock(value['first_state_time']), clock(value['detected_at'])))
+    if value['sample_age_seconds'] is None:
+        lines.append('样本时间超前，发现延迟待核验。')
+    elif value['delay_max_seconds'] is not None:
+        lines.append('发现延迟范围：%s—%s秒；未取得精确开始事件。' % (_num(value['delay_min_seconds']), _num(value['delay_max_seconds'])))
+    else:
+        lines.append('首次样本年龄：%s秒；真实开始可能更早。' % _num(value['sample_age_seconds']))
+    return lines
 
 
 def _status(snapshot):
@@ -116,6 +135,7 @@ def _fit(lines, report, event_id, partial, target):
     elif report.get('kind')=='charge_start': core += ['实际开始时间未知；首次观测时已在充电。','目标电量／充电枪连接：未确认']
     else: core += ['目标电量：暂未取得','停止原因／充电枪连接：未确认']
     if partial: core.append('部分记录：以上仅汇总已观测区间。')
+    core += _start_timing(report)
     core += [marker,'状态来自车辆云端缓存，时间可能延迟。','编号：'+event_id[:12]]
     text='\n'.join(core)
     if len(text.encode())>HARD_BYTES: raise ValueError('报告核心模板超过2048字节')
@@ -163,7 +183,7 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         mode = {'dc': '｜直流', 'ac': '｜交流'}.get(report.get('start', {}).get('charging_mode'), '')
         location = _place((address or {}).get('start'))
         lines = ['⚡ 检测到开始充电%s%s' % (mode, suffix), '充电地点：%s' % location,
-                 '首次检测：' + _time(report.get('start_time')), '电量：%s%%' % _num(report.get('start', {}).get('soc'))]
+                 '记录起点：' + _time(report.get('start_time')), '电量：%s%%' % _num(report.get('start', {}).get('soc'))]
         if partial:
             lines.append('实际开始时间未知；首次观测时已在充电。')
         start = report.get('start', {})
@@ -231,5 +251,6 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         lines.append('独立观测%s次%s。' % (count, '，最大间隔%s秒' % _num(gap,0) if gap is not None else ''))
     if partial:
         lines.append('数据不完整：以上仅汇总已观测区间。')
+    lines += _start_timing(report)
     lines += ['状态来自车辆云端缓存，时间可能延迟。', '编号：' + event_id[:12]]
     return _fit(lines, report, event_id, partial, target)

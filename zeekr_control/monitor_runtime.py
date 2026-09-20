@@ -14,8 +14,7 @@ import time
 from .client import Client
 from .cli import find_vins
 from .errors import ApiError, RateLimited
-from .monitor import Monitor, MAX_AGE, STOP_WAIT
-from .vehicle_state import decode
+from .monitor import Monitor
 from .geocoding import AmapGeocoder
 from .profiles import vehicle_profile
 from .notifications import WeComSender
@@ -171,39 +170,9 @@ class Runner:
         self.reminders.recover()
         self.blocked_fingerprint = None
         self.failures = 0
-        self.parked_since = None
-        self.parked_last = None
-        self.sampling_interval = 60
 
     def health(self):
         return load(self.root / 'monitor-health.json')
-
-    def interval_for(self, raw, now, state):
-        point = decode(raw, self.monitor.active_codes, self.monitor.stopped_codes)
-        previous = self.parked_last
-        parked = (point['off'] is True and point['speed'] == 0
-                  and point['charging'] is False and (not state['trip'] or state['trip']['stop'])
-                  and not state['charge'])
-        if previous and (point['km'] is None or previous['km'] is None or point['km'] != previous['km']):
-            parked = False
-        fresh = point['time'] is not None and -30000 <= now - point['time'] <= MAX_AGE
-        if not parked or not fresh:
-            # Stale cache never starts a parking timer, but an already confirmed
-            # parked car can stay slow until a new observation contradicts it.
-            if parked and self.sampling_interval == 300:
-                return 300
-            self.parked_since = self.parked_last = None
-            self.sampling_interval = 60
-            return 60
-        if previous and point['time'] <= previous['time']:
-            return self.sampling_interval
-        continuous = previous and 0 <= now - previous['observed'] <= MAX_AGE and point['time'] - previous['time'] <= MAX_AGE
-        if self.parked_since is None or (not continuous and self.sampling_interval != 300):
-            self.parked_since = (now, point['time'])
-        self.parked_last = dict(point, observed=now)
-        if not state['trip'] and now - self.parked_since[0] >= STOP_WAIT and point['time'] - self.parked_since[1] >= STOP_WAIT:
-            self.sampling_interval = 300
-        return self.sampling_interval
 
     def tick(self, now=None):
         live_clock = now is None
@@ -213,8 +182,6 @@ class Runner:
         delay = 60
         fingerprint = None
         if not sampling_enabled(self.root):
-            self.parked_since = self.parked_last = None
-            self.sampling_interval = 60
             health.update(status='paused', error='', interval='60', next_check=str(now + 60000))
             save(self.root / 'monitor-health.json', health)
             return 60
@@ -258,7 +225,8 @@ class Runner:
                 health['status'] = self.monitor.observe(binding, raw, observed,
                     battery_capacity_kwh=profile.get('battery_capacity_kwh'), profile=profile)
                 state = self.monitor.status(binding)
-                delay = self.interval_for(raw, observed, state)
+                # Keep parking start detection within the same 60-second cadence.
+                delay = 60
                 if health['status'] == 'fresh':
                     if self.monitor.tracks.record(binding, raw, observed, 180):
                         health['last_new'] = str(observed)
@@ -310,7 +278,7 @@ def run(session_path=DEFAULT_PATH, vehicle=None, once=False, active_codes=(), st
                 with process_lock(root / 'monitor.lock'):
                     runner = Runner(session_path, vehicle, active_codes=active_codes, stopped_codes=stopped_codes)
                     try:
-                        print('统一采集已启动：默认 60 秒；确认停车后 300 秒；充电起止通知。', flush=True)
+                        print('统一采集已启动：正常采集每 60 秒（含停车）；充电起止通知。', flush=True)
                         collection_loop(runner, stop, once)
                     finally:
                         health = runner.health()
