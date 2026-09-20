@@ -16,6 +16,7 @@ docs/vehicle-insights-demo/trip-card.png
 docs/vehicle-insights-files-2026-09-20.txt
 docs/vehicle-insights-plan-2026-09-20.md
 docs/vehicle-insights-progress-2026-09-20.md
+docs/vehicle-insights-release-2026-09-20.md
 tests/insights_demo.cjs
 tests/insights_fixture.py
 tests/test_archive_reader.py
