@@ -31,7 +31,7 @@
 
 ## 本地验收结果（2026-09-20）
 
-状态：本地实现完成，用户已授权部署；没有操作真实行程。代码位于 `codex/trip-record-management`。上线结果另记发布记录。
+状态：本地实现完成，已按用户授权部署；没有操作真实行程。代码位于 `codex/trip-record-management`。见[发布记录](trip-record-management-release-2026-09-20.md)。
 
 - 完整 Python：526 项通过（37.394 秒），其中新增管理测试 13 项。覆盖回收/恢复、批量原子性、数据库持久化、账号/车辆/网页会话隔离、提交前会话切换回滚、并发/过期/重复执行，以及异常摘要和超大数值。
 - 11 个真实浏览器测试脚本通过：`ui_trip_management`、`ui_trips`、`ui_usage_reports`、`ui_charge_ledger`、`ui_trip_tags`、`ui_usage_calendar`、`ui_trip_cards`、`ui_smoke`、`ui_theme`、`ui_energy`、`ui_overview`。
