@@ -41,6 +41,15 @@ const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unc
 const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,redraw:render,escape:esc,age,active:()=>page==='car'});
 
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='insights'});
+const tripManager = window.TripManagement.create({getState:()=>state,getDate:()=>trackDate,request:api,escape:esc,
+  active:()=>page==='tracks'&&trackSource==='local'&&tripManagementOpen,
+  changed:revision=>{
+    state.trip_records_revision=revision;
+    if(localTrips){clearLocalRoute();localTrips.selection='day';localTrips.selected=null;localTrips.events=null;
+      localTrips.cursor=null;localTrips.previous=[];localTrips.listRequest++;localTrips.listTask=null;
+      renderLocalTripDetail();loadLocalTrips();}
+    pollState(true);
+  }});
 
 function navigation() {
   $('#navigation').innerHTML = Object.entries(pages).filter(([key]) => key !== 'more').map(([key, label]) => `<button class="nav-item ${page === key ? 'active' : ''}" data-page="${key}" ${page === key ? 'aria-current="page"' : ''}>${icon(key)}${label}</button>`).join('');
@@ -520,7 +529,7 @@ function tracksPage() {
 function monitoringPanel() {
   const monitor = state?.monitoring || {status:'not_started',events:[]};
   const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',paused:'已暂停',unavailable:'状态暂不可用'};
-  const delivery = {pending:'等待发送',sending:'发送中',sent:'已发送',failed:'发送失败',uncertain:'发送结果待确认'};
+  const delivery = {pending:'等待发送',sending:'发送中',sent:'已发送',failed:'发送失败',uncertain:'发送结果待确认',cancelled:'已取消'};
   const kinds = {trip_end:'行程总结',charge_start:'开始充电',charge_end:'充电总结'};
   const activity = {waiting:'下电等待 10 分钟',driving:'行程记录中',idle:'暂无进行中的记录',charging:'充电记录中',unknown:'待确认'};
   const label = monitor.status === 'not_started' ? labels.not_started : monitor.online ? labels[monitor.status] || '运行中' : '监控未在线';
@@ -536,6 +545,9 @@ function settings() {
 function more() { return `<div class="more-grid">${['energy','fields','insights','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
 
 function render() {
+  const managerNode=page==='tracks'&&trackSource==='local'&&tripManagementOpen?$('#trip-management'):null;
+  const managerFocus=managerNode?.contains(document.activeElement)?document.activeElement:null;
+  if(!(page==='tracks'&&trackSource==='local'&&tripManagementOpen))tripManager.suspend();
   const insightsNode = page === 'insights' ? document.getElementById('insights-workspace') : null;
   const insightsFocus = insightsNode?.contains(document.activeElement) ? document.activeElement : null;
   const vehicleFocus = page === 'car' ? vehiclePage.focusSnapshot() : null;
@@ -554,6 +566,7 @@ function render() {
   const error = transientError || state?.error;
   const body = {overview,car,energy,map:mapPage,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
   $('#main').innerHTML = head() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
+  if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
   if (page === 'insights') {
     if (insightsNode) document.getElementById('insights-workspace').replaceWith(insightsNode);
     insightsPage.mount(document.getElementById('insights-workspace'));
@@ -644,6 +657,7 @@ async function toggleRecording() {
 }
 
 document.addEventListener('click', event => {
+  if (tripManager.handle(event)) return;
   if (insightsPage.handle(event)) return;
   if (vehiclePage.handle(event)) return;
   const target = event.target.closest('button');
@@ -675,6 +689,7 @@ document.addEventListener('click', event => {
   }
 });
 document.addEventListener('input', event => {
+  if (tripManager.handle(event)) return;
   if (insightsPage.handle(event)) return;
   if (vehiclePage.handle(event)) return;
   if(event.target.id==='search') {search=event.target.value;renderFields();}
@@ -685,6 +700,7 @@ document.addEventListener('input', event => {
   if(event.target.id==='charging-point') {chargingPoint=Number(event.target.value);renderChargingWorkspace();}
 });
 document.addEventListener('change', event => {
+  if (tripManager.handle(event)) return;
   if (insightsPage.handle(event)) return;
   if (vehiclePage.handle(event)) return;
   if(event.target.id==='group') {groupFilter=event.target.value;renderFields();}
@@ -709,6 +725,7 @@ async function pollState(force = false) {
       latest.recording.last_sample!==state.recording.last_sample || latest.next_query_at!==state.next_query_at ||
       latest.request_key!==state.request_key || latest.vehicle!==state.vehicle ||
       latest.insights_context!==state.insights_context ||
+      latest.trip_records_revision!==state.trip_records_revision ||
       JSON.stringify(latest.history)!==JSON.stringify(state.history) ||
       latest.snapshot_revision!==state.snapshot_revision ||
       JSON.stringify(latest.recent_events)!==JSON.stringify(state.recent_events) ||

@@ -45,8 +45,10 @@
       }catch(failure){if(valid(token,identity))error=failure.message;}
       finally{if(valid(token,identity)){loading=false;paint();}}
     }
+    let tripRevision;
     function mount(container){
-      const changed=owner!==context(),remount=node!==container;node=container;
+      const changed=owner!==context()||tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
+      tripRevision=getState()?.trip_records_revision;
       if(changed){owner=context();data=null;error='';loading=false;attempted=false;serial++;dayFilter='';page=0;}
       if(changed||remount)paint();
       if(owner&&!attempted&&!loading)load();

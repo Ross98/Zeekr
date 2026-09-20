@@ -2,6 +2,7 @@
 
 // Local summaries never load coordinates. Only the shared position permission does.
 let localTrips = null;
+let tripManagementOpen = false;
 const tripStatusLabels = {driving:'行程记录中', waiting:'停车确认中', ended:'已结束'};
 const tripTime = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {
   timeZone:'Asia/Shanghai', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false
@@ -11,7 +12,7 @@ const tripDuration = seconds => Number.isFinite(seconds) ? seconds < 60 ? `${Mat
 const tripPointKey = point => point ? `${point.state_time}:${point.observed_time}` : '';
 
 function syncLocalTrips() {
-  const context = [state?.request_key,state?.field_reviews?.vehicle || state?.vehicle,trackDate].join('|');
+  const context = [state?.request_key,state?.insights_context,state?.field_reviews?.vehicle || state?.vehicle,trackDate].join('|');
   if (!localTrips || localTrips.context !== context) {
     stopLocalPlayback();
     localTrips = {context,events:null,active:null,nextCursor:null,cursor:null,previous:[],listBusy:false,
@@ -24,7 +25,8 @@ function syncLocalTrips() {
 function localTripsPage() {
   syncLocalTrips();
   return `<div id="local-trips">
-    <div class="local-trip-tools"><div class="local-date-nav">${action('前一天','local-day-before','secondary')}${action('今天','local-today','secondary')}${action('后一天','local-day-after','secondary')}</div>${action('重新查询','local-reload','secondary','refresh')}</div>
+    <div class="local-trip-tools"><div class="local-date-nav">${action('前一天','local-day-before','secondary')}${action('今天','local-today','secondary')}${action('后一天','local-day-after','secondary')}</div><div class="local-date-nav">${action(tripManagementOpen?'收起管理':'管理行程','local-manage','secondary')}${action('重新查询','local-reload','secondary','refresh')}</div></div>
+    ${tripManagementOpen?'<div id="trip-management"></div>':''}
     <div id="local-trip-activity" class="notice info" role="status"></div>
     <div class="local-trip-layout"><section class="card local-trip-list-card"><div class="card-head"><h2>行程记录</h2><span class="subtle">北京时间</span></div><div id="local-trip-list"></div></section>
     <section class="card local-trip-detail" id="local-trip-detail"></section></div>
@@ -88,7 +90,10 @@ function localTripVisible(h) {
 
 function loadLocalTrips() {
   const h = syncLocalTrips();
-  if (!h.listTask) h.listTask=fetchLocalTrips(h).finally(()=>{h.listTask=null;});
+  if (!h.listTask) {
+    const task=fetchLocalTrips(h).finally(()=>{if(h.listTask===task)h.listTask=null;});
+    h.listTask=task;
+  }
   return h.listTask;
 }
 
@@ -99,6 +104,10 @@ async function fetchLocalTrips(h) {
   try {
     const result=await api(`/api/trips?date=${encodeURIComponent(trackDate)}${h.cursor?`&cursor=${encodeURIComponent(h.cursor)}`:''}`);
     if (!localTripVisible(h) || request!==h.listRequest) return;
+    if(h.revision!==undefined&&result.revision!==h.revision&&h.selection!=='day'&&h.selection!=='current'){
+      clearLocalRoute();h.selection='day';h.selected=null;h.notice='行程记录已变化，已回到全天总览。';renderLocalTripDetail();
+    }
+    h.revision=result.revision;
     h.events=result.events || [];h.active=result.active;h.nextCursor=result.next_cursor;
     if (h.selection==='current' && (!h.active || h.active.start_time!==h.selected?.start_time)) {
       const completed=h.events.find(event=>event.start_time===h.selected?.start_time);
@@ -122,6 +131,7 @@ async function fetchLocalTrips(h) {
 function mountLocalTrips() {
   const h=syncLocalTrips();
   renderLocalTripList();renderLocalTripActivity();renderLocalTripDetail();
+  if(tripManagementOpen)tripManager.mount($('#trip-management'));
   loadLocalTrips().then(()=>{if (showPosition && localTripVisible(h)) loadLocalRoute();});
 }
 
@@ -129,6 +139,7 @@ function refreshLocalTrips() {
   if (!$('#local-trips')) return false;
   const h=localTrips;
   if (syncLocalTrips()!==h) return false;
+  if(tripManagementOpen)tripManager.mount($('#trip-management'));
   renderLocalTripActivity();
   loadLocalTrips().then(()=>{
     if (localTripVisible(h) && showPosition && (h.selection==='day'||h.selection==='current'||!h.route)) loadLocalRoute();
@@ -305,6 +316,7 @@ function handleLocalTripAction(target) {
     if(showPosition)loadLocalRoute();return true;
   }
   switch(target.dataset.action) {
+    case 'local-manage':tripManagementOpen=!tripManagementOpen;stopLocalPlayback();render();return true;
     case 'local-fit': stopLocalPlayback();fitLocalRoute();return true;
     case 'local-play': h.timer?stopLocalPlayback():startLocalPlayback();return true;
     case 'local-step-back': stopLocalPlayback();displayLocalPoint(h.index-1);return true;

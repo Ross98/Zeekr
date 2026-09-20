@@ -67,8 +67,10 @@
       }catch(failure){if(valid(token,cardSerial,identity))error=failure.message;}
       finally{if(owner===identity&&context()===identity){exporting=false;paint();}}
     }
+    let tripRevision;
     function mount(container){
-      const changed=owner!==context(),remount=node!==container;node=container;
+      const changed=owner!==context()||tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
+      tripRevision=getState()?.trip_records_revision;
       if(changed){owner=context();data=null;selected=chargeId='';attempted=loading=exporting=false;error='';serial++;clearDraft();}
       if(changed||remount)paint();if(owner&&!attempted&&!loading)load();
     }

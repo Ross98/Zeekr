@@ -61,8 +61,10 @@
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 填写内容保留；请重新读取核对后操作。';}
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
     }
+    let tripRevision;
     function mount(container){
-      const changed=owner!==context(),remount=node!==container;node=container;
+      const changed=owner!==context()||tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
+      tripRevision=getState()?.trip_records_revision;
       if(changed){owner=context();data=null;selected=null;tags=note='';attempted=false;loading=busy=false;serial++;writeSerial++;error=status='';filter=groupA=groupB='';}
       if(changed||remount)paint();if(owner&&!attempted&&!loading)load();
     }

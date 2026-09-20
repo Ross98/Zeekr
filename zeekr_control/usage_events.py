@@ -7,6 +7,7 @@ import re
 import sqlite3
 
 from .archive_reader import _private
+from .trip_visibility import visible_clause
 
 MAX_SUMMARY_BYTES = 2 * 1024 * 1024
 MAX_SCAN = 250000
@@ -97,7 +98,7 @@ class UsageEvents:
                 # Short bounded reads release SQLite's cursor lock before JSON parsing.
                 rows = db.execute('SELECT rowid,id,kind,CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END,length(CAST(summary AS BLOB)) '
                                   'FROM monitor_events WHERE vehicle=? AND rowid>? AND rowid<=? '
-                                  "AND kind IN ('trip_end','charge_end') ORDER BY rowid LIMIT 32",
+                                  "AND kind IN ('trip_end','charge_end') AND "+visible_clause(db)+' ORDER BY rowid LIMIT 32',
                                   (MAX_SUMMARY_BYTES, vehicle, cursor, high)).fetchall()
                 if not rows:
                     break
@@ -124,7 +125,7 @@ class UsageEvents:
             raise ValueError('请选择当前车辆的有效事件。')
         with self.connect() as db:
             row = db.execute('SELECT kind,CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END,length(CAST(summary AS BLOB)) '
-                             'FROM monitor_events WHERE vehicle=? AND id=?',
+                             'FROM monitor_events WHERE vehicle=? AND id=? AND '+visible_clause(db),
                              (MAX_SUMMARY_BYTES, vehicle, identity)).fetchone() if db else None
         result = self._decode(identity, *row) if row else None
         if result is None:

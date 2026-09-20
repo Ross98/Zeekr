@@ -18,6 +18,7 @@ from .storage import DEFAULT_PATH, load, save
 from .summary import updated_at
 from .tracks import TrackStore, day_bounds, empty_route
 from .trips import TripStore
+from .trip_management import TripRecordManager
 from .web_model import build_model, parse_location
 from .field_reviews import FieldReviewStore
 from .profiles import vehicle_profile
@@ -58,6 +59,7 @@ class App:
         self.snapshot_store = SnapshotStore(self.session_path.parent / 'snapshots.sqlite3')
         self.event_store = EventStore(self.database_path)
         self.trip_store = TripStore(self.database_path)
+        self.trip_manager = TripRecordManager(self.database_path)
         self.storage_manager = StorageManager(self.session_path.parent)
         self.charging_analytics = ChargingAnalytics(self.database_path)
         self.archive_reader = ArchiveReader(self.session_path.parent / 'snapshot-archive')
@@ -162,8 +164,13 @@ class App:
                                  {'trip_end': None, 'charge_end': None})
             except Exception:
                 recent_events = {'trip_end': None, 'charge_end': None, 'error': '本地事件暂不可用。'}
+            try:
+                trip_revision = self.trip_manager.revision(self.vehicle_key) if authenticated and self.vehicle_key else None
+            except Exception:
+                trip_revision = None
             return {'field_reviews': field_reviews, 'request_key': self.request_key, 'authenticated': authenticated,
                     'insights_context': self._insights_context(),
+                    'trip_records_revision': trip_revision,
                     'model': self.model, 'vehicle': self.vehicle, 'vehicles': self.vehicles,
                     'read_at': updated_at(self.read_at), 'read_time': self.read_at,
                     'query_cached': self.query_cached, 'refresh_result': self.refresh_result,
@@ -370,6 +377,7 @@ class App:
                 raise ValueError('等待当前账号的车辆缓存，旧账号绑定不能用于读取这些记录。')
             vehicle, context = self._archive_vehicle(), self._insights_context()
             handlers = {'timeline': self.archive_reader.timeline, 'snapshot': self.archive_reader.snapshot,
+                        'trip-management': lambda scope, car, *query: self.trip_manager.query(car, *query),
                         'compare': self.archive_reader.compare,
                         'report': self.usage_reports.query,
                         'calendar': self.usage_calendar.query,
@@ -389,6 +397,31 @@ class App:
             current_session = self._read_session()
             if session_scope(current_session) != session_scope(session) or context != self._insights_context():
                 raise ValueError('账号或车辆已切换，请重新读取。')
+            result['context'] = context
+            return result
+
+    def manage_trips(self, operation, data, owner):
+        with self.lock:
+            session = self._read_session()
+            if not session.get('accessToken'):
+                raise ValueError('请先连接车辆账号。')
+            self._restore_snapshot(session)
+            context = self._insights_context()
+            if not context or data.get('context') != context:
+                raise ValueError('账号或车辆已切换，请重新读取行程。')
+            fingerprint = session_scope(session)
+            bound_owner = context+':'+owner
+            def guard():
+                if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
+                    raise ValueError('操作期间账号或车辆已切换，本次修改已取消。')
+            if operation == 'preview':
+                result = self.trip_manager.preview(self.vehicle_key, data.get('action'), data.get('ids'),
+                                                   data.get('revision'), bound_owner)
+                guard()
+            elif operation == 'execute':
+                result = self.trip_manager.execute(data.get('token'), bound_owner, guard=guard)
+            else:
+                raise ValueError('行程管理操作无效。')
             result['context'] = context
             return result
 
@@ -662,6 +695,11 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 if url.path == '/api/trips':
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.trips(query.get('date', [''])[0], query.get('cursor', [None])[0]))
+                if url.path == '/api/trips/manage':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.insights('trip-management', query.get('start', [''])[0],
+                                                       query.get('end', [''])[0], query.get('status', ['active'])[0],
+                                                       query.get('cursor', [None])[0]))
                 if url.path == '/api/events':
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.events(query.get('date', [''])[0],
@@ -701,6 +739,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/vehicle.css': ('vehicle.css', 'text/css; charset=utf-8'),
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
                           '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),
+                          '/trip-management.js': ('trip-management.js', 'text/javascript; charset=utf-8'),
                           '/trips.css': ('trips.css', 'text/css; charset=utf-8'),
                           '/field-reviews.js': ('field-reviews.js', 'text/javascript; charset=utf-8'),
                           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -729,7 +768,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 return self.send(403, {'error': '请求校验失败，请从本机页面操作。'})
             try:
                 length = int(self.headers.get('Content-Length', '0'))
-                limit = 32768 if self.path == '/api/field-reviews' else 16384 if self.path.startswith('/api/insights/') else 4096
+                limit = 32768 if self.path == '/api/field-reviews' else 16384 if self.path.startswith(('/api/insights/','/api/trips/manage/')) else 4096
                 if not 0 < length <= limit or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
                     raise ValueError('请求格式无效。')
                 data = json.loads(self.rfile.read(length))
@@ -737,6 +776,9 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     raise ValueError('请求必须为 JSON 对象。')
                 if self.path == '/api/refresh':
                     return self.send(200, app.refresh(data.get('vehicle', 1)))
+                if self.path in ('/api/trips/manage/preview','/api/trips/manage/execute'):
+                    owner = hashlib.sha256(self.token().encode()).hexdigest()
+                    return self.send(200, app.manage_trips(self.path.rsplit('/',1)[1], data, owner))
                 if self.path == '/api/insights/ledger':
                     return self.send(200, app.update_insight_record('ledger',data))
                 if self.path == '/api/insights/rules':

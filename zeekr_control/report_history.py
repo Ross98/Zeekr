@@ -1,6 +1,7 @@
 """Bounded, deterministic same-vehicle comparisons for frozen v2 reports."""
 import json
 from statistics import median
+from .trip_visibility import visible_clause
 
 RULE_VERSION = 'history-v1'
 WINDOW_MS = 90 * 86400 * 1000
@@ -9,7 +10,7 @@ WINDOW_MS = 90 * 86400 * 1000
 def _candidates(db, vehicle, kind, start_time, decoder, limit=500):
     rows = db.execute('''SELECT e.id,e.summary FROM monitor_events e
                          JOIN report_metric_index i ON i.event_id=e.id
-                         WHERE e.vehicle=? AND e.kind=? AND i.end_time<?
+                         WHERE e.vehicle=? AND e.kind=? AND i.end_time<? AND '''+visible_clause(db,'e')+'''
                          GROUP BY e.id,e.summary ORDER BY i.end_time DESC,e.id DESC LIMIT ?''',
                       (vehicle, kind, start_time, limit)).fetchall()
     result, excluded = [], {}

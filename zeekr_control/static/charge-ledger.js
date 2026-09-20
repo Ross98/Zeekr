@@ -83,10 +83,13 @@
         unit_price:row.unit_price??'',service_fee:row.service_fee_cents===null?'':(row.service_fee_cents/100).toFixed(2),note:row.note};
       error='';paint();node.querySelector('#ledger-form').scrollIntoView({block:'start'});
     }
+    let tripRevision;
     function mount(container){
-      const changed=owner!==context(),remount=node!==container;node=container;
+      const changed=owner!==context(),recordsChanged=!busy&&tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
+      if(changed||recordsChanged)tripRevision=getState()?.trip_records_revision;
       if(changed){owner=context();data=null;attempted=false;loading=false;busy=false;serial++;writeSerial++;error='';status='';draft=blank(defaultDate());}
-      if(changed||remount)paint();if(owner&&!attempted&&!loading)load();
+      else if(recordsChanged){data=null;attempted=loading=false;serial++;}
+      if(changed||recordsChanged||remount)paint();if(owner&&!attempted&&!loading)load();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;

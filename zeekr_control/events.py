@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sqlite3
 from .charging_details import history_details
+from .trip_visibility import visible_clause
 
 
 ALLOWED_KINDS = {'trip_end', 'charge_end'}
@@ -44,7 +45,7 @@ class EventStore:
             return {'events': [], 'next_cursor': None, 'date': date, 'kind': kind}
         db = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True)
         try:
-            query = 'SELECT id,summary,created FROM monitor_events WHERE vehicle=? AND kind=?'
+            query = 'SELECT id,summary,created FROM monitor_events WHERE vehicle=? AND kind=? AND '+visible_clause(db)
             parameters = [vehicle, kind]
             if boundary:
                 query += ' AND (created,id)<(?,?)'
@@ -85,8 +86,8 @@ class EventStore:
             # Stop at the first valid event of each kind. Never materialize the
             # full private history to return these two small public summaries.
             for kind in result:
-                rows = db.execute('''SELECT id,summary FROM monitor_events
-                                     WHERE vehicle=? AND kind=? ORDER BY created DESC,id DESC''',
+                rows = db.execute('SELECT id,summary FROM monitor_events WHERE vehicle=? AND kind=? AND '
+                                  + visible_clause(db) + ' ORDER BY created DESC,id DESC',
                                   (vehicle, kind))
                 for event_id, encoded in rows:
                     try:

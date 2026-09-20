@@ -5,13 +5,17 @@ import re
 
 from .events import EventStore, PUBLIC_FIELDS, _decode
 from .tracks import TrackStore, day_bounds, valid_timestamp
+from .trip_visibility import visible_clause, revision
 
 
 VALID_ID = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
 
 
 def _number(value):
-    return value if type(value) in (int, float) and math.isfinite(value) else None
+    try:
+        return value if type(value) in (int, float) and math.isfinite(value) else None
+    except OverflowError:
+        return None
 
 
 def _object(value):
@@ -30,13 +34,13 @@ class TripStore:
         self.tracks = TrackStore(path, readonly=True)
         self.events = EventStore(path)
 
-    def _rows(self, table, query, parameters=()):
+    def _rows(self, table, query, parameters=(), visible=False):
         if not self.tracks.path.exists():
             return []
         with self.tracks.connect() as db:
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
                 return []
-            return db.execute(query, parameters).fetchall()
+            return db.execute(query + (' AND '+visible_clause(db) if visible else ''), parameters).fetchall()
 
     def vehicles(self):
         """Find even event-only archives without inventing a default vehicle."""
@@ -81,9 +85,12 @@ class TripStore:
         lower, upper = day_bounds(date)
         if cursor is not None:
             _decode(cursor)
-        result = {'events': [], 'next_cursor': None, 'active': None, 'date': date}
+        result = {'events': [], 'next_cursor': None, 'active': None, 'date': date, 'revision': 0}
         if not vehicle:
             return result
+        if self.tracks.path.exists():
+            with self.tracks.connect() as db:
+                result['revision'] = revision(db, vehicle)
         if self._rows('monitor_events', 'SELECT 1 FROM monitor_events LIMIT 1'):
             page = self.events.query(vehicle, date, 'trip_end', cursor=cursor)
             result.update(events=[_summary(event, event['id'], 'ended') for event in page['events']],
@@ -104,7 +111,7 @@ class TripStore:
         else:
             rows = self._rows('monitor_events',
                               'SELECT summary FROM monitor_events WHERE vehicle=? AND id=? AND kind=?',
-                              (vehicle, selection, 'trip_end'))
+                              (vehicle, selection, 'trip_end'), visible=True)
             if not rows:
                 raise ValueError('行程不存在或不属于当前车辆。')
             try:

@@ -1,0 +1,142 @@
+// Real local APIs, synthetic trips only. No vehicle or external requests.
+const {chromium}=require('playwright');
+const {spawn}=require('node:child_process');
+const path=require('node:path');
+const assert=require('node:assert/strict');
+(async()=>{
+  const server=spawn('python3',[path.join(__dirname,'trips_fixture.py'),'--management']);let browser;
+  try{
+    const port=await new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(Error('Fixture timeout')),10000);
+      server.stdout.once('data',data=>{clearTimeout(timer);resolve(Number(String(data).trim()));});
+      server.stderr.on('data',data=>process.stderr.write(data));server.once('error',reject);
+    });
+    browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});
+    const context=await browser.newContext({viewport:{width:1440,height:1080},timezoneId:'America/Los_Angeles'});
+    const page=await context.newPage();
+    page.setDefaultTimeout(7000);
+    const errors=[],coordinates=[];page.on('pageerror',e=>errors.push(e.message));
+    page.on('request',r=>{if(r.url().includes('/api/tracks?'))coordinates.push(r.url());});
+    await page.goto(`http://127.0.0.1:${port}`);
+    await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.getByRole('button',{name:'周报与月报',exact:true}).click();
+    await page.getByLabel('报告周期',{exact:true}).selectOption('month');
+    await page.getByLabel('周期内日期',{exact:true}).fill('2024-01-02');
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
+    await page.locator('[data-report-event="night-trip"]').waitFor();
+    const openTrips=async()=>{
+      await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();
+      await page.getByLabel('轨迹日期').fill('2024-01-02');
+      await page.locator('[data-local-trip="night-trip"]').waitFor();
+    };
+    await openTrips();
+    await page.getByRole('button',{name:'管理行程',exact:true}).click();
+    await page.locator('[data-trip-record="night-trip"]').waitFor();
+    await page.locator('[data-trip-record="night-trip"]').check();
+    await page.locator('[data-trip-record="morning-trip"]').check();
+    await page.getByRole('button',{name:'预览移入回收区',exact:true}).click();
+    await page.locator('#trip-manage-preview').waitFor();
+    assert.match(await page.locator('#trip-manage-preview').innerText(),/2 条/);
+    await page.evaluate(()=>pollState(true));
+    assert.equal(await page.locator('[data-trip-record]:checked').count(),2);
+    assert.equal(await page.locator('#trip-manage-preview').count(),1);
+    await page.getByRole('button',{name:'取消预览',exact:true}).click();
+    assert.equal(await page.locator('[data-local-trip="night-trip"]').count(),1);
+    await page.getByRole('button',{name:'预览移入回收区',exact:true}).click();
+    await page.getByRole('button',{name:'确认移入回收区',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelectorAll('[data-local-trip="night-trip"]').length===0);
+    assert.equal(await page.locator('[data-trip-record]').count(),0);
+    await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#report-distance')&&document.querySelectorAll('[data-report-event]').length===0);
+    assert.match(await page.locator('#report-distance').innerText(),/0 条有效里程样本/,'Cached reports refresh after trip mutation');
+    await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();
+    await page.getByLabel('记录状态').selectOption('trash');
+    await page.locator('[data-trip-record="night-trip"]').waitFor();
+    await page.locator('[data-trip-record="night-trip"]').check();
+    await page.getByRole('button',{name:'预览恢复',exact:true}).click();
+    await page.getByRole('button',{name:'确认恢复',exact:true}).click();
+    await page.locator('[data-local-trip="night-trip"]').waitFor();
+    assert.equal(await page.locator('[data-local-trip="morning-trip"]').count(),0);
+    assert.equal(coordinates.length,0,'Management never requests coordinates');
+    // Another writer makes an existing preview stale. The server must reject it.
+    await page.getByLabel('记录状态').selectOption('active');
+    await page.locator('[data-trip-record="night-trip"]').check();
+    await page.getByRole('button',{name:'预览移入回收区',exact:true}).click();
+    await page.locator('[data-local-trip="night-trip"]').click();
+    const other=await page.request.get(`http://127.0.0.1:${port}/api/state`).then(r=>r.json());
+    const post=async(url,body)=>page.request.post(`http://127.0.0.1:${port}${url}`,{data:{...body,context:other.insights_context},headers:{Origin:`http://127.0.0.1:${port}`,'X-Request-Key':other.request_key}}).then(r=>r.json());
+    const preview=await post('/api/trips/manage/preview',{action:'restore',ids:['morning-trip'],revision:other.trip_records_revision});
+    const ledger=await page.context().newPage();
+    ledger.on('pageerror',e=>errors.push(e.message));
+    await ledger.goto(`http://127.0.0.1:${port}`);
+    await ledger.getByRole('button',{name:'用车研究',exact:true}).click();
+    await ledger.getByRole('button',{name:'充电账本',exact:true}).click();
+    await ledger.locator('#ledger-range').waitFor();
+    await ledger.getByLabel('账单备注',{exact:true}).fill('回收行程时保留这个草稿');
+    await post('/api/trips/manage/execute',{token:preview.token});
+    await ledger.evaluate(()=>pollState(true));await ledger.locator('#ledger-range').waitFor();
+    assert.equal(await ledger.getByLabel('账单备注',{exact:true}).inputValue(),'回收行程时保留这个草稿');
+    await ledger.close();
+    await page.evaluate(()=>pollState(true));
+    await page.waitForFunction(()=>document.querySelector('[data-local-trip="day"]').getAttribute('aria-pressed')==='true');
+    assert.equal(await page.locator('#trip-manage-preview').count(),1,'External edits keep the preview for explicit retry');
+    await page.getByRole('button',{name:'确认移入回收区',exact:true}).click();
+    await page.getByRole('alert').filter({hasText:'已变化'}).waitFor();
+    assert.equal(await page.locator('[data-trip-record="night-trip"]:checked').count(),1);
+    await page.getByRole('button',{name:'重新读取行程',exact:true}).click();
+    await page.locator('[data-trip-record="morning-trip"]').waitFor();
+    // A delayed old response cannot overwrite a changed date or selection.
+    let releaseOld,started;
+    const gate=new Promise(resolve=>releaseOld=resolve),pending=new Promise(resolve=>started=resolve);
+    let delayed=true;
+    await page.route('**/api/trips/manage?*',async route=>{
+      if(delayed){delayed=false;const response=await route.fetch();started();await gate;await route.fulfill({response});}
+      else await route.continue();
+    });
+    await page.getByRole('button',{name:'重新读取行程',exact:true}).click();await pending;
+    // Explicit filter changes clear selected records and old confirmation.
+    await page.getByLabel('开始日期', {exact:true}).fill('2024-01-03');
+    assert.equal(await page.locator('[data-trip-record]:checked').count(),0);
+    await page.getByLabel('结束日期', {exact:true}).fill('2024-01-03');
+    await page.getByRole('button',{name:'重新读取行程',exact:true}).click();
+    await page.getByText('这段日期没有正常行程。',{exact:true}).waitFor();
+    releaseOld();await page.unrouteAll({behavior:'wait'});
+    assert.equal(await page.locator('[data-trip-record]').count(),0);
+    await page.getByLabel('开始日期', {exact:true}).fill('2024-01-01');
+    await page.getByLabel('结束日期', {exact:true}).fill('2024-01-02');
+    await page.getByRole('button',{name:'重新读取行程',exact:true}).click();
+    await page.locator('[data-trip-record="night-trip"]').waitFor();
+    assert.equal(await page.getByRole('button',{name:'预览移入回收区',exact:true}).isDisabled(),true,'Empty selection stays disabled');
+    await page.locator('[data-trip-record="night-trip"]').check();
+    assert.equal(await page.getByRole('button',{name:'预览移入回收区',exact:true}).isDisabled(),false,'Fresh list is not incorrectly stale');
+    for(const width of [1440,390,320]){
+      await page.setViewportSize({width,height:1000});
+      await page.evaluate(()=>document.documentElement.dataset.theme='dark');
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,`No overflow at ${width}`);
+      if(width===390)await page.screenshot({path:'/tmp/zeekr-trip-management-mobile.png',fullPage:true});
+    }
+    await page.setViewportSize({width:1440,height:1080});
+    await page.evaluate(()=>{document.documentElement.dataset.theme='light';document.documentElement.style.zoom='2';});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'200% zoom fits');
+    await page.evaluate(()=>document.documentElement.style.zoom='1');
+    await page.getByLabel('开始日期',{exact:true}).fill('2024-02-04');
+    await page.getByLabel('结束日期',{exact:true}).fill('2024-02-04');
+    await page.getByRole('button',{name:'重新读取行程',exact:true}).click();
+    await page.locator('[data-trip-record="batch-22"]').waitFor();
+    assert.equal(await page.locator('[data-trip-record]').count(),20);
+    await page.getByRole('button',{name:'选择本页',exact:true}).click();
+    await page.getByRole('button',{name:'下一页行程',exact:true}).click();
+    await page.locator('[data-trip-record="batch-00"]').waitFor();
+    await page.getByRole('button',{name:'选择本页',exact:true}).click();
+    await page.getByRole('button',{name:'预览移入回收区',exact:true}).click();
+    await page.getByRole('heading',{name:'确认移入回收区 23 条行程',exact:true}).waitFor();
+    assert.equal(await page.locator('.trip-manage-preview-list article').count(),23);
+    await page.getByRole('button',{name:'取消预览',exact:true}).click();
+    await page.getByRole('button',{name:'云端历史',exact:true}).click();
+    await page.getByRole('button',{name:'本地记录',exact:true}).click();
+    await page.locator('[data-trip-record="night-trip"]').waitFor();
+    assert.equal(await page.locator('[data-trip-record]:checked').count(),0);
+    assert.deepEqual(errors,[]);
+    console.log('Trip management browser: batch preview/cancel/trash/restore, polling, concurrency, privacy and mobile passed.');
+  }finally{if(browser)await browser.close();server.kill('SIGTERM');}
+})().catch(error=>{console.error(error);process.exitCode=1;});

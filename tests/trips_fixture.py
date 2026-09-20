@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 import tempfile
+import sys
 
 from web_fixture import FixtureClient
 from zeekr_control.storage import save
@@ -19,6 +20,9 @@ if __name__ == '__main__':
         store = Monitor(app.database_path).tracks
         start = int(datetime.fromisoformat('2024-01-01T23:58:00+08:00').timestamp() * 1000)
         trips = [('night-trip', start, 720, 9.6), ('morning-trip', start + 36000000, 1200, 16.8)]
+        if '--management' in sys.argv:
+            day = int(datetime.fromisoformat('2024-02-04T08:00:00+08:00').timestamp()*1000)
+            trips.extend(('batch-%02d'%index,day+index*600000,300,1.2) for index in range(23))
         for event_id, begin, seconds, distance in trips:
             summary = {'start_time': begin, 'end_time': begin + seconds * 1000,
                        'duration_seconds': seconds, 'distance_km': distance,
@@ -27,6 +31,8 @@ if __name__ == '__main__':
             with store.connect() as db:
                 db.execute('INSERT INTO monitor_events (id,vehicle,kind,summary,message,created) VALUES (?,?,?,?,?,?)',
                            (event_id, app.vehicle_key, 'trip_end', json.dumps(summary), 'PRIVATE', summary['end_time']))
+            if event_id.startswith('batch-'):
+                continue
             for index, seconds in enumerate([0, 60, 120, 240, 600, 660, seconds]):
                 timestamp = begin + seconds * 1000
                 store.record(app.vehicle_key, {'updateTime': timestamp, 'position': {

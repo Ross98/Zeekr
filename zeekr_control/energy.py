@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 
 from .summary import updated_at
+from .trip_visibility import visible_clause
 
 
 def _number(value, low, high):
@@ -21,8 +22,8 @@ def read_attainment(database_path, vehicle, profile):
         try:
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_events'").fetchone():
                 return {'status': 'no_trip'}
-            row = db.execute("SELECT summary FROM monitor_events WHERE vehicle=? AND kind='trip_end' "
-                             "ORDER BY created DESC,rowid DESC LIMIT 1", (vehicle,)).fetchone()
+            row = db.execute("SELECT summary FROM monitor_events WHERE vehicle=? AND kind='trip_end' AND "
+                             +visible_clause(db)+" ORDER BY created DESC,rowid DESC LIMIT 1", (vehicle,)).fetchone()
         finally:
             db.close()
         if not row:
