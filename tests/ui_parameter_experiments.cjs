@@ -1,0 +1,58 @@
+const assert=require('node:assert/strict');
+const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+(async()=>{
+  const f=await fixture(),{page}=f;
+  try{
+    await page.getByRole('button',{name:'参数实验室',exact:true}).click();
+    for(const label of ['前','后']){
+      await page.getByLabel(`${label}样本日期`,{exact:true}).fill('2026-09-20');
+      await page.getByRole('button',{name:`读取${label}样本`,exact:true}).click();
+    }
+    await page.getByLabel('前样本',{exact:true}).selectOption({index:1});
+    await page.getByLabel('后样本',{exact:true}).selectOption({index:2});
+    let releaseComparison,comparisonRequested;
+    const requested=new Promise(resolve=>comparisonRequested=resolve);
+    const gate=new Promise(resolve=>releaseComparison=resolve);
+    await page.route('**/api/insights/compare?*',async route=>{comparisonRequested();await gate;await route.continue();});
+    await page.getByRole('button',{name:'比较实验样本',exact:true}).click();
+    await requested;
+    assert.ok(await page.getByLabel('前样本',{exact:true}).isDisabled());
+    assert.ok(await page.getByLabel('后样本',{exact:true}).isDisabled());
+    releaseComparison();
+    await page.locator('[data-lab-field]').first().waitFor();
+    await page.unroute('**/api/insights/compare?*');
+    await page.getByLabel('实验名称',{exact:true}).fill('合成实验 <img src=x onerror=alert(1)>');
+    await page.getByLabel('实际动作',{exact:true}).fill('用户手动改变设置，仅记录动作');
+    await page.getByLabel('动作时间（北京时间）',{exact:true}).fill('2026-09-20T00:00:30');
+    await page.getByLabel('研究备注',{exact:true}).fill('这只是线索，不自动确认语义');
+    await page.getByLabel('筛选变化字段',{exact:true}).fill('chargeLevel');
+    assert.equal(await page.locator('[data-lab-field]').count(),1);
+    await page.evaluate(()=>render());
+    assert.equal(await page.getByLabel('研究备注',{exact:true}).inputValue(),'这只是线索，不自动确认语义');
+    await page.getByRole('button',{name:'保存实验记录',exact:true}).click();
+    await page.locator('[data-lab-record]').first().waitFor();
+    assert.equal(await page.locator('[data-lab-record] img').count(),0);
+    await page.getByRole('button',{name:'回看实验',exact:true}).click();
+    await page.getByText(/保存时的观测摘录/).waitFor();
+    assert.match(await page.locator('#lab-comparison').innerText(),/研究线索/);
+    await page.getByLabel('研究备注',{exact:true}).fill('补充研究备注');
+    await page.getByRole('button',{name:'保存实验记录',exact:true}).click();
+    await page.getByText('实验记录已保存。',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'删除实验',exact:true}).click();
+    await page.getByText('没有符合筛选的实验记录',{exact:true}).waitFor();
+    await page.getByLabel('实验记录状态',{exact:true}).selectOption('deleted');
+    await page.getByRole('button',{name:'恢复实验',exact:true}).click();
+    await page.getByLabel('实验记录状态',{exact:true}).selectOption('active');
+    await page.locator('[data-lab-record]').first().waitFor();
+    await page.getByRole('button',{name:'回看实验',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#lab-note')?.value==='补充研究备注');
+    await layouts(page,'parameter-experiments');
+    await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.getByRole('button',{name:'参数实验室',exact:true}).click();
+    await page.getByRole('button',{name:'回看实验',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#lab-note')?.value==='补充研究备注');
+    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/experiments'),'Never promote field review or send vehicle actions');
+    assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    console.log('UI_PARAMETER_EXPERIMENTS_PASS: before/after samples, field filtering, action/time/notes, save/review/edit/delete/restore, frozen research status, XSS, persistence, themes/mobile/zoom/contrast; no vehicle actions or evidence promotion');
+  }finally{await f.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

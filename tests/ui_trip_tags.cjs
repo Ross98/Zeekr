@@ -1,0 +1,46 @@
+const assert=require('node:assert/strict');
+const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+(async()=>{
+  const f=await fixture(),{page}=f;
+  try{
+    await page.getByRole('button',{name:'行程标签',exact:true}).click();
+    await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
+    await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
+    await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
+    await page.getByLabel('行程标签（逗号分隔）',{exact:true}).fill('通勤, 接娃');
+    await page.getByLabel('行程备注',{exact:true}).fill('<img src=x onerror=alert(1)> 合成备注');
+    await page.evaluate(()=>render());
+    assert.equal(await page.getByLabel('行程标签（逗号分隔）',{exact:true}).inputValue(),'通勤, 接娃');
+    await page.getByRole('button',{name:'保存行程标签',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"]')?.textContent.includes('接娃'));
+    await page.locator('[data-tag-event="report-trip-night"] [data-tag="edit"]').click();
+    await page.getByLabel('行程标签（逗号分隔）',{exact:true}).fill('通勤');
+    await page.getByRole('button',{name:'保存行程标签',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip-night"]')?.textContent.includes('通勤'));
+    await page.getByLabel('比较标签 A',{exact:true}).selectOption('通勤');
+    await page.getByLabel('比较标签 B',{exact:true}).selectOption('接娃');
+    assert.match(await page.locator('#tag-comparison').innerText(),/30/);
+    assert.match(await page.locator('#tag-comparison').innerText(),/40/);
+    await page.getByLabel('筛选标签',{exact:true}).selectOption('接娃');
+    assert.equal(await page.locator('[data-tag-event]').count(),1);
+    assert.equal(await page.locator('[data-tag-event] img').count(),0);
+    await page.getByLabel('筛选标签',{exact:true}).selectOption('');
+    await page.locator('[data-tag-event="report-partial"] [data-tag="edit"]').click();
+    await page.getByLabel('行程标签（逗号分隔）',{exact:true}).fill('通勤');
+    await page.getByRole('button',{name:'保存行程标签',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#tag-comparison')?.textContent.includes('片段 1'));
+    assert.match(await page.locator('#tag-comparison').innerText(),/30/);
+    await page.locator('[data-tag-event="report-trip"] [data-tag="delete"]').click();
+    await page.getByRole('button',{name:'恢复行程标签',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"]')?.textContent.includes('接娃'));
+    await layouts(page,'trip-tags');
+    await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.getByRole('button',{name:'行程标签',exact:true}).click();
+    await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
+    await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"]')?.textContent.includes('接娃'));
+    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/trip-tags'));
+    assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    console.log('UI_TRIP_TAGS_PASS: custom/multiple tags, notes escaping/preservation, group comparison and denominators, filters, delete/restore, persistence, themes/mobile/zoom/contrast');
+  }finally{await f.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

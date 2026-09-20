@@ -1,0 +1,195 @@
+(function(root) {
+  'use strict';
+  const changes = {first:'首条观测',new:'车辆时间推进',repeat:'重复缓存',revision:'同时间修订',regression:'车辆时间倒退',unknown:'时间未知'};
+  const flags = {stale:'采集时已陈旧',unknown_time:'车辆时间未知',future_time:'车辆时间超前'};
+  const time = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '未知';
+  const today = () => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+
+  function create({getState,request,escape:esc,active}) {
+    let tab='time';
+    const parkingPage=root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time});
+    const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
+    const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
+    const rulesPage=root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time});
+    const tagsPage=root.TripTagsPage.create({getState,request,escape:esc,active:()=>active() && tab==='tags',time});
+    const chargeComparisonPage=root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time});
+    const labPage=root.ParameterExperimentsPage.create({getState,request,escape:esc,active:()=>active() && tab==='lab',time});
+    const calendarPage=root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate});
+    const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
+    const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
+    const cardsPage=root.TripCardsPage.create({getState,request,escape:esc,active:()=>active() && tab==='cards',time});
+    const views={parking:parkingPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,tags:tagsPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage,cards:cardsPage};
+    let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
+    let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
+    let error='', detailError='', compareError='', query='', fieldPage=0;
+    let listSerial=0, detailSerial=0, compareSerial=0, selectTimer;
+
+    function reset() {
+      records=[];cursor=null;index=0;detail=null;baseline=null;comparison=null;loadedDate='';
+      loading=false;detailLoading=false;compareLoading=false;error='';detailError='';compareError='';
+      listSerial++;detailSerial++;compareSerial++;clearTimeout(selectTimer);
+    }
+    function context() {return getState()?.insights_context || '';}
+    function openDate(view,target){
+      tab=view;
+      if(view==='time'){date=target;reset();paint();load();}
+      else{parkingPage.openDate(target);paint();}
+    }
+    function valid(serial, current, identity) {return serial===current && owner===identity && identity===context();}
+    function button(label, action, disabled=false) {return `<button class="button secondary" id="insight-${action}" data-insight="${action}" ${disabled?'disabled':''}>${label}</button>`;}
+    function badges(record) {
+      return `<span class="insight-badge">${changes[record.change] || '未知'}</span>${record.flags.map(flag=>`<span class="insight-badge insight-warning">${esc(flags[flag] || flag)}</span>`).join('')}${record.gap_seconds?`<span class="insight-badge insight-warning">与上一条采集相隔 ${Math.round(record.gap_seconds/60)} 分钟</span>`:''}`;
+    }
+    function saveFocus() {
+      const el=document.activeElement;
+      return el?.id?.startsWith('insight-') ? {id:el.id,start:el.selectionStart,end:el.selectionEnd} : null;
+    }
+    function restoreFocus(saved) {
+      const el=saved && document.getElementById(saved.id);
+      if(el && !el.disabled){el.focus({preventScroll:true});if(saved.start!=null)el.setSelectionRange(saved.start,saved.end);}
+    }
+    function paint() {
+      if(!node?.isConnected || !active())return;
+      const focus=saveFocus();
+      const tabs=`<nav class="insight-tabs" aria-label="用车研究工具"><button data-insight-view="time" aria-pressed="${tab==='time'}">车辆时间机</button><button data-insight-view="parking" aria-pressed="${tab==='parking'}">停车耗电</button><button data-insight-view="report" aria-pressed="${tab==='report'}">周报与月报</button><button data-insight-view="ledger" aria-pressed="${tab==='ledger'}">充电账本</button><button data-insight-view="rules" aria-pressed="${tab==='rules'}">自定义提醒</button><button data-insight-view="tags" aria-pressed="${tab==='tags'}">行程标签</button><button data-insight-view="charge-comparison" aria-pressed="${tab==='charge-comparison'}">充电曲线对比</button><button data-insight-view="lab" aria-pressed="${tab==='lab'}">参数实验室</button><button data-insight-view="calendar" aria-pressed="${tab==='calendar'}">用车日历</button><button data-insight-view="life" aria-pressed="${tab==='life'}">生活账本</button><button data-insight-view="quality" aria-pressed="${tab==='quality'}">数据质量雷达</button><button data-insight-view="cards" aria-pressed="${tab==='cards'}">行程卡片</button></nav>`;
+      if(views[tab]){
+        node.innerHTML=tabs+`<div id="${tab}-workspace"></div>`;
+        views[tab].mount(node.querySelector(`#${tab}-workspace`));
+        return;
+      }
+      node.innerHTML=tabs+`<section class="insight-hero"><div><span class="insight-eyebrow">车辆时间机</span><h2>回到每一次观测</h2><p>看当时的车况，比较前后的变化。</p></div><span class="insight-source">本机归档 · 北京时间</span></section>
+        <section class="card insight-panel"><div class="insight-toolbar"><label>归档日期<input id="insight-date" type="date" value="${esc(date)}"></label>${button('查看归档','load',!owner || !date)}<span id="insight-count" role="status">${loading?'正在读取…':loadedDate?`${loadedDate} · 已载入 ${records.length} 条${cursor?'，还有更多':''}`:'选择日期查看'}</span></div>
+        <p class="insight-note">按采集日期查找。每条保留独立的车辆时间；重复读取不代表车辆产生新数据。</p>
+        ${!owner?'<p class="insight-empty">连接车辆账号并取得当前车辆绑定后，可查看对应归档。</p>':''}
+        ${error?`<div class="notice error" role="alert">${esc(error)}</div>`:''}
+        ${records.length?`<div class="insight-timeline"><label for="insight-slider">观测时间轴</label><input id="insight-slider" type="range" min="0" max="${records.length-1}" value="${index}" step="1"><div class="insight-stepper">${button('上一条观测','previous',index===0)}<span id="insight-selection" aria-live="polite"></span>${button('下一条观测','next',index===records.length-1)}</div><label class="insight-select-label">选择观测<select id="insight-select" aria-label="选择观测">${records.map((record,i)=>`<option value="${i}" ${i===index?'selected':''}>${i+1} · ${esc(time(record.observed_at))} · ${changes[record.change]}</option>`).join('')}</select></label></div>${cursor?`<div class="insight-load-more">${button('加载更多观测','more',loading)}</div>`:''}`:loadedDate && !loading?'<div class="insight-empty"><h3>这一天还没有归档观测</h3><p>未启用归档、暂停或未成功采集，都会留下空白。没有记录不等于车辆未使用。</p></div>':''}
+        </section>
+        <div id="insight-snapshot" aria-live="polite"></div><div id="insight-actions" class="insight-actions"></div>
+        <div id="insight-comparison"></div><div id="insight-fields"></div>
+        <p class="insight-note">超过 10 分钟没有采集记录会标出间隔；停车采集可能降至 5 分钟一次。只展示已归档内容，不补造车况。</p>`;
+      paintSelection();paintDetails();paintComparison();restoreFocus(focus);
+    }
+    function paintSelection() {
+      const record=records[index], label=node?.querySelector('#insight-selection');
+      if(!record || !label)return;
+      label.textContent=`${index+1} / ${records.length} · ${time(record.observed_at)}`;
+      node.querySelector('#insight-slider').value=index;
+      node.querySelector('#insight-slider').setAttribute('aria-valuetext',`${index+1}，采集于 ${time(record.observed_at)}`);
+      node.querySelector('#insight-select').value=index;
+      node.querySelector('#insight-previous').disabled=index===0;
+      node.querySelector('#insight-next').disabled=index===records.length-1;
+    }
+    function paintDetails() {
+      const container=node?.querySelector('#insight-snapshot');
+      if(!container)return;
+      const record=records[index];
+      if(!record){container.innerHTML='';paintActions();paintFields();return;}
+      const summary=detail?.record.key===record.key ? detail.summary : null;
+      const labels={battery:'动力电池',range:'预估续航',inside:'座舱温度',outside:'车外温度',lock:'门锁',doors:'车门',windows:'车窗',charging:'充电状态'};
+      container.innerHTML=`<section class="card insight-panel"><div class="insight-heading"><h3>这一刻的车况</h3><div class="insight-badges">${badges(record)}</div></div><div class="insight-times"><span>车辆更新<strong>${esc(time(record.state_time))}</strong></span><span>云端读取<strong>${esc(time(record.fetched_at))}</strong></span><span>归档采集<strong>${esc(time(record.observed_at))}</strong></span></div>
+        ${detailError?`<div class="notice error" role="alert">${esc(detailError)} ${button('重试这条观测','retry-detail')}</div>`:detailLoading?'<p class="insight-note">正在读取这条观测…</p>':''}
+        ${summary?`<div class="insight-metrics">${Object.entries(labels).map(([key,label])=>`<div><span>${label}</span><strong>${esc(summary[key])}</strong></div>`).join('')}</div>`:''}</section>`;
+      paintActions();paintFields();
+    }
+    function paintActions() {
+      const el=node?.querySelector('#insight-actions');if(!el)return;
+      el.innerHTML=records.length?`${button('设为对比起点','pin',!detail || detailLoading)}${button('与起点比较','compare',!detail || detailLoading || !baseline || baseline.key===detail.record.key || compareLoading)}${baseline?`<span>起点：${esc(time(baseline.observed_at))}</span>${button('清除对比','clear')}`:'<span>选一条作为起点，再拖到另一条比较。可跨日期选择。</span>'}`:'';
+    }
+    function paintFields() {
+      const el=node?.querySelector('#insight-fields');if(!el)return;
+      if(!detail || detailLoading){el.innerHTML='';return;}
+      const focus=saveFocus(), term=query.trim().toLowerCase();
+      const fields=detail.fields.filter(field=>field.status!=='missing' && (!term || `${field.name} ${field.path} ${field.group}`.toLowerCase().includes(term)));
+      const pages=Math.max(1,Math.ceil(fields.length/24));fieldPage=Math.min(fieldPage,pages-1);
+      el.innerHTML=`<section class="card insight-panel"><div class="insight-heading"><h3>当时返回的参数</h3><label>搜索历史参数<input type="search" id="insight-search" value="${esc(query)}" placeholder="中文名称 / 字段路径"></label></div><p class="insight-note">匹配 ${fields.length} 项 · 安全目录 ${detail.counts.total} 项，本次返回 ${detail.counts.returned} 项。未返回的值不从其他时刻补入。</p>
+        <div class="insight-fields">${fields.slice(fieldPage*24,fieldPage*24+24).map(field=>`<article data-field="${esc(field.path)}"><span>${esc(field.name)}</span><strong>${esc(field.value)}</strong><small>原值 ${esc(field.raw)} · ${esc(field.evidence)}</small><small>${esc(field.time_source)} ${esc(time(field.updated_time))}</small></article>`).join('') || '<p>没有匹配参数。</p>'}</div><div class="insight-pagination">${button('上一页参数','fields-prev',fieldPage===0)}<span>${fieldPage+1} / ${pages}</span>${button('下一页参数','fields-next',fieldPage+1===pages)}</div></section>`;
+      restoreFocus(focus);
+    }
+    function paintComparison() {
+      const el=node?.querySelector('#insight-comparison');if(!el)return;
+      if(!comparison && !compareError && !compareLoading){el.innerHTML='';return;}
+      el.innerHTML=`<section class="card insight-panel"><h3>前后变化</h3>${compareError?`<p role="alert">${esc(compareError)}</p>`:compareLoading?'<p>正在比较两条观测…</p>':`<p class="insight-note">起点采集 ${esc(time(comparison.before.observed_at))} → 终点采集 ${esc(time(comparison.after.observed_at))}<br>车辆时间 ${esc(time(comparison.before.state_time))} → ${esc(time(comparison.after.state_time))}。${comparison.changes.length} 项变化；不据此推断因果。</p>
+        <div class="insight-diff">${comparison.changes.map(field=>`<article data-change="${esc(field.path)}"><strong>${esc(field.name)}${field.display_limited?'<small class="insight-truncated">显示值已简化；完整值存在差异</small>':''}</strong><div><span>起点</span><b>${esc(field.before.value)}</b><small>原值 ${esc(field.before.raw)}</small></div><div><span>终点</span><b>${esc(field.after.value)}</b><small>原值 ${esc(field.after.raw)}</small></div></article>`).join('') || '<p>两条观测的安全参数值没有变化。</p>'}</div>`}</section>`;
+    }
+    async function load(more=false) {
+      if(!owner || !date)return;
+      const identity=owner, token=++listSerial, selectedDate=more?loadedDate:date;
+      if(!more){records=[];index=0;cursor=null;detail=null;comparison=null;compareError='';detailSerial++;compareSerial++;clearTimeout(selectTimer);}
+      loading=true;error='';loadedDate=selectedDate;paint();
+      try {
+        const result=await request(`/api/insights/timeline?date=${encodeURIComponent(selectedDate)}${more && cursor?'&cursor='+encodeURIComponent(cursor):''}`);
+        if(!valid(token,listSerial,identity))return;
+        if(result.context!==identity)throw Error('账号或车辆已切换，等待页面同步后重试。');
+        records=more?records.concat(result.items.filter(item=>!records.some(old=>old.key===item.key))):result.items;
+        cursor=result.next_cursor;
+        if(records.length && !more)select(0);
+      } catch(failure) {if(valid(token,listSerial,identity))error=failure.message;}
+      finally {if(valid(token,listSerial,identity)){loading=false;if(tab==='time')paint();}}
+    }
+    function select(next, debounce=false) {
+      if(!records[next])return;
+      index=next;detail=null;detailError='';detailLoading=true;fieldPage=0;
+      const identity=owner, token=++detailSerial, key=records[index].key;
+      clearTimeout(selectTimer);paintSelection();paintDetails();
+      const fetchDetail=async()=>{
+        try {
+          const result=await request('/api/insights/snapshot?id='+encodeURIComponent(key));
+          if(!valid(token,detailSerial,identity))return;
+          if(result.context!==identity)throw Error('账号或车辆已切换，请重新选择。');
+          detail=result;
+        } catch(failure){if(valid(token,detailSerial,identity))detailError=failure.message;}
+        finally {if(valid(token,detailSerial,identity)){detailLoading=false;if(active())paintDetails();}}
+      };
+      if(debounce)selectTimer=setTimeout(fetchDetail,150);else fetchDetail();
+    }
+    async function compare() {
+      if(!baseline || !detail)return;
+      const identity=owner, token=++compareSerial;
+      const before=baseline.key, after=detail.record.key;
+      comparison=null;compareError='';compareLoading=true;paintActions();paintComparison();
+      try {
+        const result=await request(`/api/insights/compare?before=${encodeURIComponent(before)}&after=${encodeURIComponent(after)}`);
+        if(!valid(token,compareSerial,identity))return;
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新比较。');
+        comparison=result;
+      } catch(failure){if(valid(token,compareSerial,identity))compareError=failure.message;}
+      finally {if(valid(token,compareSerial,identity)){compareLoading=false;if(active()){paintActions();paintComparison();}}}
+    }
+    function mount(container) {
+      const changed=context()!==owner, remount=node!==container;
+      if(changed){owner=context();reset();}
+      node=container;
+      if(changed || remount)paint();
+      if(views[tab])views[tab].mount(node.querySelector(`#${tab}-workspace`));
+      if(tab==='time' && owner && !loadedDate && !loading)load();
+    }
+    function handle(event) {
+      if(!active() || !node?.contains(event.target))return false;
+      const el=event.target;
+      const view=event.type==='click' && el.closest('[data-insight-view]');
+      if(view){tab=view.dataset.insightView;paint();if(tab==='time' && owner && !loadedDate && !loading)load();return true;}
+      if(views[tab]?.handle(event))return true;
+      if(event.type==='input' && el.id==='insight-date'){date=el.value;node.querySelector('#insight-load').disabled=!date || !owner;return true;}
+      if(event.type==='input' && el.id==='insight-slider'){select(Number(el.value),true);return true;}
+      if(event.type==='input' && el.id==='insight-search'){query=el.value;fieldPage=0;paintFields();return true;}
+      if(event.type==='change' && el.id==='insight-select'){select(Number(el.value));return true;}
+      if(event.type!=='click')return false;
+      const target=el.closest('[data-insight]');if(!target || target.disabled)return false;
+      switch(target.dataset.insight){
+        case 'load':load();break;
+        case 'more':load(true);break;
+        case 'previous':select(index-1);break;
+        case 'next':select(index+1);break;
+        case 'retry-detail':select(index);break;
+        case 'pin':baseline=detail.record;comparison=null;compareError='';compareSerial++;compareLoading=false;paintActions();paintComparison();break;
+        case 'compare':compare();break;
+        case 'clear':baseline=null;comparison=null;compareError='';compareSerial++;compareLoading=false;paintActions();paintComparison();break;
+        case 'fields-prev':fieldPage--;paintFields();break;
+        case 'fields-next':fieldPage++;paintFields();break;
+      }
+      return true;
+    }
+    return {mount,handle};
+  }
+  root.InsightsPage={create};
+})(window);

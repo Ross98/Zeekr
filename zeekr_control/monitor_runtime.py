@@ -22,6 +22,8 @@ from .notifications import WeComSender
 from .storage import DEFAULT_PATH, load, save
 from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
+from .personal_store import PersonalStore, account_scope
+from .custom_reminders import Reminders
 
 
 def enable_sampling(root):
@@ -165,6 +167,8 @@ class Runner:
                                address_resolver=AmapGeocoder(self.root / 'amap-geocoding.json'))
         self.sender = sender if sender is not None else WeComSender(self.root / 'wecom-webhook.json')
         self.storage_health = StorageHealth(self.root, self.sender)
+        self.reminders = Reminders(PersonalStore(self.root / 'personal.sqlite3'))
+        self.reminders.recover()
         self.blocked_fingerprint = None
         self.failures = 0
         self.parked_since = None
@@ -268,6 +272,12 @@ class Runner:
                               charge='charging' if state['charge'] else 'idle' if state['last'] and state['last']['charging'] is False else 'unknown',
                               signals=json.dumps(state['last']['signals'], ensure_ascii=False) if state['last'] else '{}')
                 self.failures = 0
+                def reminder_guard():
+                    current_binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
+                    if session_scope(load(self.session_path)) != session_scope(session) or current_binding != binding:
+                        raise ApiError('账号会话或绑定车辆已变化，本次自定义提醒已取消')
+                self.reminders.observe(account_scope(session), binding, raw, observed,
+                                       sender=self.sender, guard=reminder_guard)
         except RateLimited as exc:
             delay = max(60, exc.seconds)
             health.update(status='cooldown', error='接口限流，等待冷却')

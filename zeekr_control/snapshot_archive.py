@@ -82,6 +82,7 @@ class SnapshotArchive:
                     source TEXT NOT NULL, digest TEXT NOT NULL REFERENCES payloads(digest),
                     UNIQUE(scope_key,vehicle_key,observed_at,fetched_at,source,digest))''')
                 db.execute('CREATE INDEX IF NOT EXISTS reads_vehicle_time ON reads(vehicle_key,state_time)')
+                db.execute('CREATE INDEX IF NOT EXISTS reads_scope_observed ON reads(scope_key,vehicle_key,observed_at,id)')
                 db.execute('PRAGMA user_version=1')
                 db.execute('INSERT OR IGNORE INTO payloads VALUES (?,?,?,?)',
                            (digest, 'gzip-json-v1', len(payload), compressed))

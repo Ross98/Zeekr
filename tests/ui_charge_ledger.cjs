@@ -1,0 +1,61 @@
+const assert=require('node:assert/strict');
+const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+(async()=>{
+  const f=await fixture(),{page}=f;
+  try{
+    await page.getByRole('button',{name:'充电账本',exact:true}).click();
+    await page.getByLabel('账本月份',{exact:true}).fill('2026-09');
+    await page.getByRole('button',{name:'读取账本',exact:true}).click();
+    await page.getByLabel('关联充电记录',{exact:true}).selectOption('report-charge');
+    await page.getByLabel('充电来源',{exact:true}).selectOption('home');
+    await page.getByLabel('实际账单金额（元）',{exact:true}).fill('30.10');
+    await page.getByLabel('桩端计量电量（kWh）',{exact:true}).fill('40');
+    await page.getByLabel('参考电价（元/kWh）',{exact:true}).fill('0.75');
+    await page.getByLabel('估算附加费用（元）',{exact:true}).fill('1');
+    await page.getByLabel('账单备注',{exact:true}).fill('<img src=x onerror=alert(1)> 合成账单');
+    await page.evaluate(()=>render());
+    assert.equal(await page.getByLabel('实际账单金额（元）',{exact:true}).inputValue(),'30.10');
+    await page.getByRole('button',{name:'保存账单',exact:true}).click();
+    await page.locator('[data-ledger-entry]').first().waitFor();
+    assert.match(await page.locator('#ledger-actual-total').innerText(),/30.10/);
+    assert.match(await page.locator('[data-ledger-entry]').innerText(),/31.00/);
+    assert.equal(await page.locator('[data-ledger-entry] img').count(),0);
+    await page.getByRole('button',{name:'编辑账单',exact:true}).click();
+    await page.getByLabel('实际账单金额（元）',{exact:true}).fill('35.20');
+    await page.getByRole('button',{name:'保存账单',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#ledger-actual-total')?.textContent.includes('35.20'));
+    await page.getByRole('button',{name:'撤销上一步',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#ledger-actual-total')?.textContent.includes('30.10'));
+    await page.getByRole('button',{name:'删除账单',exact:true}).click();
+    await page.getByText('本月还没有账单',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'恢复账单',exact:true}).click();
+    await page.locator('[data-ledger-entry]').first().waitFor();
+    await page.getByRole('button',{name:'新增手工账单',exact:true}).click();
+    await page.getByLabel('账单日期',{exact:true}).fill('2026-09-20');
+    await page.getByLabel('充电来源',{exact:true}).selectOption('public');
+    await page.getByLabel('实际账单金额（元）',{exact:true}).fill('0');
+    await page.getByLabel('桩端计量电量（kWh）',{exact:true}).fill('10');
+    await page.getByRole('button',{name:'保存账单',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelectorAll('[data-ledger-entry]').length===2);
+    assert.match(await page.locator('#ledger-sources').innerText(),/外充/);
+    await layouts(page,'charge-ledger');
+    await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.getByRole('button',{name:'充电账本',exact:true}).click();
+    await page.getByLabel('账本月份',{exact:true}).fill('2026-09');
+    await page.getByRole('button',{name:'读取账本',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelectorAll('[data-ledger-entry]').length===2);
+    // Another writer changes the revision. Old form cannot overwrite it.
+    await page.getByRole('button',{name:'编辑账单',exact:true}).first().click();
+    await page.getByLabel('账单备注',{exact:true}).fill('保留未提交内容');
+    await page.evaluate(async()=>{
+      const book=await fetch('/api/insights/ledger?date=2026-09-20').then(r=>r.json());
+      await fetch('/api/insights/ledger',{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':state.request_key},body:JSON.stringify({context:state.insights_context,revision:book.revision,action:'save',date:'2026-09-20',source:'unknown',amount:'2'})});
+    });
+    await page.getByRole('button',{name:'保存账单',exact:true}).click();
+    await page.getByText(/记录已有更新/).waitFor();
+    assert.equal(await page.getByLabel('账单备注',{exact:true}).inputValue(),'保留未提交内容');
+    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/ledger'),'Only authorized local ledger writes');
+    assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    console.log('UI_CHARGE_LEDGER_PASS: linked/manual bills, actual/estimate separation, edit/undo/delete/restore, zero cost, persistence, stale-write rejection with draft preservation, source breakdown, themes/mobile/zoom/contrast');
+  }finally{await f.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

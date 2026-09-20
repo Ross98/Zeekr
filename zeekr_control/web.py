@@ -1,5 +1,6 @@
 """Loopback-only Web UI and shared background cached-position collection."""
 import hashlib
+import hmac
 import os
 from http.cookies import SimpleCookie
 from .auth import WebAuth
@@ -28,6 +29,19 @@ from .storage_management import StorageManager
 from .storage_health import StorageHealth, severity
 from .charging_analytics import ChargingAnalytics
 from .vehicle_parameters import parameters
+from .archive_reader import ArchiveReader
+from .parking_analytics import ParkingAnalytics
+from .usage_reports import UsageReports
+from .personal_store import PersonalStore, account_scope
+from .charge_ledger import ChargeLedger
+from .custom_reminders import Reminders
+from .trip_tags import TripTags
+from .charge_comparison import ChargeComparison
+from .parameter_experiments import ParameterExperiments
+from .usage_calendar import UsageCalendar
+from .vehicle_life import VehicleLife
+from .data_quality import DataQuality
+from .trip_cards import TripCards
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -46,6 +60,18 @@ class App:
         self.trip_store = TripStore(self.database_path)
         self.storage_manager = StorageManager(self.session_path.parent)
         self.charging_analytics = ChargingAnalytics(self.database_path)
+        self.archive_reader = ArchiveReader(self.session_path.parent / 'snapshot-archive')
+        self.usage_reports = UsageReports(self.database_path, self.archive_reader)
+        self.personal_store = PersonalStore(self.session_path.parent / 'personal.sqlite3')
+        self.charge_ledger = ChargeLedger(self.personal_store, self.database_path)
+        self.reminders = Reminders(self.personal_store)
+        self.trip_tags = TripTags(self.personal_store, self.database_path)
+        self.charge_comparison = ChargeComparison(self.database_path)
+        self.experiments = ParameterExperiments(self.personal_store, self.archive_reader)
+        self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader)
+        self.vehicle_life = VehicleLife(self.personal_store)
+        self.data_quality = DataQuality(self.archive_reader)
+        self.trip_cards = TripCards(self.database_path)
         self.client_factory = client_factory
         self.request_key = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
@@ -137,6 +163,7 @@ class App:
             except Exception:
                 recent_events = {'trip_end': None, 'charge_end': None, 'error': '本地事件暂不可用。'}
             return {'field_reviews': field_reviews, 'request_key': self.request_key, 'authenticated': authenticated,
+                    'insights_context': self._insights_context(),
                     'model': self.model, 'vehicle': self.vehicle, 'vehicles': self.vehicles,
                     'read_at': updated_at(self.read_at), 'read_time': self.read_at,
                     'query_cached': self.query_cached, 'refresh_result': self.refresh_result,
@@ -316,6 +343,79 @@ class App:
                           read_time=current['read_time'])
             return result
 
+    def _archive_vehicle(self):
+        if self.vehicle_key:
+            return self.vehicle_key
+        try:
+            value = load(self.session_path.parent / 'monitor-binding.json').get('vehicle_key')
+            return value if isinstance(value, str) and value else None
+        except ApiError:
+            return None
+
+    def _insights_context(self):
+        # A persisted binding alone cannot establish the new account's vehicle.
+        vehicle = self.vehicle_key
+        if not self.session_key or not vehicle:
+            return None
+        return hmac.new(self.request_key.encode(), (self.session_key + ':' + vehicle).encode(),
+                        hashlib.sha256).hexdigest()
+
+    def insights(self, operation, *args):
+        with self.lock:
+            session = self._read_session()
+            if not session.get('accessToken'):
+                raise ValueError('请先连接车辆账号。')
+            self._restore_snapshot(session)
+            if operation not in ('timeline','snapshot','compare','parking') and not self.vehicle_key:
+                raise ValueError('等待当前账号的车辆缓存，旧账号绑定不能用于读取这些记录。')
+            vehicle, context = self._archive_vehicle(), self._insights_context()
+            handlers = {'timeline': self.archive_reader.timeline, 'snapshot': self.archive_reader.snapshot,
+                        'compare': self.archive_reader.compare,
+                        'report': self.usage_reports.query,
+                        'calendar': self.usage_calendar.query,
+                        'quality': self.data_quality.query,
+                        'cards': lambda scope, car, date: self.trip_cards.query(car,date),
+                        'life': lambda scope, car, date: self.vehicle_life.query(account_scope(session),car,date,self.raw,self.read_at),
+                        'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
+                        'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
+                        'trip-tags': lambda scope, car, date: self.trip_tags.query(account_scope(session),car,date),
+                        'charge-options': lambda scope, car, date: self.charge_comparison.options(car,date),
+                        'charge-comparison': lambda scope, car, a, b: self.charge_comparison.query(car,a,b),
+                        'experiments': lambda scope, car: self.experiments.query(account_scope(session),car),
+                        'experiment': lambda scope, car, identity: self.experiments.detail(account_scope(session),car,identity),
+                        'parking': lambda scope, car, start, end: ParkingAnalytics(self.archive_reader).query(
+                            scope, car, start, end, (self.profile or {}).get('battery_capacity_kwh'))}
+            result = handlers[operation](session_scope(session), vehicle, *args)
+            current_session = self._read_session()
+            if session_scope(current_session) != session_scope(session) or context != self._insights_context():
+                raise ValueError('账号或车辆已切换，请重新读取。')
+            result['context'] = context
+            return result
+
+    def update_insight_record(self, operation, data):
+        with self.lock:
+            session = self._read_session()
+            if not session.get('accessToken'):
+                raise ValueError('请先连接车辆账号。')
+            self._restore_snapshot(session)
+            context, vehicle = self._insights_context(), self._archive_vehicle()
+            if not context or data.get('context') != context:
+                raise ValueError('账号或车辆已切换，请重新加载。')
+            fingerprint = session_scope(session)
+            def guard():
+                if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
+                    raise ValueError('保存期间账号或车辆已切换；本次修改已取消。')
+            if operation == 'rule-preview':
+                result = self.reminders.preview(account_scope(session),vehicle,data,self.raw,int(time.time()*1000))
+                guard()
+            else:
+                manager = {'ledger':self.charge_ledger,'rules':self.reminders,'trip-tags':self.trip_tags,
+                           'experiments':self.experiments,'life':self.vehicle_life}[operation]
+                extra = {'scope':session_scope(session)} if operation=='experiments' else {}
+                result = manager.update(account_scope(session), vehicle, data, guard=guard,**extra)
+            result['context'] = context
+            return result
+
     def _store(self):
         if self.store is None:
             self.store = TrackStore(self.database_path)
@@ -484,8 +584,13 @@ def make_server(app, port=8765, auth=None, public_origin=None):
             self.send_header('X-Frame-Options', 'DENY')
             self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-            self.end_headers()
-            self.wfile.write(payload)
+            try:
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError):
+                # Closing a tab can cancel an in-flight response. The client is
+                # already gone: do not retry with a 500 or alter application state.
+                self.close_connection = True
 
         def do_GET(self):
             if not self.permitted():
@@ -503,6 +608,41 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     return self.send(200, app.state())
                 if url.path == '/api/vehicle/parameters':
                     return self.send(200, app.vehicle_parameters())
+                if url.path.startswith('/api/insights/'):
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    value = lambda name, default='': query.get(name, [default])[0]
+                    if url.path == '/api/insights/timeline':
+                        return self.send(200, app.insights('timeline', value('date'), value('cursor', None)))
+                    if url.path == '/api/insights/snapshot':
+                        return self.send(200, app.insights('snapshot', value('id')))
+                    if url.path == '/api/insights/compare':
+                        return self.send(200, app.insights('compare', value('before'), value('after')))
+                    if url.path == '/api/insights/parking':
+                        return self.send(200, app.insights('parking', value('start'), value('end')))
+                    if url.path == '/api/insights/report':
+                        return self.send(200, app.insights('report', value('period'), value('date')))
+                    if url.path == '/api/insights/calendar':
+                        return self.send(200, app.insights('calendar',value('date')))
+                    if url.path == '/api/insights/life':
+                        return self.send(200, app.insights('life',value('date')))
+                    if url.path == '/api/insights/quality':
+                        return self.send(200, app.insights('quality',value('start'),value('end')))
+                    if url.path == '/api/insights/cards':
+                        return self.send(200, app.insights('cards',value('date')))
+                    if url.path == '/api/insights/ledger':
+                        return self.send(200, app.insights('ledger', value('date')))
+                    if url.path == '/api/insights/rules':
+                        return self.send(200, app.insights('rules'))
+                    if url.path == '/api/insights/trip-tags':
+                        return self.send(200, app.insights('trip-tags',value('date')))
+                    if url.path == '/api/insights/charge-comparison/options':
+                        return self.send(200, app.insights('charge-options',value('date')))
+                    if url.path == '/api/insights/charge-comparison':
+                        return self.send(200, app.insights('charge-comparison',value('a'),value('b')))
+                    if url.path == '/api/insights/experiments':
+                        return self.send(200, app.insights('experiments'))
+                    if url.path == '/api/insights/experiments/detail':
+                        return self.send(200, app.insights('experiment',value('id')))
                 if url.path == '/api/storage':
                     return self.send(200, app.storage_status())
                 if url.path == '/api/storage/archives':
@@ -543,6 +683,20 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     return self.send(200, app.charging_statistics(query.get('days', [''])[0],
                                                                    query.get('mode', [''])[0]))
                 assets = {'/': ('index.html', 'text/html; charset=utf-8'),
+                          '/insights.js': ('insights.js', 'text/javascript; charset=utf-8'),
+                          '/insights.css': ('insights.css', 'text/css; charset=utf-8'),
+                          '/parking.js': ('parking.js', 'text/javascript; charset=utf-8'),
+                          '/usage-reports.js': ('usage-reports.js', 'text/javascript; charset=utf-8'),
+                          '/charge-ledger.js': ('charge-ledger.js', 'text/javascript; charset=utf-8'),
+                          '/custom-reminders.js': ('custom-reminders.js', 'text/javascript; charset=utf-8'),
+                          '/trip-tags.js': ('trip-tags.js', 'text/javascript; charset=utf-8'),
+                          '/charge-comparison.js': ('charge-comparison.js', 'text/javascript; charset=utf-8'),
+                          '/parameter-experiments.js': ('parameter-experiments.js', 'text/javascript; charset=utf-8'),
+                          '/usage-calendar.js': ('usage-calendar.js', 'text/javascript; charset=utf-8'),
+                          '/vehicle-life.js': ('vehicle-life.js', 'text/javascript; charset=utf-8'),
+                          '/data-quality.js': ('data-quality.js', 'text/javascript; charset=utf-8'),
+                          '/trip-card-renderer.js': ('trip-card-renderer.js', 'text/javascript; charset=utf-8'),
+                          '/trip-cards.js': ('trip-cards.js', 'text/javascript; charset=utf-8'),
                           '/vehicle.js': ('vehicle.js', 'text/javascript; charset=utf-8'),
                           '/vehicle.css': ('vehicle.css', 'text/css; charset=utf-8'),
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
@@ -575,7 +729,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 return self.send(403, {'error': '请求校验失败，请从本机页面操作。'})
             try:
                 length = int(self.headers.get('Content-Length', '0'))
-                limit = 32768 if self.path == '/api/field-reviews' else 4096
+                limit = 32768 if self.path == '/api/field-reviews' else 16384 if self.path.startswith('/api/insights/') else 4096
                 if not 0 < length <= limit or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
                     raise ValueError('请求格式无效。')
                 data = json.loads(self.rfile.read(length))
@@ -583,6 +737,18 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     raise ValueError('请求必须为 JSON 对象。')
                 if self.path == '/api/refresh':
                     return self.send(200, app.refresh(data.get('vehicle', 1)))
+                if self.path == '/api/insights/ledger':
+                    return self.send(200, app.update_insight_record('ledger',data))
+                if self.path == '/api/insights/rules':
+                    return self.send(200, app.update_insight_record('rules',data))
+                if self.path == '/api/insights/rules/preview':
+                    return self.send(200, app.update_insight_record('rule-preview',data))
+                if self.path == '/api/insights/trip-tags':
+                    return self.send(200, app.update_insight_record('trip-tags',data))
+                if self.path == '/api/insights/experiments':
+                    return self.send(200, app.update_insight_record('experiments',data))
+                if self.path == '/api/insights/life':
+                    return self.send(200, app.update_insight_record('life',data))
                 if self.path == '/api/storage/preview':
                     owner = hashlib.sha256(self.token().encode()).hexdigest()
                     return self.send(200, app.storage_manager.preview(data.get('action'), data.get('target'), owner))
@@ -603,7 +769,12 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     app.error = '本地服务或存储发生错误，请检查后重试。'
                 self.send(500, {'error': app.error})
 
-    server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    class LocalHTTPServer(ThreadingHTTPServer):
+        # A page now loads many same-origin assets. Queue connection bursts while
+        # the accept loop yields to handlers, rather than resetting asset sockets.
+        request_queue_size = 128
+
+    server = LocalHTTPServer(('127.0.0.1', port), Handler)
     server.daemon_threads = True
     server.timeout = 15
     return server

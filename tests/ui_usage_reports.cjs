@@ -1,0 +1,47 @@
+const assert=require('node:assert/strict');
+const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+(async()=>{
+  const f=await fixture(),{page}=f;
+  try{
+    await page.getByRole('button',{name:'周报与月报',exact:true}).click();
+    await page.getByLabel('报告周期',{exact:true}).selectOption('month');
+    await page.getByLabel('周期内日期',{exact:true}).fill('2026-09-20');
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
+    await page.getByRole('heading',{name:'2026-09-01 — 2026-09-30',exact:true}).waitFor();
+    assert.match(await page.locator('#report-distance').innerText(),/60/);
+    assert.equal(await page.locator('[data-report-event]').count(),4);
+    assert.match(await page.locator('.report-comparison').innerText(),/100%/);
+    await page.getByLabel('事件完整性',{exact:true}).selectOption('partial');
+    assert.equal(await page.locator('[data-report-event]').count(),1);
+    assert.match(await page.locator('[data-report-event]').innerText(),/7 km/);
+    await page.getByLabel('事件完整性',{exact:true}).selectOption('all');
+    await page.locator('[data-report="day"][data-date="2026-09-20"]').click();
+    assert.equal(await page.locator('[data-report-event]').count(),1);
+    assert.match(await page.locator('[data-report-event]').innerText(),/09\/19 23:30:00/);
+    await page.getByRole('button',{name:'显示整个周期',exact:true}).click();
+    await page.getByLabel('事件类型',{exact:true}).selectOption('charge_end');
+    assert.equal(await page.locator('[data-report-event]').count(),1);
+    await page.evaluate(()=>render());
+    assert.equal(await page.getByLabel('事件类型',{exact:true}).inputValue(),'charge_end');
+    await page.getByLabel('事件类型',{exact:true}).selectOption('all');
+    await layouts(page,'usage-report');
+    await page.getByRole('button',{name:'上一周期',exact:true}).click();
+    await page.getByRole('heading',{name:'2026-08-01 — 2026-08-31',exact:true}).waitFor();
+    assert.match(await page.locator('#report-distance').innerText(),/30/);
+    await page.getByRole('button',{name:'下一周期',exact:true}).click();
+    await page.getByRole('heading',{name:'2026-09-01 — 2026-09-30',exact:true}).waitFor();
+    await page.getByLabel('报告周期',{exact:true}).selectOption('week');
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
+    await page.getByRole('heading',{name:'2026-08-31 — 2026-09-06',exact:true}).waitFor();
+    await page.getByLabel('周期内日期',{exact:true}).fill('2026-10-05');
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
+    await page.getByText(/本期进行中/).waitFor();
+    assert.match(await page.locator('.report-comparison').innerText(),/本期未结束/);
+    await page.route('**/api/insights/report?*',route=>route.fulfill({status:500,json:{error:'合成报告失败'}}));
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
+    await page.getByText(/合成报告失败/).waitFor();
+    assert.match(await page.locator('#report-title').innerText(),/2026-10-05/);
+    assert.deepEqual(f.posts,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    console.log('UI_USAGE_REPORTS_PASS: week/month, sample counts, complete/partial, midnight, period navigation, day/type filters, preserved form/errors, light/dark/mobile/zoom/contrast; no writes or cloud');
+  }finally{await f.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

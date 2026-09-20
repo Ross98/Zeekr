@@ -62,6 +62,29 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT COUNT(*) FROM payloads').fetchone()[0], 1)
             self.assertEqual(db.execute('SELECT DISTINCT source FROM reads').fetchall(), [('monitor',)])
 
+    def test_custom_rules_use_collected_data_without_extra_queries_or_real_sender(self):
+        import hashlib
+        from zeekr_control.personal_store import account_scope
+        class Client:
+            tick=0;calls=0
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):
+                Client.calls+=1
+                return sample(Client.tick,soc=20)
+        runner=self.runner(Client);messages=[];runner.sender=messages.append
+        owner=account_scope({'accessToken':'synthetic'})
+        car=hashlib.sha256(b'L6T79X2Z0NP000001').hexdigest()
+        runner.reminders.update(owner,car,dict(action='save',revision=0,name='合成提醒',kind='low_soc',threshold=25,
+                confirm_seconds=60,cooldown_minutes=60,enabled=True,delivery='wecom',recovery=True))
+        runner.tick(BASE);Client.tick=60;runner.tick(BASE+60000)
+        self.assertEqual(Client.calls,2)
+        self.assertEqual(len(messages),1)
+        self.assertEqual(runner.reminders.query(owner,car)['history'][0]['delivery'],'sent')
+        restarted=self.runner(Client);restarted.sender=messages.append
+        Client.tick=120;restarted.tick(BASE+120000)
+        self.assertEqual(len(messages),1)
+
     def test_multiple_vehicles_require_explicit_selection(self):
         class Client:
             def __init__(self, session): pass

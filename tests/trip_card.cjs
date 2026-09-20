@@ -1,0 +1,26 @@
+const assert=require('node:assert/strict');
+const {describe,imageSize}=require('../zeekr_control/static/trip-card-renderer.js');
+const trip={kind:'trip_end',partial:false,distance_km:40,duration_seconds:3600,start_time:1000000000000,end_time:1000003600000,start_soc:70,end_soc:60,vin:'SECRET',latitude:123,raw:{accessToken:'TOKEN'}};
+const settings={title:'测试卡片',note:'用户备注',location:'明确手填地点',showDistance:true,showTime:true,showSoc:true,showLocation:false,showCharge:false};
+const model=describe(trip,null,settings);
+assert.equal(model.location,'');assert.equal(model.metrics.length,3);
+assert.ok(!JSON.stringify(model).includes('SECRET'));assert.ok(!JSON.stringify(model).includes('TOKEN'));
+const hidden=describe(trip,{...trip,kind:'charge_end'},{...settings,showDistance:false,showTime:false,showSoc:false});
+assert.deepEqual(hidden.metrics,[]);assert.equal(hidden.period,'');assert.equal(hidden.charge,null);
+assert.equal(describe(trip,null,{...settings,showLocation:true}).location,'明确手填地点');
+const partial=describe({...trip,partial:true,distance_km:null},null,settings);
+assert.match(partial.quality,/片段/);assert.match(partial.metrics[0].value,/未知/);
+const empty=describe({...trip,start_soc:null,end_soc:null,duration_seconds:null},null,settings);
+assert.ok(!JSON.stringify(empty).includes('NaN'));
+const long=describe(trip,null,{...settings,title:'字'.repeat(200),note:('a\n').repeat(1000),location:'位'.repeat(200)});
+assert.ok(long.title.length<=60);assert.ok(long.note.length<=400);assert.ok(!long.note.includes('\n'));
+// Bounded dimensions are checked before handing selected files to an image decoder.
+const png=Buffer.alloc(24);Buffer.from([137,80,78,71,13,10,26,10]).copy(png);png.write('IHDR',12);png.writeUInt32BE(640,16);png.writeUInt32BE(480,20);
+assert.deepEqual(imageSize(png),{width:640,height:480,type:'image/png'});
+png.writeUInt32BE(100000,16);assert.throws(()=>imageSize(png),/尺寸/);
+assert.throws(()=>imageSize(Buffer.from('<svg onload="alert(1)">')),/PNG|JPEG|WebP/);
+const jpeg=Buffer.from([0xff,0xd8,0xff,0xc0,0,17,8,1,224,2,128,3,1,0x11,0,2,0x11,0,3,0x11,0]);
+assert.deepEqual(imageSize(jpeg),{width:640,height:480,type:'image/jpeg'});
+const webp=Buffer.alloc(30);webp.write('RIFF',0);webp.write('WEBPVP8X',8);webp.writeUIntLE(639,24,3);webp.writeUIntLE(479,27,3);
+assert.deepEqual(imageSize(webp),{width:640,height:480,type:'image/webp'});
+console.log('TRIP_CARD_LOGIC_PASS: whitelist, hidden options/location, partial/unknown metrics, bounded text, PNG/JPEG/WebP dimensions and oversized/unsupported image rejection');

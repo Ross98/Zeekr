@@ -1,0 +1,43 @@
+const assert=require('node:assert/strict');
+const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+(async()=>{
+  const f=await fixture(),{page}=f;
+  try{
+    await page.getByRole('button',{name:'用车日历',exact:true}).click();
+    await page.getByLabel('日历月份',{exact:true}).fill('2026-09');
+    await page.getByRole('button',{name:'读取用车日历',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#calendar-result-month')?.textContent.includes('2026-09'));
+    assert.equal(await page.locator('[data-calendar-day]').count(),30);
+    await page.locator('[data-calendar-day="2026-09-19"]').click();
+    assert.match(await page.locator('#calendar-day-detail').innerText(),/行程 1.*充电 1/s);
+    assert.match(await page.locator('#calendar-day-detail').innerText(),/有停车观测/);
+    await page.locator('[data-calendar-event="report-trip-night"]').click();
+    assert.match(await page.locator('#calendar-event-detail').innerText(),/跨午夜/);
+    assert.match(await page.locator('#calendar-event-detail').innerText(),/20 km/);
+    await page.locator('[data-calendar-day="2026-09-20"]').click();
+    assert.equal(await page.locator('[data-calendar-event="report-trip-night"]').count(),1);
+    await page.evaluate(()=>render());
+    assert.match(await page.locator('#calendar-day-detail').innerText(),/2026-09-20/);
+    await page.locator('[data-calendar-day="2026-09-21"]').click();
+    assert.match(await page.locator('#calendar-day-detail').innerText(),/未来日期/);
+    await page.locator('[data-calendar-day="2026-09-01"]').click();
+    assert.match(await page.locator('#calendar-day-detail').innerText(),/无归档观测/);
+    await page.locator('[data-calendar-day="2026-09-19"]').click();
+    await layouts(page,'usage-calendar');
+    await page.setViewportSize({width:390,height:1000});
+    await page.locator('.calendar-panel').screenshot({path:'/tmp/zeekr-insights-qa/usage-calendar-grid-dark-390.png'});
+    await page.getByRole('button',{name:'查看当日停车片段',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#parking-range')?.textContent.includes('2026-09-19 至 2026-09-19'));
+    await page.getByRole('button',{name:'用车日历',exact:true}).click();
+    await page.getByRole('button',{name:'查看当日快照',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#insight-count')?.textContent.includes('2026-09-19'));
+    await page.getByRole('button',{name:'用车日历',exact:true}).click();
+    await page.route('**/api/insights/calendar?*',r=>r.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'合成读取失败'})}));
+    await page.getByLabel('日历月份',{exact:true}).fill('2026-08');
+    await page.getByRole('button',{name:'读取用车日历',exact:true}).click();
+    await page.getByRole('alert').filter({hasText:'合成读取失败'}).waitFor();
+    assert.match(await page.locator('#calendar-result-month').innerText(),/2026-09/);
+    assert.deepEqual(f.posts,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    console.log('UI_USAGE_CALENDAR_PASS: month grid, cross-midnight days, full event detail, parking/time-machine links, future/missing dates, retained selection/error result, themes/mobile/zoom/contrast; read-only');
+  }finally{await f.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});
