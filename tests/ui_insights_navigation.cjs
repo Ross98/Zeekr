@@ -6,7 +6,7 @@ const {fixture, layouts} = require('./ui_insight_helpers.cjs');
   const tool = name => page.getByRole('button', {name, exact: true});
   try {
     assert.equal(await page.locator('[data-insight-group]').count(), 4);
-    assert.equal(await page.locator('[data-insight-view]').count(), 13);
+    assert.equal(await page.locator('[data-insight-view]').count(), 14);
     const search = page.getByLabel('查找研究工具', {exact: true});
     await search.fill('费用');
     assert.equal(await page.locator('[data-insight-view]:visible').count(), 2);
@@ -17,7 +17,7 @@ const {fixture, layouts} = require('./ui_insight_helpers.cjs');
     await page.getByText('没有匹配的工具，试试「充电」「费用」「行程」。', {exact: true}).waitFor();
     assert.equal(await page.locator('[data-insight-view]:visible').count(), 0);
     await tool('清空工具搜索').click();
-    assert.equal(await page.locator('[data-insight-view]:visible').count(), 13);
+    assert.equal(await page.locator('[data-insight-view]:visible').count(), 14);
     assert.equal(await search.evaluate(el => el === document.activeElement), true);
     await search.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement.id), 'insight-tool-clear');
@@ -41,7 +41,7 @@ const {fixture, layouts} = require('./ui_insight_helpers.cjs');
     for (const width of [390, 320]) {
       await page.setViewportSize({width, height: 900});
       assert.ok(await page.locator('.insight-navigation').evaluate(el => el.getBoundingClientRect().height < 125), 'Compact mobile tool selector');
-      for (const [value,label] of [['time','车辆时间机'],['report','周报与月报'],['parking','停车耗电']]) {
+      for (const [value,label] of [['automatic','自动洞察'],['time','车辆时间机'],['report','周报与月报'],['parking','停车耗电']]) {
         await page.getByLabel('当前研究工具',{exact:true}).selectOption(value);
         assert.equal(await page.getByLabel('当前研究工具',{exact:true}).inputValue(),value);
         await tool('查找工具').click();

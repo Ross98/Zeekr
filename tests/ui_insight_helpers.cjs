@@ -1,8 +1,8 @@
 const {chromium}=require('playwright');
 const {spawn}=require('node:child_process');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
-async function fixture({demo=false}={}){
-  const server=spawn('python3',[path.join(__dirname,'insights_fixture.py'),...(demo?['--demo']:[])]);
+async function fixture({demo=false,automatic=false}={}){
+  const server=spawn('python3',[path.join(__dirname,'insights_fixture.py'),...(demo?['--demo']:[]),...(automatic?['--automatic']:[])]);
   let browser;
   try{
     const port=await new Promise((resolve,reject)=>{

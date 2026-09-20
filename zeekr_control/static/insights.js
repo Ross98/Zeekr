@@ -7,6 +7,7 @@
   const toolGroups = [
     {name:'全量研究',tools:[
       {id:'research',label:'数据利用',description:'全部字段、历史变化、场景分析与证据'},
+      {id:'automatic',label:'自动洞察',description:'定期汇总能耗、充电习惯与采集质量'},
       {id:'time',label:'车辆时间机',description:'历史归档、车况回看、前后参数变化'},
       {id:'lab',label:'参数实验室',description:'保存实验、动作、样本与研究备注'},
       {id:'quality',label:'数据质量雷达',description:'采集覆盖、数据延迟、重复缓存与缺口'}
@@ -27,9 +28,11 @@
       {id:'cards',label:'行程卡片',description:'照片、出行回忆与本地图片导出'}
     ]}
   ];
+  const toolCount=toolGroups.reduce((total,group)=>total+group.tools.length,0);
 
   function create({getState,request,escape:esc,active,review}) {
     let tab='research', toolQuery='', toolsExpanded=false;
+    const automaticPage=root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time});
     const parkingPage=root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time});
     const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
     const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
@@ -42,7 +45,7 @@
     const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
     const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
     const cardsPage=root.TripCardsPage.create({getState,request,escape:esc,active:()=>active() && tab==='cards',time});
-    const views={research:researchPage,parking:parkingPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,tags:tagsPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage,cards:cardsPage};
+    const views={automatic:automaticPage,research:researchPage,parking:parkingPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,tags:tagsPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage,cards:cardsPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
@@ -76,7 +79,7 @@
       if(el && !el.disabled){el.focus({preventScroll:true});if(saved.start!=null)el.setSelectionRange(saved.start,saved.end);}
     }
     function navigation() {
-      return `<aside class="insight-navigation"><div class="insight-mobile-tools"><label>当前研究工具<select id="insight-tool-select" aria-label="当前研究工具">${toolGroups.map(g=>`<optgroup label="${g.name}">${g.tools.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</optgroup>`).join('')}</select></label><button class="button secondary" data-insight="toggle-tools" aria-controls="insight-tool-directory" aria-expanded="${toolsExpanded}">查找工具</button></div><div id="insight-tool-directory" data-expanded="${toolsExpanded}"><div class="insight-nav-heading"><strong>研究工具</strong><span id="insight-tool-count">13 项</span></div>
+      return `<aside class="insight-navigation"><div class="insight-mobile-tools"><label>当前研究工具<select id="insight-tool-select" aria-label="当前研究工具">${toolGroups.map(g=>`<optgroup label="${g.name}">${g.tools.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</optgroup>`).join('')}</select></label><button class="button secondary" data-insight="toggle-tools" aria-controls="insight-tool-directory" aria-expanded="${toolsExpanded}">查找工具</button></div><div id="insight-tool-directory" data-expanded="${toolsExpanded}"><div class="insight-nav-heading"><strong>研究工具</strong><span id="insight-tool-count">${toolCount} 项</span></div>
         <div class="insight-tool-search"><label for="insight-tool-search">查找研究工具</label><div><input id="insight-tool-search" type="search" value="${esc(toolQuery)}" placeholder="搜名称或用途"><button id="insight-tool-clear" data-insight="clear-tools" aria-label="清空工具搜索" title="清空工具搜索">×</button></div></div>
         <nav class="insight-tabs" aria-label="用车研究工具">${toolGroups.map((group,i)=>`<section data-insight-group="${i}" aria-labelledby="insight-group-${i}"><h2 id="insight-group-${i}">${group.name}</h2><div>${group.tools.map(tool=>`<button data-insight-view="${tool.id}" aria-pressed="${tab===tool.id}" title="${tool.description}">${tool.label}</button>`).join('')}</div></section>`).join('')}</nav>
         <p class="insight-nav-empty" role="status" hidden>没有匹配的工具，试试「充电」「费用」「行程」。</p></div></aside>`;
@@ -99,7 +102,7 @@
         node.querySelector(`[data-insight-group="${i}"]`).hidden=!groupCount;
         count+=groupCount;
       }
-      node.querySelector('#insight-tool-count').textContent=term?`${count} / 13 项`:'13 项';
+      node.querySelector('#insight-tool-count').textContent=term?`${count} / ${toolCount} 项`:`${toolCount} 项`;
       node.querySelector('.insight-nav-empty').hidden=count>0;
     }
     function paint() {

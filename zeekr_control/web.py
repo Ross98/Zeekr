@@ -45,6 +45,7 @@ from .vehicle_life import VehicleLife
 from .data_quality import DataQuality
 from .trip_cards import TripCards
 from .vehicle_research import VehicleResearch, ResearchInputError, PUBLIC
+from .automatic_insights import Analyzer, InsightCache
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -65,6 +66,8 @@ class App:
         self.storage_manager = StorageManager(self.session_path.parent)
         self.charging_analytics = ChargingAnalytics(self.database_path)
         self.archive_reader = ArchiveReader(self.session_path.parent / 'snapshot-archive')
+        self.automatic_analyzer = Analyzer(self.database_path, self.archive_reader)
+        self.automatic_cache = InsightCache(self.session_path.parent / 'automatic-insights.json')
         self.usage_reports = UsageReports(self.database_path, self.archive_reader)
         self.personal_store = PersonalStore(self.session_path.parent / 'personal.sqlite3')
         self.charge_ledger = ChargeLedger(self.personal_store, self.database_path)
@@ -433,6 +436,8 @@ class App:
                 raise ValueError('等待当前账号的车辆缓存，旧账号绑定不能用于读取这些记录。')
             vehicle, context = self._archive_vehicle(), self._insights_context()
             handlers = {'timeline': self.archive_reader.timeline, 'snapshot': self.archive_reader.snapshot,
+                        'automatic': lambda scope, car: self.automatic_cache.query(
+                            scope, car, int(time.time()*1000), self.automatic_analyzer.revision(car)),
                         'trip-management': lambda scope, car, *query: self.trip_manager.query(car, *query),
                         'compare': self.archive_reader.compare,
                         'report': self.usage_reports.query,
@@ -701,6 +706,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     value = lambda name, default='': query.get(name, [default])[0]
                     if url.path == '/api/insights/research':
                         return self.send(200, app.insights('research', value('start'), value('end'), value('path')))
+                    if url.path == '/api/insights/automatic':
+                        return self.send(200, app.insights('automatic'))
                     if url.path == '/api/insights/timeline':
                         return self.send(200, app.insights('timeline', value('date'), value('cursor', None)))
                     if url.path == '/api/insights/snapshot':
@@ -779,6 +786,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                                                                    query.get('mode', [''])[0]))
                 assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                           '/insights.js': ('insights.js', 'text/javascript; charset=utf-8'),
+                          '/automatic-insights.js': ('automatic-insights.js', 'text/javascript; charset=utf-8'),
                           '/insights.css': ('insights.css', 'text/css; charset=utf-8'),
                           '/parking.js': ('parking.js', 'text/javascript; charset=utf-8'),
                           '/usage-reports.js': ('usage-reports.js', 'text/javascript; charset=utf-8'),
