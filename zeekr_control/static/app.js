@@ -33,7 +33,9 @@ const beijingDate = value => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Sha
 let chargeDate = beijingDate(Date.now()), chargeDateInitialized = false;
 let chargeEvents = [], chargeSelected = null, chargeCursor = null, chargeCursorStack = [], chargeNextCursor = null, chargeBusy = false, chargeError = '', chargeRequest = 0;
 let chargingTab = 'process', chargingView = 'power-soc', chargingDays = 30, chargingMode = 'all';
+let chargingSelection = 'current';
 let chargingSession = null, chargingSeries = null, chargingStats = null, chargingAnalyticsError = '', chargingAnalyticsBusy = false, chargingAnalyticsRequest = 0, chargingPoint = 0;
+let chargingAnalyticsLoadedKey = '', chargingAnalyticsLoadingKey = '';
 let connectionFailures = 0, polling = false;
 let refreshMessage = '';
 const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unchanged:'已读取云端，车辆数据未更新。',new:'已获得新车辆数据。',time_unknown:'已读取云端，车辆更新时间未知。'};
@@ -174,35 +176,52 @@ function chargingCurrent(details) {
   return `<section class="card" id="charging-parameters"><div class="card-head"><div><h2>充电状态参数</h2><p class="card-meta">当前缓存观测 · ${esc(eventTime(details?.state_time))}</p></div>${pill('只读')}</div><div class="card-body"><div class="charging-power">${row('当前观测功率',chargeNumber(details?.power_kw,'kW'))}<p class="energy-caption">${details?.power_source==='ac_ui'?'交流充电电压 × 电流':details?.power_source==='dc_pile_ui'?'直流桩侧电压 × 电流':'缺少可确认的充电与电气证据，暂不计算功率'}；同一观测计算值，不是实时保证或桩端结算值。</p></div>${chargingParameterGroups(details)}${chargingUnavailable()}</div></section>`;
 }
 
-function chartGeometry(points, key) {
+function chartGeometry(points, key, options={}) {
   const valid=points.filter(point=>Number.isFinite(point.time)&&Number.isFinite(point[key]));
   if(!valid.length) return null;
   const times=valid.map(point=>point.time), values=valid.map(point=>point[key]);
   const minX=Math.min(...times), maxX=Math.max(...times);
-  let minY=Math.min(...values), maxY=Math.max(...values);
-  if(minY===maxY) { const pad=Math.max(1,Math.abs(minY)*.05);minY-=pad;maxY+=pad; }
+  let minY=Number.isFinite(options.minY)?options.minY:Math.min(...values);
+  let maxY=Number.isFinite(options.maxY)?options.maxY:Math.max(...values);
+  if(minY===maxY) {
+    const pad=Math.max(1,Math.abs(minY)*.05);
+    if(Number.isFinite(options.minY)) maxY+=pad;
+    else if(Number.isFinite(options.maxY)) minY-=pad;
+    else {minY-=pad;maxY+=pad;}
+  }
   const x=time=>minX===maxX?400:64+(time-minX)/(maxX-minX)*672;
   const y=value=>180-(value-minY)/(maxY-minY)*156;
-  let previous=null;
-  const dots=[],commands=[];
-  points.forEach(point=>{
+  let previous=null,lastDot=null;
+  const dots=[],commands=[],gaps=[];
+  points.forEach((point,index)=>{
     if(!Number.isFinite(point.time)||!Number.isFinite(point[key])) { previous=null;return; }
     const px=x(point.time),py=y(point[key]);
-    commands.push(`${previous&&previous.segment_id===point.segment_id?'L':'M'}${px.toFixed(1)},${py.toFixed(1)}`);
-    dots.push({x:px,y:py});previous=point;
+    const connected=previous&&previous.segment_id===point.segment_id;
+    if(connected&&options.step) commands.push(`H${px.toFixed(1)} V${py.toFixed(1)}`);
+    else commands.push(`${connected?'L':'M'}${px.toFixed(1)},${py.toFixed(1)}`);
+    if(!connected&&lastDot) gaps.push({x:(lastDot.x+px)/2});
+    const dot={x:px,y:py,index,time:point.time,segment_id:point.segment_id};
+    dots.push(dot);lastDot=dot;previous=point;
   });
-  return {path:commands.join(' '),dots,minX,maxX,minY,maxY,x,y};
+  return {path:commands.join(' '),dots,gaps,minX,maxX,minY,maxY,x,y};
 }
 
 function chargingChart(title, key, unit) {
-  const chart=chartGeometry(chargingSeries?.points || [],key);
+  const points=chargingSeries?.points || [];
+  const values=points.map(point=>point[key]).filter(Number.isFinite);
+  const options=key==='soc'?{minY:0,maxY:100,step:true}:key==='power_kw'?{minY:0,maxY:Math.max(1,...values)*1.1}:{};
+  const chart=chartGeometry(points,key,options);
   if(!chart) return `<section class="charging-chart"><h3>${esc(title)}</h3><div class="chart-empty">该记录未保存有效过程采样</div></section>`;
   const ticks=[chart.maxY,(chart.minY+chart.maxY)/2,chart.minY];
   const number=value=>Number(value.toPrecision(4)).toString();
   const time=value=>new Date(value).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
   const labels=ticks.map(value=>`<text class="chart-axis" x="56" y="${chart.y(value)+5}" text-anchor="end">${esc(number(value))}</text>`).join('');
-  const dots=chart.dots.map(point=>`<circle class="chart-point" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.5"/>`).join('');
-  return `<section class="charging-chart"><div class="charging-chart-head"><h3>${esc(title)}</h3><span>${chart.dots.length} 个有效点 · ${esc(unit)}</span></div><div class="charging-chart-scroll" tabindex="0" role="region" aria-label="${esc(title)}图表，可横向滚动"><svg viewBox="0 0 760 225" role="img" aria-label="${esc(title)}折线图，单位 ${esc(unit)}，横轴为北京时间；缺失采样不连线"><path class="chart-grid" d="M64 24H736M64 102H736M64 180H736"/>${labels}<text class="chart-axis" x="64" y="216">${esc(time(chart.minX))}</text><text class="chart-axis" x="736" y="216" text-anchor="end">${esc(time(chart.maxX))} 北京时间</text><path class="chart-line" d="${chart.path}"/>${dots}</svg></div></section>`;
+  const dots=chart.dots.map(point=>`<circle class="chart-point${point.index===chargingPoint?' selected':''}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${point.index===chargingPoint?'5':'2.5'}"/>`).join('');
+  const selected=points[chargingPoint], cursor=Number.isFinite(selected?.time)?chart.x(selected.time):null;
+  const cursorLine=Number.isFinite(cursor)?`<line class="chart-cursor" x1="${cursor.toFixed(1)}" y1="24" x2="${cursor.toFixed(1)}" y2="180"/>`:'';
+  const gaps=chart.gaps.map(gap=>`<line class="chart-gap" x1="${gap.x.toFixed(1)}" y1="24" x2="${gap.x.toFixed(1)}" y2="180"><title>观测缺口</title></line>`).join('');
+  const gapLabel=chart.gaps.length?` · ${chart.gaps.length} 处缺口`:'';
+  return `<section class="charging-chart"><div class="charging-chart-head"><h3>${esc(title)}</h3><span>${chart.dots.length} 个有效点${gapLabel} · ${esc(unit)}</span></div><div class="charging-chart-scroll" tabindex="0" role="region" aria-label="${esc(title)}图表，可横向滚动"><svg viewBox="0 0 760 225" role="img" aria-label="${esc(title)}折线图，单位 ${esc(unit)}，横轴为北京时间；缺失采样不连线"><path class="chart-grid" d="M64 24H736M64 102H736M64 180H736"/>${labels}<text class="chart-axis" x="64" y="216">${esc(time(chart.minX))}</text><text class="chart-axis" x="736" y="216" text-anchor="end">${esc(time(chart.maxX))} 北京时间</text>${gaps}${cursorLine}<path class="chart-line" d="${chart.path}"/>${dots}</svg></div></section>`;
 }
 
 function selectedChargingPoint() {
@@ -242,19 +261,36 @@ function chargingWorkspace(details) {
   return `<section class="charging-workspace"><div class="charging-tabs" role="tablist">${tabs.map(([key,label])=>`<button role="tab" aria-selected="${chargingTab===key}" data-action="charging-tab" data-tab="${key}" class="${chargingTab===key?'active':''}">${label}</button>`).join('')}</div><div class="charging-tab-panel">${body}</div></section>`;
 }
 
-async function loadChargingAnalytics(selected='current') {
-  const request=++chargingAnalyticsRequest, version=generation;
+function chargingAnalyticsKey(selected='current') {
+  const vehicle=state?.vehicle || '';
+  if(chargingTab==='statistics') return `${vehicle}|statistics|${chargingDays}|${chargingMode}|${state?.recent_events?.charge_end?.id||state?.recent_events?.charge_end?.end_time||''}`;
+  const revision=selected==='current'?(state?.snapshot_revision||state?.model?.updated_time||''):'';
+  return `${vehicle}|process|${selected}|${chargingView}|${revision}`;
+}
+
+function ensureChargingAnalytics(selected='current') {
+  if(chargingTab==='parameters') return;
+  const key=chargingAnalyticsKey(selected);
+  if(key===chargingAnalyticsLoadedKey||key===chargingAnalyticsLoadingKey) return;
+  loadChargingAnalytics(selected,key);
+}
+
+async function loadChargingAnalytics(selected='current',key=chargingAnalyticsKey(selected)) {
+  const request=++chargingAnalyticsRequest;
+  chargingAnalyticsLoadingKey=key;
   chargingAnalyticsBusy=true; chargingAnalyticsError='';
   if(page==='energy') renderChargingWorkspace();
   try {
     if(chargingTab==='statistics') chargingStats=await api(`/api/charging/statistics?days=${chargingDays}&mode=${chargingMode}`);
     else if(chargingTab==='process') {
-      const [session,series]=await Promise.all([api(`/api/charging/session?id=${encodeURIComponent(selected)}`),api(`/api/charging/series?id=${encodeURIComponent(selected)}&view=${chargingView}`)]);
-      if(request!==chargingAnalyticsRequest||version!==generation||page!=='energy') return;
-      chargingSession=session; chargingSeries=series; chargingPoint=Math.min(chargingPoint,Math.max(0,(series.points||[]).length-1));
+      const result=await api(`/api/charging/process?id=${encodeURIComponent(selected)}&view=${chargingView}`);
+      if(request!==chargingAnalyticsRequest||key!==chargingAnalyticsKey(selected)||page!=='energy') return;
+      chargingSession=result.session;chargingSeries=result.series;
+      chargingPoint=Math.min(chargingPoint,Math.max(0,(result.series.points||[]).length-1));
     }
+    if(request===chargingAnalyticsRequest) chargingAnalyticsLoadedKey=key;
   } catch(error) { if(request===chargingAnalyticsRequest) chargingAnalyticsError=error.message; }
-  finally { if(request===chargingAnalyticsRequest){chargingAnalyticsBusy=false;renderChargingWorkspace();} }
+  finally { if(request===chargingAnalyticsRequest){chargingAnalyticsLoadingKey='';chargingAnalyticsBusy=false;renderChargingWorkspace();} }
 }
 
 function renderChargingWorkspace() {
@@ -523,7 +559,7 @@ function render() {
   if (page === 'fields') {renderFields();reviewRestoreFocus(fieldFocus);}
   if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);
-  if (page === 'energy' && state?.model) { loadChargeEvents(generation); loadChargingAnalytics(chargeSelected?.id || 'current'); }
+  if (page === 'energy' && state?.model) { loadChargeEvents(generation); ensureChargingAnalytics(chargingSelection); }
   if (page === 'tracks' && trackSource === 'local') {
     loadEvents(generation);
     if (showPosition && (state?.model || state?.archived_vehicles?.length)) loadTracks(generation);
@@ -658,16 +694,16 @@ document.addEventListener('click', event => {
     case 'reload-tracks': render();break;
     case 'events-next': if(target.dataset.cursor){eventCursorStack.push(eventCursor);eventCursor=target.dataset.cursor;render();}break;
     case 'events-prev': if(eventCursorStack.length){eventCursor=eventCursorStack.pop();render();}break;
-    case 'charge-select': chargeSelected=chargeEvents.find(item=>item.id===target.dataset.eventId)||chargeSelected;renderChargeHistory();if(chargingTab==='process')loadChargingAnalytics(chargeSelected.id);break;
+    case 'charge-select': chargeSelected=chargeEvents.find(item=>item.id===target.dataset.eventId)||chargeSelected;chargingSelection=chargeSelected.id;renderChargeHistory();if(chargingTab==='process')loadChargingAnalytics(chargingSelection);break;
     case 'charge-next': if(chargeNextCursor){chargeCursorStack.push(chargeCursor);chargeCursor=chargeNextCursor;chargeSelected=null;loadChargeEvents(generation);}break;
     case 'charge-prev': if(chargeCursorStack.length){chargeCursor=chargeCursorStack.pop();chargeSelected=null;loadChargeEvents(generation);}break;
     case 'charge-retry': loadChargeEvents(generation);break;
     case 'charge-latest': chargeDate=beijingDate(Number.isFinite(state?.recent_events?.charge_end?.end_time)?state.recent_events.charge_end.end_time:Date.now());chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];render();break;
-    case 'charging-tab': chargingTab=target.dataset.tab;chargingAnalyticsError='';renderChargingWorkspace();loadChargingAnalytics(chargeSelected?.id||'current');break;
-    case 'charging-view': chargingView=target.dataset.view;chargingPoint=0;loadChargingAnalytics(chargeSelected?.id||'current');break;
+    case 'charging-tab': chargingTab=target.dataset.tab;chargingAnalyticsError='';renderChargingWorkspace();ensureChargingAnalytics(chargingSelection);break;
+    case 'charging-view': chargingView=target.dataset.view;chargingPoint=0;loadChargingAnalytics(chargingSelection);break;
     case 'stats-days': chargingDays=Number(target.dataset.days);chargingStats=null;loadChargingAnalytics();break;
-    case 'stats-detail': chargingTab='process';chargeSelected={id:target.dataset.eventId};chargingPoint=0;renderChargingWorkspace();loadChargingAnalytics(target.dataset.eventId);break;
-    case 'analytics-retry': loadChargingAnalytics(chargeSelected?.id||'current');break;
+    case 'stats-detail': chargingTab='process';chargeSelected={id:target.dataset.eventId};chargingSelection=target.dataset.eventId;chargingPoint=0;renderChargingWorkspace();loadChargingAnalytics(chargingSelection);break;
+    case 'analytics-retry': loadChargingAnalytics(chargingSelection);break;
     case 'recording': toggleRecording();break;
   }
 });
@@ -683,7 +719,7 @@ document.addEventListener('change', event => {
   if(event.target.id==='charge-date') {chargeDate=event.target.value;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];render();}
   if(event.target.id==='charging-mode') {chargingMode=event.target.value;chargingStats=null;loadChargingAnalytics();}
   if(event.target.id==='archive-vehicle') {archiveVehicle=event.target.value;render();}
-  if(event.target.id==='vehicle-select') {chargeDateInitialized=false;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];chargingSession=null;chargingSeries=null;chargingStats=null;refresh();}
+  if(event.target.id==='vehicle-select') {chargeDateInitialized=false;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];chargingSelection='current';chargingSession=null;chargingSeries=null;chargingStats=null;chargingAnalyticsLoadedKey='';chargingAnalyticsLoadingKey='';refresh();}
 });
 
 async function pollState(force = false) {

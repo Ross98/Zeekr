@@ -128,6 +128,13 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(self.request('GET', '/../../Myconfig.md')[0], 404)
         self.assertEqual(self.request('GET', '/api/unknown')[0], 404)
 
+    def test_charging_process_returns_summary_and_series_together(self):
+        self.post('/api/refresh', {'vehicle': 1})
+        code, data = self.request('GET', '/api/charging/process?id=current&view=power-soc')
+        self.assertEqual(code, 200)
+        self.assertEqual(data['session']['status'], 'empty')
+        self.assertEqual(data['series']['points'], [])
+
     def test_local_tracks_remain_readable_without_cloud_refresh_after_restart(self):
         from zeekr_control.web import App
         from zeekr_control.tracks import TrackStore

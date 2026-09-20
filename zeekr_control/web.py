@@ -322,6 +322,10 @@ class App:
         with self.lock:
             return self.charging_analytics.series(self.vehicle_key, selection, view)
 
+    def charging_process(self, selection, view):
+        with self.lock:
+            return self.charging_analytics.process(self.vehicle_key, selection, view)
+
     def charging_statistics(self, days, mode):
         with self.lock:
             try:
@@ -452,6 +456,10 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.charging_series(query.get('id', [''])[0],
                                                                query.get('view', [''])[0]))
+                if url.path == '/api/charging/process':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.charging_process(query.get('id', [''])[0],
+                                                                query.get('view', [''])[0]))
                 if url.path == '/api/charging/statistics':
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.charging_statistics(query.get('days', [''])[0],

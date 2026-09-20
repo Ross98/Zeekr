@@ -14,4 +14,13 @@ chart=context.chartGeometry([{time:100,power_kw:6,segment_id:null}],'power_kw');
 assert.match(chart.path,/^M/,'null segment cannot produce a leading L');
 assert.ok(chart.minY<6&&chart.maxY>6,'constant data has a meaningful visible range');
 assert.equal(context.chartGeometry([{time:100,power_kw:null}],'power_kw'),null);
+chart=context.chartGeometry([
+  {time:100,soc:20,segment_id:0},
+  {time:200,soc:21,segment_id:0},
+  {time:500,soc:30,segment_id:1},
+],'soc',{minY:0,maxY:100,step:true});
+assert.equal(chart.minY,0);assert.equal(chart.maxY,100);
+assert.match(chart.path,/H.*V/,'SOC uses a step path instead of inventing a smooth slope');
+assert.equal(chart.gaps.length,1,'segment changes expose one visible observation gap');
+assert.equal(chart.dots[1].index,1,'geometry retains source indexes for a synchronized cursor');
 console.log('CHART_PASS');

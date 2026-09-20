@@ -90,6 +90,9 @@ class ChargingAnalyticsTests(unittest.TestCase):
         self.assertTrue(result['partial'])
         self.assertEqual(result['start_time'], BASE)
         self.assertEqual(self.analytics.series('car-a', 'current', 'electrical')['raw_count'], 2)
+        process = self.analytics.process('car-a', 'current', 'power-soc')
+        self.assertEqual(process['session']['status'], 'active')
+        self.assertEqual(process['series']['raw_count'], 2)
 
     def test_statistics_use_all_events_and_conservative_complete_totals(self):
         day = 86400000

@@ -33,11 +33,12 @@ const path = require('node:path');
       {time:1704067260000,soc:21,power_kw:6.2,segment_id:0,quality:'valid'},
       {time:1704067600000,soc:30,power_kw:6.4,segment_id:1,quality:'valid'}
     ];
-    await page.route('**/api/charging/session?**', route => route.fulfill({json:{id:'current',status:'active',partial:false,start_time:1704067200000,end_time:1704067600000,start_soc:20,end_soc:30,power_kw:6.4,mode:'ac'}}));
-    await page.route('**/api/charging/series?**', route => {
+    const analyticsQueries=[];
+    await page.route('**/api/charging/process?**', route => {
+      analyticsQueries.push(route.request().url());
       const electrical=new URL(route.request().url()).searchParams.get('view')==='electrical';
       const points=analyticsPoints.map(point=>electrical?{time:point.time,soc:point.soc,voltage:220,current:29,mode:'ac',segment_id:point.segment_id,quality:'valid'}:point);
-      return route.fulfill({json:{id:'current',view:electrical?'electrical':'power-soc',points,segments:[{id:0},{id:1}],raw_count:3,display_count:3,has_gaps:true,downsampled:false}});
+      return route.fulfill({json:{session:{id:'current',status:'active',partial:false,start_time:1704067200000,end_time:1704067600000,start_soc:20,end_soc:30,power_kw:6.4,mode:'ac'},series:{id:'current',view:electrical?'electrical':'power-soc',points,segments:[{id:0},{id:1}],raw_count:3,display_count:3,has_gaps:true,downsampled:false}}});
     });
     await page.route('**/api/charging/statistics?**', route => route.fulfill({json:{days:30,mode:'all',timezone:'Asia/Shanghai',summary:{ended_count:2,complete_count:1,partial_count:1,estimated_kwh:51.6,included_energy_count:1,excluded_energy_count:1,complete_duration_seconds:3600},daily:Array.from({length:30},(_,index)=>({date:`2024-01-${String(index+1).padStart(2,'0')}`,count:index===1?2:0,ac_kwh:index===1?51.6:0,dc_kwh:0,unknown_kwh:0})),records:[{id:'charge-complete',end_time:1704070800000,start_time:1704067200000,date:'2024-01-01',mode:'ac',partial:false,start_soc:20,end_soc:80,duration_seconds:3600,estimated_kwh:51.6},{id:'charge-partial',end_time:1703984400000,date:'2023-12-31',mode:'dc',partial:true,start_soc:70,end_soc:75,duration_seconds:null,estimated_kwh:null}]}}));
     await page.goto(`http://127.0.0.1:${port}`);
@@ -51,6 +52,13 @@ const path = require('node:path');
     const graph = page.locator('.charging-chart').first();
     assert.equal((await graph.locator('.chart-line').getAttribute('d')).match(/M/g).length,2,'sampling gaps remain disconnected');
     assert.equal(await graph.locator('.chart-point').count(),3,'isolated samples remain visible');
+    assert.equal(await graph.locator('.chart-gap').count(),1,'sampling gaps receive a visible marker');
+    assert.equal(await graph.locator('.chart-cursor').count(),1,'both charts expose the synchronized selected time');
+    const queriesAfterFirstLoad=analyticsQueries.length;
+    assert.equal(new URL(analyticsQueries[0]).searchParams.get('id'),'current','history list defaults must not replace the current process chart');
+    await page.evaluate(()=>render());
+    await page.waitForTimeout(50);
+    assert.equal(analyticsQueries.length,queriesAfterFirstLoad,'unrelated page renders must reuse the loaded chart');
     await page.getByRole('button',{name:'电气细节'}).click();
     assert.match(await page.locator('.charging-tab-panel').innerText(),/电压.*电流/s);
     await page.getByRole('tab',{name:'统计趋势'}).click();
@@ -70,6 +78,7 @@ const path = require('node:path');
     assert.match(await parameterCard.innerText(), /充电限值.*未提供或未核验/s);
     await page.getByRole('tab',{name:'本次过程'}).click();
     await page.getByRole('button',{name:/查看充电记录 2/}).click();
+    assert.equal(new URL(analyticsQueries.at(-1)).searchParams.get('id'),'charge-partial','an explicit history selection changes the process chart');
     assert.match(await page.locator('#charge-detail').innerText(), /部分记录.*已观测 SOC 变化.*不作为完整充电量/s);
     assert.doesNotMatch(await page.locator('#charge-detail').innerText(), /4\.3 kWh/);
     await page.evaluate(() => render());

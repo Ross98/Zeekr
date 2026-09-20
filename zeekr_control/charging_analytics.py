@@ -92,6 +92,11 @@ class ChargingAnalytics:
                      'power_sample_count': _number(metrics.get('power_sample_count'))})
         return item
 
+    def process(self, vehicle, selection, view):
+        """Return the process summary and chart series in one response."""
+        return {'session': self.session(vehicle, selection),
+                'series': self.series(vehicle, selection, view)}
+
     def series(self, vehicle, selection, view):
         if view not in VALID_VIEWS:
             raise ValueError('充电曲线视图无效。')
