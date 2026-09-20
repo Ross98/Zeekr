@@ -91,6 +91,75 @@ class AcChargingTests(unittest.TestCase):
             self.assertIsNotNone(monitor.status('synthetic-ac')['charge'])
             self.assertIsNone(decode(ac_sample(chargeIAct=0))['charging'])
 
+    def test_owner_confirmed_ac_finished_combination_is_stopped(self):
+        raw = ac_sample(chargerState=4, statusOfChargerConnection=1,
+                        chargeUAct=0, chargeIAct=0)
+        point = decode(raw)
+        self.assertIs(point['charging'], False)
+        self.assertEqual(point['charging_phase'], 'stopped')
+        self.assertIsNone(point['charging_mode'])
+
+    def test_each_required_ac_finished_evidence_must_match(self):
+        finished = dict(chargerState=4, statusOfChargerConnection=1,
+                        chargeUAct=0, chargeIAct=0)
+        counterexamples = {
+            'chargeLidAcStatus': (None, 2, 99),
+            'chargeLidDcAcStatus': (None, 1, 99),
+            'chargeSts': (None, 1, 99),
+            'chargerState': (None, 0, 2, 99),
+            'statusOfChargerConnection': (None, 0, 3, 99),
+            'dcChargeSts': (None, 10, 12),
+            'dcChargePileIAct': (None, -1, 1),
+            'chargeUAct': (None, -1, 1, 1501),
+            'chargeIAct': (None, -1, 1, 2001),
+        }
+        for key, values in counterexamples.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    raw = ac_sample(**dict(finished, **{key: value}))
+                    self.assertIsNone(decode(raw)['charging'])
+
+    def test_confirmed_ac_finished_state_ends_session_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'private' / 'tracks.sqlite3'
+            monitor = Monitor(path)
+            monitor.observe('synthetic-ac', ac_sample(0, chargeLevel=53), BASE)
+            monitor.observe('synthetic-ac', ac_sample(60, chargeLevel=90,
+                chargerState=4, statusOfChargerConnection=1,
+                chargeUAct=0, chargeIAct=0), BASE + 60000)
+            self.assertEqual([event['kind'] for event in monitor.events()],
+                             ['charge_start', 'charge_end'])
+            ended = monitor.events()[1]['summary']
+            self.assertEqual(ended['start_soc'], 53)
+            self.assertEqual(ended['end_soc'], 90)
+            self.assertIsNone(monitor.status('synthetic-ac')['charge'])
+
+            monitor = Monitor(path)
+            monitor.observe('synthetic-ac', ac_sample(120, chargeLevel=90,
+                chargerState=4, statusOfChargerConnection=1,
+                chargeUAct=0, chargeIAct=0), BASE + 120000)
+            self.assertEqual([event['kind'] for event in monitor.events()],
+                             ['charge_start', 'charge_end'])
+
+    def test_upgrade_reinterprets_same_cached_ac_finished_state_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'private' / 'tracks.sqlite3'
+            monitor = Monitor(path)
+            monitor.observe('synthetic-ac', ac_sample(0, chargeLevel=53), BASE)
+            monitor.observe('synthetic-ac', ac_sample(60, chargeLevel=90,
+                chargeIAct=0), BASE + 60000)
+            self.assertEqual([event['kind'] for event in monitor.events()],
+                             ['charge_start'])
+
+            monitor = Monitor(path)
+            finished = ac_sample(60, chargeLevel=90, chargerState=4,
+                                 statusOfChargerConnection=1,
+                                 chargeUAct=0, chargeIAct=0)
+            monitor.observe('synthetic-ac', finished, BASE + 600000)
+            monitor.observe('synthetic-ac', finished, BASE + 660000)
+            self.assertEqual([event['kind'] for event in monitor.events()],
+                             ['charge_start', 'charge_end'])
+
     def test_ac_metadata_alone_never_claims_activity_or_stop(self):
         for changes in ({'chargeUAct': None, 'chargeIAct': None},
                         {'chargeUAct': 220, 'chargeIAct': 0},

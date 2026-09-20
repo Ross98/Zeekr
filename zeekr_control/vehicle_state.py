@@ -35,9 +35,9 @@ def decode(raw, active_codes=(), stopped_codes=()):
     verified_dc = (dc_lid_open and number(electric.get('chargerState')) == 24 and dc_status == 12
                    and pile_voltage is not None and pile_voltage > 0
                    and pile_current is not None and pile_current > 0)
-    verified_stopped = (dc_lid_open and number(electric.get('chargerState')) == 26
-                        and dc_status == 10 and pile_current == 0 and not dc_invalid
-                        and not (speed is not None and speed > 0) and off is not False)
+    verified_dc_stopped = (dc_lid_open and number(electric.get('chargerState')) == 26
+                           and dc_status == 10 and pile_current == 0 and not dc_invalid
+                           and not (speed is not None and speed > 0) and off is not False)
     # Owner-confirmed AC activity; DC voltage can remain after earlier DC use.
     # These codes do not independently establish connection or stop semantics.
     verified_ac = (number(electric.get('chargeLidAcStatus')) == 1
@@ -49,6 +49,18 @@ def decode(raw, active_codes=(), stopped_codes=()):
                    and ac_voltage is not None and ac_voltage > 0
                    and ac_current is not None and ac_current > 0
                    and not ac_invalid and not dc_invalid)
+    # Owner-confirmed completed AC combination. Residual DC voltage is not
+    # activity evidence when both measured currents and AC voltage are zero.
+    verified_ac_stopped = (number(electric.get('chargeLidAcStatus')) == 1
+                           and number(electric.get('chargeLidDcAcStatus')) == 2
+                           and number(electric.get('chargeSts')) == 0
+                           and number(electric.get('chargerState')) == 4
+                           and number(electric.get('statusOfChargerConnection')) == 1
+                           and dc_status == 0 and pile_current == 0
+                           and ac_voltage == 0 and ac_current == 0
+                           and not ac_invalid and not dc_invalid
+                           and not (speed is not None and speed > 0) and off is not False)
+    verified_stopped = verified_dc_stopped or verified_ac_stopped
     charging = None
     # Owner-confirmed combinations take priority over generic zero codes.
     if verified_dc or verified_ac:

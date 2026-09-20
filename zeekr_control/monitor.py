@@ -209,6 +209,11 @@ class Monitor:
             trip.update(report_start=telemetry, report_end=telemetry, samples=[telemetry],
                         profile=profile, parking=None, report_upgrade=True, partial=True)
         charge = state['charge']
+        reclassified_charge_stop = (previous is not None and charge is not None
+                                    and timestamp == previous.get('time')
+                                    and previous.get('charging') is None
+                                    and point.get('charging') is False
+                                    and point.get('charging_phase') == 'stopped')
         had_activity = bool(trip or charge)
         if charge and 'report_start' not in charge:
             charge.update(report_start=telemetry, samples=[telemetry], profile=profile,
@@ -234,14 +239,19 @@ class Monitor:
                 db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)',
                            (vehicle, json.dumps(state)))
             return 'stale' if not -30000 <= now - timestamp <= MAX_AGE else 'unchanged'
-        if timestamp is None or not -30000 <= now - timestamp <= MAX_AGE:
+        if (timestamp is None or not -30000 <= now - timestamp <= MAX_AGE) and not reclassified_charge_stop:
             return 'stale'
-        if previous and timestamp <= previous['time']:
+        if previous and timestamp <= previous['time'] and not reclassified_charge_stop:
             return 'unchanged'
-        point['observed'] = now
+        observed = previous.get('observed', now) if reclassified_charge_stop else now
+        point['observed'] = observed
+        if reclassified_charge_stop:
+            telemetry['observed_at'] = observed
         point['location'] = parse_location(raw)
         point['_report'] = telemetry
-        continuous = previous is not None and timestamp - previous['time'] <= MAX_AGE and 0 <= now - previous['observed'] <= MAX_AGE
+        continuous = (reclassified_charge_stop or
+                      previous is not None and timestamp - previous['time'] <= MAX_AGE
+                      and 0 <= now - previous['observed'] <= MAX_AGE)
         seed_telemetry = None
         moving = point['speed'] is not None and point['speed'] > 0
         distance_moved = continuous and previous['km'] is not None and point['km'] is not None and point['km'] > previous['km']
