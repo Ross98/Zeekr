@@ -42,27 +42,30 @@ class EventStore:
         boundary = _decode(cursor) if cursor else None
         if not self.path.exists():
             return {'events': [], 'next_cursor': None, 'date': date, 'kind': kind}
-        db = sqlite3.connect(self.path)
+        db = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True)
         try:
-            rows = db.execute('''SELECT id,summary,created FROM monitor_events
-                                 WHERE vehicle=? AND kind=? ORDER BY created DESC,id DESC''',
-                              (vehicle, kind)).fetchall()
+            query = 'SELECT id,summary,created FROM monitor_events WHERE vehicle=? AND kind=?'
+            parameters = [vehicle, kind]
+            if boundary:
+                query += ' AND (created,id)<(?,?)'
+                parameters.extend(boundary)
+            rows = db.execute(query + ' ORDER BY created DESC,id DESC', parameters)
+            selected = []
+            for event_id, encoded, created in rows:
+                try:
+                    summary = json.loads(encoded)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(summary, dict):
+                    continue
+                end_time = summary.get('end_time')
+                if type(end_time) not in (int, float) or not lower <= end_time < upper:
+                    continue
+                selected.append((event_id, created, summary))
+                if len(selected) > limit:
+                    break
         finally:
             db.close()
-        selected = []
-        for event_id, encoded, created in rows:
-            if boundary and (created, event_id) >= boundary:
-                continue
-            try:
-                summary = json.loads(encoded)
-            except (TypeError, ValueError):
-                continue
-            end_time = summary.get('end_time')
-            if type(end_time) not in (int, float) or not lower <= end_time < upper:
-                continue
-            selected.append((event_id, created, summary))
-            if len(selected) > limit:
-                break
         page = selected[:limit]
         events = [dict({'id': event_id, 'kind': kind},
                        **{key: summary.get(key) for key in PUBLIC_FIELDS})
@@ -76,23 +79,25 @@ class EventStore:
     def latest(self, vehicle):
         if not vehicle or not self.path.exists():
             return {'trip_end': None, 'charge_end': None}
-        db = sqlite3.connect(self.path)
+        result = {'trip_end': None, 'charge_end': None}
+        db = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True)
         try:
-            rows = db.execute('''SELECT id,kind,summary FROM monitor_events
-                                 WHERE vehicle=? AND kind IN ('trip_end','charge_end')
-                                 ORDER BY created DESC,id DESC''', (vehicle,)).fetchall()
+            # Stop at the first valid event of each kind. Never materialize the
+            # full private history to return these two small public summaries.
+            for kind in result:
+                rows = db.execute('''SELECT id,summary FROM monitor_events
+                                     WHERE vehicle=? AND kind=? ORDER BY created DESC,id DESC''',
+                                  (vehicle, kind))
+                for event_id, encoded in rows:
+                    try:
+                        summary = json.loads(encoded)
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(summary, dict):
+                        continue
+                    result[kind] = dict({'id': event_id, 'kind': kind},
+                                        **{key: summary.get(key) for key in PUBLIC_FIELDS})
+                    break
         finally:
             db.close()
-        result = {'trip_end': None, 'charge_end': None}
-        for event_id, kind, encoded in rows:
-            if result[kind] is not None:
-                continue
-            try:
-                summary = json.loads(encoded)
-            except (TypeError, ValueError):
-                continue
-            result[kind] = dict({'id': event_id, 'kind': kind},
-                                **{key: summary.get(key) for key in PUBLIC_FIELDS})
-            if all(result.values()):
-                break
         return result

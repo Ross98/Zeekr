@@ -1,4 +1,5 @@
 """Read-only, privacy-safe charging session, series and aggregate queries."""
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 import json
 import math
@@ -35,8 +36,10 @@ class ChargingAnalytics:
     def __init__(self, path):
         self.path = Path(path)
 
+    @contextmanager
     def _connect(self):
-        return sqlite3.connect(self.path)
+        with closing(sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+            yield db
 
     def _event(self, db, vehicle, selection):
         if not isinstance(selection, str) or not VALID_ID.fullmatch(selection):
@@ -111,40 +114,37 @@ class ChargingAnalytics:
             upper = item['end_time'] if item['end_time'] is not None else 32503680000000
             rows = db.execute('''SELECT normalized_payload,decoder_version FROM report_observations
                                  WHERE vehicle=? AND state_time>=? AND state_time<=?
-                                 ORDER BY state_time''', (vehicle, item['start_time'], upper)).fetchall()
-        parsed = []
-        for encoded, decoder in rows:
-            try:
-                point = json.loads(encoded)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(point, dict):
-                continue
-            parsed.append((point, decoder))
-        public, segment, previous = [], 0, None
-        for point, decoder in parsed:
-            continuous = previous is not None
-            if previous is not None:
-                left, left_decoder = previous
-                state_gap = point.get('state_time', 0) - left.get('state_time', 0)
-                observed_gap = point.get('observed_at', 0) - left.get('observed_at', 0)
-                continuous = (0 < state_gap <= 180000 and 0 <= observed_gap <= 180000
-                              and point.get('charging') == left.get('charging')
-                              and point.get('charging_mode') == left.get('charging_mode')
-                              and decoder == left_decoder)
-            if previous is not None and not continuous:
-                segment += 1
-            row = {'time': _number(point.get('state_time')), 'soc': _number(point.get('soc')),
-                   'segment_id': segment, 'quality': 'valid' if point.get('charging') is True else 'stopped'}
-            if view == 'power-soc':
-                row['power_kw'] = _number(point.get('power_kw'))
-            else:
-                mode = point.get('charging_mode')
-                row.update({'mode': mode if mode in ('ac', 'dc') else 'unknown',
-                            'voltage': _metric_value(point, 'ac_voltage' if mode == 'ac' else 'voltage'),
-                            'current': _metric_value(point, 'ac_current' if mode == 'ac' else 'current')})
-            public.append(row)
-            previous = (point, decoder)
+                                 ORDER BY state_time''', (vehicle, item['start_time'], upper))
+            public, segment, previous = [], 0, None
+            for encoded, decoder in rows:
+                try:
+                    point = json.loads(encoded)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(point, dict):
+                    continue
+                continuous = previous is not None
+                if previous is not None:
+                    left, left_decoder = previous
+                    state_gap = point.get('state_time', 0) - left.get('state_time', 0)
+                    observed_gap = point.get('observed_at', 0) - left.get('observed_at', 0)
+                    continuous = (0 < state_gap <= 180000 and 0 <= observed_gap <= 180000
+                                  and point.get('charging') == left.get('charging')
+                                  and point.get('charging_mode') == left.get('charging_mode')
+                                  and decoder == left_decoder)
+                if previous is not None and not continuous:
+                    segment += 1
+                row = {'time': _number(point.get('state_time')), 'soc': _number(point.get('soc')),
+                       'segment_id': segment, 'quality': 'valid' if point.get('charging') is True else 'stopped'}
+                if view == 'power-soc':
+                    row['power_kw'] = _number(point.get('power_kw'))
+                else:
+                    mode = point.get('charging_mode')
+                    row.update({'mode': mode if mode in ('ac', 'dc') else 'unknown',
+                                'voltage': _metric_value(point, 'ac_voltage' if mode == 'ac' else 'voltage'),
+                                'current': _metric_value(point, 'ac_current' if mode == 'ac' else 'current')})
+                public.append(row)
+                previous = (point, decoder)
         raw_count = len(public)
         public = self._downsample(public, 600)
         segments = []
@@ -195,40 +195,41 @@ class ChargingAnalytics:
         end_day = datetime.fromtimestamp(now/1000, BEIJING).replace(hour=0, minute=0, second=0, microsecond=0)
         lower = int((end_day-timedelta(days=days-1)).timestamp()*1000)
         upper = int((end_day+timedelta(days=1)).timestamp()*1000)
-        rows = []
+        records = []
         if self.path.exists():
             with self._connect() as db:
                 rows = db.execute('''SELECT id,summary FROM monitor_events
                                      WHERE vehicle=? AND kind='charge_end' ORDER BY created DESC,id DESC''',
-                                  (vehicle,)).fetchall()
-        records = []
-        for event_id, encoded in rows:
-            try:
-                summary = json.loads(encoded)
-            except (TypeError, ValueError):
-                continue
-            ended = _number(summary.get('end_time'))
-            if ended is None or not lower <= ended < upper:
-                continue
-            report = summary.get('report_v2') if isinstance(summary.get('report_v2'), dict) else {}
-            event_mode = _mode(report)
-            if mode != 'all' and event_mode != mode:
-                continue
-            metrics = report.get('metrics') if isinstance(report.get('metrics'), dict) else {}
-            partial = bool(summary.get('partial'))
-            delta = _number(summary.get('soc_delta'))
-            capacity = _number(summary.get('battery_capacity_kwh'))
-            estimate = capacity*delta/100 if not partial and capacity and delta is not None and delta >= 0 else None
-            duration = _number(summary.get('duration_seconds')) if not partial else None
-            records.append({'id': event_id, 'end_time': ended, 'start_time': _number(summary.get('start_time')),
-                            'date': datetime.fromtimestamp(ended/1000, BEIJING).strftime('%Y-%m-%d'),
-                            'mode': event_mode, 'partial': partial,
-                            'start_soc': _number(summary.get('start_soc')),
-                            'end_soc': _number(summary.get('end_soc')),
-                            'soc_delta': delta, 'duration_seconds': duration,
-                            'estimated_kwh': estimate,
-                            'sampled_peak_kw': _number(metrics.get('sampled_peak_kw')),
-                            'average_power_kw': _number(metrics.get('average_power_kw'))})
+                                  (vehicle,))
+                for event_id, encoded in rows:
+                    try:
+                        summary = json.loads(encoded)
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(summary, dict):
+                        continue
+                    ended = _number(summary.get('end_time'))
+                    if ended is None or not lower <= ended < upper:
+                        continue
+                    report = summary.get('report_v2') if isinstance(summary.get('report_v2'), dict) else {}
+                    event_mode = _mode(report)
+                    if mode != 'all' and event_mode != mode:
+                        continue
+                    metrics = report.get('metrics') if isinstance(report.get('metrics'), dict) else {}
+                    partial = bool(summary.get('partial'))
+                    delta = _number(summary.get('soc_delta'))
+                    capacity = _number(summary.get('battery_capacity_kwh'))
+                    estimate = capacity*delta/100 if not partial and capacity and delta is not None and delta >= 0 else None
+                    duration = _number(summary.get('duration_seconds')) if not partial else None
+                    records.append({'id': event_id, 'end_time': ended, 'start_time': _number(summary.get('start_time')),
+                                    'date': datetime.fromtimestamp(ended/1000, BEIJING).strftime('%Y-%m-%d'),
+                                    'mode': event_mode, 'partial': partial,
+                                    'start_soc': _number(summary.get('start_soc')),
+                                    'end_soc': _number(summary.get('end_soc')),
+                                    'soc_delta': delta, 'duration_seconds': duration,
+                                    'estimated_kwh': estimate,
+                                    'sampled_peak_kw': _number(metrics.get('sampled_peak_kw')),
+                                    'average_power_kw': _number(metrics.get('average_power_kw'))})
         daily = []
         for offset in range(days):
             date = (end_day-timedelta(days=days-1-offset)).strftime('%Y-%m-%d')

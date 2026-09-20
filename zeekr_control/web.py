@@ -67,6 +67,29 @@ class App:
         self.store = None
         self.monitor_thread = None
         self.snapshot_revision = None
+        self.session_key = None
+
+    def _sync_session(self, session):
+        """Invalidate in-memory vehicle data when its private session scope changes."""
+        key = session_scope(session) if session and session.get('accessToken') else None
+        if key == self.session_key:
+            return
+        self.session_key = key
+        self.raw = self.model = self.profile = None
+        self.vehicle, self.vehicle_key, self.vehicles = 1, None, []
+        self.read_at = self.snapshot_revision = None
+        self.query_cached = False
+        self.refresh_result = self.next_query_at = self.error = None
+        self.history_selections.clear()
+
+    def _read_session(self):
+        try:
+            session = load(self.session_path)
+        except ApiError:
+            self._sync_session(None)
+            raise
+        self._sync_session(session)
+        return session
 
     def start_monitor(self):
         from .monitor_runtime import background, enable_sampling
@@ -78,12 +101,14 @@ class App:
     def state(self):
         with self.lock:
             try:
-                session = load(self.session_path)
+                session = self._read_session()
                 authenticated = bool(session.get('accessToken'))
                 session_error = None
             except ApiError as exc:
                 authenticated, session_error = False, str(exc)
                 session = None
+            if authenticated:
+                self._restore_snapshot(session)
             try:
                 from .monitor_runtime import read_status
                 monitoring = read_status(self.session_path.parent,
@@ -91,8 +116,6 @@ class App:
                                          public=True)
             except Exception:
                 monitoring = {'status': 'unavailable', 'online': False, 'events': []}
-            if authenticated:
-                self._restore_snapshot(session)
             try:
                 archives = self._store().vehicles() if self.database_path.exists() else []
                 storage_error = None
@@ -131,7 +154,9 @@ class App:
                     'range_attainment': read_attainment(self.database_path, self.vehicle_key, self.profile),
                     'storage_bytes': self.database_path.stat().st_size if self.database_path.exists() else 0}
 
-    def _restore_snapshot(self, session):
+    def _restore_snapshot(self, session, vehicle=None):
+        if not session.get('accessToken'):
+            return
         try:
             binding = load(self.session_path.parent / 'monitor-binding.json').get('vehicle_key')
         except Exception:
@@ -139,12 +164,12 @@ class App:
         key = self.vehicle_key or binding
         if not key:
             return
-        snapshot = self.snapshot_store.read(session_scope(session), key)
-        if not snapshot or snapshot['revision'] == self.snapshot_revision:
+        snapshot = self.snapshot_store.read(session_scope(session), key, known_revision=self.snapshot_revision)
+        if not snapshot:
             return
         self.vehicle_key = key
         self.raw = snapshot['raw']
-        self.model = build_model(self.raw)
+        self.model = build_model(self.raw, vehicle=vehicle)
         self.read_at = snapshot['fetched_at']
         self.snapshot_revision = snapshot['revision']
         if self.profile is None:
@@ -227,8 +252,13 @@ class App:
         if not self.refresh_lock.acquire(blocking=False):
             raise RefreshBusy('正在读取，请稍后。')
         client = None
+        scope = None
         try:
-            client = self.client_factory(load(self.session_path))
+            with self.lock:
+                session = self._read_session()
+                scope = session_scope(session)
+                self._restore_snapshot(session)
+            client = self.client_factory(session)
             vehicles = client.vehicles()
             if vehicle > len(vehicles):
                 raise ValueError('车辆序号超出范围，或账号下没有可用车辆。')
@@ -239,34 +269,41 @@ class App:
             raw = client.status(vin)
             model = build_model(raw, vehicle=vehicles[vehicle - 1])
             with self.lock:
+                if session_scope(self._read_session()) != scope:
+                    raise ApiError('车辆会话已变化，请重新刷新状态。')
                 key = hashlib.sha256(vin.encode()).hexdigest()
                 previous_time = self.model.get('updated_time') if self.model and key == self.vehicle_key else None
                 incoming_time = model['updated_time']
+                fetched_at = getattr(client, "last_query_fetched_at", None)
+                observed_at = int(time.time() * 1000)
+                self.snapshot_store.publish(
+                    scope, key, raw, observed_at,
+                    fetched_at=int((fetched_at if fetched_at is not None else time.time()) * 1000), source='manual')
                 self.vehicle, self.vehicle_key = vehicle, key
                 self.profile = vehicle_profile(key, vehicle, len(vehicles))
                 self.vehicles = [{'number': index, 'label': '车辆 %d' % index} for index in range(1, len(vehicles) + 1)]
-                fetched_at = getattr(client, "last_query_fetched_at", None)
-                observed_at = int(time.time() * 1000)
-                snapshot = self.snapshot_store.publish(
-                    session_scope(load(self.session_path)), key, raw, observed_at,
-                    fetched_at=int((fetched_at if fetched_at is not None else time.time()) * 1000), source='manual')
-                self.snapshot_revision = snapshot['revision']
+                # Publish can reject old/undated responses, or the monitor can win
+                # a concurrent update. Always render the store's accepted snapshot.
+                self.snapshot_revision = None
+                self._restore_snapshot(session, vehicle=vehicles[vehicle - 1])
                 self.query_cached = bool(getattr(client, 'last_query_cached', False))
                 self.next_query_at = getattr(client, 'next_query_at', None)
                 self.refresh_result = ('cached' if self.query_cached else 'time_unknown' if incoming_time is None
                                        else 'new' if previous_time is None or incoming_time > previous_time else 'unchanged')
-                self.raw, self.model, self.read_at, self.error = raw, model, int((fetched_at if fetched_at is not None else time.time()) * 1000), None
+                self.error = None
                 return self.state()
         except ApiError as exc:
             with self.lock:
-                self.error = str(exc)
-                self.next_query_at = getattr(client, 'next_query_at', self.next_query_at)
+                if self.session_key == scope:
+                    self.error = str(exc)
+                    self.next_query_at = getattr(client, 'next_query_at', self.next_query_at)
             raise
         finally:
             self.refresh_lock.release()
 
     def review_field(self, data):
         with self.lock:
+            self._restore_snapshot(self._read_session())
             paths = {field['path'] for field in (self.model or {}).get('fields', [])}
             return self.field_review_store.update(self.vehicle_key, data, paths)
 
@@ -292,11 +329,13 @@ class App:
 
     def location(self):
         with self.lock:
+            self._restore_snapshot(self._read_session())
             result = parse_location(self.raw or {})
             result['read_at'] = updated_at(self.read_at)
             return result
 
     def _local_vehicle(self, archive=None):
+        self._restore_snapshot(self._read_session())
         selected = self.vehicle_key
         if not selected:
             try:
@@ -331,6 +370,7 @@ class App:
 
     def events(self, date, kind, cursor=None):
         with self.lock:
+            self._restore_snapshot(self._read_session())
             if not self.vehicle_key:
                 raise ValueError('请先选择车辆。')
             return self.event_store.query(self.vehicle_key, date, kind, cursor=cursor)
@@ -344,18 +384,22 @@ class App:
 
     def charging_session(self, selection):
         with self.lock:
+            self._restore_snapshot(self._read_session())
             return self.charging_analytics.session(self.vehicle_key, selection)
 
     def charging_series(self, selection, view):
         with self.lock:
+            self._restore_snapshot(self._read_session())
             return self.charging_analytics.series(self.vehicle_key, selection, view)
 
     def charging_process(self, selection, view):
         with self.lock:
+            self._restore_snapshot(self._read_session())
             return self.charging_analytics.process(self.vehicle_key, selection, view)
 
     def charging_statistics(self, days, mode):
         with self.lock:
+            self._restore_snapshot(self._read_session())
             try:
                 parsed = int(days)
             except (TypeError, ValueError):

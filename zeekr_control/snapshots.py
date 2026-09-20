@@ -1,4 +1,5 @@
 """Private latest-vehicle snapshots shared by monitor and Web processes."""
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -52,7 +53,7 @@ class SnapshotStore:
         # retries are idempotent and never delete that evidence.
         SnapshotArchive(self.path.parent / 'snapshot-archive').append(
             scope_key, vehicle_key, encoded, state_time, observed_at, fetched_at, source)
-        with self.connect() as db:
+        with closing(self.connect()) as db, db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT state_time,revision,digest FROM snapshots WHERE scope_key=? AND vehicle_key=?',
                              (scope_key, vehicle_key)).fetchone()
@@ -70,13 +71,22 @@ class SnapshotStore:
                         revision, digest, encoded))
             return {'changed': True, 'revision': revision}
 
-    def read(self, scope_key, vehicle_key):
+    def read(self, scope_key, vehicle_key, known_revision=None):
+        """Read a changed snapshot without loading an already-rendered payload."""
         if not self.path.exists() or not scope_key or not vehicle_key:
             return None
-        with self.connect() as db:
-            row = db.execute('''SELECT state_time,fetched_at,observed_at,revision,raw
-                                FROM snapshots WHERE scope_key=? AND vehicle_key=?''',
-                             (scope_key, vehicle_key)).fetchone()
+        if self.path.is_symlink():
+            raise OSError('快照文件不可使用符号链接。')
+        with closing(sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as db:
+            try:
+                row = db.execute('''SELECT state_time,fetched_at,observed_at,revision,raw
+                                    FROM snapshots WHERE scope_key=? AND vehicle_key=?
+                                    AND (? IS NULL OR revision!=?)''',
+                                 (scope_key, vehicle_key, known_revision, known_revision)).fetchone()
+            except sqlite3.OperationalError:
+                if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='snapshots'").fetchone():
+                    return None
+                raise
         if not row:
             return None
         return {'state_time': row[0], 'fetched_at': row[1], 'observed_at': row[2],

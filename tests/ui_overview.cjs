@@ -23,6 +23,7 @@ const fs = require('node:fs');
     assert.match(await page.locator('.tyre-grid').innerText(),/265\.1 kPa/);
     assert.doesNotMatch(await page.locator('.tyre-grid').innerText(),/265\.125/);
     await page.getByRole('button',{name:'车辆',exact:true}).first().click();
+    await page.getByRole('button',{name:'状态总览',exact:true}).click();
     assert.match(await page.locator('.tyre-grid').innerText(),/265\.125 kPa/);
     await page.getByRole('button',{name:'总览',exact:true}).click();
     await page.locator('.data-explanation summary').click();

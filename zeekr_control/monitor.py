@@ -96,6 +96,10 @@ class Monitor:
                 attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0,
                 error TEXT, sent_at INTEGER)''')
             db.execute('CREATE INDEX IF NOT EXISTS monitor_delivery ON monitor_events(delivery, next_attempt)')
+            db.execute('CREATE INDEX IF NOT EXISTS monitor_vehicle_kind_created '
+                       'ON monitor_events(vehicle,kind,created DESC,id DESC)')
+            db.execute('CREATE INDEX IF NOT EXISTS monitor_vehicle_created '
+                       'ON monitor_events(vehicle,created DESC)')
             db.execute('''CREATE TABLE IF NOT EXISTS report_metric_index (
                 event_id TEXT PRIMARY KEY, vehicle TEXT NOT NULL, kind TEXT NOT NULL,
                 end_time INTEGER NOT NULL, decoder_version TEXT NOT NULL,
