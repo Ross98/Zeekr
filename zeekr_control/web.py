@@ -737,6 +737,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/trip-cards.js': ('trip-cards.js', 'text/javascript; charset=utf-8'),
                           '/vehicle.js': ('vehicle.js', 'text/javascript; charset=utf-8'),
                           '/vehicle.css': ('vehicle.css', 'text/css; charset=utf-8'),
+                          '/route-quality.js': ('route-quality.js', 'text/javascript; charset=utf-8'),
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
                           '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),
                           '/trip-management.js': ('trip-management.js', 'text/javascript; charset=utf-8'),

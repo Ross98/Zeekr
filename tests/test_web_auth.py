@@ -27,6 +27,7 @@ class AuthTests(unittest.TestCase):
                 c.request(method,path,json.dumps(body) if body is not None else None,headers)
                 r=c.getresponse(); result=(r.status,dict(r.getheaders()),r.read());c.close();return result
             try:
+                self.assertEqual(request('GET','/route-quality.js')[0],401)
                 for route in ['/trip-management.js','/api/trips/manage?start=2024-01-01&end=2024-01-02','/trip-cards.js','/trip-card-renderer.js','/api/insights/cards?date=2026-09-20','/data-quality.js','/api/insights/quality?start=2026-09-20&end=2026-09-20','/vehicle-life.js','/api/insights/life?date=2026-09-20','/usage-calendar.js','/api/insights/calendar?date=2026-09-20','/parameter-experiments.js','/api/insights/experiments','/api/insights/experiments/detail?id=missing','/charge-comparison.js','/api/insights/charge-comparison?a=a&b=b','/api/insights/charge-comparison/options?date=2026-07-12','/trip-tags.js','/api/insights/trip-tags?date=2026-09-20','/custom-reminders.js','/api/insights/rules','/api/insights/ledger?date=2026-09-20','/charge-ledger.js','/api/insights/report?period=month&date=2026-09-20','/usage-reports.js','/api/insights/parking?start=2026-09-20&end=2026-09-20','/parking.js','/api/insights/timeline?date=2026-09-20','/api/insights/snapshot?id=202609.1','/api/insights/compare?before=202609.1&after=202609.2','/insights.js','/insights.css','/api/state','/api/vehicle/parameters','/vehicle.js','/vehicle.css','/api/location','/api/tracks','/api/trips?date=2024-01-02','/api/tracks?date=2024-01-02&trip=current','/api/history?date=2024-01-01','/api/history/points?trip=unknown','/api/charging/process?id=current&view=power-soc','/history.js','/car.svg','/app.js','/trips.js','/trips.css']:
                     self.assertEqual(request('GET',route)[0],401)
                 self.assertEqual(request('GET','/')[0],200)
@@ -48,7 +49,7 @@ class AuthTests(unittest.TestCase):
                 self.assertIn('HttpOnly',headers['Set-Cookie']);self.assertIn('Secure',headers['Set-Cookie'])
                 cookie=headers['Set-Cookie'].split(';')[0]
                 self.assertEqual(request('GET','/api/state',cookie=cookie)[0],200)
-                for asset in ('/trip-management.js', '/trips.js', '/trips.css', '/vehicle.js', '/vehicle.css', '/api/vehicle/parameters'):
+                for asset in ('/route-quality.js', '/trip-management.js', '/trips.js', '/trips.css', '/vehicle.js', '/vehicle.css', '/api/vehicle/parameters'):
                     status, headers, body = request('GET', asset, cookie=cookie)
                     self.assertEqual(status, 200, asset)
                     self.assertTrue(body)

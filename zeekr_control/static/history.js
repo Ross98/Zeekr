@@ -110,14 +110,19 @@ function renderCloudMap() {
   playback=(result.points || []).filter(point=>point.plottable);
   const note=`${result.count} 个轨迹点 · ${result.unplottable_count || 0} 个点无法绘制${result.truncated?' · 仅显示前 5000 个点':''}。间断分段显示，不补画路线。`;
   $('#map-status').textContent=note;
+  const density=RouteQuality.analyze(result.points || [],result.segments || [],'time');
+  let densityPanel=$('#cloud-route-density');
+  if(!densityPanel){densityPanel=document.createElement('div');densityPanel.id='cloud-route-density';$('#map').before(densityPanel);}
+  densityPanel.innerHTML=RouteQuality.summary(density);
   if(!playback.length) {
     $('#map').innerHTML=empty('坐标系未确认','已返回轨迹点，但坐标无效或未声明支持的坐标系。保留行程摘要，不强行落点。','map');
     return;
   }
   try {
     createMap([playback[0].latitude,playback[0].longitude],13,{zoomAnimation:false,fadeAnimation:false,markerZoomAnimation:false});
-    (result.segments || []).forEach(segment=>{
-      if(segment.length>1) L.polyline(segment.map(point=>[point.latitude,point.longitude]),{color:'#20776e',weight:4}).addTo(map);
+    density.parts.forEach(part=>{
+      L.polyline(part.points.map(point=>[point.latitude,point.longitude]),RouteQuality.lineOptions(part)).addTo(map)
+        .bindTooltip(part.sparse?'稀疏示意线 · 不代表实际道路':'采样点连线 · 不保证实际道路形状');
     });
     playback.forEach(point=>L.circleMarker([point.latitude,point.longitude],{radius:4,color:'#20776e',weight:1,fillOpacity:.6}).addTo(map));
     if(playback.length>1) map.fitBounds(playback.map(point=>[point.latitude,point.longitude]),{padding:[30,30],maxZoom:16,animate:false});

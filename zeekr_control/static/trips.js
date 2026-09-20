@@ -183,11 +183,12 @@ async function loadLocalRoute(force=false) {
   }
 }
 
-function localRouteQuality(result) {
+function localRouteQuality(result, density) {
   const quality=result.quality || {}, gaps=result.gaps || [];
   const trusted=result.observations.filter(point=>point.trusted&&point.plottable).length;
   const unknown=quality.untrusted_count ?? result.observations.filter(point=>!point.trusted).length;
   return `<div class="local-route-summary"><span><b>${result.count}</b> 条采样</span><span><b>${trusted}</b> 个可信可绘点</span><span><b>${gaps.length}</b> 处间断</span>${unknown?`<span>${unknown} 个位置未确认</span>`:''}</div>
+    ${RouteQuality.summary(density)}
     ${result.truncated?'<p class="unknown">仅展示前 5000 条采样，后续记录未展示；末个采样点不代表行程终点。</p>':''}
     <p class="subtle">${!result.count?'本次范围没有采样，无法判断路线情况。':gaps.length?'存在采样缺口，地图分段展示。':'当前记录未发现超过阈值的间断；不能据此确认实际路线完整。'}首末标记仅代表可绘采样点。</p>
     ${gaps.length?`<details class="local-gap-details"><summary>查看 ${gaps.length} 处采样间断</summary><ul>${gaps.map(gap=>`<li><span>${esc(tripTime(gap.start_time))} → ${esc(tripTime(gap.end_time))}</span><strong>${esc(tripDuration(gap.duration_seconds))}</strong><span class="subtle">${esc(gap.reason || '间断原因未确认')}</span></li>`).join('')}</ul></details>`:''}`;
@@ -215,7 +216,8 @@ function renderLocalRoute() {
       <div class="local-playback-controls">${action('上一点','local-step-back','secondary')}${action('播放','local-play','secondary')}${action('下一点','local-step-next','secondary')}<label>速度 <select id="local-playback-speed" class="select" aria-label="回放速度"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></label></div><p class="subtle local-playback-note">1× 每秒前进一个采样点；按记录回看，不代表实际车速。缺口直接跳到下一段。</p></div>
       <details class="local-observation-details"><summary>采样详情</summary><div id="local-observation-list" class="point-list"></div></details>`;
   }
-  $('#local-route-quality').innerHTML=localRouteQuality(result);
+  const density=RouteQuality.analyze(result.observations,result.segments,'state_time');
+  $('#local-route-quality').innerHTML=localRouteQuality(result,density);
   $('#local-observation-list').innerHTML=result.observations.map(point=>`<div class="point"><span>${esc(point.time_label)}<span class="field-path">${esc(point.time_source)}</span></span>${pill(point.trusted?'接口标记可信':'位置未确认',point.trusted?'':'warn')}</div>`).join('');
   $('#map-status').textContent=`${result.count} 条观测 · ${result.segments.length} 个可信片段 · 时间以缓存状态时间为准，缺失时使用本机观测时间`;
   playback=result.observations.filter(point=>point.plottable);
@@ -229,8 +231,9 @@ function renderLocalRoute() {
   if (!existing) createMap([playback[0].latitude,playback[0].longitude],13);
   if (h.layers) h.layers.remove();
   h.layers=L.layerGroup().addTo(map);
-  result.segments.forEach(segment=>{
-    if (segment.length>1) L.polyline(segment.map(point=>[point.latitude,point.longitude]),{color:'#20776e',weight:4}).addTo(h.layers);
+  density.parts.forEach(part=>{
+    L.polyline(part.points.map(point=>[point.latitude,point.longitude]),RouteQuality.lineOptions(part)).addTo(h.layers)
+      .bindTooltip(part.sparse?'稀疏示意线 · 不代表实际道路':'采样点连线 · 不保证实际道路形状');
   });
   playback.forEach(point=>L.circleMarker([point.latitude,point.longitude],{radius:4,color:point.trusted?'#20776e':'#7c8588',fillOpacity:.7,weight:1}).addTo(h.layers));
   for (const [point,label] of [[playback[0],'首个采样点'],[playback.at(-1),'末个采样点']]) {

@@ -55,13 +55,15 @@ const fs = require('node:fs');
     assert.equal(await page.locator('.leaflet-container').count(), 0);
     await page.getByRole('button',{name:'隐藏位置',exact:true}).click();
     const points = [
-      {latitude:31,longitude:121,plottable:true,trusted:true,time_label:'08:00',time_source:'轨迹点上报时间'},
-      {latitude:31.01,longitude:121.01,plottable:true,trusted:true,time_label:'08:01',time_source:'轨迹点上报时间'},
-      {latitude:31.02,longitude:121.02,plottable:true,trusted:true,time_label:'08:20',time_source:'轨迹点上报时间'}];
+      {latitude:31,longitude:121,plottable:true,trusted:true,time:1704067200000,time_label:'08:00',time_source:'轨迹点上报时间'},
+      {latitude:31.01,longitude:121.01,plottable:true,trusted:true,time:1704067260000,time_label:'08:01',time_source:'轨迹点上报时间'},
+      {latitude:31.02,longitude:121.02,plottable:true,trusted:true,time:1704068400000,time_label:'08:20',time_source:'轨迹点上报时间'}];
     pointResponse = {status:'available',count:3,points,segments:[points.slice(0,2),points.slice(2)],unplottable_count:0,truncated:false};
     await page.getByRole('button',{name:'显示行程路线',exact:true}).click();
     await page.locator('.leaflet-container').waitFor();
     assert.equal(await page.locator('path.leaflet-interactive[fill="none"]').count(),1,'only the continuous segment should have a line');
+    assert.match(await page.locator('#cloud-route-density').innerText(),/1 段稀疏示意线/);
+    assert.equal(await page.locator('path.route-sparse-line').getAttribute('stroke-dasharray'),'7 7');
     await page.getByLabel('轨迹回看位置').fill('2');
     assert.match(await page.locator('#playback-label').innerText(), /3 \/ 3.*08:20/);
     for(const width of [320,390,1024,1440]) {
