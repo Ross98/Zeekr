@@ -59,6 +59,11 @@ class ManagementTests(TripFixtures, unittest.TestCase):
         self.assertEqual(EventStore(self.path).query('car-a','2024-01-02','trip_end')['events'], [])
         self.assertIsNone(EventStore(self.path).latest('car-a')['trip_end'])
         self.assertEqual(UsageEvents(self.path).between('car-a', MIDNIGHT, MIDNIGHT+86400000)['events'], [])
+        from zeekr_control.vehicle_research import VehicleResearch
+        from zeekr_control.archive_reader import ArchiveReader
+        research = VehicleResearch(ArchiveReader(self.path.parent/'snapshot-archive'), self.path,
+                                   clock=lambda:MIDNIGHT+86400000)
+        self.assertEqual(research.query('owner','car-a','2024-01-02','2024-01-02')['event_conditions']['total'],0)
         with self.assertRaises(ValueError):
             UsageEvents(self.path).get('car-a','one')
         with self.assertRaises(ValueError):

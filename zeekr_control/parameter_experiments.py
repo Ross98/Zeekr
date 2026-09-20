@@ -1,8 +1,10 @@
 """Frozen, privacy-projected observations. Never promote research to capabilities."""
+import json
 import time
 import uuid
 
 from .personal_store import VALID_ID
+from .web_model import scalar
 
 
 def text_field(data,key,limit,required=False):
@@ -23,6 +25,12 @@ def warnings(before,after,action_at):
     return result
 
 
+def review_raw(sample):
+    if sample['status'] not in ('known', 'pending'):
+        return None
+    return scalar(json.loads(sample['raw']))
+
+
 class ParameterExperiments:
     def __init__(self,store,archive,clock=None):
         self.store=store;self.archive=archive;self.clock=clock or (lambda:int(time.time()*1000))
@@ -32,6 +40,9 @@ class ParameterExperiments:
         saved=self.store.read(owner,vehicle,'experiments')
         row=next((r for r in saved['records'] if r['id']==identity),None)
         if row is None:raise ValueError('实验不存在或不属于当前账号车辆。')
+        for field in row['body']['changes']:
+            for side in ('before', 'after'):
+                field[side]['review_raw'] = review_raw(field[side])
         return dict(row,revision=saved['revision'])
 
     def query(self,owner,vehicle):
@@ -39,6 +50,23 @@ class ParameterExperiments:
         for row in saved['records']:
             body=row['body'];body['change_count']=len(body.pop('changes'))
         return saved
+
+    def review_evidence(self, owner, vehicle, data):
+        row = self.detail(owner, vehicle, data.get('experiment_id'))
+        if row['deleted']:
+            raise ValueError('实验已删除，请恢复后再引用。')
+        body, side = row['body'], data.get('experiment_side')
+        if side not in ('before', 'after'):
+            raise ValueError('请选择实验的前或后样本。')
+        field = next((f for f in body['changes'] if f['path'] == data.get('path')), None)
+        expected = review_raw(field[side]) if field else None
+        if field is None or expected != data.get('raw'):
+            raise ValueError('核实字段或原值与实验摘录不一致。')
+        if field[side]['status'] not in ('known', 'pending'):
+            raise ValueError('缺失或无效样本不能作为核实证据。')
+        return dict(id=row['id'], side=side, title=body['title'], action_text=body['action_text'],
+                    action_at=body['action_at'], saved_at=body['saved_at'], sample=body[side],
+                    observation=field[side], warnings=body['warnings'])
 
     def update(self,owner,vehicle,data,scope,guard=None):
         action=data.get('action');identity=data.get('id');body=None

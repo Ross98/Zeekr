@@ -1,0 +1,82 @@
+const assert=require('node:assert/strict');
+const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+(async()=>{
+  const f=await fixture(),{page}=f;
+  page.setDefaultTimeout(15000);
+  const button=name=>page.getByRole('button',{name,exact:true});
+  try{
+    await button('数据利用').click();
+    await page.getByLabel('研究开始日期',{exact:true}).fill('2026-09-20');
+    await page.getByLabel('研究结束日期',{exact:true}).fill('2026-09-20');
+    await button('分析本地数据').click();
+    await page.waitForFunction(()=>document.querySelector('#research-body')?.innerText.includes('126 次归档读取'));
+    assert.equal(await page.locator('#research-field-count').innerText(),'217 / 217 项');
+    await page.getByLabel('搜索研究字段',{exact:true}).fill('不应存在');
+    await page.getByText('没有匹配字段。清除筛选可查看完整目录。',{exact:true}).waitFor();
+    await page.getByLabel('搜索研究字段',{exact:true}).fill('chargeLevel');
+    await page.evaluate(()=>render());
+    assert.equal(await page.getByLabel('搜索研究字段',{exact:true}).inputValue(),'chargeLevel');
+    await page.getByLabel('搜索研究字段',{exact:true}).fill('');
+    await layouts(page,'research-overview');
+    await button('场景分析').click();
+    for(const name of ['四轮观测','低压电池','门窗、灯光与座椅','行程与充电条件']){
+      await page.locator('.research-scene-nav button').filter({hasText:name}).click();
+      await page.locator('#research-body h3').filter({hasText:name}).waitFor();
+    }
+    await layouts(page,'research-scenes');
+    await button('数据总览').click();
+    await page.getByLabel('搜索研究字段',{exact:true}).fill('electricVehicleStatus.chargeLevel');
+    await page.locator('[data-research="field"]').click();
+    await page.locator('.research-point-list article').first().waitFor();
+    assert.equal(await page.locator('.research-chart svg circle').count(),125);
+    assert.equal(await page.locator('.research-chart svg polyline').count(),0);
+    await layouts(page,'research-field');
+    await page.locator('.research-point-list article').nth(0).getByRole('button',{name:'选作前样本',exact:true}).click();
+    assert.equal(await page.evaluate(()=>document.activeElement.dataset.side),'before','Keyboard focus survives sample selection');
+    await page.locator('.research-point-list article').nth(1).getByRole('button',{name:'选作后样本',exact:true}).click();
+    await button('用所选样本建实验').click();
+    await page.locator('[data-lab-field]').waitFor();
+    assert.equal(await page.locator('[data-lab-path]:checked').count(),1);
+    await page.getByLabel('实际动作',{exact:true}).fill('用户核对表显电量');
+    assert.equal(await page.getByLabel('动作时间（北京时间）',{exact:true}).inputValue(),'','An action time must come from the user');
+    await page.getByLabel('动作时间（北京时间）',{exact:true}).fill('2026-09-20T00:00:30');
+    await button('保存实验记录').click();
+    await page.locator('[data-lab-record]').waitFor();
+    await button('回看实验').click();
+    await page.locator('[data-review-experiment]').first().click();
+    assert.equal(await page.locator('#review-status').inputValue(),'question','Evidence does not auto-confirm semantics');
+    await page.locator('#review-meaning').fill('用户人工核对的电量');
+    await page.locator('#review-status').selectOption('confirmed');
+    await page.locator('[data-review-action="save"]').click();
+    await page.waitForFunction(()=>state.field_reviews.records.some(r=>r.evidence&&r.status==='confirmed'));
+    await button('查看字段历史与场景').click();
+    await page.getByText('用户人工核对的电量',{exact:false}).first().waitFor();
+    await button('回看关联实验').click();
+    await page.getByText('保存时的观测摘录',{exact:true}).waitFor();
+    await button('查看历史与场景').click();
+    await page.locator('.research-point-list').waitFor();
+    // Opening another field while a scan runs queues it, without launching concurrent scans.
+    let release,started;
+    const gate=new Promise(resolve=>release=resolve), requested=new Promise(resolve=>started=resolve);
+    let held=false;
+    await page.route('**/api/insights/research?*',async route=>{
+      if(!held){held=true;started();await gate;}await route.continue();
+    });
+    await button('分析本地数据').click();await requested;
+    await page.evaluate(()=>insightsPage.openField('additionalVehicleStatus.climateStatus.interiorTemp'));
+    release();
+    await page.waitForFunction(()=>document.querySelector('#research-body .research-path')?.textContent==='additionalVehicleStatus.climateStatus.interiorTemp'&&!document.querySelector('#research-loading'));
+    await page.unroute('**/api/insights/research?*');
+    await page.getByLabel('研究开始日期',{exact:true}).fill('2026-07-01');
+    await button('分析本地数据').click();
+    await page.getByRole('alert').filter({hasText:'31'}).waitFor();
+    assert.equal(await page.getByLabel('研究开始日期',{exact:true}).inputValue(),'2026-07-01');
+    assert.ok(await page.locator('.research-point-list').isVisible(),'Previous results remain labeled with their actual range after error');
+    await page.evaluate(()=>{state.insights_context='another-owner';render();});
+    await page.waitForFunction(()=>!document.querySelector('.research-point-list'));
+    assert.equal(await page.getByText('用户人工核对的电量',{exact:false}).count(),0);
+    assert.equal(f.posts.length,2);
+    assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    console.log('UI_VEHICLE_RESEARCH_PASS: coverage, filters, five scenes, discrete history, experiment/review roundtrip, errors, isolation, layouts and contrast');
+  }finally{await f.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

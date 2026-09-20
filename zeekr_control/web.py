@@ -44,6 +44,7 @@ from .usage_calendar import UsageCalendar
 from .vehicle_life import VehicleLife
 from .data_quality import DataQuality
 from .trip_cards import TripCards
+from .vehicle_research import VehicleResearch, ResearchInputError, PUBLIC
 
 STATIC = Path(__file__).parent / 'static'
 
@@ -75,6 +76,7 @@ class App:
         self.vehicle_life = VehicleLife(self.personal_store)
         self.data_quality = DataQuality(self.archive_reader)
         self.trip_cards = TripCards(self.database_path)
+        self.vehicle_research = VehicleResearch(self.archive_reader, self.database_path)
         self.query_path = self.session_path.parent / 'queries.sqlite3'
         self.client_factory = ((lambda session: Client(session, query_policy=QueryPolicy(self.query_path)))
                                if client_factory is Client else client_factory)
@@ -340,9 +342,58 @@ class App:
 
     def review_field(self, data):
         with self.lock:
-            self._restore_snapshot(self._read_session())
+            session = self._read_session()
+            self._restore_snapshot(session)
+            fingerprint, context = session_scope(session), self._insights_context()
+            def guard():
+                if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
+                    raise ValueError('账号或车辆已切换，本次核实未保存。')
             paths = {field['path'] for field in (self.model or {}).get('fields', [])}
-            return self.field_review_store.update(self.vehicle_key, data, paths)
+            evidence = None
+            if data.get('experiment_id') and data.get('action') == 'save':
+                if data.get('context') != self._insights_context():
+                    raise ValueError('账号或车辆已切换，请重新读取实验。')
+                evidence = self.experiments.review_evidence(account_scope(session), self.vehicle_key, data)
+                paths.add(data.get('path'))
+            return self.field_review_store.update(self.vehicle_key, data, paths, evidence=evidence, guard=guard)
+
+    def research(self, start, end, path=''):
+        # Capture scope under the lock, scan privately outside it, then revalidate.
+        with self.lock:
+            session = self._read_session()
+            if not session.get('accessToken'):
+                raise ValueError('请先连接车辆账号。')
+            self._restore_snapshot(session)
+            context, vehicle = self._insights_context(), self.vehicle_key
+            if not context or not vehicle:
+                raise ValueError('等待当前账号的车辆缓存后再研究。')
+            scope, owner = session_scope(session), account_scope(session)
+            current = parameters(self.raw, self.model)
+        result = self.vehicle_research.query(scope, vehicle, start, end, path, current)
+        experiments = self.experiments.query(owner, vehicle)['records']
+        result['experiments'] = [dict(id=r['id'], title=r['body']['title'],
+            action_at=r['body']['action_at'], paths=r['body']['paths']) for r in experiments
+            if not r['deleted'] and (not path or path in r['body']['paths'])]
+        reviews = self.field_review_store.read(vehicle)['records']
+        result['reviews'] = [r for r in reviews if r['path'] in PUBLIC and (not path or r['path'] == path)]
+        result['sources'] = [dict(name='车况归档', count=result['counts']['reads'], scope='所选范围的读取',
+            use='历史、字段分布、时间质量与场景'),
+            dict(name='当前车辆档案', count=sum(f['status'] != 'missing' for f in current['fields']
+                 if f['path'].startswith('vehicleMetadata.')), scope='当前缓存的公开字段', use='配置与适用性背景'),
+            dict(name='行程与充电', count=result['event_conditions']['total'], scope='所选范围内结束的可见事件', use='条件比较与用车回顾'),
+            dict(name='人工核实', count=len(reviews), scope='本车全部记录', use='人工解释，独立于运行判断')]
+        for collection, label, use in [('experiments','参数实验','冻结动作与前后证据'),
+                ('charges','充电账本','费用和桩端电量'),('tags','行程标签','同类出行比较'),
+                ('expenses','生活支出','用车成本'),('reminders','生活待办','保养与日期提醒'),
+                ('rules','提醒规则','条件提醒与触发追踪')]:
+            records = experiments if collection == 'experiments' else self.personal_store.read(owner, vehicle, collection)['records']
+            result['sources'].append(dict(name=label, count=sum(not r['deleted'] for r in records),
+                scope='当前账号、本车全部保留记录', use=use))
+        with self.lock:
+            if session_scope(self._read_session()) != scope or self._insights_context() != context:
+                raise ValueError('账号或车辆已切换，请重新读取。')
+            result['context'] = context
+        return result
 
     def vehicle_parameters(self):
         with self.lock:
@@ -371,6 +422,8 @@ class App:
                         hashlib.sha256).hexdigest()
 
     def insights(self, operation, *args):
+        if operation == 'research':
+            return self.research(*args)
         with self.lock:
             session = self._read_session()
             if not session.get('accessToken'):
@@ -646,6 +699,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 if url.path.startswith('/api/insights/'):
                     query = parse_qs(url.query, keep_blank_values=True)
                     value = lambda name, default='': query.get(name, [default])[0]
+                    if url.path == '/api/insights/research':
+                        return self.send(200, app.insights('research', value('start'), value('end'), value('path')))
                     if url.path == '/api/insights/timeline':
                         return self.send(200, app.insights('timeline', value('date'), value('cursor', None)))
                     if url.path == '/api/insights/snapshot':
@@ -732,6 +787,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/trip-tags.js': ('trip-tags.js', 'text/javascript; charset=utf-8'),
                           '/charge-comparison.js': ('charge-comparison.js', 'text/javascript; charset=utf-8'),
                           '/parameter-experiments.js': ('parameter-experiments.js', 'text/javascript; charset=utf-8'),
+                          '/vehicle-research.js': ('vehicle-research.js', 'text/javascript; charset=utf-8'),
                           '/usage-calendar.js': ('usage-calendar.js', 'text/javascript; charset=utf-8'),
                           '/vehicle-life.js': ('vehicle-life.js', 'text/javascript; charset=utf-8'),
                           '/data-quality.js': ('data-quality.js', 'text/javascript; charset=utf-8'),
@@ -757,6 +813,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     name, content_type = assets[url.path]
                     return self.send(200, (STATIC / name).read_bytes(), content_type)
                 return self.send(404, {'error': '页面不存在。'})
+            except ResearchInputError as exc:
+                self.send(400, {'error': str(exc)})
             except ValueError:
                 self.send(400, {'error': '日期或参数无效。'})
             except Exception:

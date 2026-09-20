@@ -94,5 +94,16 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(self.api.query('other','car')['records'],[])
         with self.assertRaises(ValueError):self.api.detail('other','car',saved['id'])
 
+    def test_review_raw_uses_dictionary_format_without_losing_frozen_raw(self):
+        from zeekr_control.parameter_experiments import review_raw
+        self.assertEqual(review_raw({'status':'pending','raw':'12.34567'}),'12.346')
+        self.assertEqual(review_raw({'status':'pending','raw':'"hello"'}),'hello')
+        self.assertEqual(review_raw({'status':'pending','raw':'true'}),'true')
+        self.assertIsNone(review_raw({'status':'invalid','raw':'[非标量值]'}))
+        saved=self.save()
+        data=dict(experiment_id=saved['id'],experiment_side='after',path=self.path,raw='69')
+        with self.assertRaises(ValueError):self.api.review_evidence('other','car',data)
+        with self.assertRaises(ValueError):self.api.review_evidence('owner','other-car',data)
+
 
 if __name__=='__main__':unittest.main()

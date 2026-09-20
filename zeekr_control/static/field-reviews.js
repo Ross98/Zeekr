@@ -2,6 +2,7 @@
 const reviewLabels = {pending:'待核实', partial:'部分确认', confirmed:'已确认', question:'有疑问', na:'不适用'};
 let reviewFilter = '', reviewSelected = '', reviewVehicle = null, reviewSaving = false, reviewUndo = null;
 let reviewEditing = false;
+let reviewExternal=null, reviewExternalContext='', reviewContext='';
 const reviewDrafts = new Map();
 
 function reviewData() { return state?.field_reviews || {vehicle:null,revision:null,records:[]}; }
@@ -21,7 +22,9 @@ function reviewStatus(field) {
 function reviewDraftKey(path) { return JSON.stringify([reviewVehicle,path]); }
 function reviewDraft() { return reviewDrafts.get(reviewDraftKey(reviewSelected)); }
 function reviewSync() {
-  if (reviewVehicle !== reviewData().vehicle) {
+  if (reviewVehicle !== reviewData().vehicle || reviewContext !== state?.insights_context) {
+    reviewContext=state?.insights_context;
+    reviewDrafts.clear();
     reviewVehicle = reviewData().vehicle;
     reviewSelected = '';
     reviewUndo = null;
@@ -37,7 +40,44 @@ function newReviewDraft(field, scope = null) {
     dirty:false, saved:false, revision:reviewData().revision};
 }
 function reviewVisibleFields() {
-  return (state?.model?.fields || []).filter(f => f.evidence !== '未知' && f.value !== '未知' && f.raw !== '未知');
+  const fields=(state?.model?.fields || []).filter(f => f.evidence !== '未知' && f.value !== '未知' && f.raw !== '未知');
+  if(reviewExternal && reviewExternalContext===state?.insights_context && !fields.some(f=>f.path===reviewExternal.path))fields.push(reviewExternal);
+  return fields;
+}
+
+function openResearchReview(field, evidence=null){
+  if(reviewSaving){toast('正在保存核实，请稍后再切换。');return;}
+  reviewSync();
+  const current=state.model?.fields.find(f=>f.path===field.path);
+  const existing=reviewDrafts.get(reviewDraftKey(field.path));
+  if(existing?.dirty){toast('此字段有未保存草稿，请先保存或放弃。');return;}
+  reviewExternal={path:field.path,name:field.name,group:field.group,
+    raw:evidence?.raw??current?.raw??'未返回',value:current?.value??'本次未返回',evidence:current?.evidence??'待核实',
+    reference:current?.reference??{kind:field.kind,unit:field.unit,note:field.note,applicability:field.applicability,sources:[]},
+    research_only:!current&&!evidence};
+  reviewExternalContext=state.insights_context;
+  reviewSelected=field.path;search=groupFilter=reviewFilter='';unknownOnly=false;reviewEditing=!!evidence;
+  if(evidence){
+    reviewDrafts.set(reviewDraftKey(field.path),{...newReviewDraft(reviewExternal,'value'),
+      raw:evidence.raw,status:'question',meaning:'',observation:'',scene:evidence.action_text,note:'',
+      observed_at:evidence.observed_at,experiment_id:evidence.id,experiment_side:evidence.side,
+      evidence,dirty:true,saved:false});
+  }
+  page='fields';render();window.scrollTo(0,0);
+}
+async function openExperimentReview(id,path,side){
+  const identity=state?.insights_context;
+  try{
+    const result=await api('/api/insights/experiments/detail?id='+encodeURIComponent(id));
+    if(identity!==state?.insights_context||result.context!==identity)return;
+    const field=result.body.changes.find(f=>f.path===path),sample=field?.[side];
+    if(!field||!['known','pending'].includes(sample?.status))throw Error('该样本没有可核实的有效原值。');
+    const display=sample.review_raw;
+    if(typeof display!=='string'||display==='未知')throw Error('该样本不支持字典核实。');
+    openResearchReview(field,{id,side,title:result.body.title,raw:display,
+      action_text:result.body.action_text,observed_at:result.body[side].state_time,
+      warnings:result.body.warnings});
+  }catch(error){toast(error.message);}
 }
 function reviewItems() {
   return reviewVisibleFields().filter(f => (!groupFilter || f.group === groupFilter) &&
@@ -53,7 +93,7 @@ function fieldsPage() {
     ${state.profile?.variant ? `<p class="section-note">本车资料：${esc(state.profile.name)} · ${esc(state.profile.variant)}</p>` : ''}
     <div id="review-progress" class="review-progress" aria-label="人工核实进度"></div>
     <div class="filters"><input type="search" id="search" aria-label="搜索参数" placeholder="搜索中文名称或字段，如：胎压、chargeLevel" value="${esc(search)}"><select class="select" id="group" aria-label="参数分类"><option value="">全部分类</option>${groups.map(g => `<option ${groupFilter===g?'selected':''}>${esc(g)}</option>`).join('')}</select><label class="check"><input type="checkbox" id="unknown" ${unknownOnly?'checked':''}>仅系统待核实</label></div>
-    <p class="section-note">未核实参数也可正常读取、展示和参考；标记仅说明解释尚未确认。枚举按具体原值核实，未知项已隐藏（${state.model.fields.length-reviewVisibleFields().length} 项）；有效值返回后恢复展示。</p>
+    <p class="section-note">未核实参数也可正常读取、展示和参考；标记仅说明解释尚未确认。枚举按具体原值核实，未知项已隐藏（${Math.max(0,state.model.fields.length-reviewVisibleFields().length)} 项）；有效值返回后恢复展示。</p>
     ${reviewData().error ? `<div class="notice error" role="alert">${esc(reviewData().error)}</div>` : ''}
     <div class="review-workspace"><section class="card review-list" id="field-results"></section><aside class="card review-panel" id="review-panel" aria-label="参数核实面板"></aside></div>`;
 }
@@ -99,9 +139,9 @@ function renderReviewPanel() {
   if (!reviewEditing) {
     const records = reviewRecords(field.path), status = reviewStatus(field);
     panel.innerHTML = `<div class="card-head"><div><span class="eyebrow">参数详情</span><h2>${esc(field.name)}</h2></div><span class="pill ${status==='confirmed'?'good':status==='pending'||status==='question'?'warn':''}">${reviewLabels[status]}</span></div>
-      <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span><div class="review-snapshot"><div><span>当前原值</span><strong>${esc(field.raw)}</strong></div><div><span>系统解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div>${renderFieldReference(field)}
-      <details class="review-history" ${records.length?'open':''}><summary>人工核实记录 · ${records.length} 条</summary>${records.length?records.map(record=>`<div class="review-history-row"><span>${record.scope==='field'?'整个字段':`原值 ${esc(record.raw)}`} · ${reviewLabels[record.status]}</span><strong>${esc(record.meaning || record.note || '未填写说明')}</strong><small>${esc(reviewTime(record.saved_at))}</small></div>`).join(''):'<p class="subtle">暂无人工核实记录。</p>'}</details></div>
-      <div class="review-panel-footer"><div class="review-actions"><button type="button" class="button" data-review-action="edit">编辑核实</button></div></div>`;
+      <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span><div class="review-snapshot"><div><span>当前原值</span><strong>${esc(field.raw)}</strong></div><div><span>系统解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div>${renderFieldReference(field)}<div class="review-actions"><button class="button secondary" data-open-research="${esc(field.path)}">查看字段历史与场景</button></div>
+      <details class="review-history" ${records.length?'open':''}><summary>人工核实记录 · ${records.length} 条</summary>${records.length?records.map(record=>`<div class="review-history-row"><span>${record.scope==='field'?'整个字段':`原值 ${esc(record.raw)}`} · ${reviewLabels[record.status]}</span><strong>${esc(record.meaning || record.note || '未填写说明')}</strong><small>${esc(reviewTime(record.saved_at))}${record.evidence?' · 已关联实验：'+esc(record.evidence.title):''}</small></div>`).join(''):'<p class="subtle">暂无人工核实记录。</p>'}</details></div>
+      <div class="review-panel-footer"><div class="review-actions"><button type="button" class="button" data-review-action="edit" ${field.research_only?'disabled':''}>编辑核实</button></div></div>`;
     return;
   }
   if (!reviewDraft()) reviewDrafts.set(reviewDraftKey(field.path),newReviewDraft(field));
@@ -114,7 +154,8 @@ function renderReviewPanel() {
   panel.innerHTML = `<div class="card-head"><div><span class="eyebrow">逐项核实</span><h2>${esc(field.name)}</h2></div><span id="review-save-status" class="subtle" role="status">${draft.dirty?'有未保存内容':draft.saved?'已保存':'待填写 / 可修改'}</span></div>
     <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span>
     <div class="review-snapshot"><div><span>本次核实原值</span><strong>${esc(draft.raw)}</strong></div><div><span>系统当前解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div>
-    ${renderFieldReference(field)}
+    ${renderFieldReference(field)}<div class="review-actions"><button class="button secondary" data-open-research="${esc(field.path)}">查看字段历史与场景</button></div>
+    ${draft.evidence?`<p class="notice info">已关联实验：${esc(draft.evidence.title)} · ${draft.experiment_side==='before'?'前':'后'}样本。核实结果仍需你填写；有疑问为默认状态。</p>`:''}
     <p class="subtle">核实样本时间：${esc(reviewTime(draft.observed_at))}<br>整车缓存时间；子字段可能不同步。</p>
     <div id="review-live-notice" class="${changed?'notice info':'subtle'}">${changed?`当前原值已变化为 ${esc(field.raw)}；填写内容仍对应原值 ${esc(draft.raw)}。`:'填写期间保留本次样本，刷新不会覆盖草稿。'}</div>
     ${changed?'<button class="text-link" data-review-action="latest">使用最新值核实</button>':''}
@@ -168,6 +209,7 @@ async function saveReview(action = 'save', next = false, override = null) {
   const draft = reviewDraft(), vehicle = reviewVehicle;
   const snapshot = {...draft}, items = reviewItems();
   const payload = override || {...snapshot,action,vehicle,revision:draft.revision};
+  payload.context=state.insights_context;
   if (payload.action === 'save' && payload.status === 'confirmed' && !payload.meaning.trim()) {
     $('#review-error').textContent = '请填写确认含义，再保存。'; $('#review-meaning').focus(); return;
   }
@@ -183,7 +225,7 @@ async function saveReview(action = 'save', next = false, override = null) {
     for (const [key,value] of reviewDrafts) {
       if (key.startsWith(JSON.stringify([vehicle]).slice(0,-1)+',') && !value.dirty) value.revision = result.revision;
     }
-    const field = state.model.fields.find(f => f.path === payload.path);
+    const field = reviewVisibleFields().find(f => f.path === payload.path);
     const saved = newReviewDraft({...field,raw:payload.raw},payload.scope);
     saved.saved = true;
     reviewDrafts.set(reviewDraftKey(payload.path),saved);
@@ -223,7 +265,7 @@ function handleReviewAction(target) {
   if (!operation && !target.hasAttribute('data-review-record')) return false;
   if (reviewSaving) return true;
   if (operation === 'edit') {reviewEditing=true;renderReviewPanel();return true;}
-  const draft = reviewDraft(), field = state.model.fields.find(f=>f.path===reviewSelected);
+  const draft = reviewDraft(), field = reviewVisibleFields().find(f=>f.path===reviewSelected);
   if (target.hasAttribute('data-review-record') || operation === 'latest') {
     if (draft.dirty) {toast('请先保存或放弃当前草稿，再切换核实样本。');return true;}
     const record = target.hasAttribute('data-review-record') ? reviewRecords(reviewSelected)[Number(target.dataset.reviewRecord)] : null;

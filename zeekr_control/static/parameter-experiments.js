@@ -5,7 +5,7 @@
   const warningLabels={action_not_bracketed:'动作时间不在两条采集时间之间，不能据此前后关系推断影响。',vehicle_time_unknown:'样本车辆时间未知。',vehicle_time_not_advanced:'车辆时间没有推进，可能只是重复或修订。',flagged_samples:'样本有陈旧、时间异常等标记。',wide_sample_gap:'两个采集样本相隔超过十分钟，期间可能有其他变化。'};
   function create({getState,request,escape:esc,active,time}){
     let node=null,owner='',data=null,attempted=false,loading=false,busy=false,serial=0,detailSerial=0,writeSerial=0;
-    let draft=blank(),comparison=null,chosen=new Set(),query='',fieldPage=0,page=0,recordFilter='active',error='',status='';
+    let draft=blank(),dirty=false,comparison=null,chosen=new Set(),query='',fieldPage=0,page=0,recordFilter='active',error='',status='';
     const today=()=>beijingInput(Date.now()).slice(0,10);
     let dates={before:today(),after:today()},lists={before:null,after:null},selected={before:'',after:''};
     let sampleLoading={before:false,after:false},sampleSerial={before:0,after:0},sampleError={before:'',after:''};
@@ -40,7 +40,7 @@
     function paintChanges(){
       const el=node?.querySelector('#lab-fields');if(!el||!comparison)return;
       const fields=filtered(),pages=Math.max(1,Math.ceil(fields.length/12));fieldPage=Math.min(fieldPage,pages-1);
-      el.innerHTML=`<div class="insight-diff lab-diff">${fields.slice(fieldPage*12,fieldPage*12+12).map(f=>`<article data-lab-field="${esc(f.path)}"><div><label class="lab-field-check"><input type="checkbox" data-lab-path="${esc(f.path)}" ${chosen.has(f.path)?'checked':''} ${draft.id||busy?'disabled':''}>${esc(f.name)}</label><small>${esc(f.path)}</small>${f.display_limited?'<small>显示已简化，完整值确有差异。</small>':''}</div>${['before','after'].map(side=>`<div><span>${side==='before'?'前':'后'}</span><b>${esc(f[side].value)}</b><small>原值 ${esc(f[side].raw)}</small><small>解释状态：${esc({known:'已有解释',unverified:'含义待核验',unknown:'数值未知'}[f[side].status]||f[side].status)}</small></div>`).join('')}</article>`).join('')||'<p class="insight-empty">没有符合筛选的变化字段。</p>'}</div><div class="insight-pagination">${button('上一页变化字段','fields-previous',fieldPage===0)}<span>${fields.length} 项 · ${fieldPage+1} / ${pages}</span>${button('下一页变化字段','fields-next',fieldPage+1===pages)}</div>`;
+      el.innerHTML=`<div class="insight-diff lab-diff">${fields.slice(fieldPage*12,fieldPage*12+12).map(f=>`<article data-lab-field="${esc(f.path)}"><div><label class="lab-field-check"><input type="checkbox" data-lab-path="${esc(f.path)}" ${chosen.has(f.path)?'checked':''} ${draft.id||busy?'disabled':''}>${esc(f.name)}</label><small>${esc(f.path)}</small><button class="text-link" data-open-research="${esc(f.path)}">查看历史与场景</button>${f.display_limited?'<small>显示已简化，完整值确有差异。</small>':''}</div>${['before','after'].map(side=>`<div><span>${side==='before'?'前':'后'}</span><b>${esc(f[side].value)}</b><small>原值 ${esc(f[side].raw)}</small><small>解释状态：${esc({known:'已有解释',unverified:'含义待核验',unknown:'数值未知'}[f[side].status]||f[side].status)}</small>${draft.id&&['known','pending'].includes(f[side].status)?`<button class="text-link" data-review-experiment="${esc(draft.id)}" data-path="${esc(f.path)}" data-side="${side}">带此证据核实</button>`:''}</div>`).join('')}</article>`).join('')||'<p class="insight-empty">没有符合筛选的变化字段。</p>'}</div><div class="insight-pagination">${button('上一页变化字段','fields-previous',fieldPage===0)}<span>${fields.length} 项 · ${fieldPage+1} / ${pages}</span>${button('下一页变化字段','fields-next',fieldPage+1===pages)}</div>`;
       node.querySelector('#lab-chosen-count').textContent=`已选 ${chosen.size} / 40 项；筛选不会自动清除已选项`;
     }
     function paintRecords(){
@@ -66,7 +66,7 @@
       }catch(failure){if(valid(token,sampleSerial[side],identity))sampleError[side]=failure.message;}
       finally{if(valid(token,sampleSerial[side],identity)){sampleLoading[side]=false;paint();}}
     }
-    async function readDetail(identityToRead){
+    async function readDetail(identityToRead,preferredPath=''){
       if(busy||sampleLoading.before||sampleLoading.after)return;
       const identity=owner,token=++detailSerial;busy=true;error='';paint();
       try{
@@ -74,7 +74,9 @@
         if(!valid(token,detailSerial,identity))return;if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         if(identityToRead){const b=result.body;draft={id:result.id,title:b.title,action_text:b.action_text,action_time:beijingInput(b.action_at),note:b.note};comparison={before:b.before,after:b.after,changes:b.changes};chosen=new Set(b.paths);}
         else{comparison=result;chosen=new Set(result.changes.slice(0,40).map(f=>f.path));}
-        query='';fieldPage=0;
+        if(identityToRead||preferredPath)dirty=false;
+        if(preferredPath){chosen=new Set(result.changes.filter(f=>f.path===preferredPath).map(f=>f.path));query=preferredPath;}
+        else query='';fieldPage=0;
       }catch(failure){if(valid(token,detailSerial,identity))error=failure.message;}
       finally{if(valid(token,detailSerial,identity)){busy=false;paint();}}
     }
@@ -87,21 +89,21 @@
       try{const result=await request('/api/insights/experiments',payload);if(!valid(token,writeSerial,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');data.revision=result.revision;data.can_undo=result.can_undo;
         status=action==='save'?'实验记录已保存。':'实验操作已保存。';
-        if(action==='save'||action==='delete'&&draft.id===id){draft=blank();comparison=null;chosen.clear();}
+        if(action==='save'||action==='delete'&&draft.id===id){draft=blank();dirty=false;comparison=null;chosen.clear();}
         if(!await loadRecords()&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新读取核对。';
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 填写内容保留；请重新读取核对后操作。';}
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
     }
     function mount(container){
       const changed=owner!==context(),remount=node!==container;node=container;
-      if(changed){owner=context();data=null;draft=blank();comparison=null;chosen.clear();attempted=loading=busy=false;serial++;detailSerial++;writeSerial++;error=status='';for(const side of ['before','after']){lists[side]=null;selected[side]='';sampleLoading[side]=false;sampleSerial[side]++;sampleError[side]='';}}
+      if(changed){owner=context();data=null;draft=blank();dirty=false;comparison=null;chosen.clear();attempted=loading=busy=false;serial++;detailSerial++;writeSerial++;error=status='';for(const side of ['before','after']){lists[side]=null;selected[side]='';sampleLoading[side]=false;sampleSerial[side]++;sampleError[side]='';}}
       if(changed||remount)paint();if(owner&&!attempted&&!loading)loadRecords();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;const el=event.target;
       if(event.type==='input'){
         const mapping={'lab-title':'title','lab-action-text':'action_text','lab-action-time':'action_time','lab-note':'note'};
-        if(mapping[el.id]){draft[mapping[el.id]]=el.value;paintWarnings();return true;}
+        if(mapping[el.id]){draft[mapping[el.id]]=el.value;dirty=true;paintWarnings();return true;}
         if(el.id.startsWith('lab-date-')){dates[el.id.endsWith('before')?'before':'after']=el.value;return true;}
         if(el.id==='lab-search'){query=el.value;fieldPage=0;paintChanges();return true;}
       }
@@ -112,7 +114,7 @@
       }
       if(event.type!=='click')return false;const target=el.closest('[data-lab]');if(!target||target.disabled)return false;
       const action=target.dataset.lab;
-      if(action==='load')loadRecords();else if(action==='new'){draft=blank();comparison=null;chosen.clear();error=status='';detailSerial++;paint();}
+      if(action==='load')loadRecords();else if(action==='new'){draft=blank();dirty=false;comparison=null;chosen.clear();error=status='';detailSerial++;paint();}
       else if(action==='samples'||action==='more')loadSamples(target.dataset.side,action==='more');
       else if(action==='compare')readDetail();else if(action==='review')readDetail(target.dataset.id);
       else if(action==='select-filter'){chosen=new Set(filtered().slice(0,40).map(f=>f.path));paintChanges();}
@@ -121,7 +123,20 @@
       else if(action==='previous'){page--;paintRecords();}else if(action==='next'){page++;paintRecords();}
       else mutate(action,target.dataset.id);return true;
     }
-    return {mount,handle};
+    function openEvidence(selection){
+      if(dirty){error='实验室有未保存内容，请先保存，或点新建实验放弃当前内容后再带入样本。';paint();return;}
+      if(selection.id){readDetail(selection.id);return;}
+      if(busy)return;
+      draft=blank();draft.title=selection.name+'观察';
+      draft.action_time='';
+      comparison=null;chosen.clear();
+      for(const side of ['before','after']){
+        const point=selection[side];selected[side]=point.key;dates[side]=beijingInput(point.observed_at).slice(0,10);
+        lists[side]={date:dates[side],items:[point],next_cursor:null};
+      }
+      paint();readDetail(undefined,selection.path);
+    }
+    return {mount,handle,openEvidence};
   }
   root.ParameterExperimentsPage={create};
 })(window);

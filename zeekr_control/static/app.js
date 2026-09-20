@@ -41,7 +41,7 @@ const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unc
 
 const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,redraw:render,escape:esc,age,active:()=>page==='car'});
 
-const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='insights'});
+const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='insights',review:openResearchReview});
 const tripManager = window.TripManagement.create({getState:()=>state,getDate:()=>trackDate,request:api,escape:esc,
   active:()=>page==='tracks'&&trackSource==='local'&&tripManagementOpen,
   changed:revision=>{
@@ -679,6 +679,9 @@ document.addEventListener('click', event => {
   if (vehiclePage.handle(event)) return;
   const target = event.target.closest('button');
   if (!target || target.disabled) return;
+  if (target.dataset.openResearch) {page='insights';render();insightsPage.openField(target.dataset.openResearch);window.scrollTo(0,0);return;}
+  if (target.dataset.reviewExperiment) {openExperimentReview(target.dataset.reviewExperiment,target.dataset.path,target.dataset.side);return;}
+  if (target.dataset.openExperiment) {page='insights';render();insightsPage.openExperiment({id:target.dataset.openExperiment});window.scrollTo(0,0);return;}
   if (handleReviewAction(target)) return;
   if (handleCloudAction(target)) return;
   if (handleLocalTripAction(target)) return;

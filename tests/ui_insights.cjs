@@ -38,6 +38,7 @@ const path = require('node:path'), fs = require('node:fs');
     page.on('request', r => {if(r.method()==='POST')posts.push(r.url());if(!r.url().startsWith(origin))external.push(r.url());});
     await page.goto(origin);
     await page.getByRole('button', {name:'用车研究',exact:true}).click();
+    await page.getByRole('button', {name:'车辆时间机',exact:true}).click();
     await page.getByLabel('归档日期', {exact:true}).fill('2026-09-20');
     await page.getByRole('button', {name:'查看归档',exact:true}).click();
     await page.locator('#insight-snapshot').getByText('70%', {exact:true}).waitFor();

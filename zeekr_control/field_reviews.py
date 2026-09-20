@@ -39,7 +39,7 @@ class FieldReviewStore:
             'SELECT body FROM reviews WHERE vehicle=? ORDER BY path,scope,value', (vehicle,))]
         return {'vehicle': vehicle, 'revision': revision[0] if revision else 0, 'records': records}
 
-    def update(self, vehicle, data, allowed_paths):
+    def update(self, vehicle, data, allowed_paths, *, evidence=None, guard=None):
         if not vehicle or data.get('vehicle') != vehicle:
             raise ValueError('车辆已切换，请重新选择参数。')
         if type(data.get('revision')) is not int or data['revision'] < 0:
@@ -77,6 +77,9 @@ class FieldReviewStore:
                     if not valid:
                         raise ValueError('字段级确认仅用于数值参数，枚举请按具体值确认。')
             record.update(status=status, observed_at=observed, saved_at=int(time.time() * 1000))
+            if evidence is not None:
+                record.update(experiment_id=evidence['id'], experiment_side=evidence['side'], evidence=evidence)
+                record['observed_at'] = evidence['sample']['state_time']
         db = self.connect()
         try:
             with db:
@@ -84,6 +87,8 @@ class FieldReviewStore:
                 current = self._read(db, vehicle)
                 if current['revision'] != data['revision']:
                     raise ValueError('核实记录已有更新，请同步记录后重试；填写内容保留。')
+                if guard is not None:
+                    guard()
                 key = (vehicle, path, scope, raw if scope == 'value' else '')
                 if action == 'delete':
                     db.execute('DELETE FROM reviews WHERE vehicle=? AND path=? AND scope=? AND value=?', key)
@@ -91,6 +96,8 @@ class FieldReviewStore:
                     db.execute('INSERT OR REPLACE INTO reviews VALUES (?,?,?,?,?)',
                                (*key, json.dumps(record, ensure_ascii=False)))
                 db.execute('INSERT OR REPLACE INTO revisions VALUES (?,?)', (vehicle, current['revision'] + 1))
+                if guard is not None:
+                    guard()
                 return self._read(db, vehicle)
         finally:
             db.close()
