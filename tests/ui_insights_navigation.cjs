@@ -40,26 +40,20 @@ const {fixture, layouts} = require('./ui_insight_helpers.cjs');
     await layouts(page, 'insights-navigation');
     for (const width of [390, 320]) {
       await page.setViewportSize({width, height: 900});
-      await page.waitForFunction(() => {
-        const nav = document.querySelector('.insight-tabs').getBoundingClientRect();
-        const current = document.querySelector('[data-insight-view][aria-pressed=true]').getBoundingClientRect();
-        return current.left >= nav.left - 1 && current.right <= nav.right + 1;
-      });
-      assert.ok(await page.locator('.insight-navigation').evaluate(el => el.getBoundingClientRect().height < 260), 'Compact mobile tool directory');
-      for (const label of ['车辆时间机', '周报与月报', '停车耗电']) {
-        await tool(label).click();
-        assert.equal(await tool(label).getAttribute('aria-pressed'), 'true');
+      assert.ok(await page.locator('.insight-navigation').evaluate(el => el.getBoundingClientRect().height < 125), 'Compact mobile tool selector');
+      for (const [value,label] of [['time','车辆时间机'],['report','周报与月报'],['parking','停车耗电']]) {
+        await page.getByLabel('当前研究工具',{exact:true}).selectOption(value);
+        assert.equal(await page.getByLabel('当前研究工具',{exact:true}).inputValue(),value);
+        await tool('查找工具').click();
+        assert.equal(await tool(label).getAttribute('aria-pressed'),'true');
+        await tool('查找工具').click();
       }
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     }
     await page.setViewportSize({width: 1440, height: 1000});
     await page.evaluate(() => {document.documentElement.style.zoom = '2';});
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    assert.ok(await page.evaluate(() => {
-      const nav = document.querySelector('.insight-tabs').getBoundingClientRect();
-      const current = document.querySelector('[data-insight-view][aria-pressed=true]').getBoundingClientRect();
-      return current.left >= nav.left - 1 && current.right <= nav.right + 1;
-    }), 'The selected tool remains visible at 200% zoom');
+    assert.ok(await page.getByLabel('当前研究工具',{exact:true}).isVisible(), 'Current tool selector visible at 200% zoom');
     await page.evaluate(() => {document.documentElement.style.zoom = '';});
     await search.fill('费用');
     await page.evaluate(() => {state.insights_context = 'synthetic-other-owner'; render();});

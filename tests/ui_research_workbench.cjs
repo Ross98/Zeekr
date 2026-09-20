@@ -1,0 +1,88 @@
+const assert=require('node:assert/strict');
+const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+(async()=>{
+  const f=await fixture(),{page}=f;
+  page.setDefaultTimeout(10000);
+  const button=name=>page.getByRole('button',{name,exact:true});
+  let queries=0;page.on('request',r=>{if(r.url().includes('/api/insights/research?'))queries++;});
+  try{
+    await button('数据利用').click();
+    await page.locator('#research-field-count').waitFor();
+    const response=page.waitForResponse(r=>r.url().includes('/api/insights/research?'));
+    await button('今日').click();await response;
+    await page.locator('#research-loading').waitFor({state:'detached'});
+    const end=await page.locator('#research-end').inputValue();
+    assert.equal(await page.locator('#research-start').inputValue(),end);
+    for(const [label,days] of [['近 7 天',7],['近 30 天',30]]){
+      await button(label).click();await page.locator('#research-loading').waitFor({state:'detached'});
+      assert.equal((Date.parse(await page.locator('#research-end').inputValue())-Date.parse(await page.locator('#research-start').inputValue()))/86400000,days-1);
+    }
+    async function range(start,end){
+      await page.locator('#research-start').fill(start);await page.locator('#research-end').fill(end);
+      await button('分析本地数据').click();await page.locator('#research-loading').waitFor({state:'detached'});
+    }
+    await range('2030-01-01','2030-01-01');
+    assert.equal(await page.locator('.research-field-table td[data-label="返回率"] strong').first().innerText(),'—','No reads means unknown return rate, not zero percent');
+    await range('2026-09-20','2026-09-20');
+    const count=queries;
+    await page.getByRole('button',{name:/已用于分析 \d+ 项/}).click();
+    assert.equal(await page.locator('#research-usage').inputValue(),'analyzed');
+    await page.locator('#research-sort').selectOption('samples');
+    const samples=await page.locator('[data-field-samples]').evaluateAll(els=>els.map(e=>Number(e.dataset.fieldSamples)));
+    assert.ok(samples.length>0);assert.deepEqual(samples,[...samples].sort((a,b)=>b-a));
+    await page.getByLabel('搜索研究字段',{exact:true}).fill('electricVehicleStatus.chargeLevel');
+    assert.equal(queries,count,'Local sort, search and usage filters must not scan archives');
+    let release,started;
+    const gate=new Promise(resolve=>release=resolve),requested=new Promise(resolve=>started=resolve);
+    await page.route('**/api/insights/research?*',async route=>{started();await gate;await route.continue();});
+    await page.locator('[data-research="field"]').click();await requested;
+    await button('数据总览').click();release();
+    await page.locator('#research-loading').waitFor({state:'detached'});
+    await page.unroute('**/api/insights/research?*');
+    assert.equal(await button('数据总览').getAttribute('aria-pressed'),'true','A completed request must not override navigation made while loading');
+    await page.locator('[data-research="field"]').click();
+    await page.locator('.research-chart').waitFor();
+    await page.locator('#research-loading').waitFor({state:'detached'});
+    assert.equal(await page.evaluate(()=>document.activeElement.dataset.research),'back','Opening a field places keyboard focus at its entry');
+    assert.equal(await page.locator('#research-samples').isVisible(),false);
+    assert.ok(await page.locator('.research-y-axis span').count()>=3,'Visible numeric scale');
+    await layouts(page,'research-detail-compact');
+    await button('选择前后样本').click();
+    assert.equal(await page.locator('.research-point-list article').count(),6);
+    await page.locator('.research-point-list article').first().getByRole('button',{name:'选作前样本',exact:true}).click();
+    await button('分布与场景').click();
+    assert.equal(await page.locator('.research-chart').count(),0,'Only the selected detail section is rendered');
+    await button('历史取证').click();
+    assert.equal(await page.locator('[data-side="before"][aria-pressed="true"]').count(),1);
+    await button('返回字段清单').click();
+    assert.equal(await page.getByLabel('搜索研究字段',{exact:true}).inputValue(),'electricVehicleStatus.chargeLevel');
+    assert.equal(await page.locator('#research-sort').inputValue(),'samples');
+    await button('清除字段筛选').click();
+    assert.equal(await page.locator('#research-field-count').innerText(),'217 / 217 项');
+    await page.locator('#research-group').selectOption({index:1});
+    await page.getByLabel('搜索研究字段',{exact:true}).fill('没有这个参数');
+    await button('清除字段筛选').click();
+    assert.equal(await page.locator('#research-group').inputValue(),'');
+    assert.ok(await page.locator('[data-research=field]').first().evaluate(el=>el.getBoundingClientRect().top+scrollY<1000),'First field is reachable in the desktop first viewport');
+    await layouts(page,'research-workbench');
+    await page.setViewportSize({width:390,height:844});
+    assert.ok(await page.locator('.insight-navigation').evaluate(el=>el.getBoundingClientRect().height<125));
+    assert.equal(await page.locator('#research-start').isVisible(),false);
+    await button('自选日期').click();
+    assert.equal(await page.locator('#research-start').isVisible(),true);
+    await page.locator('#research-start').fill('2026-09-19');
+    assert.match(await page.locator('#research-range-draft').innerText(),/日期已修改/);
+    await button('自选日期').click();
+    await page.getByLabel('当前研究工具',{exact:true}).selectOption('ledger');
+    await page.locator('#ledger-note').fill('手机保留草稿');
+    await page.getByLabel('当前研究工具',{exact:true}).selectOption('research');
+    await button('查找工具').click();
+    await page.getByLabel('查找研究工具',{exact:true}).fill('费用');
+    await button('充电账本').click();
+    assert.equal(await page.locator('#ledger-note').inputValue(),'手机保留草稿');
+    assert.equal(await page.getByLabel('当前研究工具',{exact:true}).inputValue(),'ledger');
+    assert.equal(await button('查找工具').getAttribute('aria-expanded'),'false');
+    assert.deepEqual(f.posts,[]);assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
+    console.log('UI_RESEARCH_WORKBENCH_PASS: date presets, local filters/sorting, layered details, sample selection, mobile navigation and drafts');
+  }finally{await f.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -22,7 +22,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.locator('.quality-delays').locator('..').screenshot({path:'/tmp/zeekr-insights-qa/data-quality-delay-dark-390.png'});
     await page.getByRole('button',{name:'查看所选日快照',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#insight-count')?.textContent.includes('2026-09-20'));
-    await page.getByRole('button',{name:'数据质量雷达',exact:true}).click();
+    await page.getByLabel('当前研究工具',{exact:true}).selectOption('quality');
     await page.route('**/api/insights/quality?*',r=>r.fulfill({status:500,contentType:'application/json',body:JSON.stringify({error:'合成归档读取失败'})}));
     await page.getByLabel('质量分析开始日期',{exact:true}).fill('2026-09-01');
     await page.getByRole('button',{name:'分析数据质量',exact:true}).click();

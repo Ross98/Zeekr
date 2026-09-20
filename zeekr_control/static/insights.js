@@ -29,7 +29,7 @@
   ];
 
   function create({getState,request,escape:esc,active,review}) {
-    let tab='research', toolQuery='';
+    let tab='research', toolQuery='', toolsExpanded=false;
     const parkingPage=root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time});
     const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
     const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
@@ -47,7 +47,6 @@
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
     let listSerial=0, detailSerial=0, compareSerial=0, selectTimer;
-    let navigationObserver=null;
 
     function reset() {
       records=[];cursor=null;index=0;detail=null;baseline=null;comparison=null;loadedDate='';
@@ -55,13 +54,13 @@
       listSerial++;detailSerial++;compareSerial++;clearTimeout(selectTimer);
     }
     function context() {return getState()?.insights_context || '';}
-    function openField(path){tab='research';toolQuery='';paint();researchPage.openField(path);alignNavigation();}
-    function openExperiment(selection){tab='lab';toolQuery='';paint();labPage.openEvidence(selection);alignNavigation();}
+    function openField(path){tab='research';toolQuery='';paint();researchPage.openField(path);}
+    function openExperiment(selection){tab='lab';toolQuery='';paint();labPage.openEvidence(selection);}
     function openDate(view,target){
       tab=view;toolQuery='';
       if(view==='time'){date=target;reset();paint();load();}
       else{parkingPage.openDate(target);paint();}
-      alignNavigation();
+
     }
     function valid(serial, current, identity) {return serial===current && owner===identity && identity===context();}
     function button(label, action, disabled=false) {return `<button class="button secondary" id="insight-${action}" data-insight="${action}" ${disabled?'disabled':''}>${label}</button>`;}
@@ -77,16 +76,18 @@
       if(el && !el.disabled){el.focus({preventScroll:true});if(saved.start!=null)el.setSelectionRange(saved.start,saved.end);}
     }
     function navigation() {
-      return `<aside class="insight-navigation"><div class="insight-nav-heading"><strong>研究工具</strong><span id="insight-tool-count">13 项</span></div>
+      return `<aside class="insight-navigation"><div class="insight-mobile-tools"><label>当前研究工具<select id="insight-tool-select" aria-label="当前研究工具">${toolGroups.map(g=>`<optgroup label="${g.name}">${g.tools.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</optgroup>`).join('')}</select></label><button class="button secondary" data-insight="toggle-tools" aria-controls="insight-tool-directory" aria-expanded="${toolsExpanded}">查找工具</button></div><div id="insight-tool-directory" data-expanded="${toolsExpanded}"><div class="insight-nav-heading"><strong>研究工具</strong><span id="insight-tool-count">13 项</span></div>
         <div class="insight-tool-search"><label for="insight-tool-search">查找研究工具</label><div><input id="insight-tool-search" type="search" value="${esc(toolQuery)}" placeholder="搜名称或用途"><button id="insight-tool-clear" data-insight="clear-tools" aria-label="清空工具搜索" title="清空工具搜索">×</button></div></div>
-        <p class="insight-nav-hint">左右滑动，查看其他分组</p>
         <nav class="insight-tabs" aria-label="用车研究工具">${toolGroups.map((group,i)=>`<section data-insight-group="${i}" aria-labelledby="insight-group-${i}"><h2 id="insight-group-${i}">${group.name}</h2><div>${group.tools.map(tool=>`<button data-insight-view="${tool.id}" aria-pressed="${tab===tool.id}" title="${tool.description}">${tool.label}</button>`).join('')}</div></section>`).join('')}</nav>
-        <p class="insight-nav-empty" role="status" hidden>没有匹配的工具，试试「充电」「费用」「行程」。</p></aside>`;
+        <p class="insight-nav-empty" role="status" hidden>没有匹配的工具，试试「充电」「费用」「行程」。</p></div></aside>`;
     }
     function updateNavigation() {
       const term=toolQuery.trim().toLowerCase();
       let count=0;
       node.querySelector('#insight-tool-search').value=toolQuery;
+      node.querySelector('#insight-tool-select').value=tab;
+      node.querySelector('#insight-tool-directory').dataset.expanded=String(toolsExpanded);
+      node.querySelector('[data-insight=toggle-tools]').setAttribute('aria-expanded',String(toolsExpanded));
       for(const [i,group] of toolGroups.entries()){
         let groupCount=0;
         for(const tool of group.tools){
@@ -101,21 +102,11 @@
       node.querySelector('#insight-tool-count').textContent=term?`${count} / 13 项`:'13 项';
       node.querySelector('.insight-nav-empty').hidden=count>0;
     }
-    function alignNavigation() {
-      const nav=node.querySelector('.insight-tabs');
-      const selected=nav.querySelector(`[data-insight-view="${tab}"]`)?.closest('[data-insight-group]');
-      if(selected && !toolQuery && nav.scrollWidth>nav.clientWidth){
-        nav.scrollLeft=selected.offsetLeft-nav.firstElementChild.offsetLeft;
-      }
-    }
     function paint() {
       if(!node?.isConnected || !active())return;
       const focus=saveFocus();
       if(!node.querySelector('.insight-layout')){
         node.innerHTML=`<div class="insight-layout">${navigation()}<div class="insight-content"></div></div>`;
-        navigationObserver?.disconnect();
-        navigationObserver=new root.ResizeObserver(()=>{if(node?.isConnected && active())alignNavigation();});
-        navigationObserver.observe(node.querySelector('.insight-tabs'));
       }
       updateNavigation();
       const content=node.querySelector('.insight-content');
@@ -134,7 +125,7 @@
         </section>
         <div id="insight-snapshot" aria-live="polite"></div><div id="insight-actions" class="insight-actions"></div>
         <div id="insight-comparison"></div><div id="insight-fields"></div>
-        <p class="insight-note">超过 10 分钟没有采集记录会标出间隔；停车采集可能降至 5 分钟一次。只展示已归档内容，不补造车况。</p>`;
+        <p class="insight-note">超过 10 分钟没有采集记录会标出间隔。正常采样间隔以设置页为准，车辆上传和故障退避也会影响观测间隔。只展示已归档内容，不补造车况。</p>`;
       paintSelection();paintDetails();paintComparison();restoreFocus(focus);
     }
     function paintSelection() {
@@ -225,7 +216,7 @@
     }
     function mount(container) {
       const changed=context()!==owner, remount=node!==container;
-      if(changed){owner=context();toolQuery='';reset();}
+      if(changed){owner=context();toolQuery='';toolsExpanded=false;reset();}
       node=container;
       if(changed || remount)paint();
       if(views[tab])views[tab].mount(node.querySelector(`#${tab}-workspace`));
@@ -235,11 +226,12 @@
       if(!active() || !node?.contains(event.target))return false;
       const el=event.target;
       const view=event.type==='click' && el.closest('[data-insight-view]');
-      if(view){
-        const next=view.dataset.insightView;
-        toolQuery='';
+      if(view || (event.type==='change' && el.id==='insight-tool-select')){
+        const next=view?view.dataset.insightView:el.value;
+        toolQuery='';toolsExpanded=false;
         if(tab!==next){tab=next;paint();}else updateNavigation();
-        alignNavigation();
+        const selector=node.querySelector('#insight-tool-select');
+        if(selector.checkVisibility())selector.focus({preventScroll:true});
         if(tab==='time' && owner && !loadedDate && !loading)load();
         return true;
       }
@@ -252,6 +244,7 @@
       if(event.type!=='click')return false;
       const target=el.closest('[data-insight]');if(!target || target.disabled)return false;
       switch(target.dataset.insight){
+        case 'toggle-tools':toolsExpanded=!toolsExpanded;updateNavigation();if(toolsExpanded)node.querySelector('#insight-tool-search').focus({preventScroll:true});break;
         case 'clear-tools':toolQuery='';updateNavigation();node.querySelector('#insight-tool-search').focus({preventScroll:true});break;
         case 'load':load();break;
         case 'more':load(true);break;
