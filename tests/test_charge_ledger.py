@@ -121,6 +121,13 @@ class ChargeLedgerTests(unittest.TestCase):
         self.assertEqual(data['trend'][-2]['actual_cents'],1200)
         self.assertEqual(self.query('2026-08-01')['totals']['actual_cents'],1200)
 
+    def test_linked_event_outside_bill_month_is_not_treated_as_removed(self):
+        self.save(unit_price='0.5',date='2026-10-01')
+        row=self.query('2026-10-01')['entries'][0]
+        self.assertFalse(row['source_event_removed'])
+        self.assertEqual(row['source_event_id'],'charge')
+        self.assertEqual(row['estimated_cents'],1720)
+
     def test_scope_and_privacy(self):
         self.save(amount='12')
         self.assertEqual(self.ledger.query('other','car','2026-09-20')['entries'],[])

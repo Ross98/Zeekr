@@ -155,3 +155,34 @@ class PersonalStore:
                        (*key,revision+1))
             if guard:guard()
             return self._read(db,key)
+
+    def change_many(self, owner, vehicle, collection, action, identities, revision, guard=None):
+        """Soft-delete or restore a previewed batch without offering one-step undo."""
+        key = self._key(owner, vehicle, collection)
+        if (action not in ('delete', 'restore') or type(revision) is not int or revision < 0
+                or not isinstance(identities, list) or not 1 <= len(identities) <= 100
+                or len(set(identities)) != len(identities)
+                or any(not isinstance(identity, str) or not VALID_ID.fullmatch(identity) for identity in identities)):
+            raise ValueError('批量记录操作或版本无效。')
+        with self.connect(write=True) as db, db:
+            db.execute('BEGIN IMMEDIATE')
+            current = self._read(db, key)
+            if current['revision'] != revision:
+                raise ValueError('账本记录已有更新，请重新预览。')
+            rows = db.execute('SELECT id,deleted FROM records WHERE owner=? AND vehicle=? AND collection=? '
+                              'AND id IN (%s)' % ','.join('?'*len(identities)), (*key, *identities)).fetchall()
+            found = {row[0]: bool(row[1]) for row in rows}
+            target = action == 'delete'
+            if any(identity not in found or found[identity] == target for identity in identities):
+                raise ValueError('关联账单不存在、状态已变化或不属于当前车辆。')
+            now = int(time.time()*1000)
+            db.execute('UPDATE records SET deleted=?,updated_at=? WHERE owner=? AND vehicle=? AND collection=? '
+                       'AND id IN (%s)' % ','.join('?'*len(identities)),
+                       (int(target), now, *key, *identities))
+            new_revision = revision+1
+            # Batch changes remain recoverable from trash, but are not ambiguous one-step undo operations.
+            db.execute('DELETE FROM changes WHERE owner=? AND vehicle=? AND collection=?', key)
+            db.execute('INSERT OR REPLACE INTO revisions VALUES(?,?,?,?)', (*key, new_revision))
+            if guard:
+                guard()
+            return self._read(db, key)

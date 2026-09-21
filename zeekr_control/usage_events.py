@@ -7,7 +7,7 @@ import re
 import sqlite3
 
 from .archive_reader import _private
-from .trip_visibility import visible_clause
+from .trip_visibility import has_charge_trash, visible_clause
 from .start_evidence import from_summary as start_evidence
 
 MAX_SUMMARY_BYTES = 2 * 1024 * 1024
@@ -145,3 +145,22 @@ class UsageEvents:
         if result is None:
             raise ValueError('事件不存在、格式无效或不属于当前车辆。')
         return result
+
+    def hidden_charge_ids(self, vehicle, identities):
+        identities = {identity for identity in identities if isinstance(identity, str) and VALID_ID.fullmatch(identity)}
+        if not isinstance(vehicle, str) or not vehicle:
+            raise ValueError('车辆无效。')
+        if not identities:
+            return set()
+        hidden = set()
+        with self.connect() as db:
+            if db is None or not has_charge_trash(db):
+                return hidden
+            ordered = sorted(identities)
+            for offset in range(0, len(ordered), 500):
+                batch = ordered[offset:offset+500]
+                marks = ','.join('?' for _ in batch)
+                rows = db.execute(f'SELECT event_id FROM charge_record_trash WHERE vehicle=? AND event_id IN ({marks})',
+                                  (vehicle, *batch)).fetchall()
+                hidden.update(row[0] for row in rows)
+        return hidden

@@ -88,6 +88,15 @@ class AnalysisTests(unittest.TestCase):
         with patch.object(Analyzer, 'revision', side_effect=[0, 1]):
             with self.assertRaises(ValueError): self.result()
 
+    def test_charge_management_revision_invalidates_automatic_insights(self):
+        analyzer = self.analyzer()
+        self.assertEqual(analyzer.revision('car'), 0)
+        import sqlite3
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE charge_record_revisions (vehicle TEXT PRIMARY KEY,revision INTEGER NOT NULL)')
+            db.execute('INSERT INTO charge_record_revisions VALUES (?,?)', ('car', 1))
+        self.assertNotEqual(analyzer.revision('car'), 0)
+
     def test_output_contains_no_event_ids_locations_or_raw_fields(self):
         self.add('PRIVATE-ID')
         encoded = json.dumps(self.result(), allow_nan=False)

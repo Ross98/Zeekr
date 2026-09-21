@@ -51,6 +51,16 @@ const tripManager = window.TripManagement.create({getState:()=>state,getDate:()=
       renderLocalTripDetail();loadLocalTrips();}
     pollState(true);
   }});
+const chargeManager = window.ChargeManagement.create({getState:()=>state,getDate:()=>chargeDate,request:api,escape:esc,
+  active:()=>page==='energy'&&!!state?.model,
+  changed:revision=>{
+    state.charge_records_revision=revision;
+    chargeEvents=[];chargeSelected=null;chargeCursor=null;chargeCursorStack=[];chargeNextCursor=null;
+    chargingSession=chargingSeries=chargingStats=null;
+    chargingAnalyticsLoadedKey=chargingAnalyticsLoadingKey='';
+    render();
+    pollState(true);
+  }});
 
 function navigation() {
   $('#navigation').innerHTML = Object.entries(pages).filter(([key]) => key !== 'more').map(([key, label]) => `<button class="nav-item ${page === key ? 'active' : ''}" data-page="${key}" ${page === key ? 'aria-current="page"' : ''}>${icon(key)}${label}</button>`).join('');
@@ -508,6 +518,7 @@ function energy() {
       <div class="energy-charge-grid">${[['充电模式',m.charging.mode==='dc'?'直流充电':m.charging.mode==='ac'?'交流充电':'未知'],['预计剩余时间',remainingTime],['连接状态',m.charging.connection_state || '接口未提供有效连接判断']].map(([label,value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p><p class="energy-caption">状态来自车辆云端缓存；缺少会话起点时不推测充电开始时间。</p></div></section>
   </div>
   ${chargingWorkspace(m.charging_details)}
+  <div id="charge-management"></div>
   <section class="card energy-achievement"><div class="card-head"><h2>续航与行程参考</h2>${pill(trip.partial?'最近已结束记录 · 片段':'最近已结束记录')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
       <p class="energy-caption">${canCalculate ? `按已观测里程与 SOC 下降，对比 ${esc(trip.standard)} 标称续航${trip.partial?'；仅代表这个片段':''}` : esc(reasons[trip.status] || reasons.invalid)}</p>
       ${canCalculate ? `<div class="energy-reference">${row('已观测里程',`${format(trip.distance_km)} km`)}${row('起止电量',`${format(trip.start_soc)}% 至 ${format(trip.end_soc)}%`)}${row('消耗电量',`${format(trip.used_soc)} 个百分点`)}${row('对应标称里程',`${format(trip.reference_km)} km`)}</div>` : ''}
@@ -562,6 +573,9 @@ function render() {
   const managerNode=page==='tracks'&&trackSource==='local'&&tripManagementOpen?$('#trip-management'):null;
   const managerFocus=managerNode?.contains(document.activeElement)?document.activeElement:null;
   if(!(page==='tracks'&&trackSource==='local'&&tripManagementOpen))tripManager.suspend();
+  const chargeManagerNode=page==='energy'?$('#charge-management'):null;
+  const chargeManagerFocus=chargeManagerNode?.contains(document.activeElement)?document.activeElement:null;
+  if(page!=='energy')chargeManager.suspend();
   const insightsNode = page === 'insights' ? document.getElementById('insights-workspace') : null;
   const insightsFocus = insightsNode?.contains(document.activeElement) ? document.activeElement : null;
   const vehicleFocus = page === 'car' ? vehiclePage.focusSnapshot() : null;
@@ -581,6 +595,7 @@ function render() {
   const body = {overview,car,energy,map:mapPage,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
   $('#main').innerHTML = head() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
   if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
+  if(chargeManagerNode&&$('#charge-management')){$('#charge-management').replaceWith(chargeManagerNode);if(chargeManagerFocus?.isConnected)chargeManagerFocus.focus({preventScroll:true});}
   if (page === 'insights') {
     if (insightsNode) document.getElementById('insights-workspace').replaceWith(insightsNode);
     insightsPage.mount(document.getElementById('insights-workspace'));
@@ -595,7 +610,7 @@ function render() {
   if (page === 'fields') {renderFields();reviewRestoreFocus(fieldFocus);}
   if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);
-  if (page === 'energy' && state?.model) { loadChargeEvents(generation); ensureChargingAnalytics(chargingSelection); }
+  if (page === 'energy' && state?.model) { chargeManager.mount($('#charge-management'));loadChargeEvents(generation); ensureChargingAnalytics(chargingSelection); }
   if (page === 'tracks' && trackSource === 'local') mountLocalTrips();
 }
 
@@ -675,6 +690,7 @@ async function updateRecording(saveInterval = false) {
 
 document.addEventListener('click', event => {
   if (tripManager.handle(event)) return;
+  if (chargeManager.handle(event)) return;
   if (insightsPage.handle(event)) return;
   if (vehiclePage.handle(event)) return;
   const target = event.target.closest('button');
@@ -711,6 +727,7 @@ document.addEventListener('click', event => {
 });
 document.addEventListener('input', event => {
   if (tripManager.handle(event)) return;
+  if (chargeManager.handle(event)) return;
   if (insightsPage.handle(event)) return;
   if (vehiclePage.handle(event)) return;
   if(event.target.id==='interval') samplingDraft=event.target.value;
@@ -723,6 +740,7 @@ document.addEventListener('input', event => {
 });
 document.addEventListener('change', event => {
   if (tripManager.handle(event)) return;
+  if (chargeManager.handle(event)) return;
   if (insightsPage.handle(event)) return;
   if (vehiclePage.handle(event)) return;
   if(event.target.id==='group') {groupFilter=event.target.value;renderFields();}
@@ -749,6 +767,7 @@ async function pollState(force = false) {
       latest.request_key!==state.request_key || latest.vehicle!==state.vehicle ||
       latest.insights_context!==state.insights_context ||
       latest.trip_records_revision!==state.trip_records_revision ||
+      latest.charge_records_revision!==state.charge_records_revision ||
       JSON.stringify(latest.history)!==JSON.stringify(state.history) ||
       latest.snapshot_revision!==state.snapshot_revision ||
       JSON.stringify(latest.recent_events)!==JSON.stringify(state.recent_events) ||

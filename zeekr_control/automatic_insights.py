@@ -9,7 +9,7 @@ from .archive_reader import _context, _private
 from .data_quality import DataQuality
 from .storage import load, save
 from .tracks import day_bounds
-from .trip_visibility import revision
+from .trip_visibility import charge_revision, revision
 from .usage_events import UsageEvents
 from .usage_reports import DAY, date_label
 
@@ -68,7 +68,9 @@ class Analyzer:
 
     def revision(self, vehicle):
         with self.events.connect() as db:
-            return revision(db, vehicle)
+            trips, charges = revision(db, vehicle), charge_revision(db, vehicle)
+            total = trips + charges
+            return total * (total + 1) // 2 + charges
 
     def build(self, scope, vehicle, now):
         _context(scope, vehicle)

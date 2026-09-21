@@ -20,6 +20,7 @@ from .summary import updated_at
 from .tracks import TrackStore, day_bounds, empty_route
 from .trips import TripStore
 from .trip_management import TripRecordManager
+from .charge_management import ChargeRecordManager
 from .web_model import build_model, parse_location
 from .field_reviews import FieldReviewStore
 from .profiles import vehicle_profile
@@ -63,6 +64,7 @@ class App:
         self.event_store = EventStore(self.database_path)
         self.trip_store = TripStore(self.database_path)
         self.trip_manager = TripRecordManager(self.database_path)
+        self.charge_manager = ChargeRecordManager(self.database_path)
         self.storage_manager = StorageManager(self.session_path.parent)
         self.charging_analytics = ChargingAnalytics(self.database_path)
         self.archive_reader = ArchiveReader(self.session_path.parent / 'snapshot-archive')
@@ -176,9 +178,14 @@ class App:
                 trip_revision = self.trip_manager.revision(self.vehicle_key) if authenticated and self.vehicle_key else None
             except Exception:
                 trip_revision = None
+            try:
+                charge_revision = self.charge_manager.revision(self.vehicle_key) if authenticated and self.vehicle_key else None
+            except Exception:
+                charge_revision = None
             return {'field_reviews': field_reviews, 'request_key': self.request_key, 'authenticated': authenticated,
                     'insights_context': self._insights_context(),
                     'trip_records_revision': trip_revision,
+                    'charge_records_revision': charge_revision,
                     'model': self.model, 'vehicle': self.vehicle, 'vehicles': self.vehicles,
                     'read_at': updated_at(self.read_at), 'read_time': self.read_at,
                     'query_cached': self.query_cached, 'refresh_result': self.refresh_result,
@@ -439,6 +446,7 @@ class App:
                         'automatic': lambda scope, car: self.automatic_cache.query(
                             scope, car, int(time.time()*1000), self.automatic_analyzer.revision(car)),
                         'trip-management': lambda scope, car, *query: self.trip_manager.query(car, *query),
+                        'charge-management': lambda scope, car, *query: self.charge_manager.query(car, *query),
                         'compare': self.archive_reader.compare,
                         'report': self.usage_reports.query,
                         'calendar': self.usage_calendar.query,
@@ -483,6 +491,54 @@ class App:
                 result = self.trip_manager.execute(data.get('token'), bound_owner, guard=guard)
             else:
                 raise ValueError('行程管理操作无效。')
+            result['context'] = context
+            return result
+
+    def manage_charges(self, operation, data, owner):
+        with self.lock:
+            session = self._read_session()
+            if not session.get('accessToken'):
+                raise ValueError('请先连接车辆账号。')
+            self._restore_snapshot(session)
+            context = self._insights_context()
+            if not context or data.get('context') != context:
+                raise ValueError('账号或车辆已切换，请重新读取充电记录。')
+            fingerprint = session_scope(session)
+            bound_owner = context+':'+owner
+            def guard():
+                if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
+                    raise ValueError('操作期间账号或车辆已切换，本次修改已取消。')
+            if operation == 'preview':
+                selected = data.get('ids') if isinstance(data.get('ids'), list) else []
+                owner_scope = account_scope(session)
+                ledger = self.personal_store.read(owner_scope, self.vehicle_key, 'charges')
+                linked = []
+                for record in ledger['records']:
+                    event = record['body'].get('event') if isinstance(record.get('body'), dict) else None
+                    expected_deleted = data.get('action') == 'restore'
+                    if (record['deleted'] == expected_deleted and isinstance(event, dict)
+                            and event.get('id') in selected):
+                        linked.append({'id':record['id'],'event_id':event['id'],
+                                       'date':record['body'].get('date'),'source':record['body'].get('source'),
+                                       'has_actual':record['body'].get('actual_cents') is not None,
+                                       'has_metered':record['body'].get('metered_kwh') is not None})
+                together = data.get('with_linked_bills') is True
+                if together and data.get('ledger_revision') != ledger['revision']:
+                    raise ValueError('账本记录已变化，请重新预览。')
+                result = self.charge_manager.preview(self.vehicle_key, data.get('action'), selected,
+                    data.get('revision'), bound_owner, linked_bills=linked,
+                    with_linked_bills=together, ledger_revision=ledger['revision'])
+                guard()
+            elif operation == 'execute':
+                owner_scope = account_scope(session)
+                def linked_change(plan):
+                    action = 'delete' if plan['action'] == 'trash' else 'restore'
+                    self.charge_ledger.batch_change(owner_scope, self.vehicle_key, action,
+                        [row['id'] for row in plan['linked_bills']], plan['ledger_revision'], guard=guard)
+                result = self.charge_manager.execute(data.get('token'), bound_owner, guard=guard,
+                                                     linked_change=linked_change)
+            else:
+                raise ValueError('充电记录管理操作无效。')
             result['context'] = context
             return result
 
@@ -766,6 +822,11 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     return self.send(200, app.insights('trip-management', query.get('start', [''])[0],
                                                        query.get('end', [''])[0], query.get('status', ['active'])[0],
                                                        query.get('cursor', [None])[0]))
+                if url.path == '/api/charging/manage':
+                    query = parse_qs(url.query, keep_blank_values=True)
+                    return self.send(200, app.insights('charge-management', query.get('start', [''])[0],
+                                                       query.get('end', [''])[0], query.get('status', ['active'])[0],
+                                                       query.get('cursor', [None])[0]))
                 if url.path == '/api/events':
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.events(query.get('date', [''])[0],
@@ -809,6 +870,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
                           '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),
                           '/trip-management.js': ('trip-management.js', 'text/javascript; charset=utf-8'),
+                          '/charge-management.js': ('charge-management.js', 'text/javascript; charset=utf-8'),
                           '/trips.css': ('trips.css', 'text/css; charset=utf-8'),
                           '/field-reviews.js': ('field-reviews.js', 'text/javascript; charset=utf-8'),
                           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
@@ -840,7 +902,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 return self.send(403, {'error': '请求校验失败，请从本机页面操作。'})
             try:
                 length = int(self.headers.get('Content-Length', '0'))
-                limit = 32768 if self.path == '/api/field-reviews' else 16384 if self.path.startswith(('/api/insights/','/api/trips/manage/')) else 4096
+                limit = 32768 if self.path == '/api/field-reviews' else 16384 if self.path.startswith(('/api/insights/','/api/trips/manage/','/api/charging/manage/')) else 4096
                 if not 0 < length <= limit or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
                     raise ValueError('请求格式无效。')
                 data = json.loads(self.rfile.read(length))
@@ -851,6 +913,9 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 if self.path in ('/api/trips/manage/preview','/api/trips/manage/execute'):
                     owner = hashlib.sha256(self.token().encode()).hexdigest()
                     return self.send(200, app.manage_trips(self.path.rsplit('/',1)[1], data, owner))
+                if self.path in ('/api/charging/manage/preview','/api/charging/manage/execute'):
+                    owner = hashlib.sha256(self.token().encode()).hexdigest()
+                    return self.send(200, app.manage_charges(self.path.rsplit('/',1)[1], data, owner))
                 if self.path == '/api/insights/ledger':
                     return self.send(200, app.update_insight_record('ledger',data))
                 if self.path == '/api/insights/rules':

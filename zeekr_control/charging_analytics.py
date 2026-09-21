@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sqlite3
 from .start_evidence import from_summary as start_evidence
+from .trip_visibility import visible_clause
 from .usage_events import project, total
 
 
@@ -60,7 +61,8 @@ class ChargingAnalytics:
                     'start_time': _number(start.get('state_time')),
                     'end_time': _number(end.get('state_time')),
                     'start': start, 'end': end, 'metrics': {}, 'mode': start.get('charging_mode')}
-        row = db.execute('SELECT summary FROM monitor_events WHERE id=? AND vehicle=? AND kind=?',
+        row = db.execute('SELECT e.summary FROM monitor_events e WHERE e.id=? AND e.vehicle=? AND e.kind=? AND '
+                         + visible_clause(db, 'e'),
                          (selection, vehicle, 'charge_end')).fetchone()
         if not row:
             raise ValueError('充电记录不存在或不属于当前车辆。')
@@ -202,8 +204,9 @@ class ChargingAnalytics:
         records = []
         if self.path.exists():
             with self._connect() as db:
-                rows = db.execute('''SELECT id,summary FROM monitor_events
-                                     WHERE vehicle=? AND kind='charge_end' ORDER BY created DESC,id DESC''',
+                rows = db.execute('''SELECT e.id,e.summary FROM monitor_events e
+                                     WHERE e.vehicle=? AND e.kind='charge_end' AND '''
+                                  + visible_clause(db, 'e') + ''' ORDER BY e.created DESC,e.id DESC''',
                                   (vehicle,))
                 for event_id, encoded in rows:
                     try:
