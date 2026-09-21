@@ -57,6 +57,13 @@ class TripImageTests(unittest.TestCase):
         return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
                 + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
 
+    @staticmethod
+    def _palette_png(color):
+        def chunk(name, data):
+            return struct.pack('>I', len(data)) + name + data + struct.pack('>I', zlib.crc32(name + data) & 0xffffffff)
+        return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 3, 0, 0, 0))
+                + chunk(b'PLTE', bytes(color)) + chunk(b'IDAT', zlib.compress(b'\0\0')) + chunk(b'IEND', b''))
+
     def _pixel(self, image, x, y):
         offset = 8
         data = b''
@@ -94,6 +101,11 @@ class TripImageTests(unittest.TestCase):
             render_trip_png({}, {'segments': []}, None)
         with self.assertRaisesRegex(ValueError, '真实地图'):
             render_trip_png({}, {'segments': []}, b'not-png')
+
+    def test_renderer_accepts_palette_png_returned_by_amap(self):
+        from zeekr_control.trip_notification_image import render_trip_png
+        image=render_trip_png({}, {'segments': []}, self._palette_png((211,223,227)))
+        self.assertEqual(self._pixel(image,500,200),(211,223,227))
 
 
 class AmapStaticMapTests(unittest.TestCase):

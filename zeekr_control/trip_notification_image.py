@@ -63,19 +63,22 @@ def _number(value,suffix=''):
 def _decode_png(content):
     if not isinstance(content,bytes) or not content.startswith(b'\x89PNG\r\n\x1a\n'):
         raise ValueError('真实地图不是有效 PNG')
-    offset=8;compressed=b'';header=None
+    offset=8;compressed=b'';header=None;palette=None
     while offset+12<=len(content):
         length=struct.unpack('>I',content[offset:offset+4])[0];name=content[offset+4:offset+8]
         data=content[offset+8:offset+8+length];offset+=12+length
         if name==b'IHDR':header=struct.unpack('>IIBBBBB',data)
+        elif name==b'PLTE':palette=data
         elif name==b'IDAT':compressed+=data
         elif name==b'IEND':break
     if not header:
         raise ValueError('真实地图缺少 PNG 头')
     width,height,depth,color,compression,filtering,interlace=header
-    if not 0<width<=2048 or not 0<height<=2048 or depth!=8 or color not in (2,6) or compression or filtering or interlace:
+    if not 0<width<=2048 or not 0<height<=2048 or depth!=8 or color not in (2,3,6) or compression or filtering or interlace:
         raise ValueError('真实地图 PNG 格式不支持')
-    channels=3 if color==2 else 4;stride=width*channels
+    if color==3 and (not palette or len(palette)%3 or len(palette)>768):
+        raise ValueError('真实地图 PNG 调色板无效')
+    channels=3 if color==2 else 4 if color==6 else 1;stride=width*channels
     try:raw=zlib.decompress(compressed)
     except zlib.error:raise ValueError('真实地图 PNG 数据损坏') from None
     if len(raw)!=(stride+1)*height:raise ValueError('真实地图 PNG 尺寸不符')
@@ -94,9 +97,15 @@ def _decode_png(content):
             else:raise ValueError('真实地图 PNG 滤镜不支持')
             row[i]=(value+predictor)&255
         result[y*stride:(y+1)*stride]=row;previous=row
-    if channels==3:return width,height,result
+    if color==2:return width,height,result
     rgb=bytearray(width*height*3)
-    for index in range(width*height):rgb[index*3:index*3+3]=result[index*4:index*4+3]
+    if color==6:
+        for index in range(width*height):rgb[index*3:index*3+3]=result[index*4:index*4+3]
+    else:
+        for index,value in enumerate(result):
+            start=value*3
+            if start+3>len(palette):raise ValueError('真实地图 PNG 调色板索引无效')
+            rgb[index*3:index*3+3]=palette[start:start+3]
     return width,height,rgb
 
 def render_trip_png(report,route,map_image):
