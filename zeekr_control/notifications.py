@@ -1,4 +1,6 @@
 """Outbound-only WeCom notifications; secrets never appear in errors."""
+import base64
+import hashlib
 import json
 import re
 from urllib.error import HTTPError, URLError
@@ -24,16 +26,31 @@ class WeComSender:
         self.config_path = config_path
 
     def __call__(self, message):
+        self._send({'msgtype': 'text', 'text': {'content': message}},
+                   len(message.encode('utf-8')), 2048)
+
+    def send_markdown(self, message):
+        self._send({'msgtype': 'markdown', 'markdown': {'content': message}},
+                   len(message.encode('utf-8')), 4096)
+
+    def send_image(self, content):
+        if not isinstance(content, bytes) or not content.startswith((b'\x89PNG\r\n\x1a\n', b'\xff\xd8')):
+            raise DeliveryError('通知图片格式无效', permanent=True)
+        self._send({'msgtype': 'image', 'image': {
+            'base64': base64.b64encode(content).decode('ascii'),
+            'md5': hashlib.md5(content).hexdigest()}}, len(content), 2 * 1024 * 1024)
+
+    def _send(self, payload, size, limit):
         try:
             url = load(self.config_path).get('webhook_url', '')
         except Exception:
             raise DeliveryError('通知配置无法读取', permanent=True) from None
         if not re.fullmatch(r'https://qyapi\.weixin\.qq\.com/cgi-bin/webhook/send\?key=[A-Za-z0-9_-]{16,128}', url):
             raise DeliveryError('通知地址无效', permanent=True)
-        payload = json.dumps({'msgtype': 'text', 'text': {'content': message}}, ensure_ascii=False).encode()
-        if len(message.encode('utf-8')) > 2048:
+        if size > limit:
             raise DeliveryError('通知内容过长', permanent=True)
-        request = Request(url, data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+        encoded = json.dumps(payload, ensure_ascii=False).encode()
+        request = Request(url, data=encoded, headers={'Content-Type': 'application/json'}, method='POST')
         try:
             with build_opener(NoRedirect()).open(request, timeout=20) as response:
                 result = json.loads(response.read(65536))

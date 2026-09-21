@@ -1,6 +1,8 @@
 """Persistent, conservative trip/charging transitions and notification outbox."""
 import hashlib
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .notifications import DeliveryError
 from .summary import updated_at
@@ -10,6 +12,8 @@ from .web_model import parse_location
 from .report_telemetry import normalize, DECODER_VERSION
 from .report_metrics import trip_metrics, charge_metrics
 from .report_render import render
+from .report_markdown import markdown_for
+from .trip_notification_image import render_trip_png
 from .report_history import compare
 from .report_attention import build as build_attention
 from .start_evidence import build as start_evidence, project as project_start
@@ -102,6 +106,12 @@ class Monitor:
                        'ON monitor_events(vehicle,kind,created DESC,id DESC)')
             db.execute('CREATE INDEX IF NOT EXISTS monitor_vehicle_created '
                        'ON monitor_events(vehicle,created DESC)')
+            db.execute('''CREATE TABLE IF NOT EXISTS monitor_event_media (
+                event_id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                delivery TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt INTEGER NOT NULL DEFAULT 0, error TEXT, sent_at INTEGER)''')
+            db.execute('CREATE INDEX IF NOT EXISTS monitor_media_delivery '
+                       'ON monitor_event_media(delivery,next_attempt)')
             db.execute('''CREATE TABLE IF NOT EXISTS report_metric_index (
                 event_id TEXT PRIMARY KEY, vehicle TEXT NOT NULL, kind TEXT NOT NULL,
                 end_time INTEGER NOT NULL, decoder_version TEXT NOT NULL,
@@ -113,6 +123,7 @@ class Monitor:
                 PRIMARY KEY(vehicle,state_time))''')
             db.execute('CREATE INDEX IF NOT EXISTS report_observation_time ON report_observations(vehicle,state_time)')
             db.execute("UPDATE monitor_events SET delivery='uncertain', error='发送期间进程中断，需人工确认' WHERE delivery='sending'")
+            db.execute("UPDATE monitor_event_media SET delivery='uncertain', error='图片发送期间进程中断，需人工确认' WHERE delivery='sending'")
 
     def status(self, vehicle):
         with self.tracks.connect() as db:
@@ -138,6 +149,9 @@ class Monitor:
                                            'message_frozen': False}
         db.execute('INSERT OR IGNORE INTO monitor_events (id,vehicle,kind,summary,message,created) VALUES (?,?,?,?,?,?)',
                    (event_id, vehicle, kind, json.dumps(data, ensure_ascii=False), message, now))
+        if kind == 'trip_end':
+            db.execute('INSERT OR IGNORE INTO monitor_event_media (event_id,kind) VALUES (?,?)',
+                       (event_id, 'trip_image'))
         report = data.get('report_v2')
         if report:
             approved = {key:value for key,value in report.get('metrics',{}).items()
@@ -363,8 +377,11 @@ class Monitor:
 
     def events(self, limit=100):
         with self.tracks.connect() as db:
-            rows = db.execute('SELECT id,kind,summary,message,delivery,attempts,error FROM monitor_events ORDER BY created, rowid LIMIT ?', (limit,)).fetchall()
-        return [dict(id=r[0], kind=r[1], summary=json.loads(r[2]), message=r[3], delivery=r[4], attempts=r[5], error=r[6]) for r in rows]
+            rows = db.execute('''SELECT e.id,e.kind,e.summary,e.message,e.delivery,e.attempts,e.error,
+                m.delivery,m.error FROM monitor_events e LEFT JOIN monitor_event_media m ON m.event_id=e.id
+                ORDER BY e.created,e.rowid LIMIT ?''', (limit,)).fetchall()
+        return [dict(id=r[0], kind=r[1], summary=json.loads(r[2]), message=r[3], delivery=r[4],
+                     attempts=r[5], error=r[6], image_delivery=r[7], image_error=r[8]) for r in rows]
 
     def deliver(self, sender, now):
         # One worker owns the process lock; compare-and-set also guards claims.
@@ -408,7 +425,10 @@ class Monitor:
                         db.execute('UPDATE monitor_events SET summary=?,message=? WHERE id=?',
                                    (json.dumps(data, ensure_ascii=False), message, event_id))
                 sender_called = True
-                sender(message)
+                if hasattr(sender, 'send_markdown'):
+                    sender.send_markdown(markdown_for(message))
+                else:
+                    sender(message)
                 delivery, sent_at = 'sent', now
             except DeliveryError as exc:
                 delivery = 'uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts >= 5 else 'pending'
@@ -422,3 +442,35 @@ class Monitor:
             with self.tracks.connect() as db:
                 db.execute('UPDATE monitor_events SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE id=?',
                            (delivery, error, next_attempt, sent_at, event_id))
+        if hasattr(sender, 'send_image'):
+            self._deliver_images(sender, now)
+
+    def _deliver_images(self, sender, now):
+        with self.tracks.connect() as db:
+            rows = db.execute('''SELECT m.event_id,m.attempts,e.vehicle,e.summary
+                FROM monitor_event_media m JOIN monitor_events e ON e.id=m.event_id
+                WHERE m.delivery='pending' AND m.next_attempt<=? AND e.delivery='sent'
+                ORDER BY e.created,e.rowid LIMIT 10''', (now,)).fetchall()
+        for event_id, attempts, vehicle, encoded in rows:
+            with self.tracks.connect() as db:
+                claimed=db.execute("UPDATE monitor_event_media SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='pending'",(event_id,)).rowcount
+            if not claimed: continue
+            delivery,error,next_attempt,sent_at='sent',None,0,now
+            called=False
+            try:
+                data=json.loads(encoded); report=data.get('report_v2')
+                if not report or report.get('schema_version') != 2:
+                    raise ValueError('未知报告版本')
+                start,end=report.get('start_time'),report.get('end_time')
+                date=datetime.fromtimestamp(end/1000,ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d')
+                route=self.tracks.between(vehicle,start,end,date)
+                content=render_trip_png(report,route)
+                called=True; sender.send_image(content)
+            except DeliveryError as exc:
+                delivery='uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts>=5 else 'pending'
+                error=str(exc)[:100]; next_attempt=now+min(3600,60*2**attempts)*1000
+            except Exception:
+                delivery,error=('uncertain','图片发送结果未确认') if called else ('failed','行程图片准备失败，未调用发送器')
+            with self.tracks.connect() as db:
+                db.execute('UPDATE monitor_event_media SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE event_id=?',
+                           (delivery,error,next_attempt,sent_at if delivery=='sent' else None,event_id))
