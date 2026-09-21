@@ -688,9 +688,11 @@ def make_server(app, port=8765, auth=None, public_origin=None):
         def do_GET(self):
             if not self.permitted():
                 return self.send(403, {'error': '仅允许本机同源访问。'})
-            if self.path in ('/login.js', '/login.css', '/theme.js', '/theme.css'):
+            if self.path in ('/login.js', '/login.css', '/theme.js', '/theme.css', '/zeekr-logo.png'):
                 name = self.path[1:]
-                return self.send(200, (STATIC / name).read_bytes(), 'text/javascript' if name.endswith('.js') else 'text/css')
+                content_type = ('text/javascript' if name.endswith('.js') else
+                                'image/png' if name.endswith('.png') else 'text/css')
+                return self.send(200, (STATIC / name).read_bytes(), content_type)
             if not self.signed_in():
                 if self.path == '/':
                     return self.send(200, (STATIC / 'login.html').read_bytes(), 'text/html; charset=utf-8')
@@ -815,6 +817,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/app.css': ('app.css', 'text/css; charset=utf-8'),
                           '/vendor/leaflet.js': ('vendor/leaflet.js', 'text/javascript; charset=utf-8'),
                           '/vendor/leaflet.css': ('vendor/leaflet.css', 'text/css; charset=utf-8'),
+                          '/zeekr-logo.png': ('zeekr-logo.png', 'image/png'),
                           '/car.svg': ('car.svg', 'image/svg+xml'),
                           '/car-001.png': ('car-001.png', 'image/png')}
                 if url.path in assets:

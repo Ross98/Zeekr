@@ -11,6 +11,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   const origin=`http://127.0.0.1:${port}`;
   await page.goto(origin);await page.getByRole('heading',{name:'总览',exact:true}).waitFor();
+  assert.equal(await page.locator('img[src="/zeekr-logo.png"]').count(),0);
   assert.equal(await page.locator('html').getAttribute('data-theme'),'dark');
   await page.getByLabel('外观',{exact:true}).selectOption('light');
   await page.emulateMedia({colorScheme:'dark'});assert.equal(await page.locator('html').getAttribute('data-theme'),'light');
@@ -63,6 +64,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   // Same-origin login preview exercises actual shipped login markup and CSP-compatible resources.
   await page.route('**/__login',route=>route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(__dirname,'../zeekr_control/static/login.html'),'utf8')}));
   await page.goto(origin+'/__login');await page.getByLabel('访问密码').fill('synthetic-input');
+  assert.equal(await page.locator('img[src="/zeekr-logo.png"]').count(),0);
   await page.getByLabel('外观',{exact:true}).selectOption('dark');assert.equal(await page.getByLabel('访问密码').inputValue(),'synthetic-input');
   await page.setViewportSize({width:320,height:800});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:'/tmp/zeekr-night-qa/login-320.png',fullPage:true});
