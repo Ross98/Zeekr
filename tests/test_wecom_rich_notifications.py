@@ -5,6 +5,7 @@ import json
 import struct
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -48,7 +49,32 @@ class WeComRichSenderTests(unittest.TestCase):
 
 
 class TripImageTests(unittest.TestCase):
-    def test_renderer_returns_bounded_png_with_expected_dimensions(self):
+    @staticmethod
+    def _solid_png(color):
+        def chunk(name, data):
+            return struct.pack('>I', len(data)) + name + data + struct.pack('>I', zlib.crc32(name + data) & 0xffffffff)
+        raw = b'\0' + bytes(color)
+        return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
+                + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+
+    def _pixel(self, image, x, y):
+        offset = 8
+        data = b''
+        while offset < len(image):
+            length = struct.unpack('>I', image[offset:offset + 4])[0]
+            name = image[offset + 4:offset + 8]
+            value = image[offset + 8:offset + 8 + length]
+            offset += 12 + length
+            if name == b'IDAT': data += value
+            if name == b'IEND': break
+        raw = zlib.decompress(data)
+        stride = 1068 * 3 + 1
+        # Renderer output uses filter 0 for every row.
+        self.assertEqual(raw[y * stride], 0)
+        start = y * stride + 1 + x * 3
+        return tuple(raw[start:start + 3])
+
+    def test_renderer_composites_provider_map_and_keeps_expected_dimensions(self):
         from zeekr_control.trip_notification_image import render_trip_png
         report = {'metrics': {'distance_km': 23.6, 'duration_seconds': 2520,
                               'estimated_kwh_100km': 21.9, 'average_speed_kmh': 33.7},
@@ -56,10 +82,82 @@ class TripImageTests(unittest.TestCase):
         route = {'segments': [[{'longitude':121.0,'latitude':31.0},
                                {'longitude':121.1,'latitude':31.05},
                                {'longitude':121.2,'latitude':31.02}]], 'gaps': []}
-        image = render_trip_png(report, route)
+        image = render_trip_png(report, route, self._solid_png((211, 223, 227)))
         self.assertEqual(image[:8], b'\x89PNG\r\n\x1a\n')
         self.assertEqual(struct.unpack('>II', image[16:24]), (1068, 720))
+        self.assertEqual(self._pixel(image, 500, 200), (211, 223, 227))
         self.assertLess(len(image), 2 * 1024 * 1024)
+
+    def test_renderer_rejects_missing_or_invalid_map_instead_of_drawing_fake_map(self):
+        from zeekr_control.trip_notification_image import render_trip_png
+        with self.assertRaisesRegex(ValueError, '真实地图'):
+            render_trip_png({}, {'segments': []}, None)
+        with self.assertRaisesRegex(ValueError, '真实地图'):
+            render_trip_png({}, {'segments': []}, b'not-png')
+
+
+class AmapStaticMapTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.config = Path(self.temp.name) / 'amap-geocoding.json'
+        save(self.config, {'api_key': 'synthetic-key'})
+
+    def test_converts_wgs84_and_requests_static_map_with_broken_segments_preserved(self):
+        from zeekr_control.trip_map import AmapStaticMap
+        calls=[]
+        route={'segments': [
+            [{'longitude':121.0,'latitude':31.0,'trusted':True,'coordinate_system':'WGS84（社区解释）'},
+             {'longitude':121.1,'latitude':31.1,'trusted':True,'coordinate_system':'WGS84（社区解释）'}],
+            [{'longitude':121.2,'latitude':31.2,'trusted':True,'coordinate_system':'WGS84（社区解释）'},
+             {'longitude':121.3,'latitude':31.3,'trusted':True,'coordinate_system':'WGS84（社区解释）'}]]}
+        provider=AmapStaticMap(self.config)
+        def request(path,params,binary=False):
+            calls.append((path,params,binary))
+            if path.endswith('/convert'):
+                values=params['locations'].split('|')
+                return {'status':'1','locations':';'.join('%.6f,%.6f'%(float(v.split(',')[0])+.004,float(v.split(',')[1])-.002) for v in values)}
+            return self._png
+        self._png=TripImageTests._solid_png((1,2,3))
+        with patch.object(provider,'_request',side_effect=request):
+            self.assertEqual(provider(route),self._png)
+        self.assertEqual(calls[0][0],'/v3/assistant/coordinate/convert')
+        static=calls[-1]
+        self.assertEqual(static[0],'/v3/staticmap')
+        self.assertTrue(static[2])
+        self.assertEqual(static[1]['size'],'956*302')
+        self.assertEqual(static[1]['scale'],2)
+        self.assertEqual(static[1]['paths'].count('|'),1)
+        self.assertIn('121.004000,30.998000',static[1]['paths'])
+        self.assertIn('A:121.004000,30.998000',static[1]['markers'])
+        self.assertIn('B:121.304000,31.298000',static[1]['markers'])
+
+    def test_missing_key_untrusted_unknown_too_many_segments_and_provider_errors_fail_closed(self):
+        from zeekr_control.trip_map import AmapStaticMap
+        base={'longitude':121.0,'latitude':31.0,'trusted':True,'coordinate_system':'GCJ-02（社区解释）'}
+        provider=AmapStaticMap(self.config)
+        for route in ({'segments':[]}, {'segments':[[dict(base,trusted=False),dict(base)]]},
+                      {'segments':[[dict(base,coordinate_system='未知'),dict(base)]]},
+                      {'segments':[[dict(base),dict(base)]]*5}):
+            with self.assertRaises(ValueError): provider(route)
+        self.config.unlink()
+        with self.assertRaises(ValueError): provider({'segments':[[dict(base),dict(base)]]})
+        save(self.config, {'api_key':'synthetic-key'})
+        with patch.object(provider,'_request',return_value=b'not-png'):
+            with self.assertRaises(ValueError): provider({'segments':[[dict(base),dict(base)]]})
+
+    def test_long_route_is_bounded_without_dropping_segment_endpoints(self):
+        from zeekr_control.trip_map import AmapStaticMap
+        provider=AmapStaticMap(self.config);calls=[]
+        points=[{'longitude':121+i/10000,'latitude':31+i/10000,'trusted':True,
+                 'coordinate_system':'GCJ-02（社区解释）'} for i in range(300)]
+        image=TripImageTests._solid_png((1,2,3))
+        def request(path,params,binary=False):
+            calls.append((path,params));return image
+        with patch.object(provider,'_request',side_effect=request): provider({'segments':[points]})
+        path=calls[-1][1]['paths']
+        self.assertLessEqual(path.count(';')+1,120)
+        self.assertIn('121.000000,31.000000',path)
+        self.assertIn('121.029900,31.029900',path)
 
 
 class MarkdownFormattingTests(unittest.TestCase):
@@ -81,7 +179,9 @@ class RichDeliveryTests(unittest.TestCase):
         from tests.test_monitor import BASE, sample
         self.BASE, self.sample = BASE, sample
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.monitor = Monitor(Path(self.temp.name) / 'private' / 'tracks.sqlite3')
+        self.maps=[]
+        self.monitor = Monitor(Path(self.temp.name) / 'private' / 'tracks.sqlite3',
+                               map_renderer=lambda route:(self.maps.append(route) or TripImageTests._solid_png((220,225,230))))
 
     def _trip(self):
         for seconds, kwargs in ((0,{}),(60,{'speed':30,'engine':'engine_on','ready':1,'km':101}),
@@ -104,6 +204,8 @@ class RichDeliveryTests(unittest.TestCase):
         self.assertEqual([kind for kind,_ in sender.calls],['markdown','image'])
         self.assertTrue(sender.calls[0][1].startswith('## 🚗 行程结束'))
         self.assertTrue(sender.calls[1][1].startswith(b'\x89PNG'))
+        self.assertEqual(len(self.maps),1)
+        self.assertGreaterEqual(len(self.maps[0]['segments'][0]),2)
         self.monitor.deliver(sender,self.BASE+900000)
         self.assertEqual(len(sender.calls),2)
         event=self.monitor.events()[0]
@@ -123,6 +225,20 @@ class RichDeliveryTests(unittest.TestCase):
         event=self.monitor.events()[0]
         self.assertEqual((event['delivery'],event['image_delivery']),('sent','failed'))
         self.assertEqual(event['image_error'],'图片被拒绝')
+
+    def test_map_failure_never_sends_fake_image(self):
+        self._trip()
+        def fail(_route): raise ValueError('真实地图服务不可用')
+        self.monitor.map_renderer=fail
+        class Sender:
+            def __init__(self): self.calls=[]
+            def send_markdown(self,value): self.calls.append('markdown')
+            def send_image(self,value): self.calls.append('image')
+        sender=Sender();self.monitor.deliver(sender,self.BASE+720000)
+        self.assertEqual(sender.calls,['markdown'])
+        event=self.monitor.events()[0]
+        self.assertEqual(event['image_delivery'],'failed')
+        self.assertEqual(event['image_error'],'行程图片准备失败，未调用发送器')
 
 
 if __name__ == '__main__':

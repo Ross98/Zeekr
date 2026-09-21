@@ -107,8 +107,9 @@ def bark_message_for(kind, data):
 
 
 class Monitor:
-    def __init__(self, database_path, active_codes=(), stopped_codes=(), address_resolver=None):
+    def __init__(self, database_path, active_codes=(), stopped_codes=(), address_resolver=None, map_renderer=None):
         self.address_resolver = address_resolver
+        self.map_renderer = map_renderer
         self.tracks = TrackStore(database_path)
         self.active_codes, self.stopped_codes = active_codes, stopped_codes
         with self.tracks.connect() as db:
@@ -523,7 +524,9 @@ class Monitor:
                 start,end=report.get('start_time'),report.get('end_time')
                 date=datetime.fromtimestamp(end/1000,ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d')
                 route=self.tracks.between(vehicle,start,end,date)
-                content=render_trip_png(report,route)
+                if self.map_renderer is None:
+                    raise ValueError('未配置真实地图渲染器')
+                content=render_trip_png(report,route,self.map_renderer(route))
                 called=True; sender.send_image(content)
             except DeliveryError as exc:
                 delivery='uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts>=5 else 'pending'

@@ -44,6 +44,14 @@ class Canvas:
                 for column,bit in enumerate(bits):
                     if bit=='1':self.rect(cursor+column*scale,y+row*scale,cursor+(column+1)*scale,y+(row+1)*scale,color)
             cursor+=6*scale
+    def image(self,x1,y1,x2,y2,image):
+        width,height,pixels=_decode_png(image)
+        for y in range(y1,y2):
+            sy=min(height-1,int((y-y1)*height/(y2-y1)))
+            for x in range(x1,x2):
+                sx=min(width-1,int((x-x1)*width/(x2-x1)))
+                source=(sy*width+sx)*3;target=(y*WIDTH+x)*3
+                self.data[target:target+3]=pixels[source:source+3]
     def png(self):
         raw=b''.join(b'\0'+bytes(self.data[y*WIDTH*3:(y+1)*WIDTH*3]) for y in range(HEIGHT))
         def chunk(name,data):return struct.pack('>I',len(data))+name+data+struct.pack('>I',zlib.crc32(name+data)&0xffffffff)
@@ -52,23 +60,51 @@ class Canvas:
 def _number(value,suffix=''):
     return '--' if type(value) not in (int,float) else ('%.1f'%value).rstrip('0').rstrip('.')+suffix
 
-def _route(canvas,route,box):
-    segments=[];points=[]
-    for segment in route.get('segments',[]):
-        valid=[(p.get('longitude'),p.get('latitude')) for p in segment if type(p.get('longitude')) in (int,float) and type(p.get('latitude')) in (int,float)]
-        if valid:segments.append(valid);points.extend(valid)
-    canvas.rect(*box,COLORS['panel'])
-    if len(points)<2:return
-    left,top,right,bottom=box;xs=[p[0] for p in points];ys=[p[1] for p in points];dx=max(xs)-min(xs) or 1;dy=max(ys)-min(ys) or 1;margin=42
-    def xy(p):return (left+margin+(p[0]-min(xs))/dx*(right-left-2*margin),bottom-margin-(p[1]-min(ys))/dy*(bottom-top-2*margin))
-    for segment in segments:
-        for a,b in zip(segment,segment[1:]):canvas.line(xy(a),xy(b),COLORS['green'])
-    canvas.circle(*xy(points[0]),12,COLORS['white']);canvas.circle(*xy(points[-1]),14,COLORS['orange'])
+def _decode_png(content):
+    if not isinstance(content,bytes) or not content.startswith(b'\x89PNG\r\n\x1a\n'):
+        raise ValueError('真实地图不是有效 PNG')
+    offset=8;compressed=b'';header=None
+    while offset+12<=len(content):
+        length=struct.unpack('>I',content[offset:offset+4])[0];name=content[offset+4:offset+8]
+        data=content[offset+8:offset+8+length];offset+=12+length
+        if name==b'IHDR':header=struct.unpack('>IIBBBBB',data)
+        elif name==b'IDAT':compressed+=data
+        elif name==b'IEND':break
+    if not header:
+        raise ValueError('真实地图缺少 PNG 头')
+    width,height,depth,color,compression,filtering,interlace=header
+    if not 0<width<=2048 or not 0<height<=2048 or depth!=8 or color not in (2,6) or compression or filtering or interlace:
+        raise ValueError('真实地图 PNG 格式不支持')
+    channels=3 if color==2 else 4;stride=width*channels
+    try:raw=zlib.decompress(compressed)
+    except zlib.error:raise ValueError('真实地图 PNG 数据损坏') from None
+    if len(raw)!=(stride+1)*height:raise ValueError('真实地图 PNG 尺寸不符')
+    result=bytearray(height*stride);previous=bytearray(stride)
+    for y in range(height):
+        kind=raw[y*(stride+1)];source=raw[y*(stride+1)+1:(y+1)*(stride+1)];row=bytearray(stride)
+        for i,value in enumerate(source):
+            left=row[i-channels] if i>=channels else 0;up=previous[i];upper_left=previous[i-channels] if i>=channels else 0
+            if kind==0:predictor=0
+            elif kind==1:predictor=left
+            elif kind==2:predictor=up
+            elif kind==3:predictor=(left+up)//2
+            elif kind==4:
+                p=left+up-upper_left;pa,pb,pc=abs(p-left),abs(p-up),abs(p-upper_left)
+                predictor=left if pa<=pb and pa<=pc else up if pb<=pc else upper_left
+            else:raise ValueError('真实地图 PNG 滤镜不支持')
+            row[i]=(value+predictor)&255
+        result[y*stride:(y+1)*stride]=row;previous=row
+    if channels==3:return width,height,result
+    rgb=bytearray(width*height*3)
+    for index in range(width*height):rgb[index*3:index*3+3]=result[index*4:index*4+3]
+    return width,height,rgb
 
-def render_trip_png(report,route):
+def render_trip_png(report,route,map_image):
     canvas=Canvas();canvas.text(56,42,'TRIP REPORT',7,COLORS['white'])
     if report.get('partial'):canvas.text(820,52,'PARTIAL',4,COLORS['orange'])
-    _route(canvas,route,(56,118,1012,420));metrics,start,end=report.get('metrics',{}),report.get('start',{}),report.get('end',{})
+    try:canvas.image(56,118,1012,420,map_image)
+    except ValueError as exc:raise ValueError('真实地图不可用：%s'%exc) from None
+    metrics,start,end=report.get('metrics',{}),report.get('start',{}),report.get('end',{})
     duration=metrics.get('duration_seconds');cards=[('DISTANCE',_number(metrics.get('distance_km'),' KM')),('DURATION',_number(duration/60 if type(duration) in (int,float) else None,' MIN')),('SOC','%s-%s'%(_number(start.get('soc'),'%'),_number(end.get('soc'),'%'))),('ENERGY',_number(metrics.get('estimated_kwh_100km'),' KWH/100KM'))]
     for index,(label,value) in enumerate(cards):
         x=56+index*239;canvas.rect(x,454,x+224,652,COLORS['card']);canvas.text(x+20,480,label,3,COLORS['muted']);canvas.text(x+20,545,value,2 if len(value)>12 else 5,COLORS['white'])

@@ -163,7 +163,7 @@ HTTP 429 根据 `Retry-After` 建立共享冷却，无有效响应头时暂停 6
 | `field-reviews.sqlite3` | 本车字段及具体原值的人工核实记录 |
 | `wecom-webhook.json` | 单独配置的企业微信群机器人 Webhook |
 | `bark.json` | Bark HTTPS 服务地址和设备 Key；用于 Apple 设备状态提醒 |
-| `amap-geocoding.json` | 可选的高德 Web 服务 Key，用于通知发送前解析地址 |
+| `amap-geocoding.json` | 可选的高德 Web 服务 Key，用于通知发送前解析地址并生成真实静态地图 |
 
 这些文件受权限保护，但属于本机明文存储，不是加密保险箱。登录不保存手机号、短信验证码、JWT 或刷新 Token。重新普通登录会替换会话并清除已导入的历史凭据；`logout` 只删除会话，不物理擦除缓存或轨迹数据库。轨迹默认长期保留，不自动删除。
 
