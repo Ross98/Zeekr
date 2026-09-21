@@ -566,6 +566,15 @@ function settings() {
   <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会同时停止自动检查与通知处理，已有记录保留。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">默认 30 秒，可调为 10–60 秒；停车保持相同间隔。更快查询不保证车辆上传更快，重复数据不会增加轨迹点。故障或限流时等待会延长。</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="10" max="60" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section>`;
 }
 
+function updateHeartbeat() {
+  document.querySelectorAll('.inline-row').forEach(row => {
+    const label=row.querySelector('span')?.textContent, value=row.querySelector('strong');
+    if(label==='最近采样检查'&&value)value.textContent=state?.recording?.last_sample || '未知';
+    if(label==='最近新增观测'&&value)value.textContent=state?.recording?.last_new || '未知';
+  });
+  updateConnection();updateClock();
+}
+
 function more() { return `<div class="more-grid">${['energy','fields','insights','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
 
 function render() {
@@ -762,8 +771,8 @@ async function pollState(force = false) {
     const latest=await api('/api/state',undefined,8000);
     const changed=!state || latest.read_time!==state.read_time || latest.error!==state.error ||
       latest.recording.interval!==state.recording.interval || latest.recording.active!==state.recording.active ||
-      latest.recording.effective_interval!==state.recording.effective_interval || latest.recording.status!==state.recording.status || latest.recording.last_new!==state.recording.last_new ||
-      latest.recording.last_sample!==state.recording.last_sample || latest.next_query_at!==state.next_query_at ||
+      latest.recording.effective_interval!==state.recording.effective_interval || latest.recording.status!==state.recording.status ||
+      latest.next_query_at!==state.next_query_at ||
       latest.request_key!==state.request_key || latest.vehicle!==state.vehicle ||
       latest.insights_context!==state.insights_context ||
       latest.trip_records_revision!==state.trip_records_revision ||
@@ -779,7 +788,7 @@ async function pollState(force = false) {
       if(page==='tracks' && trackSource==='local' && refreshLocalTrips()) {updateConnection();updateClock();}
       else render();
     }
-    else { if(page==='insights')insightsPage.mount($('#insights-workspace'));updateConnection();updateClock(); }
+    else { if(page==='insights')insightsPage.mount($('#insights-workspace'));updateHeartbeat(); }
   } catch(error) {
     connectionFailures=state?connectionFailures+1:2;
     updateConnection();

@@ -59,12 +59,15 @@ const path = require('node:path');
     assert.equal((await page.evaluate(()=>fetch('/api/state').then(r=>r.json()))).recording.interval, 30);
     await intervalInput.fill('10');
     // A background update must keep the unsaved input and focus.
+    await page.evaluate(() => { window.__intervalBeforeHeartbeat = document.querySelector('#interval'); });
     await page.route('**/api/state', async route=>{
       const response=await route.fetch();const data=await response.json();
       data.recording.last_sample='合成后台更新';
       await route.fulfill({response,json:data});
     });
     await page.evaluate(()=>pollState(true));
+    assert.equal(await page.evaluate(()=>document.querySelector('#interval')===window.__intervalBeforeHeartbeat),true,'Background heartbeat must not rebuild the page');
+    assert.match(await page.locator('.inline-row').filter({hasText:'最近采样检查'}).innerText(),/合成后台更新/,'Background heartbeat updates its visible value in place');
     assert.equal(await intervalInput.inputValue(), '10');
     assert.equal(await intervalInput.evaluate(el=>el===document.activeElement), true);
     await page.unroute('**/api/state');
