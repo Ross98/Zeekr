@@ -45,10 +45,11 @@ def severity(sample, previous='healthy'):
 
 
 class StorageHealth:
-    def __init__(self, root, sender=None):
+    def __init__(self, root, sender=None, alert_sender=None):
         self.root = Path(root)
         self.path = self.root/'storage-health.json'
         self.sender = sender
+        self.alert_sender = alert_sender
         self.next_check = 0
 
     def _state(self):
@@ -75,6 +76,7 @@ class StorageHealth:
         state = self._state()
         result = dict(state.get('sample') or {'status': 'not_checked', 'checked_at': None})
         result['notification_state'] = state.get('notification_state', 'none')
+        result['alert_notification_state'] = state.get('alert_notification_state', 'none')
         result['last_notification_at'] = state.get('attempt_at')
         result['monitor_fresh'] = bool(result.get('checked_at') and time.time()-result['checked_at'] <= 900)
         return result
@@ -88,6 +90,19 @@ class StorageHealth:
             parts += ['inode 使用 %.1f%%。' % sample['inode_used_percent']]
         parts += ['未自动删除任何数据。请在设置的存储管理中检查。']
         return '\n'.join(parts)
+
+    def _alert(self, sample):
+        healthy = sample['status'] == 'healthy'
+        title = '✅ Zeekr 服务器存储恢复' if healthy else '⚠️ Zeekr 服务器存储异常'
+        parts = []
+        if sample.get('disk_used_percent') is not None:
+            parts.append('磁盘使用率：%.1f%%' % sample['disk_used_percent'])
+        if sample.get('disk_free_bytes') is not None:
+            parts.append('磁盘剩余：%.2f GiB' % (sample['disk_free_bytes']/GIB))
+        if sample.get('inode_used_percent') is not None:
+            parts.append('inode 使用率：%.1f%%' % sample['inode_used_percent'])
+        parts.append('恢复详情由企业微信发送' if healthy else '具体异常由企业微信发送')
+        return title, '\n'.join(parts)
 
     def tick(self, now=None):
         now = time.time() if now is None else now
@@ -115,23 +130,40 @@ class StorageHealth:
         state.update(sample=sample, history=history[-2016:], last_check=now)
         # A worker interrupted during send must not retry an uncertain delivery.
         if state.get('notification_state') == 'sending': state['notification_state'] = 'uncertain'
+        if state.get('alert_notification_state') == 'sending': state['alert_notification_state'] = 'uncertain'
         level = sample['status']
         prior = state.get('notification_level', 'healthy')
         changed = level != prior
-        due = changed or (level != 'healthy' and now-state.get('attempt_at', 0) >= REMINDER)
-        if state.get('notification_state') == 'failed' and level == prior:
-            due = now >= state.get('retry_at', now+3600)
-        if not due or self.sender is None:
+        reminder_due = level != 'healthy' and now-state.get('attempt_at', 0) >= REMINDER
+        retry_due = now >= state.get('retry_at', now+3600)
+        detail_failed = state.get('notification_state') == 'failed' and level == prior and retry_due
+        alert_failed = state.get('alert_notification_state') == 'failed' and level == prior and retry_due
+        due = changed or reminder_due or detail_failed or alert_failed
+        if not due or self.sender is None and self.alert_sender is None:
             self._save(state)
             return
-        state.update(notification_state='sending', notification_level=level, attempt_at=now)
+        send_detail = self.sender is not None and (changed or reminder_due or detail_failed)
+        send_alert = self.alert_sender is not None and (changed or reminder_due or alert_failed)
+        state.update(notification_level=level, attempt_at=now)
+        if send_detail: state['notification_state'] = 'sending'
+        if send_alert: state['alert_notification_state'] = 'sending'
         self._save(state)  # Durable intent before network; errors never silently hide disk trouble.
-        try:
-            self.sender(self._message(sample))
-            state['notification_state'] = 'sent'
-        except DeliveryError as exc:
-            state['notification_state'] = 'uncertain' if exc.ambiguous else 'failed'
-            state['retry_at'] = now+(3600 if exc.permanent else 900)
-        except Exception:
-            state['notification_state'] = 'uncertain'
+        if send_alert:
+            try:
+                self.alert_sender(*self._alert(sample))
+                state['alert_notification_state'] = 'sent'
+            except DeliveryError as exc:
+                state['alert_notification_state'] = 'uncertain' if exc.ambiguous else 'failed'
+                state['retry_at'] = now+(3600 if exc.permanent else 900)
+            except Exception:
+                state['alert_notification_state'] = 'uncertain'
+        if send_detail:
+            try:
+                self.sender(self._message(sample))
+                state['notification_state'] = 'sent'
+            except DeliveryError as exc:
+                state['notification_state'] = 'uncertain' if exc.ambiguous else 'failed'
+                state['retry_at'] = now+(3600 if exc.permanent else 900)
+            except Exception:
+                state['notification_state'] = 'uncertain'
         self._save(state)

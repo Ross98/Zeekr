@@ -17,7 +17,7 @@ from .errors import ApiError, RateLimited
 from .monitor import Monitor
 from .geocoding import AmapGeocoder
 from .profiles import vehicle_profile
-from .notifications import WeComSender
+from .notifications import BarkSender, FallbackSender, WeComSender
 from .storage import DEFAULT_PATH, load, save
 from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
@@ -152,16 +152,25 @@ def read_status(root, vehicle=None, public=False):
     if path.exists():
         db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=5)
         try:
+            has_alerts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_event_alerts'").fetchone())
+            alert_columns = ',a.delivery,a.error' if has_alerts else ',NULL,NULL'
+            alert_join = ' LEFT JOIN monitor_event_alerts a ON a.event_id=e.id' if has_alerts else ''
             if public and not vehicle:
                 rows = []
             elif public:
-                rows = db.execute('SELECT kind,delivery,error,created FROM monitor_events WHERE vehicle=? ORDER BY created DESC,rowid DESC LIMIT 10', (vehicle,)).fetchall()
+                rows = db.execute('SELECT e.kind,e.delivery,e.error,e.created' + alert_columns +
+                    ' FROM monitor_events e' + alert_join +
+                    ' WHERE e.vehicle=? ORDER BY e.created DESC,e.rowid DESC LIMIT 10', (vehicle,)).fetchall()
             else:
-                rows = db.execute('SELECT kind,summary,delivery,error,created FROM monitor_events ORDER BY created DESC,rowid DESC LIMIT 10').fetchall()
+                rows = db.execute('SELECT e.kind,e.summary,e.delivery,e.error,e.created' + alert_columns +
+                    ' FROM monitor_events e' + alert_join +
+                    ' ORDER BY e.created DESC,e.rowid DESC LIMIT 10').fetchall()
             if public:
-                result['events'] = [dict(kind=r[0], delivery=r[1], error=_safe_error(r[2]), created=r[3]) for r in rows]
+                result['events'] = [dict(kind=r[0], delivery=r[1], error=_safe_error(r[2]), created=r[3],
+                                         alert_delivery=r[4], alert_error=_safe_error(r[5])) for r in rows]
             else:
-                result['events'] = [dict(kind=r[0], summary=json.loads(r[1]), delivery=r[2], error=r[3], created=r[4]) for r in rows]
+                result['events'] = [dict(kind=r[0], summary=json.loads(r[1]), delivery=r[2], error=r[3], created=r[4],
+                                         alert_delivery=r[5], alert_error=r[6]) for r in rows]
         finally:
             db.close()
     return result
@@ -169,7 +178,7 @@ def read_status(root, vehicle=None, public=False):
 
 class Runner:
     def __init__(self, session_path=DEFAULT_PATH, vehicle=None, client_factory=Client, sender=None,
-                 active_codes=(), stopped_codes=()):
+                 active_codes=(), stopped_codes=(), alert_sender=None):
         self.session_path = Path(session_path)
         self.root = self.session_path.parent
         if vehicle is not None and (type(vehicle) is not int or vehicle < 1):
@@ -182,7 +191,11 @@ class Runner:
         self.monitor = Monitor(self.root / 'tracks.sqlite3', active_codes, stopped_codes,
                                address_resolver=AmapGeocoder(self.root / 'amap-geocoding.json'))
         self.sender = sender if sender is not None else WeComSender(self.root / 'wecom-webhook.json')
-        self.storage_health = StorageHealth(self.root, self.sender)
+        self.alert_sender = (alert_sender if alert_sender is not None else
+                             BarkSender(self.root / 'bark.json') if sender is None else None)
+        self.reminder_sender = (FallbackSender(self.alert_sender, self.sender)
+                                if self.alert_sender is not None else self.sender)
+        self.storage_health = StorageHealth(self.root, self.sender, self.alert_sender)
         self.reminders = Reminders(PersonalStore(self.root / 'personal.sqlite3'))
         self.reminders.recover()
         self.blocked_fingerprint = None
@@ -276,8 +289,11 @@ class Runner:
                     current_binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
                     if session_scope(load(self.session_path)) != session_scope(session) or current_binding != binding:
                         raise ApiError('账号会话或绑定车辆已变化，本次自定义提醒已取消')
+                reminder_sender = (FallbackSender(self.alert_sender, self.sender)
+                                   if self.alert_sender is not None else self.sender)
+                self.reminder_sender = reminder_sender
                 self.reminders.observe(account_scope(session), binding, raw, observed,
-                                       sender=self.sender, guard=reminder_guard)
+                                       sender=reminder_sender, guard=reminder_guard)
                 self.analysis_input = (session_scope(session), binding, observed)
         except RateLimited as exc:
             delay = max(60, exc.seconds)
@@ -295,7 +311,7 @@ class Runner:
                 self.blocked_fingerprint = fingerprint
                 health.update(status='blocked', error=error[:150])
         # Storage errors escape and stop the worker, never inventing transitions.
-        self.monitor.deliver(self.sender, now)
+        self.monitor.deliver(self.sender, now, self.alert_sender)
         health['interval'] = str(delay)
         health['next_check'] = str((int(time.time() * 1000) if live_clock else now) + delay * 1000)
         save(self.root / 'monitor-health.json', health)

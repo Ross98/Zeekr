@@ -12,7 +12,7 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await page.locator('[data-page="settings"]').first().click();
     const panel=page.locator('#storage-management'),old=panel.locator('.storage-archive-row').filter({hasText:'2024/12'});
     await old.waitFor();
-    assert.match(await panel.innerText(),/企业微信预警.*每 5 分钟/s);
+    assert.match(await panel.innerText(),/Bark 提醒.*企业微信详情.*每 5 分钟/s);
     const current=panel.locator('.storage-archive-row').filter({hasText:'受保护'});
     assert.equal(await current.getByRole('button').isDisabled(),true);
     const preview=async(action)=>{await old.getByRole('button',{name:action,exact:true}).click();await panel.locator('#storage-confirm-input').waitFor();};

@@ -177,6 +177,7 @@ class RuntimeTests(unittest.TestCase):
             for vehicle in ('car-a','car-b'):
                 db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
                     (vehicle,vehicle,'trip_end',json.dumps({'report_v2':{'secret':'PRIVATE'},'start_location':[1,2]}),'PRIVATE',1))
+                db.execute('INSERT INTO monitor_event_alerts(event_id) VALUES(?)', (vehicle,))
         save(self.root/'monitor-health.json', {'status':'fresh','heartbeat':str(BASE),'next_check':str(BASE+60000),
              'signals':'PRIVATE-SIGNALS','raw_future':'PRIVATE-FUTURE'})
         result = read_status(self.root,'car-a',public=True)
@@ -185,6 +186,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn('summary',result['events'][0])
         self.assertNotIn('PRIVATE',encoded)
         self.assertNotIn('signals',result)
+        self.assertEqual(result['events'][0]['alert_delivery'], 'pending')
         self.assertEqual(read_status(self.root,None,public=True)['events'],[])
 
 

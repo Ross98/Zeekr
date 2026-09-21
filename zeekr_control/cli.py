@@ -64,7 +64,7 @@ def parser():
     commands.add_parser('logout', help='删除本机会话，不调用云端注销')
     web = commands.add_parser('web', help='启动本机 Web 界面，采集默认关闭')
     web.add_argument('--port', type=int, default=8765, help='本机端口，默认 8765')
-    monitor = commands.add_parser('monitor', help='后台监控行程和充电，向已配置的企业微信群发送通知')
+    monitor = commands.add_parser('monitor', help='后台监控行程和充电，发送 Bark 状态提醒和企业微信详细报告')
     monitor.add_argument('--vehicle', type=int, help='首次绑定车辆序号；单车可省略')
     monitor.add_argument('--once', action='store_true', help='执行一次检查及待发通知后退出')
     monitor.add_argument('--charging-active-code', action='append', default=[], help='仅填写本车实测确认的充电中 chargeSts，可重复')

@@ -4,6 +4,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   const f=await fixture(),{page}=f;
   try{
     await page.getByRole('button',{name:'自定义提醒',exact:true}).click();
+    assert.match(await page.locator('#rule-delivery').innerText(),/Bark.*企业微信兜底/);
     await page.getByLabel('提醒名称',{exact:true}).fill('<img src=x onerror=alert(1)> 合成规则');
     await page.getByLabel('电量阈值（%）',{exact:true}).fill('30');
     await page.getByLabel('连续确认（秒）',{exact:true}).fill('120');

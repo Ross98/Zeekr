@@ -34,6 +34,10 @@ sudo systemctl restart zeekr-control
 sudo du -sh /var/lib/zeekr-control
 ```
 
+## Bark 状态提醒
+
+Bark 配置保存在服务数据目录的 `bark.json`，属主为 `zeekr-control`、权限为 `600`。配置包含 `base_url` 和 `device_key`，不得进入 Git、发布包、命令参数或日志。状态短提醒与企业微信详细报告的通道分工见 [Bark 通知说明](bark-notifications-2026-09-21.md)。
+
 首次需建立极氪会话。可安全迁移已有会话或在服务器交互登录，禁止把 Token、短信验证码写入文档、命令参数或日志。项目代码包不包含任何账号凭据或本地轨迹数据库。
 
 ## 回滚

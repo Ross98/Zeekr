@@ -1,4 +1,4 @@
-"""Outbound-only WeCom notifications; secrets never appear in errors."""
+"""Outbound-only notification senders; secrets never appear in errors."""
 import base64
 import hashlib
 import json
@@ -19,6 +19,59 @@ class DeliveryError(Exception):
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+class BarkSender:
+    def __init__(self, config_path):
+        self.config_path = config_path
+
+    def __call__(self, title, body=None):
+        if body is None:
+            title, body = '极氪车辆提醒', title
+        try:
+            config = load(self.config_path)
+            base_url = config.get('base_url', '')
+            device_key = config.get('device_key', '')
+        except Exception:
+            raise DeliveryError('Bark 配置无法读取', permanent=True) from None
+        if not re.fullmatch(r'https://[A-Za-z0-9.-]+(?::\d+)?(?:/[A-Za-z0-9._~-]+)*/?', base_url):
+            raise DeliveryError('Bark 服务地址无效', permanent=True)
+        if not isinstance(device_key, str) or not re.fullmatch(r'[A-Za-z0-9_-]{8,256}', device_key):
+            raise DeliveryError('Bark 设备 Key 无效', permanent=True)
+        if not isinstance(title, str) or not isinstance(body, str):
+            raise DeliveryError('Bark 通知内容无效', permanent=True)
+        payload = {'device_key': device_key, 'title': title, 'body': body,
+                   'group': 'Zeekr', 'level': 'active'}
+        request = Request(base_url.rstrip('/') + '/push',
+                          data=json.dumps(payload, ensure_ascii=False).encode(),
+                          headers={'Content-Type': 'application/json; charset=utf-8'}, method='POST')
+        try:
+            with build_opener(NoRedirect()).open(request, timeout=20) as response:
+                result = json.loads(response.read(65536))
+        except HTTPError as exc:
+            raise DeliveryError('Bark HTTP 错误 %d' % exc.code, ambiguous=exc.code >= 500,
+                                permanent=300 <= exc.code < 500 and exc.code != 429) from None
+        except (URLError, OSError, ValueError):
+            raise DeliveryError('Bark 响应未确认', ambiguous=True) from None
+        if not isinstance(result, dict) or type(result.get('code')) is not int:
+            raise DeliveryError('Bark 响应格式未确认', ambiguous=True)
+        if result['code'] != 200:
+            raise DeliveryError('Bark 推送被拒绝，代码 %d' % result['code'],
+                                permanent=400 <= result['code'] < 500 and result['code'] != 429)
+
+
+class FallbackSender:
+    def __init__(self, primary, fallback):
+        self.primary = primary
+        self.fallback = fallback
+
+    def __call__(self, message):
+        try:
+            self.primary(message)
+        except DeliveryError as exc:
+            if exc.ambiguous:
+                raise
+            self.fallback(message)
 
 
 class WeComSender:
