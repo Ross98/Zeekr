@@ -9,7 +9,7 @@
 
 ## 发布与验证
 
-- 代码提交：`0fab242`（`fix(notifications): simplify Bark timestamps`）。
+- 部署构建来源：原提交 `0fab242`；重放到最新 `main` 后的等价 Bark 提交：`52a209c`（`fix(notifications): simplify Bark timestamps`）。
 - 活动发布：`/opt/zeekr-control/releases/20260922-bark-time-0fab242`。
 - 停服备份：`/opt/zeekr-control/backups/20260922-bark-time-0fab242`。
 - 上一发布：`/opt/zeekr-control/releases/20260921-trip-map-ef14833`。
