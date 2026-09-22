@@ -81,6 +81,17 @@ class TripImageTests(unittest.TestCase):
         start = y * stride + 1 + x * 3
         return tuple(raw[start:start + 3])
 
+    def _region_contains(self,image,left,top,right,bottom,color):
+        offset=8;data=b''
+        while offset<len(image):
+            length=struct.unpack('>I',image[offset:offset+4])[0];name=image[offset+4:offset+8]
+            value=image[offset+8:offset+8+length];offset+=12+length
+            if name==b'IDAT':data+=value
+            if name==b'IEND':break
+        raw=zlib.decompress(data);stride=1068*3+1
+        return any(tuple(raw[y*stride+1+x*3:y*stride+4+x*3])==color
+                   for y in range(top,bottom) for x in range(left,right))
+
     def test_renderer_composites_provider_map_and_keeps_expected_dimensions(self):
         from zeekr_control.trip_notification_image import render_trip_png
         report = {'metrics': {'distance_km': 23.6, 'duration_seconds': 2520,
@@ -106,6 +117,14 @@ class TripImageTests(unittest.TestCase):
         from zeekr_control.trip_notification_image import render_trip_png
         image=render_trip_png({}, {'segments': []}, self._palette_png((211,223,227)))
         self.assertEqual(self._pixel(image,500,200),(211,223,227))
+
+    def test_metric_values_never_draw_into_card_gutters(self):
+        from zeekr_control.trip_notification_image import render_trip_png, COLORS
+        report={'metrics':{'distance_km':10,'duration_seconds':1668,'estimated_kwh_100km':None},
+                'start':{'soc':55},'end':{'soc':53},'partial':False}
+        image=render_trip_png(report,{'segments':[]},self._solid_png((211,223,227)))
+        for left,right in ((280,295),(519,534),(758,773)):
+            self.assertFalse(self._region_contains(image,left,535,right,590,COLORS['white']))
 
 
 class AmapStaticMapTests(unittest.TestCase):

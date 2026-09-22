@@ -37,12 +37,14 @@ class Canvas:
         x1,y1=a;x2,y2=b;steps=max(1,int(max(abs(x2-x1),abs(y2-y1))))
         for i in range(steps+1):
             ratio=i/steps;self.circle(x1+(x2-x1)*ratio,y1+(y2-y1)*ratio,width/2,color)
-    def text(self,x,y,value,scale,color):
+    def text(self,x,y,value,scale,color,max_width=None):
         cursor=int(x)
+        right=cursor+max_width if max_width is not None else WIDTH
         for character in str(value).upper():
             for row,bits in enumerate(FONT.get(character,FONT[' '])):
                 for column,bit in enumerate(bits):
-                    if bit=='1':self.rect(cursor+column*scale,y+row*scale,cursor+(column+1)*scale,y+(row+1)*scale,color)
+                    left=cursor+column*scale
+                    if bit=='1' and left<right:self.rect(left,y+row*scale,min(right,left+scale),y+(row+1)*scale,color)
             cursor+=6*scale
     def image(self,x1,y1,x2,y2,image):
         width,height,pixels=_decode_png(image)
@@ -59,6 +61,10 @@ class Canvas:
 
 def _number(value,suffix=''):
     return '--' if type(value) not in (int,float) else ('%.1f'%value).rstrip('0').rstrip('.')+suffix
+
+def _fit_scale(value,preferred,width):
+    pixels=max(1,6*len(str(value))-1)
+    return max(1,min(preferred,width//pixels))
 
 def _decode_png(content):
     if not isinstance(content,bytes) or not content.startswith(b'\x89PNG\r\n\x1a\n'):
@@ -116,7 +122,7 @@ def render_trip_png(report,route,map_image):
     metrics,start,end=report.get('metrics',{}),report.get('start',{}),report.get('end',{})
     duration=metrics.get('duration_seconds');cards=[('DISTANCE',_number(metrics.get('distance_km'),' KM')),('DURATION',_number(duration/60 if type(duration) in (int,float) else None,' MIN')),('SOC','%s-%s'%(_number(start.get('soc'),'%'),_number(end.get('soc'),'%'))),('ENERGY',_number(metrics.get('estimated_kwh_100km'),' KWH/100KM'))]
     for index,(label,value) in enumerate(cards):
-        x=56+index*239;canvas.rect(x,454,x+224,652,COLORS['card']);canvas.text(x+20,480,label,3,COLORS['muted']);canvas.text(x+20,545,value,2 if len(value)>12 else 5,COLORS['white'])
+        x=56+index*239;canvas.rect(x,454,x+224,652,COLORS['card']);canvas.text(x+20,480,label,3,COLORS['muted']);canvas.text(x+20,545,value,_fit_scale(value,5,184),COLORS['white'],184)
     canvas.text(56,682,'CLOUD CACHE - VALID SAMPLES ONLY',3,COLORS['muted']);content=canvas.png()
     if len(content)>2*1024*1024:raise ValueError('行程图片超过2MB')
     return content
