@@ -18,7 +18,7 @@ from .monitor import Monitor
 from .geocoding import AmapGeocoder
 from .trip_map import AmapStaticMap
 from .profiles import vehicle_profile
-from .notifications import BarkSender, FallbackSender, WeComSender
+from .notifications import BarkSender, FallbackSender, WeComSender, compact_bark_times
 from .storage import DEFAULT_PATH, load, save
 from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
@@ -195,7 +195,7 @@ class Runner:
         self.sender = sender if sender is not None else WeComSender(self.root / 'wecom-webhook.json')
         self.alert_sender = (alert_sender if alert_sender is not None else
                              BarkSender(self.root / 'bark.json') if sender is None else None)
-        self.reminder_sender = (FallbackSender(self.alert_sender, self.sender)
+        self.reminder_sender = (FallbackSender(self.alert_sender, self.sender, compact_bark_times)
                                 if self.alert_sender is not None else self.sender)
         self.storage_health = StorageHealth(self.root, self.sender, self.alert_sender)
         self.reminders = Reminders(PersonalStore(self.root / 'personal.sqlite3'))
@@ -291,7 +291,7 @@ class Runner:
                     current_binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
                     if session_scope(load(self.session_path)) != session_scope(session) or current_binding != binding:
                         raise ApiError('账号会话或绑定车辆已变化，本次自定义提醒已取消')
-                reminder_sender = (FallbackSender(self.alert_sender, self.sender)
+                reminder_sender = (FallbackSender(self.alert_sender, self.sender, compact_bark_times)
                                    if self.alert_sender is not None else self.sender)
                 self.reminder_sender = reminder_sender
                 self.reminders.observe(account_scope(session), binding, raw, observed,

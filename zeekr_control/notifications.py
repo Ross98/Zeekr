@@ -1,8 +1,10 @@
 """Outbound-only notification senders; secrets never appear in errors."""
 import base64
+from datetime import datetime
 import hashlib
 import json
 import re
+from zoneinfo import ZoneInfo
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -19,6 +21,24 @@ class DeliveryError(Exception):
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+def bark_time(value):
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return '未知'
+    try:
+        milliseconds = float(value)
+        if milliseconds < 0:
+            return '未知'
+        return datetime.fromtimestamp(milliseconds / 1000, ZoneInfo('Asia/Shanghai')).strftime(
+            '%Y年%m月%d日 %H:%M')
+    except (ValueError, OverflowError, OSError):
+        return '未知'
+
+
+def compact_bark_times(message):
+    return re.sub(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}):\d{2}（北京时间）',
+                  r'\1年\2月\3日 \4', message)
 
 
 class BarkSender:
@@ -61,13 +81,14 @@ class BarkSender:
 
 
 class FallbackSender:
-    def __init__(self, primary, fallback):
+    def __init__(self, primary, fallback, primary_transform=None):
         self.primary = primary
         self.fallback = fallback
+        self.primary_transform = primary_transform or (lambda message: message)
 
     def __call__(self, message):
         try:
-            self.primary(message)
+            self.primary(self.primary_transform(message))
         except DeliveryError as exc:
             if exc.ambiguous:
                 raise

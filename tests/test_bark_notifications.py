@@ -76,6 +76,20 @@ class BarkSenderTests(unittest.TestCase):
             sender('提醒正文')
         self.assertEqual(calls, [])
 
+    def test_fallback_formats_bark_time_but_preserves_wecom_seconds(self):
+        from zeekr_control.notifications import DeliveryError, FallbackSender, compact_bark_times
+        calls = []
+        def bark(message):
+            calls.append(('bark', message))
+            raise DeliveryError('Bark 被拒绝', permanent=True)
+        sender = FallbackSender(bark, lambda message: calls.append(('wecom', message)),
+                                primary_transform=compact_bark_times)
+        original = '车辆观测：2026-09-22 14:30:45（北京时间）\n缓存可能延迟。'
+        sender(original)
+        self.assertEqual(calls, [
+            ('bark', '车辆观测：2026年09月22日 14:30\n缓存可能延迟。'),
+            ('wecom', original)])
+
 
 class BarkEventRoutingTests(unittest.TestCase):
     def setUp(self):
@@ -108,6 +122,13 @@ class BarkEventRoutingTests(unittest.TestCase):
         self.assertEqual(wecom, [])
         event = self.monitor.events()[0]
         self.assertEqual((event['alert_delivery'], event['delivery']), ('sent', 'sent'))
+
+    def test_bark_event_time_uses_chinese_date_without_seconds(self):
+        from zeekr_control.monitor import bark_message_for
+        title, body = bark_message_for('charge_start', {
+            'start_time': 0, 'start_soc': 50, 'partial': False})
+        self.assertEqual(title, '⚡ 极氪开始充电')
+        self.assertEqual(body, '时间：1970年01月01日 08:00\n当前电量：50%')
 
     def test_trip_alert_and_wecom_detail_retry_independently(self):
         from zeekr_control.notifications import DeliveryError

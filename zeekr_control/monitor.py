@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .notifications import DeliveryError
+from .notifications import DeliveryError, bark_time
 from .summary import updated_at
 from .vehicle_state import decode, numeric
 from .tracks import TrackStore
@@ -93,7 +93,7 @@ def bark_message_for(kind, data):
     titles = {'trip_end': '🚗 极氪行程结束', 'charge_start': '⚡ 极氪开始充电',
               'charge_end': '🔋 极氪充电结束'}
     when = data.get('end_time') if kind != 'charge_start' else data.get('start_time')
-    lines = [('结束时间：' if kind != 'charge_start' else '时间：') + updated_at(when)]
+    lines = [('结束时间：' if kind != 'charge_start' else '时间：') + bark_time(when)]
     soc = data.get('end_soc') if kind != 'charge_start' else data.get('start_soc')
     if soc is not None:
         lines.append('当前电量：' + fmt(soc, '%'))
