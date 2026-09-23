@@ -18,7 +18,7 @@ from .monitor import Monitor
 from .geocoding import AmapGeocoder
 from .trip_map import AmapStaticMap
 from .profiles import vehicle_profile
-from .notifications import BarkSender, FallbackSender, WeComSender, compact_bark_times
+from .notifications import BarkSender, DeliveryError, FallbackSender, WeComSender, compact_bark_times
 from .storage import DEFAULT_PATH, load, save
 from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
@@ -177,6 +177,34 @@ def read_status(root, vehicle=None, public=False):
     return result
 
 
+class AuthFailureAlert:
+    """One Bark attempt per observed 1509 outage, durable across restarts."""
+
+    def __init__(self, root, sender):
+        self.path = Path(root) / 'auth-failure-alert.json'
+        self.sender = sender
+
+    def blocked(self, error):
+        if self.sender is None or '网关代码 1509' not in error:
+            return
+        if load(self.path).get('state') in ('sending', 'sent', 'failed', 'uncertain'):
+            return
+        save(self.path, {'state': 'sending'})
+        try:
+            self.sender('⚠️ 极氪采集已中断',
+                        '车辆接口返回 1509，无法采集新数据或生成新通知。请在服务器重新登录极氪副账号。')
+        except DeliveryError as exc:
+            save(self.path, {'state': 'uncertain' if exc.ambiguous else 'failed'})
+        except Exception:
+            save(self.path, {'state': 'uncertain'})
+        else:
+            save(self.path, {'state': 'sent'})
+
+    def recovered(self):
+        if load(self.path).get('state') not in (None, 'ready'):
+            save(self.path, {'state': 'ready'})
+
+
 class Runner:
     def __init__(self, session_path=DEFAULT_PATH, vehicle=None, client_factory=Client, sender=None,
                  active_codes=(), stopped_codes=(), alert_sender=None):
@@ -197,6 +225,7 @@ class Runner:
                              BarkSender(self.root / 'bark.json') if sender is None else None)
         self.reminder_sender = (FallbackSender(self.alert_sender, self.sender, compact_bark_times)
                                 if self.alert_sender is not None else self.sender)
+        self.auth_failure_alert = AuthFailureAlert(self.root, self.alert_sender)
         self.storage_health = StorageHealth(self.root, self.sender, self.alert_sender)
         self.reminders = Reminders(PersonalStore(self.root / 'personal.sqlite3'))
         self.reminders.recover()
@@ -286,6 +315,7 @@ class Runner:
                               trip='waiting' if state['trip'] and state['trip']['stop'] else 'driving' if state['trip'] else 'idle',
                               charge='charging' if state['charge'] else 'idle' if state['last'] and state['last']['charging'] is False else 'unknown',
                               signals=json.dumps(state['last']['signals'], ensure_ascii=False) if state['last'] else '{}')
+                self.auth_failure_alert.recovered()
                 self.failures = 0
                 def reminder_guard():
                     current_binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
@@ -312,6 +342,7 @@ class Runner:
             else:
                 self.blocked_fingerprint = fingerprint
                 health.update(status='blocked', error=error[:150])
+                self.auth_failure_alert.blocked(error)
         # Storage errors escape and stop the worker, never inventing transitions.
         self.monitor.deliver(self.sender, now, self.alert_sender)
         health['interval'] = str(delay)

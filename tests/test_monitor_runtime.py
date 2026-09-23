@@ -163,6 +163,69 @@ class RuntimeTests(unittest.TestCase):
         runner.tick(BASE + 120000)
         self.assertEqual(Client.calls, 2)
 
+    def test_gateway_1509_alerts_bark_once_until_success_even_after_restart(self):
+        from zeekr_control.errors import ApiError
+        from zeekr_control.monitor_runtime import Runner
+        messages = []
+        class Client:
+            valid = False
+            def __init__(self, session): pass
+            def vehicles(self):
+                if not Client.valid:
+                    raise ApiError('status 失败，网关代码 1509；会话过期或被替换时请重新登录。')
+                return [{'vin': 'L6T79X2Z0NP000001'}]
+            def status(self, vin): return sample(0)
+        def runner():
+            value = Runner(self.root/'session.json', client_factory=Client,
+                           sender=lambda message: None,
+                           alert_sender=lambda title, body: messages.append((title, body)))
+            self.addCleanup(value.insight_worker.close)
+            return value
+        first = runner()
+        first.tick(BASE)
+        first.tick(BASE + 60000)
+        self.assertEqual(len(messages), 1)
+        self.assertIn('1509', messages[0][1])
+        self.assertIn('重新登录', messages[0][1])
+        runner().tick(BASE + 120000)
+        self.assertEqual(len(messages), 1)
+        Client.valid = True
+        save(self.root/'session.json', {'accessToken': 'new-synthetic'})
+        runner().tick(BASE + 180000)
+        self.assertEqual(len(messages), 1)
+        Client.valid = False
+        save(self.root/'session.json', {'accessToken': 'another-synthetic'})
+        runner().tick(BASE + 240000)
+        self.assertEqual(len(messages), 2)
+
+    def test_auth_alert_does_not_send_on_other_blocked_errors(self):
+        from zeekr_control.errors import ApiError
+        from zeekr_control.monitor_runtime import Runner
+        messages = []
+        class Client:
+            def __init__(self, session): pass
+            def vehicles(self): raise ApiError('原绑定车辆不在当前车辆列表中')
+        runner = Runner(self.root/'session.json', client_factory=Client,
+                        sender=lambda message: None,
+                        alert_sender=lambda title, body: messages.append((title, body)))
+        self.addCleanup(runner.insight_worker.close)
+        runner.tick(BASE)
+        self.assertEqual(messages, [])
+
+    def test_auth_alert_uncertain_delivery_is_not_repeated(self):
+        from zeekr_control.monitor_runtime import AuthFailureAlert
+        from zeekr_control.notifications import DeliveryError
+        calls = []
+        def uncertain(title, body):
+            calls.append((title, body))
+            raise DeliveryError('timeout', ambiguous=True)
+        alert = AuthFailureAlert(self.root, uncertain)
+        alert.blocked('status 失败，网关代码 1509')
+        AuthFailureAlert(self.root, uncertain).blocked('status 失败，网关代码 1509')
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(__import__('zeekr_control.storage', fromlist=['load']).load(
+            self.root/'auth-failure-alert.json')['state'], 'uncertain')
+
     def test_process_lock_rejects_second_monitor(self):
         from zeekr_control.monitor_runtime import process_lock
         with process_lock(self.root / 'monitor.lock'):
