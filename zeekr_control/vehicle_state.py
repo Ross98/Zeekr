@@ -32,7 +32,14 @@ def decode(raw, active_codes=(), stopped_codes=()):
     ac_invalid = any(electric.get(k) is not None and value is None for k, value in (
         ('chargeUAct', ac_voltage), ('chargeIAct', ac_current)))
     ac_evidence = ac_current is not None and ac_current != 0
-    verified_dc = (dc_lid_open and number(electric.get('chargerState')) == 24 and dc_status == 12
+    verified_dc_15_2 = (number(electric.get('chargeLidAcStatus')) == 2
+                        and number(electric.get('chargeSts')) == 0
+                        and number(electric.get('chargerState')) == 15
+                        and number(electric.get('statusOfChargerConnection')) == 0
+                        and dc_status == 2)
+    verified_dc = (dc_lid_open
+                   and ((number(electric.get('chargerState')) == 24 and dc_status == 12)
+                        or verified_dc_15_2)
                    and pile_voltage is not None and pile_voltage > 0
                    and pile_current is not None and pile_current > 0)
     verified_dc_stopped = (dc_lid_open and number(electric.get('chargerState')) == 26

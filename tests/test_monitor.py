@@ -189,6 +189,53 @@ class MonitorTests(unittest.TestCase):
             electric['chargeLidDcAcStatus'] = lid
             self.assertIsNone(decode(raw)['charging'])
 
+    def test_observed_dc_15_2_combination_creates_one_partial_session(self):
+        from zeekr_control.monitor import decode
+
+        def dc(seconds, soc, amps):
+            raw = sample(seconds, soc=soc, charger=15, dc_lid=1)
+            raw['additionalVehicleStatus']['electricVehicleStatus'].update(
+                chargeLidAcStatus=2, chargeSts=0, statusOfChargerConnection=0,
+                dcChargeSts=2, dcChargePileUAct=400, dcChargePileIAct=amps)
+            return raw
+
+        self.observe(0, soc=27)
+        active = dc(60, 27, 124)
+        self.assertIs(decode(active)['charging'], True)
+        self.assertEqual(decode(active)['charging_mode'], 'dc')
+        self.monitor.observe('test-vehicle', active, BASE + 60000)
+        self.monitor.observe('test-vehicle', dc(120, 34, 123), BASE + 120000)
+        self.monitor.observe('test-vehicle', sample(1800, soc=53), BASE + 1800000)
+        events = self.monitor.events()
+        self.assertEqual([event['kind'] for event in events], ['charge_start', 'charge_end'])
+        self.assertTrue(events[1]['summary']['partial'])
+        self.monitor.observe('test-vehicle', sample(1860, soc=53), BASE + 1860000)
+        self.assertEqual(len(self.monitor.events()), 2)
+
+    def test_dc_15_2_requires_complete_evidence(self):
+        from zeekr_control.monitor import decode
+        raw = sample(0, charger=15, dc_lid=1)
+        electric = raw['additionalVehicleStatus']['electricVehicleStatus']
+        electric.update(chargeLidAcStatus=2, chargeSts=0,
+                        statusOfChargerConnection=0, dcChargeSts=2,
+                        dcChargePileUAct=400, dcChargePileIAct=124)
+        for key, values in {
+            'chargeLidDcAcStatus': (2, None),
+            'chargeLidAcStatus': (1, None),
+            'chargeSts': (1, None),
+            'chargerState': (24, None),
+            'statusOfChargerConnection': (1, None),
+            'dcChargeSts': (12, None),
+            'dcChargePileUAct': (0, None),
+            'dcChargePileIAct': (0, -1, None),
+        }.items():
+            original = electric.get(key)
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    electric[key] = value
+                    self.assertIsNot(decode(raw)['charging'], True)
+            electric[key] = original
+
     def test_lid_open_or_pile_voltage_alone_does_not_confirm_charging(self):
         from zeekr_control.monitor import decode
         raw = sample(0, charger=24)

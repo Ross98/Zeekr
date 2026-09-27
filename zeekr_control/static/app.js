@@ -553,7 +553,7 @@ function tracksPage() {
 function monitoringPanel() {
   const monitor = state?.monitoring || {status:'not_started',events:[]};
   const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',paused:'已暂停',unavailable:'状态暂不可用'};
-  const delivery = {pending:'等待发送',sending:'发送中',sent:'已发送',failed:'发送失败',uncertain:'发送结果待确认',cancelled:'已取消'};
+  const delivery = {pending:'等待发送',sending:'发送中',sent:'已发送',failed:'发送失败',uncertain:'发送结果待确认',cancelled:'已取消',historical:'历史补录，未推送'};
   const kinds = {trip_end:'行程总结',charge_start:'开始充电',charge_end:'充电总结'};
   const activity = {waiting:'下电等待 10 分钟',driving:'行程记录中',idle:'暂无进行中的记录',charging:'充电记录中',unknown:'待确认'};
   const label = monitor.status === 'not_started' ? labels.not_started : monitor.online ? labels[monitor.status] || '运行中' : '监控未在线';
