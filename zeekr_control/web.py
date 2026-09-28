@@ -460,7 +460,7 @@ class App:
                         'charge-comparison': lambda scope, car, a, b: self.charge_comparison.query(car,a,b),
                         'experiments': lambda scope, car: self.experiments.query(account_scope(session),car),
                         'experiment': lambda scope, car, identity: self.experiments.detail(account_scope(session),car,identity),
-                        'parking': lambda scope, car, start, end: ParkingAnalytics(self.archive_reader).query(
+                        'parking': lambda scope, car, start, end: ParkingAnalytics(self.archive_reader, self.database_path).query(
                             scope, car, start, end, (self.profile or {}).get('battery_capacity_kwh'))}
             result = handlers[operation](session_scope(session), vehicle, *args)
             current_session = self._read_session()
