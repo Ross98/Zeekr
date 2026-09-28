@@ -7,7 +7,7 @@
     let serial=0,writeSerial=0,error='',status='',filter='',completeness='all',groupA='',groupB='',page=0,trashPage=0;
     let routeShown=false,routeBusy=false,routeData=null,routeError='',routeSerial=0,routeMap=null;
     let commuteDraft={home:null,work:null,homeRadius:300,workRadius:300},commuteDirty=false;
-    let commuteMap=null,commuteShown=false,placeMode='home',commuteBusy=false;
+    let commuteMap=null,commuteShown=false,placeMode=null,commuteBusy=false;
     const context=()=>getState()?.insights_context||'';
     const valid=(token,current,identity)=>token===current&&owner===identity&&context()===identity;
     const button=(label,action,disabled=false,extra='')=>`<button class="button secondary" data-tag="${action}" ${disabled||busy?'disabled':''} ${extra}>${label}</button>`;
@@ -24,7 +24,7 @@
     }
     const tripDate=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
     function closeRoute(){routeSerial++;routeShown=routeBusy=false;routeData=null;routeError='';routeMap?.remove();routeMap=null;}
-    function closeCommuteMap(){commuteMap?.remove();commuteMap=null;commuteShown=false;}
+    function closeCommuteMap(){commuteMap?.remove();commuteMap=null;commuteShown=false;placeMode=null;}
     function syncCommuteRule(){
       if(commuteDirty)return;
       const rule=data?.commute_rule;
@@ -39,7 +39,7 @@
         <div class="ledger-form"><label>家范围半径（米）<input id="commute-home-radius" aria-label="家范围半径" type="number" min="100" max="1000" step="50" value="${esc(commuteDraft.homeRadius)}"></label><label>公司范围半径（米）<input id="commute-work-radius" aria-label="公司范围半径" type="number" min="100" max="1000" step="50" value="${esc(commuteDraft.workRadius)}"></label></div>
         <p class="insight-note">家：${commuteDraft.home?'已选点':'未选点'} · 公司：${commuteDraft.work?'已选点':'未选点'}。范围可在地图上查看后调整。</p>
         <div class="insight-actions">${button(commuteShown?'隐藏选点地图':'打开选点地图','commute-map')}${button('保存通勤规则','commute-save',!owner||!data||!commuteDraft.home||!commuteDraft.work||commuteBusy)}${rule.revision&&!rule.deleted?button(rule.enabled?'暂停自动标注':'恢复自动标注',rule.enabled?'commute-pause':'commute-resume',commuteBusy):''}${rule.revision&&!rule.deleted?button('删除通勤规则','commute-delete',commuteBusy):''}</div>
-        ${commuteShown?`<div class="insight-actions"><button class="button secondary" data-tag="commute-place-home" aria-pressed="${placeMode==='home'}">选择家地点</button><button class="button secondary" data-tag="commute-place-work" aria-pressed="${placeMode==='work'}">选择公司地点</button>${button('将地图中心设为家','commute-center-home')}${button('将地图中心设为公司','commute-center-work')}</div><div id="commute-map" aria-label="通勤地点选点地图"></div><p class="insight-note">点击地图放置${placeMode==='home'?'家':'公司'}地点，或拖动标记调整中心。键盘可平移地图，再用“将地图中心设为”按钮选点。圆圈是当前匹配边界。</p>`:''}</section>`;
+        ${commuteShown?`<div class="insight-actions"><button class="button secondary" data-tag="commute-place-home" aria-pressed="${placeMode==='home'}">选择家地点</button><button class="button secondary" data-tag="commute-place-work" aria-pressed="${placeMode==='work'}">选择公司地点</button>${button('将地图中心设为家','commute-center-home')}${button('将地图中心设为公司','commute-center-work')}</div><div id="commute-map" aria-label="通勤地点选点地图"></div><p class="insight-note">${placeMode?`点击地图放置${placeMode==='home'?'家':'公司'}地点。放置后退出选点，再次修改请重新按“选择地点”。`:'选点已结束。要修改地点，请先按“选择家地点”或“选择公司地点”。'}也可拖动标记调整中心；键盘可平移地图，再用“将地图中心设为”按钮选点。圆圈是当前匹配边界。</p>`:''}</section>`;
     }
     function paintCommuteMap(){
       const el=node?.querySelector('#commute-map');if(!el||commuteMap)return;
@@ -55,10 +55,10 @@
         L.circle(center,{radius:commuteDraft[key+'Radius'],color,fillOpacity:.12}).addTo(commuteMap);
         const icon=L.divIcon({className:`commute-pin commute-pin-${key}`,html:`<span>${key==='home'?'家':'公司'}</span>`,iconSize:[38,38],iconAnchor:[19,19]});
         L.marker(center,{draggable:true,icon,title:key==='home'?'家地点':'公司地点'}).addTo(commuteMap).bindTooltip(key==='home'?'家':'公司').on('dragend',event=>{
-          const where=event.target.getLatLng();commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;commuteMap.remove();commuteMap=null;paint();
+          const where=event.target.getLatLng();commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;placeMode=null;commuteMap.remove();commuteMap=null;paint();
         });
       }
-      commuteMap.on('click',event=>{commuteDraft[placeMode]={latitude:event.latlng.lat,longitude:event.latlng.lng};commuteDirty=true;commuteMap.remove();commuteMap=null;paint();});
+      commuteMap.on('click',event=>{if(!placeMode)return;commuteDraft[placeMode]={latitude:event.latlng.lat,longitude:event.latlng.lng};commuteDirty=true;placeMode=null;commuteMap.remove();commuteMap=null;paint();});
     }
     function routeView(){
       if(!selected)return '';
@@ -191,11 +191,11 @@
       if(event.type!=='click')return false;
       const target=el.closest('[data-tag]');if(!target||target.disabled)return false;
       const action=target.dataset.tag,id=target.dataset.id;
-      if(action==='commute-map'){commuteShown=!commuteShown;paint();return true;}
-      if(action==='commute-place-home'||action==='commute-place-work'){placeMode=action.endsWith('home')?'home':'work';paint();return true;}
+      if(action==='commute-map'){commuteShown=!commuteShown;placeMode=commuteShown&&!commuteDraft.home?'home':null;paint();return true;}
+      if(action==='commute-place-home'||action==='commute-place-work'){const key=action.endsWith('home')?'home':'work';placeMode=placeMode===key?null:key;paint();return true;}
       if(action==='commute-center-home'||action==='commute-center-work'){
         const where=commuteMap?.getCenter(),key=action.endsWith('home')?'home':'work';
-        if(where){commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;paint();}return true;
+        if(where){commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;placeMode=null;paint();}return true;
       }
       if(action.startsWith('commute-')){mutateCommute(action,id);return true;}
       if(action==='load')load();
