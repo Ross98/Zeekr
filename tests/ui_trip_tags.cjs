@@ -26,6 +26,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'选择公司地点'}).click();
     await page.locator('#commute-map').click({position:{x:400,y:180}});
     assert.ok(await page.locator('#commute-map path.leaflet-interactive').count()>=2);
+    assert.equal(await page.locator('#commute-map .commute-pin').count(),2);
+    assert.equal(await page.locator('#commute-map img.leaflet-marker-icon').count(),0);
     await page.getByLabel('家范围半径').fill('500');
     await page.getByRole('button',{name:'保存通勤规则'}).click();
     await page.waitForFunction(()=>document.querySelector('#trip-tags-workspace')?.textContent.includes('运行中'));
