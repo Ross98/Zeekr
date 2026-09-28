@@ -15,7 +15,6 @@
     {name:'用车分析',tools:[
       {id:'parking',label:'停车耗电',description:'静置与跨夜停车的电量变化'},
       {id:'charge-comparison',label:'充电曲线对比',description:'对照两次充电的功率、温度与耗时'},
-      {id:'tags',label:'行程标签',description:'通勤、接娃等同类行程比较'},
       {id:'rules',label:'自定义提醒',description:'电量条件、提醒规则与触发记录'}
     ]},
     {name:'花费记录',tools:[
@@ -37,7 +36,6 @@
     const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
     const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
     const rulesPage=root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time});
-    const tagsPage=root.TripTagsPage.create({getState,request,escape:esc,active:()=>active() && tab==='tags',time});
     const chargeComparisonPage=root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time});
     const labPage=root.ParameterExperimentsPage.create({getState,request,escape:esc,active:()=>active() && tab==='lab',time});
     const researchPage=root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review});
@@ -45,7 +43,7 @@
     const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
     const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
     const cardsPage=root.TripCardsPage.create({getState,request,escape:esc,active:()=>active() && tab==='cards',time});
-    const views={automatic:automaticPage,research:researchPage,parking:parkingPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,tags:tagsPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage,cards:cardsPage};
+    const views={automatic:automaticPage,research:researchPage,parking:parkingPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage,cards:cardsPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
