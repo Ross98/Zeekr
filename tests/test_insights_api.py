@@ -12,6 +12,7 @@ from zeekr_control.snapshots import session_scope
 from zeekr_control.tracks import day_bounds
 from zeekr_control.web import App, make_server
 from zeekr_control.personal_store import account_scope
+from zeekr_control.parking_analytics import ParkingAnalytics
 
 
 class InsightsApiTests(unittest.TestCase):
@@ -89,6 +90,41 @@ class InsightsApiTests(unittest.TestCase):
         self.assertTrue(result['context'])
         for query in ('start=2026-09-20&end=2026-09-19', 'start=2026-01-01&end=2026-09-20', 'start=&end='):
             self.assertEqual(self.get('/api/insights/parking?' + query)[0], 400)
+
+    def test_state_remains_responsive_during_parking_analysis(self):
+        entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+        parking_result, state_result = [], []
+        def slow_query(*args):
+            entered.set()
+            release.wait(3)
+            return {'events': [], 'calculation_version': 2}
+        def parking_request():
+            parking_result.append(self.get('/api/insights/parking?start=2026-09-20&end=2026-09-20')[0])
+        def state_request():
+            state_result.append(self.get('/api/state')[0])
+            completed.set()
+        with patch.object(ParkingAnalytics, 'query', side_effect=slow_query):
+            worker = threading.Thread(target=parking_request)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                state_worker = threading.Thread(target=state_request)
+                state_worker.start()
+                responsive = completed.wait(.5)
+            finally:
+                release.set()
+                worker.join(3)
+                state_worker.join(3)
+        self.assertTrue(responsive, 'parking analysis must not block /api/state')
+        self.assertEqual(parking_result, [200])
+        self.assertEqual(state_result, [200])
+
+    def test_parking_rejects_account_change_during_analysis(self):
+        def changed_query(*args):
+            save(self.path, {'accessToken': 'DIFFERENT-OWNER'})
+            return {'events': [], 'calculation_version': 2}
+        with patch.object(ParkingAnalytics, 'query', side_effect=changed_query):
+            self.assertEqual(self.get('/api/insights/parking?start=2026-09-20&end=2026-09-20')[0], 400)
 
     def test_automatic_insights_reads_cache_only_and_rejects_switched_account(self):
         route = '/api/insights/automatic'

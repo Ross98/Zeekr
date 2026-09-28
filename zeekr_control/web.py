@@ -438,6 +438,22 @@ class App:
     def insights(self, operation, *args):
         if operation == 'research':
             return self.research(*args)
+        if operation == 'parking':
+            with self.lock:
+                session = self._read_session()
+                if not session.get('accessToken'):
+                    raise ValueError('请先连接车辆账号。')
+                self._restore_snapshot(session)
+                vehicle, context = self._archive_vehicle(), self._insights_context()
+                scope = session_scope(session)
+                capacity = (self.profile or {}).get('battery_capacity_kwh')
+            result = ParkingAnalytics(self.archive_reader, self.database_path).query(
+                scope, vehicle, *args, capacity)
+            with self.lock:
+                if session_scope(self._read_session()) != scope or context != self._insights_context():
+                    raise ValueError('账号或车辆已切换，请重新读取。')
+                result['context'] = context
+            return result
         with self.lock:
             session = self._read_session()
             if not session.get('accessToken'):
@@ -465,8 +481,7 @@ class App:
                         'charge-comparison': lambda scope, car, a, b: self.charge_comparison.query(car,a,b),
                         'experiments': lambda scope, car: self.experiments.query(account_scope(session),car),
                         'experiment': lambda scope, car, identity: self.experiments.detail(account_scope(session),car,identity),
-                        'parking': lambda scope, car, start, end: ParkingAnalytics(self.archive_reader, self.database_path).query(
-                            scope, car, start, end, (self.profile or {}).get('battery_capacity_kwh'))}
+                        }
             result = handlers[operation](session_scope(session), vehicle, *args)
             current_session = self._read_session()
             if session_scope(current_session) != session_scope(session) or context != self._insights_context():
