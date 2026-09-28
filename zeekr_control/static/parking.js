@@ -33,7 +33,7 @@
       const list=rows();
       const pages=Math.max(1,Math.ceil(list.length/12));page=Math.min(page,pages-1);
       node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">停车耗电观察</span><h2>停下来以后，电量怎样变</h2><p>沿着有效观测看变化，保留每一处不确定。</p></div><span class="insight-source">SOC 观测 · 非电表计量</span></section>
-        <section class="card insight-panel"><div class="insight-toolbar"><label>开始日期<input id="parking-start" type="date" value="${esc(start)}"></label><label>结束日期<input id="parking-end" type="date" value="${esc(end)}"></label>${button('分析停车观测','load',!owner || !start || !end,'id="parking-load"')}</div><p class="insight-note">最多查看 31 天。仅比较有开始、结束边界且连续有效的停车观测；首末时间为已观测到的停车端点。</p>
+        <section class="card insight-panel"><div class="insight-toolbar"><label>开始日期<input id="parking-start" type="date" value="${esc(start)}"></label><label>结束日期<input id="parking-end" type="date" value="${esc(end)}"></label>${button('分析停车观测','load',loading || !owner || !start || !end,'id="parking-load"')}</div><p class="insight-note">最多查看 31 天。仅比较有开始、结束边界且连续有效的停车观测；首末时间为已观测到的停车端点。</p>
         ${loading?'<p role="status">正在分析本机归档…</p>':''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可分析停车观测。</p>':''}${error?`<div class="notice error" role="alert">${esc(error)}${data?' · 保留上次结果与原日期范围。':''}</div>`:''}
         ${data?`<p id="parking-range" class="insight-note">结果范围：${esc(data.start_date)} 至 ${esc(data.end_date)} · ${data.quality.read_count} 条范围内读取，另有 ${data.quality.boundary_reads} 条边界观测；${data.quality.repeat_reads} 次重复缓存，${data.quality.revisions} 次同时间修订。</p><div class="insight-metrics parking-counts"><div><span>可比较区间</span><strong>${data.eligible_count}</strong></div><div><span>证据不完整片段</span><strong>${data.fragment_count}</strong></div><div><span>无效或不确定观测</span><strong>${data.quality.excluded_reads}</strong></div></div>`:''}</section>
         ${data?`<section class="card insight-panel"><div class="insight-toolbar"><label>停车时段<select id="parking-category" aria-label="停车时段"><option value="all">全部时段</option>${Object.entries(categories).map(([key,label])=>`<option value="${key}" ${category===key?'selected':''}>${label}</option>`).join('')}</select></label><label>观测完整性<select id="parking-quality" aria-label="观测完整性"><option value="all">全部区间与片段</option><option value="eligible" ${quality==='eligible'?'selected':''}>只看可比较区间</option></select></label><label>排列方式<select id="parking-order" aria-label="排列方式"><option value="latest">最近停车优先</option><option value="drop" ${order==='drop'?'selected':''}>较大 SOC 下降优先</option></select></label></div><p class="insight-note">匹配 ${list.length} 个区间。按 SOC 下降排列时，片段单列在可比较区间之后；时长不同，不能直接归因为车辆异常。</p>
@@ -59,11 +59,11 @@
       el.innerHTML=compareError?`<p class="notice error" role="alert">${esc(compareError)}</p>`:comparing?'<p role="status">正在比较停车端点…</p>':comparison?`<section class="card insight-panel"><h3>停车端点参数变化</h3><p class="insight-note">${esc(time(comparison.before.state_time))} → ${esc(time(comparison.after.state_time))} · ${comparison.changes.length} 项变化</p><div class="insight-diff">${comparison.changes.map(row=>`<article data-parking-change="${esc(row.path)}"><strong>${esc(row.name)}</strong><div><span>停车起点</span><b>${esc(row.before.value)}</b><small>原值 ${esc(row.before.raw)}</small></div><div><span>停车终点</span><b>${esc(row.after.value)}</b><small>原值 ${esc(row.after.raw)}</small></div></article>`).join('') || '<p>安全目录参数值没有变化。</p>'}</div></section>`:'';
     }
     async function load(){
-      if(!owner || !start || !end)return;
+      if(loading || !owner || !start || !end)return;
       const context=owner,token=++serial;
       loading=true;attempted=true;error='';paint();
       try{
-        const result=await request(`/api/insights/parking?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+        const result=await request(`/api/insights/parking?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, undefined, 180000);
         if(!valid(token,serial,context))return;
         if(result.context!==context)throw Error('账号或车辆已切换，请重新读取。');
         data=result;page=0;selected=null;comparison=null;compareError='';compareSerial++;comparing=false;
@@ -95,7 +95,7 @@
       const el=event.target;
       if(event.type==='input' && ['parking-start','parking-end'].includes(el.id)){
         if(el.id==='parking-start')start=el.value;else end=el.value;
-        node.querySelector('#parking-load').disabled=!owner || !start || !end;return true;
+        node.querySelector('#parking-load').disabled=loading || !owner || !start || !end;return true;
       }
       if(event.type==='change'){
         if(el.id==='parking-category')category=el.value;
