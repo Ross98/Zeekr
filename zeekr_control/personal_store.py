@@ -51,7 +51,7 @@ class PersonalStore:
         db=sqlite3.connect(self.path.absolute().as_uri()+('' if write else '?mode=ro'),uri=True,timeout=5)
         try:
             version=db.execute('PRAGMA user_version').fetchone()[0]
-            if version not in ((0,1) if write else (1,)):
+            if version not in ((0,1,2) if write else (1,2)):
                 raise ValueError('个人记录数据库版本不支持。')
             if write:
                 with db:
@@ -65,6 +65,19 @@ class PersonalStore:
                     db.execute('''CREATE TABLE IF NOT EXISTS changes (
                         owner TEXT,vehicle TEXT,collection TEXT,revision INTEGER,id TEXT,operation TEXT,previous TEXT,
                         PRIMARY KEY(owner,vehicle,collection,revision))''')
+                    db.execute('''CREATE TABLE IF NOT EXISTS commute_rule_versions (
+                        owner TEXT NOT NULL, vehicle TEXT NOT NULL, version INTEGER NOT NULL,
+                        effective_at INTEGER NOT NULL, enabled INTEGER NOT NULL, deleted INTEGER NOT NULL,
+                        home_lat REAL, home_lon REAL, home_radius INTEGER,
+                        work_lat REAL, work_lon REAL, work_radius INTEGER,
+                        PRIMARY KEY(owner,vehicle,version))''')
+                    db.execute('''CREATE TABLE IF NOT EXISTS commute_decisions (
+                        owner TEXT NOT NULL, vehicle TEXT NOT NULL, event_id TEXT NOT NULL,
+                        rule_version INTEGER NOT NULL, result TEXT NOT NULL,
+                        start_time INTEGER, end_time INTEGER, start_distance REAL, end_distance REAL,
+                        excluded INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(owner,vehicle,event_id))''')
+                    # Additive tables preserve v1 readers for release rollback.
                     db.execute('PRAGMA user_version=1')
             else:
                 db.execute('PRAGMA query_only=ON')

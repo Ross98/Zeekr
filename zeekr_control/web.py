@@ -431,6 +431,10 @@ class App:
         return hmac.new(self.request_key.encode(), (self.session_key + ':' + vehicle).encode(),
                         hashlib.sha256).hexdigest()
 
+    def _guard_insight_session(self, session, context):
+        if session_scope(self._read_session()) != session_scope(session) or self._insights_context() != context:
+            raise ValueError('账号或车辆已切换，本次修改已取消。')
+
     def insights(self, operation, *args):
         if operation == 'research':
             return self.research(*args)
@@ -455,7 +459,8 @@ class App:
                         'life': lambda scope, car, date: self.vehicle_life.query(account_scope(session),car,date,self.raw,self.read_at),
                         'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
                         'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
-                        'trip-tags': lambda scope, car, date: self.trip_tags.query(account_scope(session),car,date),
+                        'trip-tags': lambda scope, car, date: self.trip_tags.query(account_scope(session),car,date,
+                            guard=lambda: self._guard_insight_session(session,context)),
                         'charge-options': lambda scope, car, date: self.charge_comparison.options(car,date),
                         'charge-comparison': lambda scope, car, a, b: self.charge_comparison.query(car,a,b),
                         'experiments': lambda scope, car: self.experiments.query(account_scope(session),car),

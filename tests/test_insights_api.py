@@ -240,6 +240,21 @@ class InsightsApiTests(unittest.TestCase):
         save(self.path,{'accessToken':'OTHER-OWNER'})
         self.assertEqual(self.get('/api/insights/trip-tags?date=2026-09-20')[0],400)
 
+    def test_commute_rule_write_requires_current_context_and_is_private(self):
+        context=self.get('/api/state')[1]['insights_context']
+        payload=dict(context=context,action='commute-save',revision=0,
+                     home=dict(latitude=31.2,longitude=121.4,radius_m=300),
+                     work=dict(latitude=31.21,longitude=121.41,radius_m=500))
+        self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''},'/api/insights/trip-tags')[0],403)
+        self.assertEqual(self.post_ledger(dict(payload,context='old'),route='/api/insights/trip-tags')[0],400)
+        self.assertEqual(self.post_ledger(payload,route='/api/insights/trip-tags')[0],200)
+        rule=self.get('/api/insights/trip-tags?date=2026-09-20')[1]['commute_rule']
+        self.assertEqual(rule['home']['radius_m'],300)
+        self.assertEqual(rule['work']['radius_m'],500)
+        self.assertEqual(self.post_ledger(payload,route='/api/insights/trip-tags')[0],400)
+        save(self.path,{'accessToken':'OTHER-ACCOUNT'})
+        self.assertEqual(self.get('/api/insights/trip-tags?date=2026-09-20')[0],400)
+
     def test_previous_binding_without_current_account_snapshot_cannot_read_vehicle_events(self):
         save(self.path,{'accessToken':'OTHER-ACCOUNT'})
         self.assertIsNone(self.get('/api/state')[1]['insights_context'])
