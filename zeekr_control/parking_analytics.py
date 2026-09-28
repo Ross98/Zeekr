@@ -168,8 +168,12 @@ class ParkingAnalytics:
                 last = max([upper] + [row['start_time'] for row in triples if row['start_time'] is not None])
                 evidence = []
                 if first < last:
-                    for record, raw in self.archive.iter_records(scope, vehicle, first, last+1):
-                        evidence.append({'record': record, 'state': decode(raw)})
+                    cursor = first
+                    while cursor <= last:
+                        stop = min(cursor + 30*86400000, last+1)
+                        for record, raw in self.archive.iter_records(scope, vehicle, cursor, stop):
+                            evidence.append({'record': record, 'state': decode(raw)})
+                        cursor = stop
                 result.update(build_events(triples, charges, evidence, lower, upper, capacity))
             else:
                 result.update(build_events(triples, charges, base_samples, lower, upper, capacity))

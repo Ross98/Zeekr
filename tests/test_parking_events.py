@@ -100,6 +100,27 @@ class ParkingEventTests(unittest.TestCase):
             self.assertEqual(len(result['events']),1)
             self.assertEqual(result['events'][0]['start_trip_id'],'a')
 
+    def test_query_splits_long_archive_reads(self):
+        lower, upper = day_bounds('2026-09-20')
+        trips = [self.trip('a', lower-21*86400000-600000, lower-21*86400000, 72, 70),
+                 self.trip('b', lower+21*86400000, lower+21*86400000+600000, 69, 68)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'tracks.sqlite3'
+            with sqlite3.connect(path) as db:
+                db.execute('CREATE TABLE monitor_events (id TEXT,vehicle TEXT,kind TEXT,summary TEXT,created INTEGER)')
+                for trip in trips:
+                    summary = dict(trip, duration_seconds=600)
+                    db.execute('INSERT INTO monitor_events VALUES (?,?,?,?,?)',
+                               (trip['id'], 'car', 'trip_end', json.dumps(summary), trip['end_time']))
+            path.chmod(0o600)
+            class Archive:
+                def iter_records(self, scope, vehicle, start, end):
+                    if end-start > 33*86400000:
+                        raise ValueError('归档分析范围无效。')
+                    return iter(())
+            result = ParkingAnalytics(Archive(), path).query('scope','car','2026-09-20','2026-09-20',86)
+            self.assertEqual(len(result['events']),1)
+
 
 if __name__ == '__main__':
     unittest.main()
