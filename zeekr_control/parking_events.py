@@ -25,15 +25,29 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
                     isinstance(row.get('start_time'), (int, float)) and
                     isinstance(row.get('end_time'), (int, float))),
                    key=lambda row: (row['start_time'], row['end_time']))
-    samples = sorted(samples, key=lambda row: row['record']['observed_at'])
+    ordered = sorted(samples, key=lambda row: row['record']['observed_at'])
+    samples = []
+    for row in ordered:
+        record = row['record']
+        if record.get('change') == 'repeat' and not record.get('flags'):
+            continue
+        if (record.get('change') == 'revision' and not record.get('flags') and samples and
+                record.get('state_time') == samples[-1]['record'].get('state_time')):
+            samples[-1] = row
+        else:
+            samples.append(row)
     events = []
     for before, after in zip(trips, trips[1:]):
         start, end = before['end_time'], after['start_time']
         if end <= start or end <= lower or start >= upper:
             continue
         within = [row for row in samples if start <= row['record']['observed_at'] <= end]
+        odometers = [row['state'].get('km') for row in within if row['state'].get('km') is not None]
+        stable_odometer = len(odometers) >= 2 and len(set(odometers)) == 1
         parked = [row for row in within if row['state'].get('off') is True and
-                  row['state'].get('speed') == 0 and row['state'].get('charging') is False and
+                  (row['state'].get('speed') == 0 or
+                   row['state'].get('speed') is None and stable_odometer) and
+                  row['state'].get('charging') is False and
                   not row['record'].get('flags') and row['record'].get('state_time') is not None]
         reasons = set()
         if before.get('partial') or after.get('partial'):
@@ -50,11 +64,10 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
         if any(row['state'].get('charging') is True for row in within):
             reasons.add('charging')
         if any(row['state'].get('charging') is None or row['state'].get('off') is None or
-               row['state'].get('speed') is None for row in within):
+               row['state'].get('speed') is None and not stable_odometer for row in within):
             reasons.add('unknown')
         if any(row['record'].get('flags') or row['record'].get('change') == 'regression' or
-               row['record'].get('state_time') is None or
-               abs(row['record']['observed_at']-row['record']['state_time']) > MAX_GAP_MS
+               row['record'].get('state_time') is None
                for row in within):
             reasons.add('invalid')
         vehicle_times = [row['record'].get('state_time') for row in within]
@@ -65,7 +78,6 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
                (row['state'].get('speed') is not None and row['state']['speed'] > 0)
                for row in within):
             reasons.add('movement')
-        odometers = [row['state'].get('km') for row in within if row['state'].get('km') is not None]
         if len(set(odometers)) > 1:
             reasons.add('movement')
         socs = [row['state'].get('soc') for row in parked]

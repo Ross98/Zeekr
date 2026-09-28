@@ -75,6 +75,24 @@ class ParkingEventTests(unittest.TestCase):
         row = build_events(trips, [], samples, 0, 2400000, 86)['events'][0]
         self.assertEqual(row['status'], 'uncertain')
 
+    def test_missing_speed_with_stable_odometer_is_parked(self):
+        trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 69, 68)]
+        samples = [self.sample(minute, 70 if minute < 15 else 69) for minute in (5, 10, 15, 20)]
+        for sample in samples:
+            sample['state']['speed'] = None
+        row = build_events(trips, [], samples, 0, 2400000, 86)['events'][0]
+        self.assertEqual(row['status'], 'comparable')
+
+    def test_repeat_cache_does_not_invalidate_parking_evidence(self):
+        trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 69, 68)]
+        samples = [self.sample(minute, 70 if minute < 15 else 69) for minute in (5, 10, 15, 20)]
+        repeat = self.sample(12, 70)
+        repeat['record']['change'] = 'repeat'
+        repeat['record']['state_time'] = 300000
+        samples.insert(2, repeat)
+        row = build_events(trips, [], samples, 0, 2400000, 86)['events'][0]
+        self.assertEqual(row['status'], 'comparable')
+
     def test_query_uses_adjacent_saved_trips_across_date_boundary(self):
         lower, upper = day_bounds('2026-09-20')
         first = self.trip('a', lower-1200000, lower-300000, 72, 70)
@@ -102,8 +120,8 @@ class ParkingEventTests(unittest.TestCase):
 
     def test_query_splits_long_archive_reads(self):
         lower, upper = day_bounds('2026-09-20')
-        trips = [self.trip('a', lower-21*86400000-600000, lower-21*86400000, 72, 70),
-                 self.trip('b', lower+21*86400000, lower+21*86400000+600000, 69, 68)]
+        trips = [self.trip('a', float(lower-21*86400000-600000), float(lower-21*86400000), 72, 70),
+                 self.trip('b', float(lower+21*86400000), float(lower+21*86400000+600000), 69, 68)]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'tracks.sqlite3'
             with sqlite3.connect(path) as db:
@@ -115,6 +133,8 @@ class ParkingEventTests(unittest.TestCase):
             path.chmod(0o600)
             class Archive:
                 def iter_records(self, scope, vehicle, start, end):
+                    if type(start) is not int or type(end) is not int:
+                        raise ValueError('归档分析范围无效。')
                     if end-start > 33*86400000:
                         raise ValueError('归档分析范围无效。')
                     return iter(())

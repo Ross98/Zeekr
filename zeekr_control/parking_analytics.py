@@ -1,5 +1,6 @@
 """Parking SOC observations, never joined across charging or uncertain gaps."""
 from datetime import datetime
+import math
 
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
@@ -164,8 +165,8 @@ class ParkingAnalytics:
             triples = [row for row in events if row['kind'] == 'trip_end']
             charges = [row for row in events if row['kind'] == 'charge_end']
             if len(triples) >= 2:
-                first = min(row['end_time'] for row in triples)
-                last = max([upper] + [row['start_time'] for row in triples if row['start_time'] is not None])
+                first = math.floor(min(row['end_time'] for row in triples))
+                last = math.ceil(max([upper] + [row['start_time'] for row in triples if row['start_time'] is not None]))
                 evidence = []
                 if first < last:
                     cursor = first
