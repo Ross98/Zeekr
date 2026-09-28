@@ -3,18 +3,41 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    const trackRequests=[];
+    page.on('request',request=>{if(new URL(request.url()).pathname==='/api/tracks')trackRequests.push(request.url());});
+    await page.route('**/api/tracks?**',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(route.request().url().includes('report-partial')?{
+      observations:[],segments:[],count:0,gaps:[]
+    }:{
+      observations:[{trusted:true,plottable:true,latitude:31.2,longitude:121.4,state_time:1},
+                    {trusted:true,plottable:true,latitude:31.21,longitude:121.41,state_time:2001}],
+      segments:[[{trusted:true,plottable:true,latitude:31.2,longitude:121.4,state_time:1},
+                 {trusted:true,plottable:true,latitude:31.21,longitude:121.41,state_time:2001}]],count:2,gaps:[]
+    })}));
+    await page.route('https://tile.openstreetmap.org/**',route=>route.fulfill({status:200,contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==','base64')}));
     await page.getByRole('button',{name:'行程标签',exact:true}).click();
     await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
+    assert.match(await page.locator('[data-tag-event="report-trip"] .tag-trip-facts').innerText(),/开始[\s\S]*结束[\s\S]*里程[\s\S]*时长/);
     await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
+    assert.equal(trackRequests.length,0);
+    assert.match(await page.locator('#tag-route').innerText(),/查看路线小地图/);
+    await page.getByRole('button',{name:'查看路线小地图',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#tag-route .route-sparse-line'));
+    assert.equal(trackRequests.length,1);
+    await page.getByRole('button',{name:'隐藏路线小地图',exact:true}).click();
+    assert.equal(await page.locator('#tag-route .leaflet-container').count(),0);
     await page.getByLabel('行程标签（逗号分隔）',{exact:true}).fill('通勤, 接娃');
     await page.getByLabel('行程备注',{exact:true}).fill('<img src=x onerror=alert(1)> 合成备注');
     await page.evaluate(()=>render());
     assert.equal(await page.getByLabel('行程标签（逗号分隔）',{exact:true}).inputValue(),'通勤, 接娃');
     await page.getByRole('button',{name:'保存行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"]')?.textContent.includes('接娃'));
+    assert.match(await page.locator('#tag-form').innerText(),/点选已有标签/);
+    await page.getByLabel('行程标签（逗号分隔）',{exact:true}).fill('');
+    assert.equal(await page.getByRole('button',{name:'选择标签 通勤',exact:true}).getAttribute('aria-pressed'),'false');
     await page.locator('[data-tag-event="report-trip-night"] [data-tag="edit"]').click();
-    await page.getByLabel('行程标签（逗号分隔）',{exact:true}).fill('通勤');
+    await page.getByRole('button',{name:'选择标签 通勤',exact:true}).click();
+    assert.equal(await page.getByLabel('行程标签（逗号分隔）',{exact:true}).inputValue(),'通勤');
     await page.getByRole('button',{name:'保存行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip-night"]')?.textContent.includes('通勤'));
     await page.getByLabel('比较标签 A',{exact:true}).selectOption('通勤');
@@ -26,6 +49,9 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     assert.equal(await page.locator('[data-tag-event] img').count(),0);
     await page.getByLabel('筛选标签',{exact:true}).selectOption('');
     await page.locator('[data-tag-event="report-partial"] [data-tag="edit"]').click();
+    await page.getByRole('button',{name:'查看路线小地图',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#tag-route-map')?.textContent.includes('本趟暂无位置采样'));
+    assert.equal(await page.locator('#tag-route .leaflet-container').count(),0);
     await page.getByLabel('行程标签（逗号分隔）',{exact:true}).fill('通勤');
     await page.getByRole('button',{name:'保存行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#tag-comparison')?.textContent.includes('片段 1'));
@@ -40,7 +66,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"]')?.textContent.includes('接娃'));
     assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/trip-tags'));
-    assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    assert.ok(f.external.every(url=>url.startsWith('https://tile.openstreetmap.org/')));
+    assert.deepEqual(f.errors,[]);
     console.log('UI_TRIP_TAGS_PASS: custom/multiple tags, notes escaping/preservation, group comparison and denominators, filters, delete/restore, persistence, themes/mobile/zoom/contrast');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

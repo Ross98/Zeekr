@@ -76,4 +76,6 @@ class TripTags:
             for tag in row['tags']:members[tag].append(row)
         return dict(window=window,revision=saved['revision'],can_undo=saved['can_undo'],events=rows,
                     groups=[comparison(tag,members[tag]) for tag in sorted(members)],
+                    suggested_tags=sorted({tag for record in saved['records'] if not record['deleted']
+                                           for tag in record['body']['tags']}),
                     untagged_count=sum(not row['tags'] for row in rows),trash=trash)
