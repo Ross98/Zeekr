@@ -6,7 +6,8 @@ const {fixture, layouts} = require('./ui_insight_helpers.cjs');
   const tool = name => page.getByRole('button', {name, exact: true});
   try {
     assert.equal(await page.locator('[data-insight-group]').count(), 4);
-    assert.equal(await page.locator('[data-insight-view]').count(), 14);
+    assert.equal(await page.locator('[data-insight-view]').count(), 13);
+    assert.equal(await page.locator('[data-insight-view="tags"]').count(), 0);
     const search = page.getByLabel('查找研究工具', {exact: true});
     await search.fill('费用');
     assert.equal(await page.locator('[data-insight-view]:visible').count(), 2);
@@ -17,7 +18,7 @@ const {fixture, layouts} = require('./ui_insight_helpers.cjs');
     await page.getByText('没有匹配的工具，试试「充电」「费用」「行程」。', {exact: true}).waitFor();
     assert.equal(await page.locator('[data-insight-view]:visible').count(), 0);
     await tool('清空工具搜索').click();
-    assert.equal(await page.locator('[data-insight-view]:visible').count(), 14);
+    assert.equal(await page.locator('[data-insight-view]:visible').count(), 13);
     assert.equal(await search.evaluate(el => el === document.activeElement), true);
     await search.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement.id), 'insight-tool-clear');

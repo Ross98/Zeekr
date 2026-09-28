@@ -47,6 +47,13 @@ class TripTagTests(unittest.TestCase):
         reopened=TripTags(PersonalStore(self.store.path),self.db).query('owner','car','2026-09-20')
         self.assertEqual(reopened['revision'],1)
 
+    def test_previous_month_tags_remain_available_to_reuse(self):
+        self.save(tags=['通勤','接娃'])
+        october=self.tags.query('owner','car','2026-10-01')
+        self.assertEqual(october['events'],[])
+        self.assertEqual(october['suggested_tags'],['接娃','通勤'])
+        self.assertEqual(self.tags.query('other','car','2026-10-01')['suggested_tags'],[])
+
     def test_group_comparison_includes_partial_observed_metrics(self):
         self.save();self.save('b',revision=1);self.save('partial',revision=2)
         group=self.query()['groups'][0]
