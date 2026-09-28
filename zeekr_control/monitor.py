@@ -53,17 +53,19 @@ def fmt(value, unit=''):
 
 
 def message_for(kind, data, event_id):
-    title = {'trip_end': '本次行程已结束', 'charge_start': '检测到开始充电', 'charge_end': '充电已停止'}[kind]
+    title = {'trip_start': '检测到行程开始', 'trip_end': '本次行程已结束',
+             'charge_start': '检测到开始充电', 'charge_end': '充电已停止'}[kind]
     lines = [title]
-    if kind == 'trip_end':
-        lines += ['出发地：' + (data.get('start_address') or '位置未知'),
-                  '到达地：' + (data.get('end_address') or '位置未知')]
+    if kind in ('trip_start', 'trip_end'):
+        lines.append('出发地：' + (data.get('start_address') or '位置未知'))
+        if kind == 'trip_end':
+            lines.append('到达地：' + (data.get('end_address') or '位置未知'))
     else:
         lines += ['充电地点：' + (data.get('start_address') or '位置未知')]
-    if kind == 'charge_start':
+    if kind in ('trip_start', 'charge_start'):
         lines += ['观测时间：' + updated_at(data['start_time']), '电量：' + fmt(data['start_soc'], '%')]
         if data['partial']:
-            lines += ['实际开始时间未知；首次观测时已在充电。']
+            lines += ['实际开始时间未知；首次观测时已在%s。' % ('行驶' if kind == 'trip_start' else '充电')]
     else:
         lines += ['开始：' + updated_at(data['start_time']), '结束：' + updated_at(data['end_time']),
                   '观测时长：' + fmt(data['duration_seconds'] / 60, ' 分钟')]
@@ -90,11 +92,12 @@ def message_for(kind, data, event_id):
 
 
 def bark_message_for(kind, data):
-    titles = {'trip_end': '🚗 极氪行程结束', 'charge_start': '⚡ 极氪开始充电',
+    titles = {'trip_start': '🚗 极氪行程开始', 'trip_end': '🚗 极氪行程结束', 'charge_start': '⚡ 极氪开始充电',
               'charge_end': '🔋 极氪充电结束'}
-    when = data.get('end_time') if kind != 'charge_start' else data.get('start_time')
-    lines = [('结束时间：' if kind != 'charge_start' else '时间：') + bark_time(when)]
-    soc = data.get('end_soc') if kind != 'charge_start' else data.get('start_soc')
+    starting = kind in ('trip_start', 'charge_start')
+    when = data.get('start_time') if starting else data.get('end_time')
+    lines = [('时间：' if starting else '结束时间：') + bark_time(when)]
+    soc = data.get('start_soc') if starting else data.get('end_soc')
     if soc is not None:
         lines.append('当前电量：' + fmt(soc, '%'))
     if data.get('partial'):
@@ -302,6 +305,7 @@ class Monitor:
                       previous is not None and timestamp - previous['time'] <= MAX_AGE
                       and 0 <= now - previous['observed'] <= MAX_AGE)
         seed_telemetry = None
+        trip_started = False
         moving = point['speed'] is not None and point['speed'] > 0
         distance_moved = continuous and previous['km'] is not None and point['km'] is not None and point['km'] > previous['km']
         confirmation = trip.get('stop_confirmation') if trip else None
@@ -312,13 +316,14 @@ class Monitor:
         if trip and not continuous and not parking_continuous:
             trip['partial'], trip['stop'] = True, None
         if trip is None and (moving or distance_moved):
-            start = previous if continuous else point
+            start = previous if continuous and previous.get('charging') is not True else point
             start_raw = start.get('_report', telemetry)
             seed_telemetry = start_raw
             trip = {'start': start, 'stop': None, 'partial': not continuous, 'charging_time': None,
                     'report_start': start_raw, 'report_end': telemetry, 'samples': [start_raw],
                     'profile': profile, 'parking': None,
                     'start_evidence': start_evidence('trip', previous, point, continuous)}
+            trip_started = True
         if trip:
             # The first arrival can include the last driven distance. Once a
             # stop is frozen, further distance is evidence of resumed motion.
@@ -362,6 +367,14 @@ class Monitor:
             # they do not independently end or restart the charge session.
             _append_sample(charge, telemetry)
         with self.tracks.connect() as db:
+            if trip_started:
+                self._event(db, vehicle, 'trip_start', summary(point, point, trip['partial']), now)
+            if (trip and trip['stop'] and charge is None
+                    and point['charging'] is True and point['off'] is True
+                    and continuous and not moving and not distance_moved
+                    and point['km'] == trip['stop']['km']):
+                self._finish_trip(db, vehicle, trip, now, battery_capacity_kwh, profile)
+                trip = None
             if (trip and trip['stop'] and timestamp - trip['stop']['time'] >= STOP_WAIT
                     and now - trip['stop_confirmation']['started'] >= STOP_WAIT):
                 self._finish_trip(db, vehicle, trip, now, battery_capacity_kwh, profile)
@@ -401,13 +414,14 @@ class Monitor:
             db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)', (vehicle, json.dumps(state)))
         return 'fresh'
 
-    def events(self, limit=100):
+    def events(self, limit=100, include_alerts=False):
         with self.tracks.connect() as db:
+            where = '' if include_alerts else "WHERE e.kind!='trip_start'"
             rows = db.execute('''SELECT e.id,e.kind,e.summary,e.message,e.delivery,e.attempts,e.error,
                 m.delivery,m.error,a.delivery,a.error FROM monitor_events e
                 LEFT JOIN monitor_event_media m ON m.event_id=e.id
                 LEFT JOIN monitor_event_alerts a ON a.event_id=e.id
-                ORDER BY e.created,e.rowid LIMIT ?''', (limit,)).fetchall()
+                ''' + where + ' ORDER BY e.created,e.rowid LIMIT ?', (limit,)).fetchall()
         return [dict(id=r[0], kind=r[1], summary=json.loads(r[2]), message=r[3], delivery=r[4],
                      attempts=r[5], error=r[6], image_delivery=r[7], image_error=r[8],
                      alert_delivery=r[9], alert_error=r[10]) for r in rows]
@@ -417,7 +431,7 @@ class Monitor:
             self._deliver_alerts(alert_sender, now)
         # One worker owns the process lock; compare-and-set also guards claims.
         with self.tracks.connect() as db:
-            extra = " AND kind!='charge_start'" if alert_sender is not None else ''
+            extra = " AND kind!='trip_start'" + (" AND kind!='charge_start'" if alert_sender is not None else '')
             rows = db.execute("SELECT id,message,attempts,kind,summary FROM monitor_events WHERE delivery='pending' AND next_attempt<=?" + extra + " ORDER BY created,rowid LIMIT 10", (now,)).fetchall()
         for event_id, message, attempts, kind, encoded in rows:
             with self.tracks.connect() as db:
@@ -501,7 +515,7 @@ class Monitor:
             with self.tracks.connect() as db:
                 db.execute('UPDATE monitor_event_alerts SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE event_id=?',
                            (delivery, error, next_attempt, sent_at if delivery == 'sent' else None, event_id))
-                if kind == 'charge_start':
+                if kind in ('trip_start', 'charge_start'):
                     db.execute("UPDATE monitor_events SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE id=? AND delivery='pending'",
                                (delivery, error, next_attempt, sent_at if delivery == 'sent' else None, event_id))
 

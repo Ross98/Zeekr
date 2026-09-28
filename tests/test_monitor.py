@@ -73,6 +73,33 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(events[0]['summary']['end_time'], BASE + 120000)
         self.assertEqual(events[0]['summary']['distance_km'], 10)
 
+    def test_charging_at_stop_splits_drive_to_charger_and_drive_home(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, km=110, soc=76)
+        self.observe(180, km=110, soc=76, current=10, voltage=350,
+                     plug=1, code='charging', dc_lid=1, charger=7)
+        trips = [e for e in self.monitor.events() if e['kind'] == 'trip_end']
+        self.assertEqual(len(trips), 1)
+        self.assertEqual(trips[0]['summary']['end_time'], BASE + 120000)
+        self.assertEqual(trips[0]['summary']['soc_delta'], -4)
+        self.observe(240, km=110, soc=90, code='stopped', dc_lid=1)
+        self.observe(300, km=111, soc=89, speed=30, engine='engine_on', ready=1)
+        self.observe(360, km=120, soc=86)
+        for second in range(420, 1021, 60):
+            self.observe(second, km=120, soc=86)
+        trips = [e for e in self.monitor.events() if e['kind'] == 'trip_end']
+        self.assertEqual(len(trips), 2)
+        self.assertEqual(trips[1]['summary']['distance_km'], 10)
+
+    def test_trip_start_alert_created_once_for_first_movement(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, speed=40, engine='engine_on', ready=1, km=102)
+        alerts = [e for e in self.monitor.events(include_alerts=True) if e['kind'] == 'trip_start']
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0]['summary']['start_time'], BASE + 60000)
+
     def test_moving_again_cancels_stop_timer(self):
         self.observe(0, speed=20, engine='engine_on', ready=1)
         self.observe(60)
@@ -294,7 +321,7 @@ class MonitorTests(unittest.TestCase):
                 point = decode(sample(0, current=10, voltage=350, code='charging', dc_lid=1, **signal))
                 self.assertIsNone(point['charging'])
 
-    def test_charging_during_short_stop_invalidates_combined_trip_energy(self):
+    def test_charging_during_short_stop_splits_trip_energy(self):
         self.observe(0)
         self.observe(60, speed=20, engine='engine_on', ready=1)
         self.observe(120, soc=79)
@@ -302,8 +329,10 @@ class MonitorTests(unittest.TestCase):
         self.observe(240, soc=81, speed=20, engine='engine_on', ready=1)
         for t in range(300, 901, 60):
             self.observe(t, soc=80)
-        event = [e for e in self.monitor.events() if e['kind'] == 'trip_end'][0]
-        self.assertIsNone(event['summary']['soc_delta'])
+        trips = [e for e in self.monitor.events() if e['kind'] == 'trip_end']
+        self.assertEqual(len(trips), 2)
+        self.assertEqual(trips[0]['summary']['soc_delta'], -1)
+        self.assertEqual(trips[1]['summary']['start_soc'], 81)
 
     def test_interrupted_sending_is_uncertain_after_restart(self):
         self.observe(0, current=10, voltage=220, plug=1, code='charging', dc_lid=1, charger=7)

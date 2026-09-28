@@ -160,8 +160,8 @@ class UsageScenarioTests(unittest.TestCase):
         self.assertEqual(trip['soc_delta'], -5)
         self.assertEqual(trip['report_v2']['metrics']['soc_delta'], -5)
         self.assertEqual(trip['report_v2']['coverage']['accepted_samples'], 4)
-        self.assertEqual(trip['report_v2']['quality']['parking_samples'], 10)
-        self.assertEqual(trip['report_v2']['parking']['soc'], 84)
+        self.assertEqual(trip['report_v2']['quality']['parking_samples'], 1)
+        self.assertEqual(trip['report_v2']['parking']['soc'], 75)
         self.observe(840, km=112, soc=84)
         charge = self.events('charge_end')[0]['summary']
         self.assertEqual(charge['start_time'], BASE + 240000)
@@ -176,7 +176,7 @@ class UsageScenarioTests(unittest.TestCase):
         self.assertEqual(trips[1]['summary']['start_time'], BASE + 86400000)
         self.assertEqual(trips[1]['summary']['distance_km'], 10)
         self.assertEqual([event['kind'] for event in self.monitor.events()],
-                         ['charge_start', 'trip_end', 'charge_end', 'trip_end'])
+                         ['trip_end', 'charge_start', 'charge_end', 'trip_end'])
 
     def test_drive_home_then_ac_charge_freezes_arrival_soc_and_sends_start_once(self):
         from test_ac_charging import ac_sample
@@ -218,7 +218,7 @@ class UsageScenarioTests(unittest.TestCase):
         self.assertEqual(data['start_time'], BASE + 60000)
         self.assertEqual(data['end_time'], BASE + 720000)
 
-    def test_short_stop_charge_then_drive_never_restores_driving_soc_delta(self):
+    def test_short_stop_charge_then_drive_produces_two_trip_reports(self):
         self.observe(0, soc=80)
         self.observe(60, speed=30, engine='engine_on', ready=1, km=101, soc=79)
         self.observe(120, km=101, soc=79)
@@ -226,16 +226,11 @@ class UsageScenarioTests(unittest.TestCase):
         self.observe(240, speed=30, engine='engine_on', ready=1, km=105, soc=81)
         for seconds in range(300, 901, 60):
             self.observe(seconds, km=112, soc=76)
-        data = self.events('trip_end')[0]['summary']
-        self.assertIsNone(data['soc_delta'])
-        self.assertTrue(data['partial'])
-        metrics = data['report_v2']['metrics']
-        for field in ('soc_delta', 'estimated_kwh', 'estimated_kwh_100km',
-                      'range_attainment_percent'):
-            with self.subTest(field=field):
-                self.assertIsNone(metrics[field])
-        self.assertIn('途中有充电，电量变化不用于驾驶耗电统计',
-                      self.events('trip_end')[0]['message'])
+        trips = self.events('trip_end')
+        self.assertEqual(len(trips), 2)
+        self.assertEqual(trips[0]['summary']['end_time'], BASE + 120000)
+        self.assertEqual(trips[0]['summary']['end_soc'], 79)
+        self.assertEqual(trips[1]['summary']['start_soc'], 81)
 
     def test_cross_midnight_charge_restart_stop_and_resume_remain_separate(self):
         self.observe(57480, soc=50)

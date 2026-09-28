@@ -123,6 +123,19 @@ class BarkEventRoutingTests(unittest.TestCase):
         event = self.monitor.events()[0]
         self.assertEqual((event['alert_delivery'], event['delivery']), ('sent', 'sent'))
 
+    def test_trip_start_uses_bark_once_without_wecom_detail(self):
+        self._event('trip_start')
+        bark, wecom = [], []
+        self.monitor.deliver(wecom.append, self.base + 180000,
+                             alert_sender=lambda title, body: bark.append((title, body)))
+        self.monitor.deliver(wecom.append, self.base + 240000,
+                             alert_sender=lambda title, body: bark.append((title, body)))
+        self.assertEqual(len(bark), 1)
+        self.assertEqual(bark[0][0], '🚗 极氪行程开始')
+        self.assertEqual(wecom, [])
+        event = [e for e in self.monitor.events(include_alerts=True) if e['kind'] == 'trip_start'][0]
+        self.assertEqual((event['alert_delivery'], event['delivery']), ('sent', 'sent'))
+
     def test_bark_event_time_uses_chinese_date_without_seconds(self):
         from zeekr_control.monitor import bark_message_for
         title, body = bark_message_for('charge_start', {
