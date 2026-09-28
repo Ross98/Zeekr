@@ -53,7 +53,8 @@
         const point=commuteDraft[key];if(!point)continue;
         const center=[point.latitude,point.longitude];
         L.circle(center,{radius:commuteDraft[key+'Radius'],color,fillOpacity:.12}).addTo(commuteMap);
-        L.marker(center,{draggable:true}).addTo(commuteMap).bindTooltip(key==='home'?'家':'公司').on('dragend',event=>{
+        const icon=L.divIcon({className:`commute-pin commute-pin-${key}`,html:`<span>${key==='home'?'家':'公司'}</span>`,iconSize:[38,38],iconAnchor:[19,19]});
+        L.marker(center,{draggable:true,icon,title:key==='home'?'家地点':'公司地点'}).addTo(commuteMap).bindTooltip(key==='home'?'家':'公司').on('dragend',event=>{
           const where=event.target.getLatLng();commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;commuteMap.remove();commuteMap=null;paint();
         });
       }
