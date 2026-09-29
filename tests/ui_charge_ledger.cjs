@@ -3,7 +3,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
-    await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
+    if(await page.getByRole('button',{name:'能源与充电',exact:true}).first().isVisible())
+      await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
     await page.getByRole('button',{name:'充电账本',exact:true}).click();
     await page.getByLabel('账本月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取账本',exact:true}).click();
@@ -14,20 +15,25 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByLabel('桩端计量电量（kWh）',{exact:true}).fill('40');
     await page.getByLabel('参考电价（元/kWh）',{exact:true}).fill('0.75');
     await page.getByLabel('估算附加费用（元）',{exact:true}).fill('1');
+    await page.getByLabel('停车费（元）',{exact:true}).fill('2');
     await page.getByLabel('账单备注',{exact:true}).fill('<img src=x onerror=alert(1)> 合成账单');
     await page.evaluate(()=>render());
     assert.equal(await page.getByLabel('实际账单金额（元）',{exact:true}).inputValue(),'30.10');
     await page.getByRole('button',{name:'保存账单',exact:true}).click();
     await page.locator('[data-ledger-entry]').first().waitFor();
     assert.match(await page.locator('#ledger-actual-total').innerText(),/30.10/);
+    await page.locator('[data-ledger-entry] summary').first().click();
     assert.match(await page.locator('[data-ledger-entry]').innerText(),/31.00/);
+    assert.match(await page.locator('[data-ledger-entry]').innerText(),/停车费\s*2\.00 元/);
     assert.equal(await page.locator('[data-ledger-entry] img').count(),0);
     await page.getByRole('button',{name:'编辑账单',exact:true}).click();
+    assert.equal(await page.getByLabel('停车费（元）',{exact:true}).inputValue(),'2.00');
     await page.getByLabel('实际账单金额（元）',{exact:true}).fill('35.20');
     await page.getByRole('button',{name:'保存账单',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#ledger-actual-total')?.textContent.includes('35.20'));
     await page.getByRole('button',{name:'撤销上一步',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#ledger-actual-total')?.textContent.includes('30.10'));
+    await page.locator('[data-ledger-entry] summary').first().click();
     await page.getByRole('button',{name:'删除账单',exact:true}).click();
     await page.getByText('本月还没有账单',{exact:true}).waitFor();
     await page.getByRole('button',{name:'恢复账单',exact:true}).click();
@@ -42,12 +48,15 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     assert.match(await page.locator('#ledger-sources').innerText(),/外充/);
     await layouts(page,'charge-ledger');
     await page.reload();
-    await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
+    await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    if(await page.getByRole('button',{name:'能源与充电',exact:true}).first().isVisible())
+      await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
     await page.getByRole('button',{name:'充电账本',exact:true}).click();
     await page.getByLabel('账本月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取账本',exact:true}).click();
     await page.waitForFunction(()=>document.querySelectorAll('[data-ledger-entry]').length===2);
     // Another writer changes the revision. Old form cannot overwrite it.
+    await page.locator('[data-ledger-entry] summary').first().click();
     await page.getByRole('button',{name:'编辑账单',exact:true}).first().click();
     await page.getByLabel('账单备注',{exact:true}).fill('保留未提交内容');
     await page.evaluate(async()=>{

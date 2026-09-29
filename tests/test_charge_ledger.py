@@ -43,6 +43,21 @@ class ChargeLedgerTests(unittest.TestCase):
         self.assertAlmostEqual(data['cost_per_km']['actual_yuan'],.301)
         self.assertEqual(row['estimate_basis'],'metered_price')
 
+    def test_parking_fee_is_separate_and_blank_defaults_to_zero(self):
+        self.save(amount='43.24',metered_kwh='45.52',parking_fee='2')
+        row=self.query()['entries'][0]
+        self.assertEqual(row['parking_fee_cents'],200)
+        self.assertEqual(row['actual_cents'],4324)
+        self.assertEqual(self.query()['totals']['actual_cents'],4324)
+        self.save(revision=1,amount='43.24',metered_kwh='45.52',parking_fee='')
+        self.assertEqual(self.query()['entries'][0]['parking_fee_cents'],0)
+
+    def test_old_bill_without_parking_fee_reads_as_zero(self):
+        self.save(amount='10')
+        record=self.personal.read('owner','car','charges')['records'][0]
+        record['body'].pop('parking_fee_cents')
+        self.assertEqual(self.ledger.entry(record)['parking_fee_cents'],0)
+
     def test_soc_based_cost_is_explicit_and_frozen_to_recorded_capacity(self):
         self.save(unit_price='0.5')
         row=self.query()['entries'][0]
@@ -93,6 +108,7 @@ class ChargeLedgerTests(unittest.TestCase):
 
     def test_money_and_date_validation(self):
         for changes in ({'amount':'-1'},{'amount':'1.001'},{'unit_price':'NaN'},{'metered_kwh':True},
+                        {'parking_fee':'-1'},{'parking_fee':'1.001'},
                         {'date':'2026-02-30'},{'date':None},{'date':20260920},{'date':[]},
                         {'source':'unknown-code'},{'note':'x'*1001}):
             with self.assertRaises(ValueError):self.save(**changes)
