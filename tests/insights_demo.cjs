@@ -62,7 +62,7 @@ const entries=[];
     await page.locator('[data-calendar-day="2026-09-19"]').click();
     await capture('09-calendar','用车日历','逐日查看行程、充电和停车观测；跨午夜、缺数据与未来日期清楚区分。','.calendar-panel');
 
-    await open('车辆','生活账本');await field('生活账本月份').fill('2026-09');await button('读取生活账本').click();
+    await open('车辆','生活账本');await field('开始日期').fill('2026-09-01');await field('结束日期').fill('2026-09-30');await button('查询生活账本').click();
     await page.waitForFunction(()=>document.querySelectorAll('[data-life-expense]').length===3);
     await capture('10-vehicle-life','车辆生活账本','记录保险、停车、洗车等支出；另有日期或里程到期的保养待办。','[data-life-expense]');
 

@@ -87,12 +87,18 @@ class VehicleLife:
         return dict(collection=collection,id=identity,revision=result['revision'],can_undo=result['can_undo'],
                     saved_date=body.get('date') if body else None)
 
-    def query(self,owner,vehicle,date,raw=None,fetched_at=None):
-        window=period_window('month',date);now=self.clock();current=odometer(raw,fetched_at,now)
+    def query(self,owner,vehicle,date,raw=None,fetched_at=None,end=None):
+        if end is None:
+            window=period_window('month',date)
+        else:
+            day_bounds(date);day_bounds(end)
+            if end<date:raise ValueError('结束日期不能早于开始日期。')
+            window=dict(start_date=date,end_date=end,period='range')
+        now=self.clock();current=odometer(raw,fetched_at,now)
         costs=self.store.read(owner,vehicle,'expenses');saved=self.store.read(owner,vehicle,'reminders')
         rows=[dict(r['body'],id=r['id'],deleted=r['deleted'],updated_at=r['updated_at']) for r in costs['records']]
         categories=sorted(set(DEFAULT_CATEGORIES)|{r['category'] for r in rows})
-        rows=[r for r in rows if r['date'].startswith(window['start_date'][:7])]
+        rows=[r for r in rows if window['start_date']<=r['date']<=window['end_date']]
         entries=sorted((r for r in rows if not r['deleted']),key=lambda r:(r['date'],r['updated_at'],r['id']),reverse=True)
         by_category={}
         for row in entries:

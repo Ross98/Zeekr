@@ -354,6 +354,10 @@ class InsightsApiTests(unittest.TestCase):
         result=self.get('/api/insights/life?date=2026-09-20')[1]
         self.assertEqual(result['expenses']['total_cents'],3010)
         self.assertEqual(result['reminders']['revision'],1)
+        ranged=self.get('/api/insights/life?start=2026-08-01&end=2026-09-20')[1]
+        self.assertEqual(ranged['expenses']['total_cents'],3010)
+        self.assertEqual(ranged['window']['start_date'],'2026-08-01')
+        self.assertEqual(self.get('/api/insights/life?start=2026-09-21&end=2026-09-20')[0],400)
         self.assertNotIn('PRIVATE-VIN',json.dumps(result))
         self.assertEqual(self.get('/vehicle-life.js')[0],200)
         invalid=dict(reminder,collection='rules')

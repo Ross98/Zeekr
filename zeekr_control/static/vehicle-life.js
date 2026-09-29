@@ -7,14 +7,14 @@
   const blankExpense=date=>({id:'',date,category:'保险',title:'',amount:'',odometer:'',note:'',revision:null});
   const blankReminder=()=>({id:'',title:'',due_date:'',due_km:'',note:'',revision:null});
   function create({getState,request,escape:esc,active,time}){
-    let node=null,owner='',mode='expenses',month=dateAt(Date.now()).slice(0,7),data=null;
-    let attempted=false,loading=false,busy=false,serial=0,writeSerial=0,lastRead=0,error='',status='';
+    let node=null,owner='',mode='expenses',startDate=dateAt(Date.now()).slice(0,7)+'-01',endDate=dateAt(Date.now()),data=null;
+    let loading=false,busy=false,serial=0,writeSerial=0,error='',status='';
     let drafts={expenses:blankExpense(dateAt(Date.now())),reminders:blankReminder()};
     let expenseState='active',expenseCategory='',reminderFilter='all',page=0;
     const context=()=>getState()?.insights_context||'';
     const valid=(token,current,identity)=>token===current&&owner===identity&&context()===identity;
     const button=(label,action,disabled=false,extra='')=>`<button class="button secondary" data-life="${action}" ${disabled||busy?'disabled':''} ${extra}>${label}</button>`;
-    const defaultDate=()=>dateAt(Date.now()).startsWith(month)?dateAt(Date.now()):month+'-01';
+    const defaultDate=()=>dateAt(Date.now());
     const resetDraft=collection=>{drafts[collection]=collection==='expenses'?blankExpense(defaultDate()):blankReminder();};
     const draft=()=>drafts[mode];
     function field(label,name,type='text',extra=''){
@@ -26,7 +26,7 @@
       const focused=node.contains(document.activeElement)?document.activeElement:null;
       const focus=focused?{id:focused.id,start:focused.selectionStart,end:focused.selectionEnd}:null;
       node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">车辆生活账本</span><h2>日常支出，下次要做的事</h2><p>费用按实记，保养与到期事项留个提醒。</p></div><span class="insight-source">本机保存 · 站内待办</span></section>
-        <section class="card insight-panel"><div class="insight-toolbar"><label>生活账本月份<input id="life-month" type="month" value="${esc(month)}" ${busy?'disabled':''}></label>${button('读取生活账本','load',!owner||!month||loading)}</div>${loading?'<p role="status">正在读取记录…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存后，可管理账本。</p>':''}<div class="insight-actions">${['expenses','reminders'].map(key=>`<button class="button secondary" data-life-mode="${key}" aria-pressed="${mode===key}" ${busy?'disabled':''}>${key==='expenses'?'日常支出':'保养与到期待办'}</button>`).join('')}</div><p class="insight-note">支出按填写日期归入月份，不摊销保险或保养成本；充电账本费用另计，避免重复录入。待办不限月份，仅在本站显示，不发送外部通知。</p></section>
+        <section class="card insight-panel"><div class="insight-toolbar"><label>开始日期<input id="life-start" type="date" value="${esc(startDate)}" ${busy?'disabled':''}></label><label>结束日期<input id="life-end" type="date" value="${esc(endDate)}" ${busy?'disabled':''}></label>${button('查询生活账本','load',!owner||!startDate||!endDate||loading)}</div>${loading?'<p role="status">正在读取记录…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存后，可管理账本。</p>':''}<div class="insight-actions">${['expenses','reminders'].map(key=>`<button class="button secondary" data-life-mode="${key}" aria-pressed="${mode===key}" ${busy?'disabled':''}>${key==='expenses'?'日常支出':'保养与到期待办'}</button>`).join('')}</div><p class="insight-note">选择日期后点击查询，支出按填写日期归入区间，不摊销保险或保养成本；充电账本费用另计，避免重复录入。待办不限区间，仅在本站显示，不发送外部通知。</p></section>
         ${data?mode==='expenses'?expenseView():reminderView():''}`;
       paintRows();
       if(focus){const el=document.getElementById(focus.id);if(el&&!el.disabled){el.focus({preventScroll:true});if(focus.start!==null)el.setSelectionRange?.(focus.start,focus.end);}}
@@ -36,7 +36,7 @@
     }
     function expenseView(){
       const book=data.expenses;
-      return `<section class="card insight-panel"><div class="insight-heading"><h3>${data.window.start_date.slice(0,7)} · 已录支出</h3>${button('撤销支出操作','undo',!book.can_undo)}</div><div class="insight-metrics"><div id="life-total"><span>本账本已录金额</span><strong>${money(book.total_cents)} 元</strong><small>${book.entries.length} 笔；无记录不等于实际零成本</small></div>${Object.entries(book.categories).map(([name,row])=>`<div><span>${esc(name)} · ${row.count} 笔</span><strong>${money(row.amount_cents)} 元</strong></div>`).join('')}</div></section>
+      return `<section class="card insight-panel"><div class="insight-heading"><h3>${esc(data.window.start_date)} 至 ${esc(data.window.end_date)} · 已录支出</h3>${button('撤销支出操作','undo',!book.can_undo)}</div><div class="insight-metrics"><div id="life-total"><span>区间已录支出</span><strong>${money(book.total_cents)} 元</strong><small>${book.entries.length} 笔；无记录不等于实际零成本</small></div>${Object.entries(book.categories).map(([name,row])=>`<div><span>${esc(name)} · ${row.count} 笔</span><strong>${money(row.amount_cents)} 元</strong></div>`).join('')}</div></section>
         <section class="card insight-panel"><div class="insight-heading"><h3>${draft().id?'编辑支出':'新增支出'}</h3>${button('新增支出','new')}</div><form id="life-form" class="ledger-form" novalidate>${field('支出日期','date','date','required')}${field('支出分类','category','text','required maxlength="24" list="life-categories"')}<datalist id="life-categories">${data.category_choices.map(c=>`<option value="${esc(c)}"></option>`).join('')}</datalist>${field('支出名称','title','text','required maxlength="80"')}${field('实际支出金额（元）','amount','number','required min="0" max="10000000" step=".01"')}${field('支出时里程（km，可选）','odometer','number','min="0" max="10000000" step=".1"')}${note('支出备注')}</form><p class="insight-note">可输入自己的分类（24 字以内）。金额为包含各项费用的最终总额，免费项目填 0；里程留空时保持未知。</p>${conflict()}<div class="insight-actions">${button('保存支出','save',loading||!owner)}</div></section>
         <section class="card insight-panel"><div class="insight-heading"><h3>支出记录</h3><div class="insight-toolbar"><label>支出记录状态<select id="life-expense-state" aria-label="支出记录状态"><option value="active" ${expenseState==='active'?'selected':''}>保留的记录</option><option value="deleted" ${expenseState==='deleted'?'selected':''}>已删除记录</option></select></label><label>分类筛选<select id="life-category-filter" aria-label="分类筛选"><option value="">全部分类</option>${data.category_choices.map(c=>`<option value="${esc(c)}" ${expenseCategory===c?'selected':''}>${esc(c)}</option>`).join('')}</select></label></div></div><div id="life-rows"></div></section>`;
     }
@@ -60,11 +60,14 @@
       }).join('')||'<p class="insight-empty">没有符合筛选的记录。</p>')+`<div class="insight-pagination">${button('上一页生活记录','previous',page===0)}<span>${page+1} / ${pages}</span>${button('下一页生活记录','next',page+1===pages)}</div>`;
     }
     async function load(){
-      if(!owner||!month)return false;const identity=owner,token=++serial;loading=attempted=true;error='';lastRead=Date.now();paint();
-      try{const result=await request('/api/insights/life?date='+encodeURIComponent(month+'-01'));
-        if(!valid(token,serial,identity))return false;if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
+      if(!owner||!startDate||!endDate)return false;
+      if(endDate<startDate){error='结束日期不能早于开始日期。';paint();return false;}
+      const identity=owner,token=++serial,selectedStart=startDate,selectedEnd=endDate;loading=true;error='';paint();
+      try{const result=await request('/api/insights/life?start='+encodeURIComponent(selectedStart)+'&end='+encodeURIComponent(selectedEnd));
+        if(!valid(token,serial,identity)||selectedStart!==startDate||selectedEnd!==endDate)return false;
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         data=result;return true;
-      }catch(failure){if(valid(token,serial,identity))error=failure.message;return false;}
+      }catch(failure){if(valid(token,serial,identity)&&selectedStart===startDate&&selectedEnd===endDate)error=failure.message;return false;}
       finally{if(valid(token,serial,identity)){loading=false;paint();}}
     }
     async function mutate(action,id){
@@ -76,10 +79,10 @@
       busy=true;error=status='';paint();
       try{const result=await request('/api/insights/life',payload);if(!valid(token,writeSerial,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        data[collection].revision=result.revision;data[collection].can_undo=result.can_undo;status='生活账本操作已保存。';
-        if(action==='save'){if(result.saved_date)month=result.saved_date.slice(0,7);resetDraft(collection);}
+        status='生活账本操作已保存。点击查询更新列表。';
+        if(action==='save')resetDraft(collection);
         else if(action==='delete'&&drafts[collection].id===id)resetDraft(collection);
-        if(!await load()&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新读取核对。';
+        data=null;
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 填写内容保留。';}
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
     }
@@ -90,14 +93,16 @@
     }
     function mount(container){
       const changed=owner!==context(),remount=node!==container;node=container;
-      if(changed){owner=context();data=null;mode='expenses';attempted=loading=busy=false;serial++;writeSerial++;error=status='';resetDraft('expenses');resetDraft('reminders');expenseState='active';expenseCategory='';reminderFilter='all';page=0;lastRead=0;}
+      if(changed){owner=context();data=null;mode='expenses';loading=busy=false;serial++;writeSerial++;error=status='';resetDraft('expenses');resetDraft('reminders');expenseState='active';expenseCategory='';reminderFilter='all';page=0;}
       if(changed||remount)paint();
-      if(owner&&!loading&&!busy&&(!attempted||Date.now()-lastRead>=30000))load();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;const el=event.target;
       if(event.type==='input'){
-        if(el.id==='life-month'){month=el.value;return true;}
+        if(el.id==='life-start'||el.id==='life-end'){
+          if(el.id==='life-start')startDate=el.value;else endDate=el.value;
+          error='';data=null;paint();return true;
+        }
         if(el.dataset.lifeField){if(draft().revision===null&&data)draft().revision=data[mode].revision;draft()[el.dataset.lifeField]=el.value;return true;}
       }
       if(event.type==='change'){

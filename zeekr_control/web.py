@@ -472,7 +472,7 @@ class App:
                         'calendar': self.usage_calendar.query,
                         'quality': self.data_quality.query,
                         'cards': lambda scope, car, date: self.trip_cards.query(car,date),
-                        'life': lambda scope, car, date: self.vehicle_life.query(account_scope(session),car,date,self.raw,self.read_at),
+                        'life': lambda scope, car, start, end=None: self.vehicle_life.query(account_scope(session),car,start,self.raw,self.read_at,end=end),
                         'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
                         'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
                         'trip-tags': lambda scope, car, date: self.trip_tags.query(account_scope(session),car,date,
@@ -799,6 +799,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     if url.path == '/api/insights/calendar':
                         return self.send(200, app.insights('calendar',value('date')))
                     if url.path == '/api/insights/life':
+                        if 'start' in query or 'end' in query:
+                            return self.send(200, app.insights('life',value('start'),value('end')))
                         return self.send(200, app.insights('life',value('date')))
                     if url.path == '/api/insights/quality':
                         return self.send(200, app.insights('quality',value('start'),value('end')))
