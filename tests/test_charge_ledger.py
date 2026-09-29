@@ -21,6 +21,7 @@ class ChargeLedgerTests(unittest.TestCase):
             for identity,kind,distance,a,b,vehicle in [('charge','charge_end',0,40,80,'car'),('trip','trip_end',100,80,60,'car'),('other','charge_end',0,30,90,'other')]:
                 summary=dict(start_time=self.start,end_time=self.start+3600000,duration_seconds=3600,
                              start_soc=a,end_soc=b,soc_delta=b-a,distance_km=distance,partial=False,battery_capacity_kwh=86)
+                if identity=='charge':summary['report_v2']={'start':{'charging_mode':'ac'}}
                 db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',(identity,vehicle,kind,json.dumps(summary),self.start))
         self.db.chmod(0o600)
 
@@ -57,6 +58,24 @@ class ChargeLedgerTests(unittest.TestCase):
         record=self.personal.read('owner','car','charges')['records'][0]
         record['body'].pop('parking_fee_cents')
         self.assertEqual(self.ledger.entry(record)['parking_fee_cents'],0)
+
+    def test_manual_charge_mode_overrides_display_without_changing_event(self):
+        self.save(charge_mode_override='dc')
+        row=self.query()['entries'][0]
+        self.assertEqual(row['charge_mode_override'],'dc')
+        self.assertEqual(row['event']['charge_mode'],'ac')
+        self.save(revision=1,charge_mode_override='')
+        self.assertIsNone(self.query()['entries'][0]['charge_mode_override'])
+        self.assertEqual(self.query()['entries'][0]['event']['charge_mode'],'ac')
+
+    def test_manual_bill_can_set_charge_mode_and_old_bill_defaults_to_auto(self):
+        self.save(event_id='',charge_mode_override='ac')
+        row=self.query()['entries'][0]
+        self.assertIsNone(row['event'])
+        self.assertEqual(row['charge_mode_override'],'ac')
+        record=self.personal.read('owner','car','charges')['records'][0]
+        record['body'].pop('charge_mode_override')
+        self.assertIsNone(self.ledger.entry(record)['charge_mode_override'])
 
     def test_soc_based_cost_is_explicit_and_frozen_to_recorded_capacity(self):
         self.save(unit_price='0.5')
@@ -108,7 +127,7 @@ class ChargeLedgerTests(unittest.TestCase):
 
     def test_money_and_date_validation(self):
         for changes in ({'amount':'-1'},{'amount':'1.001'},{'unit_price':'NaN'},{'metered_kwh':True},
-                        {'parking_fee':'-1'},{'parking_fee':'1.001'},
+                        {'parking_fee':'-1'},{'parking_fee':'1.001'},{'charge_mode_override':'fast'},
                         {'date':'2026-02-30'},{'date':None},{'date':20260920},{'date':[]},
                         {'source':'unknown-code'},{'note':'x'*1001}):
             with self.assertRaises(ValueError):self.save(**changes)

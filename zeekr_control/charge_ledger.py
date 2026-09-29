@@ -80,10 +80,14 @@ class ChargeLedger:
             price=decimal_input(data.get('unit_price'),4,1000)
             fee=decimal_input(data.get('service_fee'),2,1000000)
             parking_fee=decimal_input(data.get('parking_fee'),2,1000000)
+            charge_mode_override=data.get('charge_mode_override')
+            if charge_mode_override not in (None,'','ac','dc'):
+                raise ValueError('充电方式只能选择自动识别、交流或直流。')
             body={'date':date,'source':source,'note':note.strip(),'actual_cents':cents(amount),
                   'metered_kwh':float(energy) if energy is not None else None,
                   'unit_price':str(price) if price is not None else None,'service_fee_cents':cents(fee),
-                  'parking_fee_cents':cents(parking_fee) if parking_fee is not None else 0,'event':event}
+                  'parking_fee_cents':cents(parking_fee) if parking_fee is not None else 0,
+                  'charge_mode_override':charge_mode_override or None,'event':event}
         result=self.store.change(owner,vehicle,'charges',action,identity,body,data.get('revision'),guard=guard)
         return {'revision':result['revision'],'can_undo':result['can_undo'],'id':identity,
                 'saved_date':body['date'] if body else None,'action':action}
@@ -103,6 +107,7 @@ class ChargeLedger:
                    if energy is not None and price is not None else None)
         return dict(body,event=event,id=record['id'],updated_at=record['updated_at'],deleted=record['deleted'],
                     parking_fee_cents=body.get('parking_fee_cents',0),
+                    charge_mode_override=body.get('charge_mode_override'),
                     source_event_id=source_event_id,source_event_removed=source_event_removed,
                     estimated_cents=estimated,estimate_basis=basis if estimated is not None else None)
 
