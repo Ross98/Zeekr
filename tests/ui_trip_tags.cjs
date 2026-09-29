@@ -3,6 +3,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();
     await page.getByRole('button',{name:'行程标签',exact:true}).click();
     await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
@@ -34,7 +35,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'恢复行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"]')?.textContent.includes('接娃'));
     await layouts(page,'trip-tags');
-    await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.reload();
+    await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();
     await page.getByRole('button',{name:'行程标签',exact:true}).click();
     await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();

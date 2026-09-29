@@ -3,6 +3,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    await page.getByRole('button',{name:'车辆',exact:true}).first().click();
     await page.getByRole('button',{name:'生活账本',exact:true}).click();
     await page.getByLabel('生活账本月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取生活账本',exact:true}).click();
@@ -46,7 +47,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'保存待办',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('[data-life-reminder]')?.textContent.includes('里程待确认'));
     await layouts(page,'vehicle-life-reminders');
-    await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.reload();
+    await page.getByRole('button',{name:'车辆',exact:true}).first().click();
     await page.getByRole('button',{name:'生活账本',exact:true}).click();
     await page.getByRole('button',{name:'保养与到期待办',exact:true}).click();
     await page.locator('[data-life-reminder]').waitFor();

@@ -69,7 +69,7 @@ const assert=require('node:assert/strict');
     const ledger=await page.context().newPage();
     ledger.on('pageerror',e=>errors.push(e.message));
     await ledger.goto(`http://127.0.0.1:${port}`);
-    await ledger.getByRole('button',{name:'用车研究',exact:true}).click();
+    await ledger.getByRole('button',{name:'能源与充电',exact:true}).click();
     await ledger.getByRole('button',{name:'充电账本',exact:true}).click();
     await ledger.locator('#ledger-range').waitFor();
     await ledger.getByLabel('账单备注',{exact:true}).fill('回收行程时保留这个草稿');

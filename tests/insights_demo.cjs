@@ -9,6 +9,7 @@ const entries=[];
   const f=await fixture({demo:true}),{page}=f;
   const button=name=>page.getByRole('button',{name,exact:true});
   const field=name=>page.getByLabel(name,{exact:true});
+  const open=async(section,tool)=>{await button(section).click();await button(tool).click();};
   async function capture(slug,title,description,ready){
     if(ready)await page.locator(ready).first().waitFor();
     await page.evaluate(()=>{document.activeElement?.blur();scrollTo(0,0);});
@@ -18,6 +19,7 @@ const entries=[];
   try{
     await page.setViewportSize({width:1440,height:1000});
     await field('外观').selectOption('light');
+    await open('车辆','车辆时间机');
     await field('归档日期').fill('2026-09-20');await button('查看归档').click();
     await page.locator('#insight-snapshot').getByText('70%',{exact:true}).waitFor();
     await button('设为对比起点').click();await button('下一条观测').click();
@@ -25,50 +27,50 @@ const entries=[];
     await button('与起点比较').click();await field('搜索历史参数').fill('chargeLevel');
     await capture('01-time-machine','车辆时间机','拖动时间轴，回看历史状态；挑两条观测看变化。','#insight-comparison [data-change]');
 
-    await button('停车耗电').click();await field('开始日期').fill('2026-09-18');await field('结束日期').fill('2026-09-19');
+    await open('能源与充电','停车耗电');await field('开始日期').fill('2026-09-18');await field('结束日期').fill('2026-09-19');
     await button('分析停车观测').click();await button('查看区间详情').click();
     await capture('02-parking','停车耗电观察','查看一晚静置的 SOC 变化、温度和样本间隔；不完整区间单独标注。','#parking-detail');
 
-    await button('周报与月报').click();await field('报告周期').selectOption('month');await field('周期内日期').fill('2026-09-20');
+    await open('用车研究','周报与月报');await field('报告周期').selectOption('month');await field('周期内日期').fill('2026-09-20');
     await button('查看报告').click();await page.getByRole('heading',{name:'2026-09-01 — 2026-09-30',exact:true}).waitFor();
     await capture('03-reports','用车周报与月报','里程、充电、活动日期和上期对比，完整记录与观测片段分开统计。','[data-report-event]');
 
-    await button('充电账本').click();await field('账本月份').fill('2026-09');await button('读取账本').click();
+    await open('能源与充电','充电账本');await field('账本月份').fill('2026-09');await button('读取账本').click();
     await page.waitForFunction(()=>document.querySelector('#ledger-actual-total')?.textContent.includes('30.10'));
     await capture('04-charge-ledger','充电账本','关联充电记录，补录实际费用、桩端电量与电价；实际值和估算分列。','[data-ledger-entry]');
 
-    await button('自定义提醒').click();
+    await open('设置','自定义提醒');
     await page.getByText('合成演示：低电量',{exact:true}).first().waitFor();
     await capture('05-reminders','自定义提醒','电量条件、连续确认、冷却与恢复，附规则预览和提醒历史。');
 
-    await button('行程标签').click();await field('标签月份').fill('2026-09');await button('读取行程标签').click();
+    await open('行程与轨迹','行程标签');await field('标签月份').fill('2026-09');await button('读取行程标签').click();
     await field('比较标签 A').selectOption('通勤');await field('比较标签 B').selectOption('接娃');
     await capture('06-trip-tags','行程标签与同类比较','为行程添加通勤、接娃等标签；对照同类距离、时长和 SOC 变化。','[data-tag-event]');
 
-    await button('充电曲线对比').click();
+    await open('能源与充电','充电曲线对比');
     for(const side of ['A','B']){await field(`充电 ${side} 月份`).fill('2026-07');await button(`读取充电 ${side}`).click();}
     await field('充电记录 A').selectOption('curve-a');await field('充电记录 B').selectOption('curve-b');
     await button('比较这两次充电').click();await page.getByText('共同观测 SOC：30% — 80%',{exact:true}).waitFor();
     await field('外观').selectOption('dark');
     await capture('07-charge-comparison','充电曲线对比','共同 SOC 区间对照功率、温度和耗时；保留缺口与平台时间的不确定性。','[data-charge-chart]');
 
-    await field('外观').selectOption('light');await button('参数实验室').click();await button('回看实验').click();
+    await field('外观').selectOption('light');await open('用车研究','参数实验室');await button('回看实验').click();
     await page.getByText(/保存时的观测摘录/).waitFor();
     await capture('08-experiments','车辆参数实验室','保存动作、前后样本和变化字段；研究线索保留原始摘录，不自动确认语义。','[data-lab-record]');
 
-    await button('用车日历').click();await field('日历月份').fill('2026-09');await button('读取用车日历').click();
+    await open('用车研究','用车日历');await field('日历月份').fill('2026-09');await button('读取用车日历').click();
     await page.locator('[data-calendar-day="2026-09-19"]').click();
     await capture('09-calendar','用车日历','逐日查看行程、充电和停车观测；跨午夜、缺数据与未来日期清楚区分。','.calendar-panel');
 
-    await button('生活账本').click();await field('生活账本月份').fill('2026-09');await button('读取生活账本').click();
+    await open('车辆','生活账本');await field('生活账本月份').fill('2026-09');await button('读取生活账本').click();
     await page.waitForFunction(()=>document.querySelectorAll('[data-life-expense]').length===3);
     await capture('10-vehicle-life','车辆生活账本','记录保险、停车、洗车等支出；另有日期或里程到期的保养待办。','[data-life-expense]');
 
-    await button('数据质量雷达').click();await field('质量分析开始日期').fill('2026-09-18');await field('质量分析结束日期').fill('2026-09-20');
+    await open('用车研究','数据质量雷达');await field('质量分析开始日期').fill('2026-09-18');await field('质量分析结束日期').fill('2026-09-20');
     await button('分析数据质量').click();await page.waitForFunction(()=>document.querySelector('#quality-totals')?.textContent.includes('236'));
     await capture('11-quality','数据质量雷达','查看读取延迟、新时间、修订、重复和缺口；覆盖统计不冒充车辆在线率。','.quality-delay-row');
 
-    await button('行程卡片').click();await field('卡片记录月份').fill('2026-09');await button('读取卡片素材').click();
+    await open('行程与轨迹','行程卡片');await field('卡片记录月份').fill('2026-09');await button('读取卡片素材').click();
     await field('卡片行程').selectOption('report-trip');await field('卡片标题').fill('周末，慢一点');
     await field('卡片备注').fill('一段熟悉的路，一次轻松的出行。\n合成行程 · 仅供预览');
     await field('卡片外观').selectOption('dark');

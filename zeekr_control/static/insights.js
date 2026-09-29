@@ -8,30 +8,35 @@
     {name:'全量研究',tools:[
       {id:'research',label:'数据利用',description:'全部字段、历史变化、场景分析与证据'},
       {id:'automatic',label:'自动洞察',description:'定期汇总能耗、充电习惯与采集质量'},
-      {id:'time',label:'车辆时间机',description:'历史归档、车况回看、前后参数变化'},
       {id:'lab',label:'参数实验室',description:'保存实验、动作、样本与研究备注'},
       {id:'quality',label:'数据质量雷达',description:'采集覆盖、数据延迟、重复缓存与缺口'}
     ]},
-    {name:'用车分析',tools:[
-      {id:'parking',label:'停车耗电',description:'静置与跨夜停车的电量变化'},
+    {name:'能源与充电',page:'energy',tools:[
       {id:'charge-comparison',label:'充电曲线对比',description:'对照两次充电的功率、温度与耗时'},
-      {id:'tags',label:'行程标签',description:'通勤、接娃等同类行程比较'},
-      {id:'rules',label:'自定义提醒',description:'电量条件、提醒规则与触发记录'}
-    ]},
-    {name:'花费记录',tools:[
       {id:'ledger',label:'充电账本',description:'充电费用、桩端电量与实际电价'},
+      {id:'parking',label:'停车耗电',description:'静置与跨夜停车的电量变化'}
+    ]},
+    {name:'车辆',page:'car',tools:[
+      {id:'time',label:'车辆时间机',description:'历史归档、车况回看、前后参数变化'},
       {id:'life',label:'生活账本',description:'保险、停车费用、洗车支出与保养待办'}
+    ]},
+    {name:'行程与轨迹',page:'tracks',tools:[
+      {id:'tags',label:'行程标签',description:'通勤、接娃等同类行程比较'},
+      {id:'cards',label:'行程卡片',description:'照片、出行回忆与本地图片导出'}
+    ]},
+    {name:'设置',page:'settings',tools:[
+      {id:'rules',label:'自定义提醒',description:'电量条件、提醒规则与触发记录'}
     ]},
     {name:'用车回顾',tools:[
       {id:'report',label:'周报与月报',description:'周期里程、能耗估算、日趋势与样本'},
-      {id:'calendar',label:'用车日历',description:'按日期查看行程、充电与停车'},
-      {id:'cards',label:'行程卡片',description:'照片、出行回忆与本地图片导出'}
+      {id:'calendar',label:'用车日历',description:'按日期查看行程、充电与停车'}
     ]}
   ];
-  const toolCount=toolGroups.reduce((total,group)=>total+group.tools.length,0);
+  const toolsFor=section=>toolGroups.filter(group=>(group.page || 'insights')===section).flatMap(group=>group.tools);
 
-  function create({getState,request,escape:esc,active,review}) {
-    let tab='research', toolQuery='', toolsExpanded=false;
+  function create({getState,request,escape:esc,active,review,navigate}) {
+    let tab='research', section='insights', toolQuery='', toolsExpanded=false;
+    const groups=()=>toolGroups.filter(group=>(group.page || 'insights')===section);
     const automaticPage=root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time});
     const parkingPage=root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time});
     const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
@@ -59,7 +64,10 @@
     function context() {return getState()?.insights_context || '';}
     function openField(path){tab='research';toolQuery='';paint();researchPage.openField(path);}
     function openExperiment(selection){tab='lab';toolQuery='';paint();labPage.openEvidence(selection);}
+    function openTool(id){if(!toolsFor(section).some(tool=>tool.id===id))return false;tab=id;toolQuery='';toolsExpanded=false;paint();return true;}
     function openDate(view,target){
+      const destination=toolGroups.find(group=>group.tools.some(tool=>tool.id===view))?.page || 'insights';
+      if(destination!==section){navigate(destination,view,target);return;}
       tab=view;toolQuery='';
       if(view==='time'){date=target;reset();paint();load();}
       else{parkingPage.openDate(target);paint();}
@@ -79,19 +87,21 @@
       if(el && !el.disabled){el.focus({preventScroll:true});if(saved.start!=null)el.setSelectionRange(saved.start,saved.end);}
     }
     function navigation() {
-      return `<aside class="insight-navigation"><div class="insight-mobile-tools"><label>当前研究工具<select id="insight-tool-select" aria-label="当前研究工具">${toolGroups.map(g=>`<optgroup label="${g.name}">${g.tools.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</optgroup>`).join('')}</select></label><button class="button secondary" data-insight="toggle-tools" aria-controls="insight-tool-directory" aria-expanded="${toolsExpanded}">查找工具</button></div><div id="insight-tool-directory" data-expanded="${toolsExpanded}"><div class="insight-nav-heading"><strong>研究工具</strong><span id="insight-tool-count">${toolCount} 项</span></div>
-        <div class="insight-tool-search"><label for="insight-tool-search">查找研究工具</label><div><input id="insight-tool-search" type="search" value="${esc(toolQuery)}" placeholder="搜名称或用途"><button id="insight-tool-clear" data-insight="clear-tools" aria-label="清空工具搜索" title="清空工具搜索">×</button></div></div>
-        <nav class="insight-tabs" aria-label="用车研究工具">${toolGroups.map((group,i)=>`<section data-insight-group="${i}" aria-labelledby="insight-group-${i}"><h2 id="insight-group-${i}">${group.name}</h2><div>${group.tools.map(tool=>`<button data-insight-view="${tool.id}" aria-pressed="${tab===tool.id}" title="${tool.description}">${tool.label}</button>`).join('')}</div></section>`).join('')}</nav>
-        <p class="insight-nav-empty" role="status" hidden>没有匹配的工具，试试「充电」「费用」「行程」。</p></div></aside>`;
+      const visible=groups(), toolCount=visible.reduce((total,group)=>total+group.tools.length,0);
+      return `<aside class="insight-navigation"><div class="insight-mobile-tools"><label>当前研究工具<select id="insight-tool-select" aria-label="当前研究工具">${section==='insights'?'':'<option value="">选择子功能</option>'}${visible.map(g=>`<optgroup label="${g.name}">${g.tools.map(t=>`<option value="${t.id}">${t.label}</option>`).join('')}</optgroup>`).join('')}</select></label><button class="button secondary" data-insight="toggle-tools" aria-controls="insight-tool-directory" aria-expanded="${toolsExpanded}">查找工具</button></div><div id="insight-tool-directory" data-expanded="${toolsExpanded}"><div class="insight-nav-heading"><strong>${section==='insights'?'研究工具':'相关工具'}</strong><span id="insight-tool-count">${toolCount} 项</span></div>
+        <div class="insight-tool-search"><label for="insight-tool-search">${section==='insights'?'查找研究工具':'查找子功能'}</label><div><input id="insight-tool-search" type="search" value="${esc(toolQuery)}" placeholder="搜名称或用途"><button id="insight-tool-clear" data-insight="clear-tools" aria-label="清空工具搜索" title="清空工具搜索">×</button></div></div>
+        <nav class="insight-tabs" aria-label="${section==='insights'?'用车研究工具':'相关工具'}">${visible.map((group,i)=>`<section data-insight-group="${i}" aria-labelledby="insight-group-${i}"><h2 id="insight-group-${i}">${group.name}</h2><div>${group.tools.map(tool=>`<button data-insight-view="${tool.id}" aria-pressed="${tab===tool.id}" title="${tool.description}">${tool.label}</button>`).join('')}</div></section>`).join('')}</nav>
+        <p class="insight-nav-empty" role="status" hidden>没有匹配的工具，请清空搜索后重试。</p></div></aside>`;
     }
     function updateNavigation() {
       const term=toolQuery.trim().toLowerCase();
+      const visible=groups(), toolCount=visible.reduce((total,group)=>total+group.tools.length,0);
       let count=0;
       node.querySelector('#insight-tool-search').value=toolQuery;
       node.querySelector('#insight-tool-select').value=tab;
       node.querySelector('#insight-tool-directory').dataset.expanded=String(toolsExpanded);
       node.querySelector('[data-insight=toggle-tools]').setAttribute('aria-expanded',String(toolsExpanded));
-      for(const [i,group] of toolGroups.entries()){
+      for(const [i,group] of visible.entries()){
         let groupCount=0;
         for(const tool of group.tools){
           const el=node.querySelector(`[data-insight-view="${tool.id}"]`);
@@ -113,6 +123,7 @@
       }
       updateNavigation();
       const content=node.querySelector('.insight-content');
+      if(!tab){content.innerHTML='<section class="card insight-panel"><h2>选择子功能</h2><p>从上方快捷入口或这里的工具列表打开。</p></section>';return;}
       if(views[tab]){
         content.innerHTML=`<div id="${tab}-workspace"></div>`;
         views[tab].mount(node.querySelector(`#${tab}-workspace`));
@@ -217,11 +228,13 @@
       } catch(failure){if(valid(token,compareSerial,identity))compareError=failure.message;}
       finally {if(valid(token,compareSerial,identity)){compareLoading=false;if(active()){paintActions();paintComparison();}}}
     }
-    function mount(container) {
-      const changed=context()!==owner, remount=node!==container;
+    function mount(container, nextSection='insights') {
+      const changed=context()!==owner, sectionChanged=section!==nextSection, remount=node!==container;
+      if(sectionChanged){section=nextSection;tab=section==='insights'?'research':'';toolQuery='';toolsExpanded=false;}
       if(changed){owner=context();toolQuery='';toolsExpanded=false;reset();}
       node=container;
-      if(changed || remount)paint();
+      if(sectionChanged)node.innerHTML='';
+      if(changed || remount || sectionChanged)paint();
       if(views[tab])views[tab].mount(node.querySelector(`#${tab}-workspace`));
       if(tab==='time' && owner && !loadedDate && !loading)load();
     }
@@ -262,7 +275,7 @@
       }
       return true;
     }
-    return {mount,handle,openField,openExperiment};
+    return {mount,handle,openField,openExperiment,openTool,openDate};
   }
-  root.InsightsPage={create};
+  root.InsightsPage={create,toolsFor};
 })(window);

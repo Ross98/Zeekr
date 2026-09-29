@@ -3,6 +3,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
     await page.getByRole('button',{name:'充电曲线对比',exact:true}).click();
     for(const side of ['A','B']){
       await page.getByLabel(`充电 ${side} 月份`,{exact:true}).fill('2026-07');

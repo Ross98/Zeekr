@@ -3,6 +3,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    await page.getByRole('button',{name:'设置',exact:true}).first().click();
     await page.getByRole('button',{name:'自定义提醒',exact:true}).click();
     assert.match(await page.locator('#rule-delivery').innerText(),/Bark.*企业微信兜底/);
     await page.getByLabel('提醒名称',{exact:true}).fill('<img src=x onerror=alert(1)> 合成规则');
@@ -43,7 +44,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.locator('[data-rule-record]').filter({hasText:'车窗待核验'}).waitFor();
     assert.ok(await page.locator('[data-rule-history]').count()>0);
     await layouts(page,'custom-reminders');
-    await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.reload();
+    await page.getByRole('button',{name:'设置',exact:true}).first().click();
     await page.getByRole('button',{name:'自定义提醒',exact:true}).click();
     await page.locator('[data-rule-record]').filter({hasText:'更新后的合成规则'}).waitFor();
     const refresh=page.waitForResponse(r=>r.url()===f.origin+'/api/insights/rules'&&r.request().method()==='GET');

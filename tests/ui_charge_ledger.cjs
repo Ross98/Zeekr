@@ -3,6 +3,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
     await page.getByRole('button',{name:'充电账本',exact:true}).click();
     await page.getByLabel('账本月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取账本',exact:true}).click();
@@ -40,7 +41,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.waitForFunction(()=>document.querySelectorAll('[data-ledger-entry]').length===2);
     assert.match(await page.locator('#ledger-sources').innerText(),/外充/);
     await layouts(page,'charge-ledger');
-    await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.reload();
+    await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
     await page.getByRole('button',{name:'充电账本',exact:true}).click();
     await page.getByLabel('账本月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取账本',exact:true}).click();

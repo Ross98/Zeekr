@@ -41,7 +41,9 @@ const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unc
 
 const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,redraw:render,escape:esc,age,active:()=>page==='car'});
 
-const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='insights',review:openResearchReview});
+const insightSections = ['car','energy','tracks','insights','settings'];
+const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,
+  navigate:(section,view,date)=>{page=section;render();insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const tripManager = window.TripManagement.create({getState:()=>state,getDate:()=>trackDate,request:api,escape:esc,
   active:()=>page==='tracks'&&trackSource==='local'&&tripManagementOpen,
   changed:revision=>{
@@ -440,7 +442,7 @@ function carDisclosure(key, label, fields) {
   const uncertain = fields.filter(f => ['未知','待核实'].includes(f.evidence)).length;
   return `<details class="car-disclosure" data-detail="${key}"><summary><span>${label}</span><span class="car-detail-count">${fields.length ? `${fields.length} 项${uncertain ? ` · ${uncertain} 项待核实 / 未知` : ''}` : '暂无返回数据'}</span></summary>${table(fields,true)}</details>`;
 }
-function car() { return vehiclePage.render(carOverview,modelRequired); }
+function car() { return vehiclePage.render(carOverview,modelRequired) + '<div id="insights-workspace"></div>'; }
 function carOverview() {
   if (!state?.model) return modelRequired();
   const m = state.model;
@@ -485,7 +487,7 @@ function carOverview() {
 }
 
 function energy() {
-  if (!state?.model) return modelRequired();
+  if (!state?.model) return modelRequired() + '<div id="insights-workspace"></div>';
   if (!chargeDateInitialized) {
     const latestEnd=state.recent_events?.charge_end?.end_time;
     chargeDate=beijingDate(Number.isFinite(latestEnd)?latestEnd:Date.now());
@@ -532,7 +534,7 @@ function energy() {
     ${carDisclosure('energy-strategy','预约、充电口与对外放电',electric.filter(f => strategyKeys.includes(f.key)))}
     ${carDisclosure('energy-other','电耗与其他能源参数',other)}
     <details class="car-disclosure" data-detail="energy-low-voltage"><summary><span>低压电池</span><span class="car-detail-count">独立于动力电池</span></summary><p class="car-disclosure-note">低压电池电量与健康字段不代表动力电池状态；未验证电气单位保留原值。</p>${table(m.fields.filter(f => f.group === '低压电池'),true)}</details>
-  </section>`;
+  </section><div id="insights-workspace"></div>`;
 }
 
 function privacyGate(track = false) {
@@ -547,7 +549,7 @@ function mapPage() {
 
 function tracksPage() {
   const toolbar = `<div class="track-toolbar"><div class="tabs" aria-label="轨迹来源"><button class="tab ${trackSource==='local'?'active':''}" data-source="local">本地记录</button><button class="tab ${trackSource==='cloud'?'active':''}" data-source="cloud">云端历史</button></div><label><span class="subtle">北京时间 </span><input type="date" id="track-date" aria-label="轨迹日期" value="${esc(trackDate)}"></label></div>`;
-  return toolbar + (trackSource === 'cloud' ? cloudHistoryPage() : localTripsPage());
+  return toolbar + (trackSource === 'cloud' ? cloudHistoryPage() : localTripsPage()) + '<div id="insights-workspace"></div>';
 }
 
 function monitoringPanel() {
@@ -563,7 +565,7 @@ function monitoringPanel() {
 function settings() {
   const recording = state?.recording || {active:true,interval:30,last_sample:'未知',last_new:'未知'};
   return `<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('Web 服务已连接')}</div><div class="card-body"><div class="settings-row"><div><h3>账号会话</h3><p>${state?.authenticated?'已发现车辆会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在运行服务的设备上完成车辆登录。'}</p></div>${pill(state?.authenticated?'会话已保存':'未登录',state?.authenticated?'':'warn')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section>${monitoringPanel()}
-  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会同时停止自动检查与通知处理，已有记录保留。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">默认 30 秒，可调为 10–60 秒；停车保持相同间隔。更快查询不保证车辆上传更快，重复数据不会增加轨迹点。故障或限流时等待会延长。</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="10" max="60" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section>`;
+  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会同时停止自动检查与通知处理，已有记录保留。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">默认 30 秒，可调为 10–60 秒；停车保持相同间隔。更快查询不保证车辆上传更快，重复数据不会增加轨迹点。故障或限流时等待会延长。</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="10" max="60" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section><div id="insights-workspace"></div>`;
 }
 
 function updateHeartbeat() {
@@ -576,6 +578,10 @@ function updateHeartbeat() {
 }
 
 function more() { return `<div class="more-grid">${['energy','fields','insights','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
+function relatedTools() {
+  if(!['car','energy','tracks','settings'].includes(page))return '';
+  return `<nav class="related-tools" aria-label="${pages[page]}子功能"><strong>子功能</strong>${window.InsightsPage.toolsFor(page).map(tool=>`<a href="#insights-workspace" data-insight-tool="${tool.id}">${esc(tool.label)}</a>`).join('')}</nav>`;
+}
 
 function render() {
   const samplingFocused = page==='settings' && document.activeElement?.id==='interval';
@@ -585,7 +591,7 @@ function render() {
   const chargeManagerNode=page==='energy'?$('#charge-management'):null;
   const chargeManagerFocus=chargeManagerNode?.contains(document.activeElement)?document.activeElement:null;
   if(page!=='energy')chargeManager.suspend();
-  const insightsNode = page === 'insights' ? document.getElementById('insights-workspace') : null;
+  const insightsNode = insightSections.includes(page) ? document.getElementById('insights-workspace') : null;
   const insightsFocus = insightsNode?.contains(document.activeElement) ? document.activeElement : null;
   const vehicleFocus = page === 'car' ? vehiclePage.focusSnapshot() : null;
   prepareLocalTripRender();
@@ -602,12 +608,12 @@ function render() {
   $('.breadcrumb').textContent = `我的车库 / ${state?.profile?.name || '我的车辆'}`;
   const error = transientError || state?.error;
   const body = {overview,car,energy,map:mapPage,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
-  $('#main').innerHTML = head() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
+  $('#main').innerHTML = head() + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
   if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
   if(chargeManagerNode&&$('#charge-management')){$('#charge-management').replaceWith(chargeManagerNode);if(chargeManagerFocus?.isConnected)chargeManagerFocus.focus({preventScroll:true});}
-  if (page === 'insights') {
+  if (insightSections.includes(page)) {
     if (insightsNode) document.getElementById('insights-workspace').replaceWith(insightsNode);
-    insightsPage.mount(document.getElementById('insights-workspace'));
+    insightsPage.mount(document.getElementById('insights-workspace'),page);
     if (insightsFocus?.isConnected) insightsFocus.focus({preventScroll:true});
   }
   carOpenDetails.forEach(key => { const detail = $(`details[data-detail="${key}"]`); if(detail) detail.open = true; });
@@ -698,6 +704,8 @@ async function updateRecording(saveInterval = false) {
 }
 
 document.addEventListener('click', event => {
+  const toolLink=event.target.closest('[data-insight-tool]');
+  if(toolLink){event.preventDefault();if(insightsPage.openTool(toolLink.dataset.insightTool))$('#insights-workspace')?.scrollIntoView({block:'start'});return;}
   if (tripManager.handle(event)) return;
   if (chargeManager.handle(event)) return;
   if (insightsPage.handle(event)) return;
@@ -788,7 +796,7 @@ async function pollState(force = false) {
       if(page==='tracks' && trackSource==='local' && refreshLocalTrips()) {updateConnection();updateClock();}
       else render();
     }
-    else { if(page==='insights')insightsPage.mount($('#insights-workspace'));updateHeartbeat(); }
+    else { if(insightSections.includes(page))insightsPage.mount($('#insights-workspace'),page);updateHeartbeat(); }
   } catch(error) {
     connectionFailures=state?connectionFailures+1:2;
     updateConnection();

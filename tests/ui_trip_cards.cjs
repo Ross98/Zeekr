@@ -11,6 +11,7 @@ function pngWithMetadata(png){
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();
     await page.getByRole('button',{name:'行程卡片',exact:true}).click();
     await page.getByLabel('卡片记录月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取卡片素材',exact:true}).click();

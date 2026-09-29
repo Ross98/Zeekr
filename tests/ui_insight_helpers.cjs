@@ -19,7 +19,7 @@ async function fixture({demo=false,partialCharge=false,automatic=false}={}){
     page.on('request',r=>{if(r.method()==='POST')posts.push(r.url());if(!r.url().startsWith(origin)&&!r.url().startsWith('data:'))external.push(r.url());});
     page.on('requestfailed',r=>console.error('Browser request failed:',new URL(r.url()).pathname,r.failure()?.errorText));
     await page.goto(origin);
-    try{await page.getByRole('button',{name:'用车研究',exact:true}).click();await page.getByRole('button',{name:'车辆时间机',exact:true}).click();}
+    try{await page.getByRole('button',{name:'用车研究',exact:true}).click();}
     catch(error){console.error('Fixture startup diagnostic:',await page.evaluate(()=>({ready:document.readyState,scripts:[...document.scripts].map(s=>s.src),text:document.body.innerText.slice(0,700),timing:performance.getEntriesByType('resource').map(r=>({name:new URL(r.name).pathname,duration:r.duration}))})));throw error;}
     return {page,browser,origin,errors,posts,external,close:async()=>{await browser.close();server.kill();}};
   }catch(error){if(browser)await browser.close();server.kill();throw error;}

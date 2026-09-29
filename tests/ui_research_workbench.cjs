@@ -73,16 +73,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.locator('#research-start').fill('2026-09-19');
     assert.match(await page.locator('#research-range-draft').innerText(),/日期已修改/);
     await button('自选日期').click();
-    await page.getByLabel('当前研究工具',{exact:true}).selectOption('ledger');
-    await page.locator('#ledger-note').fill('手机保留草稿');
-    await page.getByLabel('当前研究工具',{exact:true}).selectOption('research');
-    await button('查找工具').click();
-    await page.getByLabel('查找研究工具',{exact:true}).fill('费用');
-    await button('充电账本').click();
-    assert.equal(await page.locator('#ledger-note').inputValue(),'手机保留草稿');
-    assert.equal(await page.getByLabel('当前研究工具',{exact:true}).inputValue(),'ledger');
-    assert.equal(await button('查找工具').getAttribute('aria-expanded'),'false');
     assert.deepEqual(f.posts,[]);assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
-    console.log('UI_RESEARCH_WORKBENCH_PASS: date presets, local filters/sorting, layered details, sample selection, mobile navigation and drafts');
+    console.log('UI_RESEARCH_WORKBENCH_PASS: date presets, local filters/sorting, layered details and sample selection');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
