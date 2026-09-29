@@ -5,7 +5,7 @@
   const dateAt=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
   function create({getState,request,escape:esc,active,time}) {
     let node=null,owner='',start=dateAt(Date.now()-6*86400000),end=dateAt(Date.now());
-    let data=null,error='',loading=false,attempted=false,serial=0,category='all',quality='all',order='latest',page=0;
+    let data=null,error='',loading=false,serial=0,category='all',quality='all',order='latest',page=0;
     let selected=null,comparison=null,compareError='',comparing=false,compareSerial=0;
     function identity(){return getState()?.insights_context || '';}
     function valid(token,current,context){return token===current && owner===context && context===identity();}
@@ -33,7 +33,7 @@
       const list=rows();
       const pages=Math.max(1,Math.ceil(list.length/12));page=Math.min(page,pages-1);
       node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">停车耗电观察</span><h2>停下来以后，电量怎样变</h2><p>沿着有效观测看变化，保留每一处不确定。</p></div><span class="insight-source">SOC 观测 · 非电表计量</span></section>
-        <section class="card insight-panel"><div class="insight-toolbar"><label>开始日期<input id="parking-start" type="date" value="${esc(start)}"></label><label>结束日期<input id="parking-end" type="date" value="${esc(end)}"></label>${button('分析停车观测','load',loading || !owner || !start || !end,'id="parking-load"')}</div><p class="insight-note">最多查看 31 天。仅比较有开始、结束边界且连续有效的停车观测；首末时间为已观测到的停车端点。</p>
+        <section class="card insight-panel"><div class="insight-toolbar"><label>开始日期<input id="parking-start" type="date" value="${esc(start)}"></label><label>结束日期<input id="parking-end" type="date" value="${esc(end)}"></label>${button('分析停车观测','load',loading || !owner || !start || !end,'id="parking-load"')}</div><p class="insight-note">选择时间范围后点击“分析停车观测”。最多查看 31 天。仅比较有开始、结束边界且连续有效的停车观测；首末时间为已观测到的停车端点。</p>
         ${loading?'<p role="status">正在分析本机归档…</p>':''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可分析停车观测。</p>':''}${error?`<div class="notice error" role="alert">${esc(error)}${data?' · 保留上次结果与原日期范围。':''}</div>`:''}
         ${data?`<p id="parking-range" class="insight-note">结果范围：${esc(data.start_date)} 至 ${esc(data.end_date)} · ${data.quality.read_count} 条范围内读取，另有 ${data.quality.boundary_reads} 条边界观测；${data.quality.repeat_reads} 次重复缓存，${data.quality.revisions} 次同时间修订。</p><div class="insight-metrics parking-counts"><div><span>可比较区间</span><strong>${data.eligible_count}</strong></div><div><span>证据不完整片段</span><strong>${data.fragment_count}</strong></div><div><span>无效或不确定观测</span><strong>${data.quality.excluded_reads}</strong></div></div>`:''}</section>
         ${data?`<section class="card insight-panel"><div class="insight-toolbar"><label>停车时段<select id="parking-category" aria-label="停车时段"><option value="all">全部时段</option>${Object.entries(categories).map(([key,label])=>`<option value="${key}" ${category===key?'selected':''}>${label}</option>`).join('')}</select></label><label>观测完整性<select id="parking-quality" aria-label="观测完整性"><option value="all">全部区间与片段</option><option value="eligible" ${quality==='eligible'?'selected':''}>只看可比较区间</option></select></label><label>排列方式<select id="parking-order" aria-label="排列方式"><option value="latest">最近停车优先</option><option value="drop" ${order==='drop'?'selected':''}>较大 SOC 下降优先</option></select></label></div><p class="insight-note">匹配 ${list.length} 个区间。按 SOC 下降排列时，片段单列在可比较区间之后；时长不同，不能直接归因为车辆异常。</p>
@@ -61,7 +61,7 @@
     async function load(){
       if(loading || !owner || !start || !end)return;
       const context=owner,token=++serial;
-      loading=true;attempted=true;error='';paint();
+      loading=true;error='';paint();
       try{
         const result=await request(`/api/insights/parking?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, undefined, 180000);
         if(!valid(token,serial,context))return;
@@ -86,9 +86,8 @@
     function mount(container){
       const changed=owner!==identity(),remount=node!==container;
       node=container;
-      if(changed){owner=identity();data=null;attempted=false;loading=false;error='';selected=null;comparison=null;compareError='';comparing=false;serial++;compareSerial++;}
+      if(changed){owner=identity();data=null;loading=false;error='';selected=null;comparison=null;compareError='';comparing=false;serial++;compareSerial++;}
       if(changed || remount)paint();
-      if(owner && !attempted && !loading)load();
     }
     function handle(event){
       if(!active() || !node?.contains(event.target))return false;
@@ -117,7 +116,7 @@
       return true;
     }
     function openDate(date){
-      start=end=date;data=null;attempted=loading=false;error='';selected=null;comparison=null;
+      start=end=date;data=null;loading=false;error='';selected=null;comparison=null;
       category=quality='all';page=0;serial++;compareSerial++;compareError='';comparing=false;
     }
     return {mount,handle,openDate};
