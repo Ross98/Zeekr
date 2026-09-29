@@ -71,6 +71,8 @@ def seed_events(app, partial_charge=False):
             summary={'start_time':start,'end_time':end,'duration_seconds':3600,'distance_km':distance,
                      'start_soc':a,'end_soc':b,'soc_delta':b-a,'partial':partial or (partial_charge and identity=='report-charge'),'battery_capacity_kwh':86,
                      'address':'PRIVATE-ADDRESS','vin':'NEVER-EXPORT-IDENTITY'}
+            if identity=='report-charge':
+                summary['report_v2']={'start':{'charging_mode':'ac'}}
             db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
                        (identity,vehicle,kind,json.dumps(summary),'PRIVATE-MESSAGE',end+600000))
     fixed_now,_=day_bounds('2026-10-05')
