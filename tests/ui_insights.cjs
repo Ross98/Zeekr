@@ -96,24 +96,32 @@ const path = require('node:path'), fs = require('node:fs');
     const response = await page.request.get(origin+'/api/insights/snapshot?id=202609.1');
     const raw = await response.text();
     for(const secret of ['NEVER-EXPORT','latitude','longitude','111600000'])assert.ok(!raw.includes(secret));
+    const parkingContext=await page.evaluate(()=>state.insights_context);
+    await page.route('**/api/insights/parking?*',route=>route.fulfill({json:{
+      context:parkingContext,start_date:'2026-09-18',end_date:'2026-09-19',calculation_version:2,
+      comparable_count:0,uncertain_count:1,orphan_count:1,capacity_kwh:86,
+      orphan_sessions:[{start_time:1790000000000,end_time:1790000300000,reason_labels:['未观测到停车开始边界']}],
+      events:[{id:'trip-a:trip-b',start_trip_id:'trip-a',end_trip_id:'trip-b',start_time:1789660800000,
+        end_time:1789747200000,duration_seconds:86400,category:'multi_day',status:'uncertain',open:false,
+        start_soc:70,end_soc:69,soc_drop:null,estimated_kwh:null,sample_count:4,gap_count:1,
+        reason_labels:['停车期间有超过 10 分钟的数据缺口']}]
+    }}));
     await page.getByRole('button', {name:'能源与充电',exact:true}).first().click();
     await page.getByRole('button', {name:'停车耗电',exact:true}).click();
     await page.getByLabel('开始日期', {exact:true}).fill('2026-09-18');
     await page.getByLabel('结束日期', {exact:true}).fill('2026-09-19');
     await page.getByRole('button', {name:'分析停车观测',exact:true}).click();
     await page.locator('[data-parking-session]').first().waitFor();
-    assert.equal(await page.locator('[data-parking-session]').count(), 1);
-    assert.match(await page.locator('[data-parking-session]').innerText(), /可比较|跨夜/);
-    await page.getByRole('button', {name:'查看区间详情',exact:true}).click();
-    assert.match(await page.locator('#parking-detail').innerText(), /108|5 分钟|300 秒/);
-    await page.getByRole('button', {name:'比较停车端点参数',exact:true}).click();
-    await page.locator('#parking-compare [data-parking-change]').first().waitFor();
-    await page.getByLabel('停车时段', {exact:true}).selectOption('multi_day');
-    await page.getByText('没有符合筛选的停车区间', {exact:true}).waitFor();
+    assert.equal(await page.locator('[data-parking-session]').count(),1);
+    assert.match(await page.locator('[data-parking-session]').innerText(),/耗电不可算|数据缺口/);
+    await page.getByRole('button', {name:'查看停车详情',exact:true}).click();
+    assert.match(await page.locator('#parking-detail').innerText(),/超过 10 分钟的缺口/);
     await page.getByLabel('停车时段', {exact:true}).selectOption('overnight');
-    assert.equal(await page.locator('[data-parking-session]').count(), 1);
+    await page.getByText('没有符合筛选的停车事件', {exact:true}).waitFor();
+    await page.getByLabel('停车时段', {exact:true}).selectOption('multi_day');
+    assert.equal(await page.locator('[data-parking-session]').count(),1);
     await page.evaluate(() => render());
-    assert.equal(await page.getByLabel('停车时段', {exact:true}).inputValue(), 'overnight');
+    assert.equal(await page.getByLabel('停车时段', {exact:true}).inputValue(),'multi_day');
     for(const theme of ['light','dark']){
       await page.getByLabel('外观', {exact:true}).selectOption(theme);
       for(const width of [1440,390,320]){

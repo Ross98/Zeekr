@@ -5,6 +5,7 @@ from statistics import median
 
 from .usage_events import UsageEvents
 from .usage_reports import period_window
+from .commute_tags import CommuteTags
 
 
 def describe(values):
@@ -30,10 +31,18 @@ def comparison(tag,events):
 
 class TripTags:
     def __init__(self,store,database):
-        self.store=store;self.events=UsageEvents(database)
+        self.store=store;self.events=UsageEvents(database);self.commute=CommuteTags(store,database)
 
     def update(self,owner,vehicle,data,guard=None):
         action=data.get('action');identity=data.get('id');body=None
+        if isinstance(action,str) and action.startswith('commute-'):
+            if action in ('commute-exclude','commute-include'):
+                event_id=data.get('event_id')
+                event=self.events.get(vehicle,event_id)
+                if event['kind']!='trip_end':raise ValueError('请选择已结束行程。')
+                self.commute.exclude(owner,vehicle,event_id,action=='commute-exclude',guard=guard)
+                return dict(id=event_id)
+            return self.commute.update(owner,vehicle,data,guard=guard)
         if action=='save':
             event_id=data.get('event_id')
             event=self.events.get(vehicle,event_id)
@@ -59,15 +68,23 @@ class TripTags:
         saved=self.store.change(owner,vehicle,'tags',action,identity,body,data.get('revision'),guard=guard)
         return dict(id=identity,revision=saved['revision'],can_undo=saved['can_undo'])
 
-    def query(self,owner,vehicle,date):
+    def query(self,owner,vehicle,date,guard=None):
         window=period_window('month',date)
         events=[row for row in self.events.between(vehicle,window['start'],window['end'])['events'] if row['kind']=='trip_end']
         saved=self.store.read(owner,vehicle,'tags')
         annotations={r['body']['event_id']:r for r in saved['records']}
+        automatic=self.commute.decisions(owner,vehicle,events,guard=guard)
         rows=[];trash=[]
         for event in events:
             record=annotations.get(event['id']);body=record['body'] if record and not record['deleted'] else {}
-            rows.append(dict(event,tags=body.get('tags',[]),note=body.get('note',''),
+            manual=body.get('tags',[])
+            decision=automatic.get(event['id'])
+            auto=bool(decision and decision[0]=='matched' and not decision[1])
+            tags=list(manual)
+            if auto and '通勤' not in tags:tags.append('通勤')
+            rows.append(dict(event,tags=tags,manual_tags=manual,note=body.get('note',''),
+                             automatic_commute=auto,commute_excluded=bool(decision and decision[1]),
+                             commute_reason=decision[0] if decision and decision[0]!='matched' else None,
                              annotation_id=record['id'] if body else None))
             if record and record['deleted']:trash.append(dict(record['body'],id=record['id'],end_time=event['end_time']))
         rows.sort(key=lambda row:(row['end_time'],row['id']),reverse=True)
@@ -76,4 +93,7 @@ class TripTags:
             for tag in row['tags']:members[tag].append(row)
         return dict(window=window,revision=saved['revision'],can_undo=saved['can_undo'],events=rows,
                     groups=[comparison(tag,members[tag]) for tag in sorted(members)],
-                    untagged_count=sum(not row['tags'] for row in rows),trash=trash)
+                    suggested_tags=sorted({tag for record in saved['records'] if not record['deleted']
+                                           for tag in record['body']['tags']}),
+                    untagged_count=sum(not row['tags'] for row in rows),trash=trash,
+                    commute_rule=self.commute.rule(owner,vehicle))

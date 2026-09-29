@@ -59,6 +59,11 @@ class TrackTests(unittest.TestCase):
         self.assertEqual(reopened.vehicles(), [{'key': 'car-a', 'label': '本地车辆 1'}])
         self.assertEqual(reopened.day('car-a', '2024-01-01')['count'], 1)
 
+    def test_endpoint_lookup_has_vehicle_state_time_index(self):
+        with self.store.connect() as db:
+            indexes={row[1] for row in db.execute('PRAGMA index_list(observations)')}
+        self.assertIn('vehicle_state_time',indexes)
+
     def test_gap_quality_explains_unknown_untrusted_and_long_interval(self):
         base = 1704067200000
         records = [(base, True, base), (base + 60000, False, base + 60000),

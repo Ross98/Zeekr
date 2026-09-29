@@ -21,7 +21,6 @@
       {id:'life',label:'生活账本',description:'保险、停车费用、洗车支出与保养待办'}
     ]},
     {name:'行程与轨迹',page:'tracks',tools:[
-      {id:'tags',label:'行程标签',description:'通勤、接娃等同类行程比较'},
       {id:'cards',label:'行程卡片',description:'照片、出行回忆与本地图片导出'}
     ]},
     {name:'设置',page:'settings',tools:[
@@ -42,7 +41,6 @@
     const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
     const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
     const rulesPage=root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time});
-    const tagsPage=root.TripTagsPage.create({getState,request,escape:esc,active:()=>active() && tab==='tags',time});
     const chargeComparisonPage=root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time});
     const labPage=root.ParameterExperimentsPage.create({getState,request,escape:esc,active:()=>active() && tab==='lab',time});
     const researchPage=root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review});
@@ -50,7 +48,7 @@
     const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
     const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
     const cardsPage=root.TripCardsPage.create({getState,request,escape:esc,active:()=>active() && tab==='cards',time});
-    const views={automatic:automaticPage,research:researchPage,parking:parkingPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,tags:tagsPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage,cards:cardsPage};
+    const views={automatic:automaticPage,research:researchPage,parking:parkingPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage,cards:cardsPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;

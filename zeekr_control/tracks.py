@@ -63,6 +63,7 @@ class TrackStore:
                 state_time INTEGER, observed_time INTEGER NOT NULL, gap_seconds INTEGER NOT NULL,
                 location TEXT NOT NULL, UNIQUE(vehicle, cache_key))''')
             connection.execute('CREATE INDEX IF NOT EXISTS vehicle_time ON observations(vehicle, observed_time)')
+            connection.execute('CREATE INDEX IF NOT EXISTS vehicle_state_time ON observations(vehicle, state_time)')
 
     @contextmanager
     def connect(self):

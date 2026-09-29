@@ -7,7 +7,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
   try {
     const groups = [
       ['能源与充电', ['充电曲线对比', '充电账本', '停车耗电']],
-      ['行程与轨迹', ['行程标签', '行程卡片']],
+      ['行程与轨迹', ['行程卡片']],
       ['车辆', ['车辆时间机', '生活账本']],
       ['设置', ['自定义提醒']],
       ['用车研究', ['数据利用', '自动洞察', '参数实验室', '数据质量雷达', '周报与月报', '用车日历']]
@@ -16,11 +16,14 @@ const {fixture} = require('./ui_insight_helpers.cjs');
       await page.getByRole('button', {name:section, exact:true}).first().click();
       const tools = page.locator('#insights-workspace [data-insight-view]');
       assert.deepEqual(await tools.allTextContents(), labels, `${section} tools`);
-      if(section!=='用车研究')assert.deepEqual(await page.locator('.related-tools a').allTextContents(),labels,`${section} shortcuts`);
+      if(section!=='用车研究')assert.deepEqual(await page.locator('.related-tools a').allTextContents(),section==='行程与轨迹'?['行程标签',...labels]:labels,`${section} shortcuts`);
       if(section!=='用车研究')assert.equal(await page.locator('#insights-workspace [aria-pressed="true"]').count(),0);
       await tools.first().click();
       assert.equal(await tools.first().getAttribute('aria-pressed'), 'true');
     }
+    await page.getByRole('button', {name:'行程与轨迹',exact:true}).first().click();
+    await page.locator('.related-tools [data-track-tags]').click();
+    assert.equal(await page.getByRole('heading',{name:'通勤自动标注'}).count(),1);
     await page.getByRole('button', {name:'能源与充电', exact:true}).first().click();
     await page.getByRole('button', {name:'充电曲线对比', exact:true}).click();
     await page.getByLabel('充电 A 月份', {exact:true}).waitFor();

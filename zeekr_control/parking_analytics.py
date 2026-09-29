@@ -1,9 +1,12 @@
 """Parking SOC observations, never joined across charging or uncertain gaps."""
 from datetime import datetime
+import math
 
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
 from .vehicle_state import decode, numeric
+from .parking_events import build_events
+from .usage_events import UsageEvents
 
 
 MAX_GAP_MS = 600000
@@ -137,8 +140,9 @@ def analyze_parking(samples, lower, upper, capacity=None):
 
 
 class ParkingAnalytics:
-    def __init__(self, archive):
+    def __init__(self, archive, database=None):
         self.archive = archive
+        self.database = database
 
     def query(self, scope, vehicle, start, end, capacity=None):
         lower, _ = day_bounds(start)
@@ -152,6 +156,31 @@ class ParkingAnalytics:
                 inside = numeric(climate.get('interiorTemp'), -80, 100) if isinstance(climate, dict) else None
                 inside_time = numeric(climate.get('temperatureUpdateTime'), 1, 9999999999999) if isinstance(climate, dict) else None
                 yield {'record': record, 'state': decode(raw), 'inside_temp': inside, 'inside_time': inside_time}
-        result = analyze_parking(samples(), lower, upper, capacity)
+        base_samples = list(samples())
+        result = analyze_parking(base_samples, lower, upper, capacity)
+        if self.database is not None:
+            window = 31*86400000
+            history = UsageEvents(self.database).between(vehicle, max(0, lower-window), upper+window)
+            events = history['events']
+            triples = [row for row in events if row['kind'] == 'trip_end']
+            charges = [row for row in events if row['kind'] == 'charge_end']
+            if len(triples) >= 2:
+                first = math.floor(min(row['end_time'] for row in triples))
+                last = math.ceil(max([upper] + [row['start_time'] for row in triples if row['start_time'] is not None]))
+                evidence = []
+                if first < last:
+                    cursor = first
+                    while cursor <= last:
+                        stop = min(cursor + 30*86400000, last+1)
+                        for record, raw in self.archive.iter_records(scope, vehicle, cursor, stop):
+                            evidence.append({'record': record, 'state': decode(raw)})
+                        cursor = stop
+                result.update(build_events(triples, charges, evidence, lower, upper, capacity))
+            else:
+                result.update(build_events(triples, charges, base_samples, lower, upper, capacity))
+            result['orphan_sessions'] = [row for row in result['sessions'] if not any(
+                row['start_time'] < event['end_time'] and row['end_time'] > event['start_time']
+                for event in result['events'])]
+            result['orphan_count'] = len(result['orphan_sessions'])
         result.update(start_date=start, end_date=end)
         return result
