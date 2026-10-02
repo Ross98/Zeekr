@@ -91,9 +91,10 @@ class CommuteTagTests(unittest.TestCase):
     def test_new_rule_version_applies_only_to_later_trips(self):
         effective=self.save_rule()['effective_at']
         self.trip('first',effective+1000,(31.2,121.4),(31.21,121.41))
-        changed=self.tags.update('owner','car',dict(action='commute-save',revision=1,
-            home=dict(latitude=32,longitude=120,radius_m=300),
-            work=dict(latitude=32.1,longitude=120.1,radius_m=300)))
+        with patch('zeekr_control.commute_tags.time.time',return_value=(self.start+7200000)/1000):
+            changed=self.tags.update('owner','car',dict(action='commute-save',revision=1,
+                home=dict(latitude=32,longitude=120,radius_m=300),
+                work=dict(latitude=32.1,longitude=120.1,radius_m=300)))
         self.trip('later',changed['effective_at']+1000,(31.2,121.4),(31.21,121.41))
         rows={r['id']:r for r in self.tags.query('owner','car','2026-09-28')['events']}
         self.assertEqual(rows['first']['tags'],['通勤'])

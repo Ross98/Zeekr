@@ -16,7 +16,7 @@ function syncLocalTrips() {
   if (!localTrips || localTrips.context !== context) {
     stopLocalPlayback();
     localTrips = {context,events:null,active:null,nextCursor:null,cursor:null,previous:[],listBusy:false,
-      listError:'',listRequest:0,selection:'day',selected:null,route:null,routeError:'',routeBusy:false,
+      queried:false,listError:'',listRequest:0,selection:'day',selected:null,route:null,routeError:'',routeBusy:false,
       routeRequest:0,index:0,speed:1,timer:null,layers:null,viewport:null,notice:''};
   }
   return localTrips;
@@ -25,7 +25,7 @@ function syncLocalTrips() {
 function localTripsPage() {
   syncLocalTrips();
   return `<div id="local-trips">
-    <div class="local-trip-tools"><div class="local-date-nav">${action('前一天','local-day-before','secondary')}${action('今天','local-today','secondary')}${action('后一天','local-day-after','secondary')}</div><div class="local-date-nav">${action(tripManagementOpen?'收起管理':'管理行程','local-manage','secondary')}${action('重新查询','local-reload','secondary','refresh')}</div></div>
+    <div class="local-trip-tools"><div class="local-date-nav">${action('前一天','local-day-before','secondary')}${action('今天','local-today','secondary')}${action('后一天','local-day-after','secondary')}</div><div class="local-date-nav">${action(tripManagementOpen?'收起管理':'管理行程','local-manage','secondary')}${action('查询行程','local-reload','secondary','refresh')}</div></div>
     ${tripManagementOpen?'<div id="trip-management"></div>':''}
     <div id="local-trip-activity" class="notice info" role="status"></div>
     <div class="local-trip-layout"><section class="card local-trip-list-card"><div class="card-head"><h2>行程记录</h2><span class="subtle">北京时间</span></div><div id="local-trip-list"></div></section>
@@ -48,9 +48,11 @@ function localTripRow(trip) {
 function renderLocalTripList() {
   const h = localTrips, target = $('#local-trip-list');
   if (!target) return;
+  const compact=(h.events?.length || 0)+(h.active?1:0)<=3&&!h.nextCursor&&!h.previous.length;
+  target.closest('.local-trip-layout')?.classList.toggle('compact',compact);
   const focusId = document.activeElement?.dataset.localTrip;
   const current = h.active ? `<div class="local-trip-list-label">当前记录</div>${localTripRow(h.active)}` : '';
-  const records = h.events?.length ? h.events.map(localTripRow).join('') : h.events === null ? (h.listError ? '' : '<p class="card-body subtle">正在读取行程…</p>') : '<p class="card-body subtle">这一天暂无已结束行程。仍可查看全天采样。</p>';
+  const records = h.events?.length ? h.events.map(localTripRow).join('') : h.events === null ? (h.listError ? '' : h.queried ? '<p class="card-body subtle">正在读取行程…</p>' : '<p class="card-body subtle">选择日期，点击查询行程后显示记录。</p>') : '<p class="card-body subtle">这一天暂无已结束行程。仍可查看全天采样。</p>';
   target.innerHTML = `<button class="local-trip-day ${h.selection==='day'?'selected':''}" data-local-trip="day" aria-pressed="${h.selection==='day'}">${icon('map')}<span>全天总览</span>${icon('arrow')}</button>${current}<div class="local-trip-list-label">已结束行程</div>${h.listError?`<p class="card-body unknown" role="alert">${esc(h.listError)} ${action('重试','local-reload','quiet')}</p>`:''}${records}
     <div class="event-pagination local-trip-pagination"><button class="button secondary" data-action="local-prev" ${!h.previous.length||h.listBusy?'disabled':''}>上一页</button><span>第 ${h.previous.length+1} 页</span><button class="button secondary" data-action="local-next" ${!h.nextCursor||h.listBusy?'disabled':''}>下一页</button></div>`;
   if (focusId) [...target.querySelectorAll('[data-local-trip]')].find(button=>button.dataset.localTrip===focusId)?.focus({preventScroll:true});
@@ -60,14 +62,14 @@ function renderLocalTripActivity() {
   const target = $('#local-trip-activity');
   if (!target) return;
   const active = localTrips.active;
-  const status = localTrips.listError ? '行程状态暂无法更新' : localTrips.events===null ? '正在读取行程状态' : active ? tripStatusLabels[active.status] : '所选日期无进行中的记录';
+  const status = localTrips.listError ? '行程状态暂无法更新' : !localTrips.queried ? '尚未查询所选日期行程' : localTrips.events===null ? '正在读取行程状态' : active ? tripStatusLabels[active.status] : '所选日期无进行中的记录';
   const availability = !state?.recording?.active ? '采集已暂停' : !state?.monitoring?.online ? '后台未在线' : '后台采集中';
   target.innerHTML = `${icon('info')}<span><strong>${status}</strong> · ${availability}。${active?.status==='waiting'?'已观测到停车，等待连续确认后归档。':'状态来自后台最近观测，可能有延迟。'}${localTrips.notice?` ${esc(localTrips.notice)}`:''}</span>`;
 }
 
 function localTripFacts() {
   const h = localTrips, trip = h.selected;
-  if (h.selection === 'day') return `<div class="local-trip-intro"><h2>全天采样总览</h2><p class="subtle">${esc(trackDate)} · 选择左侧行程，可单独查看这一趟路线。</p></div>`;
+  if (h.selection === 'day') return `<div class="local-trip-intro"><h2>全天采样总览</h2><p class="subtle">${esc(trackDate)} · 选择行程记录，可单独查看这一趟路线。</p></div>`;
   if (!trip) return '<p class="card-body subtle">正在读取行程…</p>';
   const endLabel = trip.status==='ended'?'结束时间':trip.status==='waiting'?'停车观测':'最近观测';
   const delta = Number.isFinite(trip.start_soc)&&Number.isFinite(trip.end_soc) ? trip.end_soc-trip.start_soc : null;
@@ -88,8 +90,10 @@ function localTripVisible(h) {
   return localTrips===h && page==='tracks' && trackSource==='local' && !!$('#local-trips');
 }
 
-function loadLocalTrips() {
+function loadLocalTrips(query=false) {
   const h = syncLocalTrips();
+  if(query)h.queried=true;
+  if(!h.queried)return Promise.resolve();
   if (!h.listTask) {
     const task=fetchLocalTrips(h).finally(()=>{if(h.listTask===task)h.listTask=null;});
     h.listTask=task;
@@ -103,7 +107,7 @@ async function fetchLocalTrips(h) {
   renderLocalTripList();
   try {
     const result=await api(`/api/trips?date=${encodeURIComponent(trackDate)}${h.cursor?`&cursor=${encodeURIComponent(h.cursor)}`:''}`);
-    if (!localTripVisible(h) || request!==h.listRequest) return;
+    if (localTrips!==h || request!==h.listRequest) return;
     if(h.revision!==undefined&&result.revision!==h.revision&&h.selection!=='day'&&h.selection!=='current'){
       clearLocalRoute();h.selection='day';h.selected=null;h.notice='行程记录已变化，已回到全天总览。';renderLocalTripDetail();
     }
@@ -118,9 +122,9 @@ async function fetchLocalTrips(h) {
       h.selected=h.selection==='current'?h.active:h.events.find(event=>event.id===h.selection) || h.selected;
     }
   } catch(error) {
-    if (localTripVisible(h) && request===h.listRequest) h.listError=error.message;
+    if (localTrips===h && request===h.listRequest) h.listError=error.message;
   } finally {
-    h.listBusy=false;
+    if(request===h.listRequest)h.listBusy=false;
     if (localTripVisible(h) && request===h.listRequest) {
       renderLocalTripList();renderLocalTripActivity();
       if ($('#local-trip-facts')) $('#local-trip-facts').innerHTML=localTripFacts();
@@ -132,7 +136,7 @@ function mountLocalTrips() {
   const h=syncLocalTrips();
   renderLocalTripList();renderLocalTripActivity();renderLocalTripDetail();
   if(tripManagementOpen)tripManager.mount($('#trip-management'));
-  loadLocalTrips().then(()=>{if (showPosition && localTripVisible(h)) loadLocalRoute();});
+  if(h.queried&&showPosition&&!h.route)loadLocalRoute();
 }
 
 function refreshLocalTrips() {
@@ -141,9 +145,7 @@ function refreshLocalTrips() {
   if (syncLocalTrips()!==h) return false;
   if(tripManagementOpen)tripManager.mount($('#trip-management'));
   renderLocalTripActivity();
-  loadLocalTrips().then(()=>{
-    if (localTripVisible(h) && showPosition && (h.selection==='day'||h.selection==='current'||!h.route)) loadLocalRoute();
-  });
+  renderLocalTripList();
   return true;
 }
 
@@ -157,7 +159,7 @@ function clearLocalRoute() {
 
 async function loadLocalRoute(force=false) {
   const h=localTrips;
-  if (!h || !showPosition || !localTripVisible(h) || (h.routeBusy&&!force)) return;
+  if (!h || !h.queried || !showPosition || !localTripVisible(h) || (h.routeBusy&&!force)) return;
   h.routeBusy=true;h.routeError='';
   const selection=h.selection, request=++h.routeRequest;
   if (!h.route) renderLocalRoute();
@@ -225,9 +227,11 @@ function renderLocalRoute() {
   $('#local-playback-speed').value=String(h.speed);
   renderLocalRouteStatus();
   if (!playback.length) {
+    $('#map').classList.add('map-empty-state');
     $('#map').innerHTML=empty(result.count?'没有可绘制的位置':h.selection==='day'?'这一天还没有本地记录':'本趟暂无位置采样',result.count?'观测已保存，但坐标无效或坐标系尚未适配。':'本次范围内没有采样，已有行程摘要仍可查看。','map');
     updateLocalPlaybackControls();return;
   }
+  $('#map').classList.remove('map-empty-state');
   if (!existing) createMap([playback[0].latitude,playback[0].longitude],13);
   if (h.layers) h.layers.remove();
   h.layers=L.layerGroup().addTo(map);
@@ -325,7 +329,7 @@ function handleLocalTripAction(target) {
     case 'local-step-back': stopLocalPlayback();displayLocalPoint(h.index-1);return true;
     case 'local-step-next': stopLocalPlayback();displayLocalPoint(h.index+1);return true;
     case 'local-route-retry': loadLocalRoute(true);return true;
-    case 'local-reload': loadLocalTrips().then(()=>{if(localTripVisible(h)&&showPosition)loadLocalRoute(true);});return true;
+    case 'local-reload': h.cursor=null;h.previous=[];loadLocalTrips(true).then(()=>{if(localTripVisible(h)&&showPosition)loadLocalRoute(true);});return true;
     case 'local-prev': if(h.previous.length){h.cursor=h.previous.pop();loadLocalTrips();}return true;
     case 'local-next': if(h.nextCursor){h.previous.push(h.cursor);h.cursor=h.nextCursor;loadLocalTrips();}return true;
     case 'local-day-before': case 'local-day-after': case 'local-today': {

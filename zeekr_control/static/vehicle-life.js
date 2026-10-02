@@ -22,6 +22,7 @@
     }
     function note(label){return `<label class="ledger-wide">${label}<textarea id="life-note" aria-label="${label}" data-life-field="note" maxlength="1000" rows="3" ${busy?'disabled':''}>${esc(draft().note)}</textarea></label>`;}
     function paint(){
+      if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focused=node.contains(document.activeElement)?document.activeElement:null;
       const focus=focused?{id:focused.id,start:focused.selectionStart,end:focused.selectionEnd}:null;
@@ -79,10 +80,11 @@
       busy=true;error=status='';paint();
       try{const result=await request('/api/insights/life',payload);if(!valid(token,writeSerial,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        status='生活账本操作已保存。点击查询更新列表。';
+        status='生活账本操作已保存。';
         if(action==='save')resetDraft(collection);
         else if(action==='delete'&&drafts[collection].id===id)resetDraft(collection);
         data=null;
+        if(!await load()&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新查询核对。';
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 填写内容保留。';}
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
     }
@@ -101,7 +103,7 @@
       if(event.type==='input'){
         if(el.id==='life-start'||el.id==='life-end'){
           if(el.id==='life-start')startDate=el.value;else endDate=el.value;
-          error='';data=null;paint();return true;
+          serial++;loading=false;error='';data=null;page=0;paint();return true;
         }
         if(el.dataset.lifeField){if(draft().revision===null&&data)draft().revision=data[mode].revision;draft()[el.dataset.lifeField]=el.value;return true;}
       }

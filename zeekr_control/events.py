@@ -40,14 +40,17 @@ class EventStore:
     def __init__(self, path):
         self.path = Path(path)
 
-    def query(self, vehicle, date, kind, cursor=None, limit=20):
+    def query(self, vehicle, date, kind, cursor=None, limit=20, end_date=None):
         if not vehicle or kind not in ALLOWED_KINDS or type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError('事件查询参数无效。')
         try:
             day = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=timezone(timedelta(hours=8)))
+            last = datetime.strptime(end_date or date, '%Y-%m-%d').replace(tzinfo=day.tzinfo)
         except ValueError as exc:
             raise ValueError('日期格式无效。') from exc
-        lower, upper = int(day.timestamp() * 1000), int((day + timedelta(days=1)).timestamp() * 1000)
+        if last < day:
+            raise ValueError('结束日期不能早于开始日期。')
+        lower, upper = int(day.timestamp() * 1000), int((last + timedelta(days=1)).timestamp() * 1000)
         boundary = _decode(cursor) if cursor else None
         if not self.path.exists():
             return {'events': [], 'next_cursor': None, 'date': date, 'kind': kind}

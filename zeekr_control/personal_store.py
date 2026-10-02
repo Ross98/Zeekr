@@ -11,7 +11,7 @@ import time
 from .archive_reader import _private
 from .snapshots import session_scope
 
-COLLECTIONS = {'charges','tags','rules','experiments','expenses','reminders'}
+COLLECTIONS = {'charges','tags','rules','experiments','expenses','reminders','place_names'}
 VALID_ID = re.compile(r'[A-Za-z0-9_-]{1,128}')
 
 

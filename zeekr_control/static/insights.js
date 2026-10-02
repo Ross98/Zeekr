@@ -6,25 +6,22 @@
   const today = () => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   const toolGroups = [
     {name:'全量研究',tools:[
+      {id:'fields',label:'参数字典',description:'中文解释、原始字段与参数核实'},
       {id:'research',label:'数据利用',description:'全部字段、历史变化、场景分析与证据'},
-      {id:'automatic',label:'自动洞察',description:'定期汇总能耗、充电习惯与采集质量'},
+      {id:'automatic',label:'自动洞察',description:'近期估算能耗与历史基线对照'},
       {id:'lab',label:'参数实验室',description:'保存实验、动作、样本与研究备注'},
-      {id:'quality',label:'数据质量雷达',description:'采集覆盖、数据延迟、重复缓存与缺口'}
+      {id:'time',label:'车辆时间机',description:'历史归档、车况回看、前后参数变化'}
     ]},
     {name:'能源与充电',page:'energy',tools:[
       {id:'charge-comparison',label:'充电曲线对比',description:'对照两次充电的功率、温度与耗时'},
-      {id:'ledger',label:'充电账本',description:'充电费用、桩端电量与实际电价'},
-      {id:'parking',label:'停车耗电',description:'静置与跨夜停车的电量变化'}
+      {id:'ledger',label:'充电账本',description:'充电费用、桩端电量与实际电价'}
     ]},
     {name:'车辆',page:'car',tools:[
-      {id:'time',label:'车辆时间机',description:'历史归档、车况回看、前后参数变化'},
       {id:'life',label:'生活账本',description:'保险、停车费用、洗车支出与保养待办'}
     ]},
-    {name:'行程与轨迹',page:'tracks',tools:[
-      {id:'cards',label:'行程卡片',description:'照片、出行回忆与本地图片导出'}
-    ]},
     {name:'设置',page:'settings',tools:[
-      {id:'rules',label:'自定义提醒',description:'电量条件、提醒规则与触发记录'}
+      {id:'rules',label:'自定义提醒',description:'电量条件、提醒规则与触发记录'},
+      {id:'quality',label:'数据质量雷达',description:'采集诊断：覆盖、延迟、重复缓存与缺口'}
     ]},
     {name:'用车回顾',tools:[
       {id:'report',label:'周报与月报',description:'周期里程、能耗估算、日趋势与样本'},
@@ -33,22 +30,20 @@
   ];
   const toolsFor=section=>toolGroups.filter(group=>(group.page || 'insights')===section).flatMap(group=>group.tools);
 
-  function create({getState,request,escape:esc,active,review,navigate}) {
+  function create({getState,request,escape:esc,active,review,navigate,dictionary}) {
     let tab='research', section='insights', toolQuery='', toolsExpanded=false;
     const groups=()=>toolGroups.filter(group=>(group.page || 'insights')===section);
-    const automaticPage=root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time});
-    const parkingPage=root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time});
+    const automaticPage=root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time,navigate});
     const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
     const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
     const rulesPage=root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time});
     const chargeComparisonPage=root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time});
     const labPage=root.ParameterExperimentsPage.create({getState,request,escape:esc,active:()=>active() && tab==='lab',time});
-    const researchPage=root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review});
+    const researchPage=root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review,diagnose:()=>navigate('settings','quality')});
     const calendarPage=root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate});
     const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
     const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
-    const cardsPage=root.TripCardsPage.create({getState,request,escape:esc,active:()=>active() && tab==='cards',time});
-    const views={automatic:automaticPage,research:researchPage,parking:parkingPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage,cards:cardsPage};
+    const views={fields:dictionary,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
@@ -67,8 +62,8 @@
       const destination=toolGroups.find(group=>group.tools.some(tool=>tool.id===view))?.page || 'insights';
       if(destination!==section){navigate(destination,view,target);return;}
       tab=view;toolQuery='';
-      if(view==='time'){date=target;reset();paint();load();}
-      else{parkingPage.openDate(target);paint();}
+      if(view==='time'){date=target;reset();paint();}
+
 
     }
     function valid(serial, current, identity) {return serial===current && owner===identity && identity===context();}
@@ -114,6 +109,7 @@
       node.querySelector('.insight-nav-empty').hidden=count>0;
     }
     function paint() {
+      if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected || !active())return;
       const focus=saveFocus();
       if(!node.querySelector('.insight-layout')){
@@ -231,10 +227,10 @@
       if(sectionChanged){section=nextSection;tab=section==='insights'?'research':'';toolQuery='';toolsExpanded=false;}
       if(changed){owner=context();toolQuery='';toolsExpanded=false;reset();}
       node=container;
+      node.classList.toggle('standalone-task',section!=='insights');
       if(sectionChanged)node.innerHTML='';
       if(changed || remount || sectionChanged)paint();
       if(views[tab])views[tab].mount(node.querySelector(`#${tab}-workspace`));
-      if(tab==='time' && owner && !loadedDate && !loading)load();
     }
     function handle(event) {
       if(!active() || !node?.contains(event.target))return false;
@@ -246,12 +242,11 @@
         if(tab!==next){tab=next;paint();}else updateNavigation();
         const selector=node.querySelector('#insight-tool-select');
         if(selector.checkVisibility())selector.focus({preventScroll:true});
-        if(tab==='time' && owner && !loadedDate && !loading)load();
-        return true;
+          return true;
       }
       if(event.type==='input' && el.id==='insight-tool-search'){toolQuery=el.value;updateNavigation();return true;}
       if(views[tab]?.handle(event))return true;
-      if(event.type==='input' && el.id==='insight-date'){date=el.value;node.querySelector('#insight-load').disabled=!date || !owner;return true;}
+      if(event.type==='input' && el.id==='insight-date'){date=el.value;reset();paint();return true;}
       if(event.type==='input' && el.id==='insight-slider'){select(Number(el.value),true);return true;}
       if(event.type==='input' && el.id==='insight-search'){query=el.value;fieldPage=0;paintFields();return true;}
       if(event.type==='change' && el.id==='insight-select'){select(Number(el.value));return true;}

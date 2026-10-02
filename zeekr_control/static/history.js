@@ -58,7 +58,8 @@ function cloudHistoryPage() {
   const summary = `<div class="cloud-summary" aria-label="本页行程统计"><div><span>本页行程</span><strong>${trips.length}<small> 段</small></strong></div><div><span>${known.length===trips.length?'本页里程':'本页已知里程'}</span><strong>${known.length?cloudMetric(known.reduce((sum,trip)=>sum+trip.distance_km,0),''): '—'}<small> km</small></strong></div><div class="cloud-read-time"><span>${result.cached?'本机缓存 · 原查询时间':'云端查询时间'}</span><p>${esc(result.read_at || '未知')}</p></div></div>`;
   const pagination = `<div class="cloud-pagination">${cloudButton('上一页','cloud-previous',!h.previous.length)}<span>第 ${h.previous.length+1} 页</span>${cloudButton('下一页','cloud-next',result.next_cursor==null)}</div>`;
   const list = result.status === 'empty' ? `<section class="card">${empty(h.previous.length?'没有更多行程':'这一天没有云端行程','历史服务已成功返回空记录。若官方 App 有记录，请核对日期及账号。','tracks')}</section>` : `<section class="card cloud-trip-list" aria-label="云端行程列表"><div class="card-head"><h2>行程列表</h2><span class="subtle">时间均为北京时间</span></div>${trips.map((trip,index)=>`<button class="cloud-trip ${h.selected?.key===trip.key?'selected':''}" data-cloud-trip="${esc(trip.key)}" aria-label="查看行程 ${index+1}，${esc(cloudMetric(trip.distance_km,' km'))}" aria-pressed="${h.selected?.key===trip.key}"><span class="cloud-trip-index">${String(index+1).padStart(2,'0')}</span><span class="cloud-trip-time">${esc((trip.start_at||'未知').replace('（北京时间）',''))}<span class="subtle">至 ${esc((trip.end_at||'未知').replace('（北京时间）',''))}</span></span><span class="cloud-trip-distance">${esc(cloudMetric(trip.distance_km,' km'))}<span class="subtle">${esc(cloudMetric(trip.duration_minutes,' 分钟'))}</span></span>${icon('arrow')}</button>`).join('')}</section>`;
-  return dateControls + note + summary + `<div class="cloud-layout ${h.selected?'has-detail':''}"><div>${list}${pagination}</div>${cloudTripDetail()}</div>`;
+  const compact=trips.length<=3&&result.next_cursor==null&&!h.previous.length;
+  return dateControls + note + summary + `<div class="cloud-layout ${h.selected?'has-detail':''} ${compact?'compact':''}"><div>${list}${pagination}</div>${cloudTripDetail()}</div>`;
 }
 async function queryCloudHistory(direction='first') {
   syncCloudHistory();
@@ -74,6 +75,7 @@ async function queryCloudHistory(direction='first') {
     const result=await api(`/api/history?date=${encodeURIComponent(trackDate)}${cursor==null?'':'&cursor='+encodeURIComponent(cursor)}`);
     if (cloudHistory!==h) return;
     h.result=result;
+    if(result.status==='available'&&result.trips?.length===1)h.selected=result.trips[0];
     if (['available','empty'].includes(result.status)) {
       if(direction==='next') h.previous.push(h.cursor);
       else if(direction==='previous') h.previous.pop();
@@ -115,10 +117,12 @@ function renderCloudMap() {
   if(!densityPanel){densityPanel=document.createElement('div');densityPanel.id='cloud-route-density';$('#map').before(densityPanel);}
   densityPanel.innerHTML=RouteQuality.summary(density);
   if(!playback.length) {
+    $('#map').classList.add('map-empty-state');
     $('#map').innerHTML=empty('坐标系未确认','已返回轨迹点，但坐标无效或未声明支持的坐标系。保留行程摘要，不强行落点。','map');
     return;
   }
   try {
+    $('#map').classList.remove('map-empty-state');
     createMap([playback[0].latitude,playback[0].longitude],13,{zoomAnimation:false,fadeAnimation:false,markerZoomAnimation:false});
     density.parts.forEach(part=>{
       L.polyline(part.points.map(point=>[point.latitude,point.longitude]),RouteQuality.lineOptions(part)).addTo(map)
@@ -128,7 +132,7 @@ function renderCloudMap() {
     if(playback.length>1) map.fitBounds(playback.map(point=>[point.latitude,point.longitude]),{padding:[30,30],maxZoom:16,animate:false});
     $('#playback').max=String(playback.length-1); $('#playback').disabled=false;
     setPlayback(0);
-  } catch(error) { $('#map').innerHTML=empty('地图暂不可用',error.message,'map'); }
+  } catch(error) { $('#map').classList.add('map-empty-state');$('#map').innerHTML=empty('地图暂不可用',error.message,'map'); }
 }
 function cloudDate(offset) {
   const date = new Date(`${trackDate}T00:00:00+08:00`);

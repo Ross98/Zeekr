@@ -36,6 +36,10 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('alert').filter({hasText:'合成比较失败'}).waitFor();
     assert.equal(await page.locator('[data-charge-chart]').count(),3);
     assert.deepEqual(f.posts,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    await page.getByLabel('充电 A 月份',{exact:true}).fill('2026-08');
+    await page.getByLabel('充电 A 月份',{exact:true}).blur();
+    await page.waitForFunction(()=>document.querySelectorAll('[data-charge-chart]').length===0);
+    assert.equal(await page.locator('[data-charge-chart]').count(),0,'Condition changes clear previous results after date editor completes');
     console.log('UI_CHARGE_COMPARISON_PASS: month/session selection, common SOC, separate AC/DC/source labels, plateau timing, three responsive plots, point inspection, gaps and error preservation; no writes/cloud');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

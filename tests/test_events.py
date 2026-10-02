@@ -35,6 +35,23 @@ class EventStoreTests(unittest.TestCase):
         self.assertNotIn('SECRET', str(result))
         self.assertNotIn('message', str(result))
 
+    def test_charge_range_includes_both_days_and_paginates(self):
+        from zeekr_control.events import EventStore
+        # Beijing Jan 1 midnight through Jan 3 midnight.
+        for name, stamp in [('before', 1704038399999), ('first', 1704038400000),
+                            ('last', 1704211199999), ('after', 1704211200000)]:
+            self.add(name, 'vehicle-a', 'charge_end', stamp)
+        self.add('other', 'vehicle-b', 'charge_end', 1704038400000)
+        store = EventStore(self.path)
+        first = store.query('vehicle-a', '2024-01-01', 'charge_end', end_date='2024-01-02', limit=1)
+        self.assertEqual([row['id'] for row in first['events']], ['last'])
+        second = store.query('vehicle-a', '2024-01-01', 'charge_end', end_date='2024-01-02',
+                             limit=1, cursor=first['next_cursor'])
+        self.assertEqual([row['id'] for row in second['events']], ['first'])
+        self.assertIsNone(second['next_cursor'])
+        with self.assertRaises(ValueError):
+            store.query('vehicle-a', '2024-01-02', 'charge_end', end_date='2024-01-01')
+
     def test_cursor_paginates_stably(self):
         from zeekr_control.events import EventStore
         for index in range(3):

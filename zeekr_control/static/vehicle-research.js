@@ -5,11 +5,11 @@
   const dispositions={analyzed:'已用于分析',insufficient:'样本不足',configuration:'配置背景'};
   const date=stamp=>new Date(stamp+8*3600000).toISOString().slice(0,10);
   const num=value=>Number.isFinite(value)?new Intl.NumberFormat('zh-CN',{maximumFractionDigits:3}).format(value):'—';
-  function create({getState,request,escape:esc,active,time,experiment,review}){
+  function create({getState,request,escape:esc,active,time,experiment,review,diagnose}){
     let node=null,owner='',data=null,loading=false,serial=0,error='',attempted=false;
     let loadingTimer=null,loadingStarted=0,queuedPath=null,pendingFieldFocus=null;
     let start=date(Date.now()-6*86400000),end=date(Date.now()),path='',section='overview';
-    let search='',group='',usage='',sort='activity',detailView='history',samplesOpen=false,rangeExpanded=false,page=0,pointPage=0,scene='cabin',showMissing=false,selected={before:null,after:null};
+    let search='',group='',usage='',sort='activity',detailView='history',samplesOpen=false,rangeExpanded=true,page=0,pointPage=0,scene='cabin',showMissing=false,selected={before:null,after:null};
     const context=()=>getState()?.insights_context||'';
     const button=(text,action,extra='',disabled=false)=>`<button class="button secondary" data-research="${action}" ${extra} ${disabled?'disabled':''}>${text}</button>`;
     const stats=(value,caption,detail='')=>`<article class="research-stat"><strong>${num(value)}</strong><span>${caption}</span><small>${detail}</small></article>`;
@@ -44,7 +44,7 @@
       if(!node?.isConnected||!active())return;
       node.innerHTML=`<header class="research-header"><div><h2>数据利用</h2><p>查覆盖，找变化，让已有观测成为证据。</p></div><span>本地归档 / 北京时间</span></header>
         <section class="card research-range" data-expanded="${rangeExpanded}"><div class="research-presets" aria-label="研究日期快捷范围">${[[1,'今日'],[7,'近 7 天'],[30,'近 30 天']].map(([days,label])=>button(label,'preset',`data-days="${days}" aria-pressed="${end===date(Date.now())&&start===date(Date.now()-(days-1)*86400000)}"`,!owner||loading)).join('')}${button('自选日期','range',`aria-expanded="${rangeExpanded}" aria-controls="research-range-inputs"`)}</div><div class="research-range-inputs" id="research-range-inputs"><label>研究开始日期<input id="research-start" type="date" value="${start}"></label><label>研究结束日期<input id="research-end" type="date" value="${end}"></label><button class="button" data-research="load" ${!owner||loading?'disabled':''}>分析本地数据</button></div>
-        <p class="research-result-range">${data?`当前结果：${esc(data.start_date)} 至 ${esc(data.end_date)} · 截至 ${esc(time(data.as_of))}`:'选择日期查看归档，最多 31 天。'}<span id="research-range-draft"></span></p>${loading?'<p role="status" id="research-loading">正在整理字段与场景…</p>':''}${error?`<p class="notice error" role="alert">${esc(error)}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存。</p>':''}</section>
+        <p class="research-result-range">${data?`当前结果：${esc(data.start_date)} 至 ${esc(data.end_date)} · 截至 ${esc(time(data.as_of))}`:'选择日期，点击“分析本地数据”后查看归档，最多 31 天。'}<span id="research-range-draft"></span></p>${loading?'<p role="status" id="research-loading">正在整理字段与场景…</p>':''}${error?`<p class="notice error" role="alert">${esc(error)}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存。</p>':''}</section>
         ${data?`<nav class="research-tabs" aria-label="数据研究视图">${[['overview','数据总览'],['scenes','场景分析'],['field','字段详情']].map(([key,label])=>`<button data-research="section" data-section="${key}" aria-pressed="${section===key}" ${key==='field'&&!data.detail?'disabled':''}>${label}</button>`).join('')}</nav><div id="research-body"></div>`:''}`;
       paintBody();rangeDraft();
       if(loading&&!loadingTimer)loadingTimer=setInterval(loadingStatus,1000);
@@ -63,6 +63,9 @@
         <details class="research-method"><summary>读取质量与统计口径 <span>${num(data.counts.reads)} 次归档读取</span></summary><p class="insight-note">新时间 ${data.quality.new} · 重复 ${data.quality.repeat} · 同时间修订 ${data.quality.revision} · 时间异常 ${data.quality.invalid}。分析使用有效时间样本，同时间取最后有效修订；有样本不等于解释已确认或连续覆盖。</p><p class="insight-note">未登记路径 ${data.counts.unmapped_is_lower_bound?'至少 ':''}${data.counts.unmapped_paths} 项，仅统计数量；原始路径和值留在私有归档。字段没有返回也保留在清单中。</p></details></section>
         <section class="card insight-panel research-directory"><div class="insight-heading"><h3>字段清单</h3><div class="research-directory-actions"><span id="research-field-count" class="research-result-count" role="status"></span>${button('清除字段筛选','clear-filters')}</div></div><div class="research-filters"><label class="research-search-label">搜索研究字段<input id="research-search" type="search" value="${esc(search)}" placeholder="字段名称或路径"></label><label>字段分类<select id="research-group"><option value="">全部分类</option>${data.groups.map(g=>`<option ${group===g?'selected':''}>${esc(g)}</option>`).join('')}</select></label><label>数据用途<select id="research-usage"><option value="">全部用途</option>${Object.entries(dispositions).map(([key,label])=>`<option value="${key}" ${usage===key?'selected':''}>${label}</option>`).join('')}</select></label><label>字段排序<select id="research-sort">${[['activity','优先有样本和变化'],['changes','原值变化最多'],['samples','有效样本最多'],['name','字段名称']].map(([key,label])=>`<option value="${key}" ${sort===key?'selected':''}>${label}</option>`).join('')}</select></label></div><div class="research-filter-status"><span id="research-filter-summary"></span></div><div id="research-fields"></div></section>
         <section class="card insight-panel"><details><summary>数据来源与已有用途 · ${data.sources.length} 类</summary><div class="research-source-list">${data.sources.map(s=>`<article><b>${esc(s.name)} · ${s.count}</b><span>${esc(s.use)}</span><small>${esc(s.scope)}</small></article>`).join('')}</div></details></section>`;
+      if(data.counts.reads===0){
+        el.innerHTML=`<section class="research-empty" role="status"><h3>本期暂无归档</h3><p>所选日期没有保存的读取记录，无法分析变化；这不代表车辆没有使用。</p><div class="insight-actions">${button('扩大到近 30 天','expand-range')}${diagnose?button('查看采集诊断','diagnose'):''}</div></section><details class="research-catalog"><summary>浏览 ${num(data.counts.catalog)} 项参数目录</summary>${el.innerHTML}</details>`;
+      }
       paintRows();
     }
     function paintRowsContent(){
@@ -140,16 +143,17 @@
     }
     function mount(container){
       const changed=owner!==context(),remount=node!==container;node=container;
-      if(changed){owner=context();data=null;serial++;loading=attempted=false;queuedPath=pendingFieldFocus=null;error='';path='';section='overview';search=group=usage='';sort='activity';detailView='history';samplesOpen=false;rangeExpanded=false;page=pointPage=0;selected={before:null,after:null};}
-      if(changed||remount)paint();if(owner&&!attempted&&!loading)queueMicrotask(()=>{if(owner&&!attempted&&!loading)load();});
+      if(changed){owner=context();data=null;serial++;loading=attempted=false;queuedPath=pendingFieldFocus=null;error='';path='';section='overview';search=group=usage='';sort='activity';detailView='history';samplesOpen=false;rangeExpanded=true;page=pointPage=0;selected={before:null,after:null};}
+      if(changed||remount)paint();
     }
+    function resetRange(){serial++;data=null;loading=attempted=false;queuedPath=pendingFieldFocus=null;path='';section='overview';page=pointPage=0;selected={before:null,after:null};error='';clearInterval(loadingTimer);loadingTimer=null;paint();}
     function openField(target){section='field';pendingFieldFocus=target;load(target);}
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;
       const el=event.target;
       if(event.type==='input'){
-        if(el.id==='research-start'){start=el.value;rangeDraft();return true;}
-        if(el.id==='research-end'){end=el.value;rangeDraft();return true;}
+        if(el.id==='research-start'){if(start!==el.value){start=el.value;resetRange();}return true;}
+        if(el.id==='research-end'){if(end!==el.value){end=el.value;resetRange();}return true;}
         if(el.id==='research-search'){search=el.value;page=0;paintRows();return true;}
       }
       if(event.type==='change'&&['research-group','research-usage','research-sort'].includes(el.id)){if(el.id==='research-group')group=el.value;else if(el.id==='research-sort')sort=el.value;else usage=el.value;page=0;paintRows();return true;}
@@ -157,8 +161,10 @@
       const target=el.closest('[data-research]');if(!target||target.disabled)return false;
       const action=target.dataset.research;
       if(action==='load')load();
+      else if(action==='diagnose')diagnose?.();
+      else if(action==='expand-range'){const now=Date.now();end=date(now);start=date(now-29*86400000);resetRange();paint();node.querySelector('#research-range-draft').textContent='日期已扩大到近 30 天，点击分析本地数据读取。';}
       else if(action==='range'){rangeExpanded=!rangeExpanded;paint();}
-      else if(action==='preset'){const now=Date.now();end=date(now);start=date(now-(Number(target.dataset.days)-1)*86400000);load();}
+      else if(action==='preset'){const now=Date.now();end=date(now);start=date(now-(Number(target.dataset.days)-1)*86400000);resetRange();}
       else if(action==='usage'){usage=usage===target.dataset.usage?'':target.dataset.usage;page=0;node.querySelector('#research-usage').value=usage;paintRows();}
       else if(action==='clear-filters'){search=group=usage='';sort='activity';page=0;paintBody();node.querySelector('#research-search').focus({preventScroll:true});}
       else if(action==='back'){section='overview';paint();const field=[...node.querySelectorAll('[data-research=field]')].find(el=>el.dataset.path===path);field?.focus();}

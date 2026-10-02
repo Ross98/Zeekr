@@ -12,6 +12,7 @@
     const valid=(token,current,identity)=>token===current&&identity===owner&&context()===identity;
     const canCompare=()=>owner&&selected.a&&selected.b&&selected.a!==selected.b&&!loading.a&&!loading.b&&!comparing;
     function paint(){
+      if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
       node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">充电曲线对比</span><h2>对齐电量，看两次充电</h2><p>功率、环境温度、经过时间，各自保留观测依据。</p></div><span class="insight-source">真实观测点 · 共同 SOC</span></section>
@@ -76,15 +77,15 @@
     function mount(container){
       const changed=owner!==context(),remount=node!==container;node=container;
       if(changed){owner=context();data=null;error='';invalidate();for(const side of ['a','b']){choices[side]=null;selected[side]='';loading[side]=attempted[side]=false;listSerial[side]++;listError[side]='';}}
-      if(changed||remount)paint();for(const side of ['a','b'])if(owner&&!attempted[side]&&!loading[side])load(side);
+      if(changed||remount)paint();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;const el=event.target;
-      if(event.type==='input'&&el.id.startsWith('charge-month-')){const side=el.id.endsWith('-a')?'a':'b';months[side]=el.value;node.querySelector(`[data-charge-compare="load"][data-side="${side}"]`).disabled=!owner||!months[side]||loading[side];return true;}
+      if(event.type==='input'&&el.id.startsWith('charge-month-')){const side=el.id.endsWith('-a')?'a':'b';if(months[side]!==el.value){months[side]=el.value;listSerial[side]++;choices[side]=null;selected[side]='';loading[side]=attempted[side]=false;listError[side]='';data=null;error='';invalidate();paint();}return true;}
       if(event.type==='change'){
         if(el.id==='charge-temperature'){temperature=el.value;paintCharts();return true;}
         if(el.id.startsWith('charge-point-select-')){const side=el.id.endsWith('-a')?'a':'b';pointIndex[side]=Number(el.value);paintPoints();paintCharts();return true;}
-        if(el.id.startsWith('charge-select-')){const side=el.id.endsWith('-a')?'a':'b';selected[side]=el.value;invalidate();paint();return true;}
+        if(el.id.startsWith('charge-select-')){const side=el.id.endsWith('-a')?'a':'b';selected[side]=el.value;data=null;error='';invalidate();paint();return true;}
       }
       if(event.type!=='click')return false;const target=el.closest('[data-charge-compare]');if(!target||target.disabled)return false;
       const action=target.dataset.chargeCompare,side=target.dataset.side;

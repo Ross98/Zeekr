@@ -26,5 +26,6 @@ def preview(database_path=None, event_id=None, fixture_path=None, target_bytes=1
         address = {'start': payload.get('start_address'), 'end': payload.get('end_address')}
     if type(target_bytes) is not int or not 256 <= target_bytes <= 1900:
         raise ValueError('预览目标字节应为256–1900')
-    text, omitted = render(kind, report, identity, address, target=target_bytes)
+    references = {prefix: payload.get(prefix + '_location_reference') for prefix in ('start', 'end')}
+    text, omitted = render(kind, report, identity, address, target=target_bytes, references=references)
     return {'text': text, 'utf8_bytes': len(text.encode()), 'omitted': omitted}

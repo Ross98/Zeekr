@@ -44,3 +44,10 @@
 .trip-manage-preview-list{max-height:320px;overflow:auto}.trip-manage-preview-list article{padding:12px 0;border-bottom:1px solid var(--line)}
 @media(max-width:950px){.trip-manage-rows{grid-template-columns:1fr}}
 @media(max-width:620px){.trip-manage-panel{padding:18px}.trip-manage-filters{display:grid;grid-template-columns:1fr}.trip-manage-filters label,.trip-manage-filters input,.trip-manage-filters select{width:100%;box-sizing:border-box}.trip-manage-row{padding:12px}.trip-manage-preview{padding:14px}.trip-manage-actions .button{white-space:normal}.trip-manage-actions>span{flex-basis:100%}}
+
+.local-trip-layout.compact{grid-template-columns:minmax(0,1fr)}
+.local-trip-layout.compact #local-trip-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));max-height:none;overflow:visible}
+.local-trip-layout.compact :is(.local-trip-list-label,.local-trip-pagination,.local-trip-day){grid-column:1/-1}
+.local-trip-layout.compact .local-trip-pagination{position:static}
+.local-trip-detail .map-empty{min-height:0;padding:24px}
+@media(max-width:620px){.local-trip-layout.compact #local-trip-list{grid-template-columns:minmax(0,1fr)}.local-trip-detail .map-empty{padding:18px}}

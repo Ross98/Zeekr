@@ -1,11 +1,63 @@
 """Optional Chinese addresses via Amap; failures must not suppress notifications."""
 import json
 import math
+import re
 from urllib.parse import urlencode
 from urllib.request import Request, build_opener
 
 from .notifications import NoRedirect
 from .storage import load
+
+
+def is_trusted_location(location):
+    """Require usable coordinates as well as the vehicle's trust flag."""
+    if (not isinstance(location, dict) or location.get('valid') is not True
+            or location.get('trusted') is not True
+            or location.get('coordinate_system') not in ('WGS84（社区解释）', 'GCJ-02（社区解释）')):
+        return False
+    lat, lon = location.get('latitude'), location.get('longitude')
+    return (type(lat) in (int, float) and type(lon) in (int, float)
+            and math.isfinite(lat) and math.isfinite(lon)
+            and -90 <= lat <= 90 and -180 <= lon <= 180 and (lat != 0 or lon != 0))
+
+
+def _text(value):
+    return ' '.join(value.split()) if isinstance(value, str) else ''
+
+
+def _without_units(value, house_numbers=False):
+    units = r'(?:号楼|号院|栋|幢|单元|室|层|楼' + ('|号)' if house_numbers else ')')
+    text = re.split(r'(?:\d+(?:[-－]\d+)?|[一二三四五六七八九十百零〇]+)' + units,
+                    _text(value), maxsplit=1)[0].strip()
+    return re.sub(r'\d+号$', '', text).strip()
+
+
+def short_address(regeocode):
+    """Prefer district and a named place or road; omit postal/unit detail."""
+    if not isinstance(regeocode, dict):
+        return None
+    component = regeocode.get('addressComponent')
+    if isinstance(component, dict):
+        district = _text(component.get('district'))
+        candidates = []
+        for field, key in (('neighborhood', 'name'), ('building', 'name'), ('streetNumber', 'street')):
+            value = component.get(field)
+            if isinstance(value, dict):
+                candidates.append(_without_units(value.get(key)))
+        candidates.append(_without_units(component.get('township')))
+        place = next((value for value in candidates if value), '')
+        if district or place:
+            return '·'.join(dict.fromkeys(value for value in (district, place) if value))[:50]
+    text = _text(regeocode.get('formatted_address'))
+    text = re.sub(r'^中国', '', text)
+    text = re.sub(r'^.+?(?:省|自治区|特别行政区)', '', text)
+    text = re.sub(r'^.+?市', '', text)
+    match = re.match(r'^(.+?(?:区|县|旗))', text)
+    district = match[1] if match else ''
+    remainder = text[len(district):]
+    road = re.match(r'^.+?(?:大道|公路|大街|路|街|巷|弄|条)', remainder)
+    place = road[0] if road else _without_units(remainder, house_numbers=True)
+    return '·'.join(value for value in (district, place) if value)[:50] or None
 
 
 class AmapGeocoder:
@@ -21,16 +73,10 @@ class AmapGeocoder:
     def __call__(self, location):
         # Never guess a coordinate system or send untrusted positions to a provider.
         try:
-            if not isinstance(location, dict) or location.get('valid') is not True or location.get('trusted') is not True:
+            if not is_trusted_location(location):
                 return None
             system = location.get('coordinate_system')
-            if system not in ('WGS84（社区解释）', 'GCJ-02（社区解释）'):
-                return None
             lat, lon = location.get('latitude'), location.get('longitude')
-            if (type(lat) not in (int, float) or type(lon) not in (int, float)
-                    or not math.isfinite(lat) or not math.isfinite(lon)
-                    or not -90 <= lat <= 90 or not -180 <= lon <= 180 or (lat == 0 and lon == 0)):
-                return None
             key = load(self.config_path).get('api_key', '').strip()
             if not key:
                 return None
@@ -50,10 +96,7 @@ class AmapGeocoder:
                 {'key': key, 'location': coordinates, 'extensions': 'base', 'output': 'JSON'})
             if not isinstance(result, dict) or result.get('status') != '1':
                 return None
-            address = result.get('regeocode', {}).get('formatted_address')
-            if not isinstance(address, str):
-                return None
-            return ' '.join(address.split())[:100] or None
+            return short_address(result.get('regeocode'))
         except Exception:
             # Provider errors can contain the key or coordinates; never log them.
             return None

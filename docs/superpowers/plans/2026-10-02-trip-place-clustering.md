@@ -1,0 +1,29 @@
+# Reference trip places at 150 m
+
+User approved 150 m for automatic departure/arrival place grouping. Existing home/work commute radii remain independently configured. Implement local derivation from visible monthly trips and trustworthy WGS84 observations within three minutes of the event boundary. Partial records contribute any valid endpoint; unavailable endpoints remain unknown. Start/end share places, centers stay fixed to the earliest accepted observation, and each observation joins its nearest center within 150 m; there is no transitive chaining. Order is deterministic. Counts and frequent directed routes are monthly, not permanent place identities or asserted destinations. Original observations/events and annotations remain intact.
+
+Plan: write boundary/chaining/order/unknown/isolation tests first; share the existing endpoint reader; implement bounded reads and spatial indexing; add monthly place/route counts and explicit map reveal to trip tags; verify backend, browser privacy/state/layout and one desktop/mobile visual batch. No deployment authorized for this feature.
+
+## Implemented and verified
+
+- `trip_endpoints.py` shares the bounded trusted-observation policy with commute matching. It rejects zero/invalid coordinates and unsupported coordinate systems; equal vehicle timestamps prefer the latest observed revision.
+- `trip_places.py` reads through one readonly database connection, clusters in deterministic chronological order, and checks nearest fixed anchors using a spherical 3D neighbour grid. No chained merging or centre drift. A 20,000-endpoint synthetic benchmark completed in 0.223 seconds on this machine.
+- TripTags responses include monthly place statistics, directed routes, unknown counts and per-event reference-place IDs. Empty/partial/foreign-vehicle cases are explicit. There is no address inference, reverse-geocoding request, permanent place identity, automatic manual tag rewrite or data migration.
+- The UI provides departure/arrival counts, ten most frequent directions, event reference-place labels and an explicit map reveal. Map consent resets on month, vehicle/account context and record revisions. Existing independently configured commute circles are preserved.
+- Tests were added before implementation: absent backend module and absent UI heading both failed as expected. Final full Python discovery: 715 tests passed in 48.358 seconds. Backend place/commute focused tests, UI_TRIP_PLACES, UI_TRIP_TAGS and all 40 refresh/scroll checks passed.
+- Browser coverage includes map request privacy before reveal, owner context reset, month invalidation, accepted state retention, themes, 320/390/1440 px widths, 200% zoom and contrast. One desktop/mobile visual batch inspected synthetic statistics; screenshots: `/tmp/zeekr-insights-qa/trip-places-statistics-desktop.png` and `trip-places-statistics-mobile.png`.
+- One final detector pass on trip-tags.js returned no findings. JavaScript syntax and git diff --check passed. Existing unrelated worktree changes remain untouched. No deployment, commit or push for this feature.
+
+## Approved naming extension
+
+User approved naming precedence: explicit owner/vehicle-scoped manual name, current saved home/work range, existing trustworthy locally resolved address with an approximate suffix, then monthly reference number. No geocoding or cloud request occurs when opening statistics. Naming does not change grouping or commute decisions. Manual labels persist around their fixed anchor across monthly queries with the same 150 m matching bound. Server recomputes the selected monthly place and verifies its anchor key; writes use a separate revision and session guard. Empty or conflicting address evidence remains unnamed. A visible inline form supports rename, clear-to-automatic and cancel; drafts survive background renders.
+
+## Naming extension verification
+
+- Added separately revisioned `place_names` personal records using the existing reversible store; no schema version change. Only explicit manual-name writes persist records. Automatic names are derived during the authenticated monthly query.
+- Cached names come from bounded local event summaries whose actual resolved position is trustworthy WGS84 and within 150 m of both the sampled endpoint and group centre. Valid bounded historical references are supported. Equal conflicting address votes keep the number. Approximate addresses retain “附近”; unit/room details are stripped. No new network lookup is called.
+- Current saved home/work ranges supply labels independently of whether automatic commute tagging is enabled; deleted rules do not supply names. UI identifies this source as current settings.
+- Manual names bind to their fixed coordinate anchor, owner and vehicle. Monthly place IDs are checked together with an anchor key before saving. Revision conflicts retain UI drafts; session guards roll back writes. Resetting a manual label restores automatic precedence, and the store supports one-step undo.
+- Reused spherical-neighbour indexing for both group centres and manual-name anchors to avoid quadratic name lookups. Grouping distance remains 150 m; names never alter original observations, events or commute decisions.
+- Full Python discovery: 725 tests passed in 48.314 seconds. Focused suites: 50 passed. Browser UI_TRIP_PLACE_NAMES, UI_TRIP_PLACES, UI_TRIP_TAGS and all 40 refresh/scroll cases passed. This includes save, reset-to-auto, stale-write draft retention, HTML escaping, map privacy, context reset, monthly changes, dark/light themes, mobile, zoom and contrast.
+- One desktop/mobile batch inspected synthetic named-place screenshots at `/tmp/zeekr-insights-qa/trip-place-names-desktop.png` and `trip-place-names-mobile.png`. Final JS detector returned no findings, node syntax and git diff --check passed. The UI and naming extensions remain local; no deployment, commit or push performed.

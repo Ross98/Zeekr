@@ -3,6 +3,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import re
 from .start_evidence import project as project_start
+from .notification_location import reference_suffix
 
 TARGET_BYTES = 1900
 HARD_BYTES = 2048
@@ -35,10 +36,10 @@ def _range(start, end):
     return left.strftime(pattern)+'—'+right.strftime(pattern)
 
 
-def _place(value):
+def _place(value, reference=None):
     text=clean_text(value,100)
     if not text: return '位置未知'
-    return text if text.endswith('附近') else text+'附近'
+    return (text if text.endswith('附近') else text+'附近') + reference_suffix(reference)
 
 
 def _start_timing(report):
@@ -120,7 +121,8 @@ def _fit(lines, report, event_id, partial, target):
         if line=='【本车历史参考】': in_history=True; omitted.append('history'); continue
         if in_history and (line.startswith('独立观测') or line.startswith('数据不完整') or line.startswith('状态来自')): in_history=False
         if in_history or line.startswith(optional_prefixes): omitted.append('optional_details'); continue
-        if line.startswith(('出发地：','到达地：','充电地点：')) and len(line)>28:
+        if (line.startswith(('出发地：','到达地：','充电地点：')) and len(line)>28
+                and '（参考位置，' not in line):
             line=line[:27]+'…'; omitted.append('address_shortened')
         reduced.append(line)
     marker='部分参数因消息长度省略。'
@@ -142,7 +144,7 @@ def _fit(lines, report, event_id, partial, target):
     return text, sorted(set(omitted+['core_fallback']))
 
 
-def render(kind, report, event_id, address=None, target=TARGET_BYTES):
+def render(kind, report, event_id, address=None, target=TARGET_BYTES, references=None):
     report = dict(report)
     report.setdefault('kind', kind)
     m = report.get('metrics', {})
@@ -152,8 +154,8 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
     if kind == 'trip_end':
         duration=m.get('duration_seconds')
         lines.append('🚗 行程结束%s｜%s 公里 · %s 分钟' % (suffix, _num(m.get('distance_km')), _num(duration/60 if duration is not None else None, 0)))
-        lines += ['出发地：%s' % _place((address or {}).get('start')),
-                  '到达地：%s' % _place((address or {}).get('end')),
+        lines += ['出发地：%s' % _place((address or {}).get('start'), (references or {}).get('start')),
+                  '到达地：%s' % _place((address or {}).get('end'), (references or {}).get('end')),
                   _range(report.get('start_time'), report.get('end_time')), '', '【电量与续航】',
                   '电量：%s%% → %s%%（变化 %s 个百分点）' % (_num(report.get('start', {}).get('soc')), _num(report.get('end', {}).get('soc')), _num(m.get('soc_delta')))]
         if m.get('charge_overlap'):
@@ -181,7 +183,7 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         lines += _temperatures(report)
     elif kind == 'charge_start':
         mode = {'dc': '｜直流', 'ac': '｜交流'}.get(report.get('start', {}).get('charging_mode'), '')
-        location = _place((address or {}).get('start'))
+        location = _place((address or {}).get('start'), (references or {}).get('start'))
         lines = ['⚡ 检测到开始充电%s%s' % (mode, suffix), '充电地点：%s' % location,
                  '记录起点：' + _time(report.get('start_time')), '电量：%s%%' % _num(report.get('start', {}).get('soc'))]
         if partial:
@@ -209,7 +211,7 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES):
         lines += _temperatures(report)
     else:
         lines = ['🔋 充电已停止%s｜电量%s%%' % (suffix, _num(report.get('end', {}).get('soc'))),
-                 '充电地点：%s' % _place((address or {}).get('start')),
+                 '充电地点：%s' % _place((address or {}).get('start'), (references or {}).get('start')),
                  _range(report.get('start_time'), report.get('end_time')), '', '【补电结果】',
                  '电量：%s%% → %s%%（增加%s个百分点）' % (_num(report.get('start', {}).get('soc')), _num(report.get('end', {}).get('soc')), _num(m.get('soc_delta')))]
         if m.get('estimated_kwh') is not None:

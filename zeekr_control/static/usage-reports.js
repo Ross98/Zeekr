@@ -48,11 +48,12 @@
         }).join('')}</div></div><p class="insight-note report-chart-legend">— 无有效里程 · 0 已记录零里程 · 未到 未来日期<br>● 有归档读取 · ○ 无归档读取。归档与行程事件来源不同；无归档日期仍可能有里程。缺记录不代表未用车。</p></section>`;
     }
     function paint(){
+      if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
       const c=data?.current,t=c?.totals,s=c?.samples,w=c?.window,analysis=c?analyze(c):null;
       node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">用车周报 · 月报</span><h2>把一段用车生活，放在一起看</h2><p>里程、行程、充电与记录覆盖，各有依据。</p></div><span class="insight-source">本地结束事件</span></section>
-        <section class="card insight-panel"><div class="insight-toolbar"><label>报告周期<select id="report-period" aria-label="报告周期"><option value="week" ${period==='week'?'selected':''}>自然周</option><option value="month" ${period==='month'?'selected':''}>自然月</option></select></label><label>周期内日期<input id="report-date" type="date" value="${esc(date)}"></label>${button('查看报告','load',!owner||!date,'id="report-load"')}</div>${loading?'<p role="status">正在汇总本地记录…</p>':''}${error?`<div class="notice error" role="alert">${esc(error)}${data?' · 保留上次报告和原周期。':''}</div>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可查看报告。</p>':''}
+        <section class="card insight-panel"><div class="insight-toolbar"><label>报告周期<select id="report-period" aria-label="报告周期"><option value="week" ${period==='week'?'selected':''}>自然周</option><option value="month" ${period==='month'?'selected':''}>自然月</option></select></label><label>周期内日期<input id="report-date" type="date" value="${esc(date)}"></label>${button('查看报告','load',!owner||!date,'id="report-load"')}</div>${!data&&!loading&&owner?'<p class="insight-note">选择查询条件后，点击查询按钮显示结果。</p>':''}${loading?'<p role="status">正在汇总本地记录…</p>':''}${error?`<div class="notice error" role="alert">${esc(error)}${data?' · 保留上次报告和原周期。':''}</div>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可查看报告。</p>':''}
         ${data?`<div class="report-period-head"><div><h3 id="report-title">${esc(w.start_date)} — ${esc(w.end_date)}</h3><p class="insight-note">北京时间 · ${data.period==='week'?'周一至周日':'自然月'} · ${statusText[c.status]} · 统计截至 ${esc(time(data.as_of))}</p></div><div class="insight-actions">${button('上一周期','previous')}${button('下一周期','next')}</div></div>`:''}</section>
         ${data?`<div class="insight-metrics report-totals">${metric('已观测行程里程',t.distance_km,'km',`${s.distance} 条有效里程样本，含 ${s.partial_distance} 条片段`,'report-distance')}${metric('结束行程',t.trip_count,'次',`完整 ${t.complete_trip_count} 次 · 片段 ${t.partial_trip_count} 次`)}${metric('结束充电',t.charge_count,'次',`完整 ${t.complete_charge_count} 次 · 片段 ${t.partial_charge_count} 次`)}${metric('行程观测时段',t.duration_seconds===null?null:t.duration_seconds/3600,'小时',`${s.duration} 条有效时段，含 ${s.partial_duration} 条片段；非全程驾驶时长`)}</div>
         ${observations(analysis)}${dailyChart(analysis)}
@@ -68,6 +69,7 @@
       const rows=events(),pages=Math.max(1,Math.ceil(rows.length/12));page=Math.min(page,pages-1);
       el.innerHTML=`<p class="insight-note">匹配 ${rows.length} 条</p><div class="report-event-list">${rows.slice(page*12,page*12+12).map(row=>`<article data-report-event="${esc(row.id)}"><div class="insight-heading"><h4>${row.kind==='trip_end'?'行程':'充电'}</h4><span class="insight-badge ${row.partial?'insight-warning':''}">${row.partial?'片段记录':'完整记录'}</span></div><p>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</p><div class="parking-row-values"><span>${row.kind==='trip_end'?'里程':'观测时长'}<strong>${row.kind==='trip_end'?num(row.distance_km)+' km':num(row.duration_seconds===null?null:row.duration_seconds/60)+' 分钟'}</strong></span><span>SOC 端点<strong>${num(row.start_soc)}% → ${num(row.end_soc)}%</strong></span><span>电量估算<strong>${num(row.estimated_kwh)} kWh</strong></span><span>事件记录容量<strong>${num(row.battery_capacity_kwh)} kWh</strong></span></div></article>`).join('')||'<p class="insight-empty">没有符合筛选的结束事件。没有记录不表示车辆未使用。</p>'}</div><div class="insight-pagination">${button('上一页事件','events-previous',page===0)}<span>${page+1} / ${pages}</span>${button('下一页事件','events-next',page+1===pages)}</div>`;
     }
+    function invalidate(){serial++;data=null;attempted=loading=false;error=dayFilter='';page=0;paint();}
     async function load(){
       if(!owner||!date)return;
       const token=++serial,identity=owner;
@@ -86,14 +88,13 @@
       tripRevision=getState()?.trip_records_revision;
       if(changed){owner=context();data=null;error='';loading=false;attempted=false;serial++;dayFilter='';page=0;}
       if(changed||remount)paint();
-      if(owner&&!attempted&&!loading)load();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;
       const el=event.target;
-      if(event.type==='input'&&el.id==='report-date'){date=el.value;node.querySelector('#report-load').disabled=!date||!owner;return true;}
+      if(event.type==='input'&&el.id==='report-date'){if(date!==el.value){date=el.value;invalidate();}return true;}
       if(event.type==='change'){
-        if(el.id==='report-period'){period=el.value;return true;}
+        if(el.id==='report-period'){if(period!==el.value){period=el.value;invalidate();}return true;}
         if(el.id==='report-kind')kind=el.value;
         else if(el.id==='report-quality')quality=el.value;
         else return false;
@@ -103,8 +104,8 @@
       const target=el.closest('[data-report]');if(!target||target.disabled)return false;
       switch(target.dataset.report){
         case 'load':load();break;
-        case 'previous':date=data.current.window.previous_date;period=data.period;load();break;
-        case 'next':date=data.current.window.next_date;period=data.period;load();break;
+        case 'previous':date=data.current.window.previous_date;period=data.period;invalidate();break;
+        case 'next':date=data.current.window.next_date;period=data.period;invalidate();break;
         case 'day':dayFilter=target.dataset.date;page=0;paint();node.querySelector('#report-events').scrollIntoView({block:'start'});break;
         case 'clear-day':dayFilter='';page=0;paint();break;
         case 'events-previous':page--;paintEvents();break;

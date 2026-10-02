@@ -84,7 +84,6 @@ def seed_events(app, partial_charge=False):
     app.usage_calendar.clock=lambda:calendar_now+12*3600000
     app.vehicle_life.clock=lambda:calendar_now+12*3600000
     app.data_quality.clock=lambda:calendar_now+12*3600000
-    app.trip_cards.clock=lambda:calendar_now+12*3600000
 
 
 def seed_reminders(app,session):

@@ -63,7 +63,7 @@ function openResearchReview(field, evidence=null){
       observed_at:evidence.observed_at,experiment_id:evidence.id,experiment_side:evidence.side,
       evidence,dirty:true,saved:false});
   }
-  page='fields';render();window.scrollTo(0,0);
+  page='insights';render();insightsPage.openTool('fields');window.scrollTo(0,0);
 }
 async function openExperimentReview(id,path,side){
   const identity=state?.insights_context;
@@ -102,6 +102,7 @@ function renderFields() {
   reviewSync();
   const focus = reviewFocusSnapshot();
   const all = reviewVisibleFields(), items = reviewItems();
+  $('#field-results').closest('.review-workspace')?.classList.toggle('compact',items.length<=3);
   if (!all.some(f => f.path === reviewSelected)) reviewSelected = '';
   const counts = Object.fromEntries(Object.keys(reviewLabels).map(key => [key,all.filter(f => reviewStatus(f) === key).length]));
   $('#review-progress').innerHTML = [['','全部',all.length],...Object.entries(reviewLabels).map(([key,label])=>[key,label,counts[key]])].map(([key,label,count]) =>
@@ -137,6 +138,7 @@ function renderReviewPanel() {
   const field = reviewVisibleFields().find(f => f.path === reviewSelected);
   if (!field) { panel.innerHTML = empty('选择一项参数','从左侧清单开始逐项核实。'); return; }
   if (!reviewEditing) {
+    panel.dataset.path=field.path;
     const records = reviewRecords(field.path), status = reviewStatus(field);
     panel.innerHTML = `<div class="card-head"><div><span class="eyebrow">参数详情</span><h2>${esc(field.name)}</h2></div><span class="pill ${status==='confirmed'?'good':status==='pending'||status==='question'?'warn':''}">${reviewLabels[status]}</span></div>
       <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span><div class="review-snapshot"><div><span>当前原值</span><strong>${esc(field.raw)}</strong></div><div><span>系统解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div>${renderFieldReference(field)}<div class="review-actions"><button class="button secondary" data-open-research="${esc(field.path)}">查看字段历史与场景</button></div>
@@ -185,17 +187,25 @@ function reviewFocusSnapshot() {
   return {id:input?el.id:null, start:input?el.selectionStart:null, end:input?el.selectionEnd:null,
     vehicle:reviewVehicle, path:panel.dataset.path, inputTop:input?el.getBoundingClientRect().top:null,
     panelScroll:panel.querySelector('.review-panel-body')?.scrollTop || 0,
-    listScroll:document.querySelector('.review-rows')?.scrollTop || 0};
+    listScroll:document.querySelector('.review-rows')?.scrollTop || 0,
+    historyOpen:[...document.querySelectorAll('.review-workspace .review-history')].map(el=>el.open)};
 }
 function reviewRestoreFocus(focus) {
   if (!focus || focus.vehicle !== reviewVehicle || focus.path !== reviewSelected) return;
+  document.querySelectorAll('.review-workspace .review-history').forEach((el,index)=>{
+    if(focus.historyOpen?.[index]!==undefined)el.open=focus.historyOpen[index];
+  });
   const el = focus.id ? document.getElementById(focus.id) : null;
   el?.focus({preventScroll:true});
   if (el && focus.start !== null && ['INPUT','TEXTAREA'].includes(el.tagName)) el.setSelectionRange(focus.start,focus.end);
   const panel = document.querySelector('.review-panel-body'), list = document.querySelector('.review-rows');
   if (panel) {
     panel.scrollTop = focus.panelScroll;
-    if (el && focus.inputTop !== null) panel.scrollTop += el.getBoundingClientRect().top - focus.inputTop;
+    if (el && focus.inputTop !== null) {
+      const delta=el.getBoundingClientRect().top-focus.inputTop;
+      if(getComputedStyle(panel).overflowY==='auto')panel.scrollTop+=delta;
+      else window.scrollBy(0,delta);
+    }
   }
   if (list) list.scrollTop = focus.listScroll;
 }
@@ -253,7 +263,7 @@ async function saveReview(action = 'save', next = false, override = null) {
   }
 }
 function handleReviewAction(target) {
-  if (page !== 'fields') return false;
+  if (!$('#field-results')) return false;
   if (target.hasAttribute('data-review-filter')) {
     reviewFilter=target.dataset.reviewFilter; renderFields(); return true;
   }

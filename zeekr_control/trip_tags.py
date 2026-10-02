@@ -6,6 +6,8 @@ from statistics import median
 from .usage_events import UsageEvents
 from .usage_reports import period_window
 from .commute_tags import CommuteTags
+from .trip_places import TripPlaces
+from .trip_place_names import TripPlaceNames
 
 
 def describe(values):
@@ -31,10 +33,18 @@ def comparison(tag,events):
 
 class TripTags:
     def __init__(self,store,database):
-        self.store=store;self.events=UsageEvents(database);self.commute=CommuteTags(store,database)
+        self.store=store;self.events=UsageEvents(database);self.commute=CommuteTags(store,database);self.places=TripPlaces(database);self.place_names=TripPlaceNames(store)
 
     def update(self,owner,vehicle,data,guard=None):
         action=data.get('action');identity=data.get('id');body=None
+        if isinstance(action,str) and action.startswith('place-name-'):
+            stats=None
+            if action!='place-name-undo':
+                if not isinstance(data.get('date'),str):raise ValueError('请选择地点统计月份。')
+                window=period_window('month',data.get('date'))
+                events=[r for r in self.events.between(vehicle,window['start'],window['end'])['events'] if r['kind']=='trip_end']
+                stats=self.place_names.apply(owner,vehicle,self.places.query(vehicle,events),self.commute.rule(owner,vehicle))
+            return self.place_names.update(owner,vehicle,data,stats,guard=guard)
         if isinstance(action,str) and action.startswith('commute-'):
             if action in ('commute-exclude','commute-include'):
                 event_id=data.get('event_id')
@@ -71,6 +81,7 @@ class TripTags:
     def query(self,owner,vehicle,date,guard=None):
         window=period_window('month',date)
         events=[row for row in self.events.between(vehicle,window['start'],window['end'])['events'] if row['kind']=='trip_end']
+        place_statistics=self.place_names.apply(owner,vehicle,self.places.query(vehicle,events),self.commute.rule(owner,vehicle))
         saved=self.store.read(owner,vehicle,'tags')
         annotations={r['body']['event_id']:r for r in saved['records']}
         automatic=self.commute.decisions(owner,vehicle,events,guard=guard)
@@ -96,4 +107,4 @@ class TripTags:
                     suggested_tags=sorted({tag for record in saved['records'] if not record['deleted']
                                            for tag in record['body']['tags']}),
                     untagged_count=sum(not row['tags'] for row in rows),trash=trash,
-                    commute_rule=self.commute.rule(owner,vehicle))
+                    commute_rule=self.commute.rule(owner,vehicle),place_statistics=place_statistics)

@@ -18,6 +18,7 @@ from .report_history import compare
 from .report_attention import build as build_attention
 from .start_evidence import build as start_evidence, project as project_start
 from .start_evidence import from_summary as saved_start_evidence, MAX_GAP
+from .notification_location import select_location, reference_suffix
 
 MAX_AGE = MAX_GAP
 STOP_WAIT = 600000
@@ -57,11 +58,11 @@ def message_for(kind, data, event_id):
              'charge_start': '检测到开始充电', 'charge_end': '充电已停止'}[kind]
     lines = [title]
     if kind in ('trip_start', 'trip_end'):
-        lines.append('出发地：' + (data.get('start_address') or '位置未知'))
+        lines.append('出发地：' + _notification_address(data, 'start'))
         if kind == 'trip_end':
-            lines.append('到达地：' + (data.get('end_address') or '位置未知'))
+            lines.append('到达地：' + _notification_address(data, 'end'))
     else:
-        lines += ['充电地点：' + (data.get('start_address') or '位置未知')]
+        lines += ['充电地点：' + _notification_address(data, 'start')]
     if kind in ('trip_start', 'charge_start'):
         lines += ['观测时间：' + updated_at(data['start_time']), '电量：' + fmt(data['start_soc'], '%')]
         if data['partial']:
@@ -89,6 +90,11 @@ def message_for(kind, data, event_id):
             lines += ['数据不完整：起点或期间观测存在缺口，仅汇总已观测部分。']
     lines += ['来源：车辆云端缓存，时间可能延迟。', '事件编号：' + event_id[:12]]
     return '\n'.join(lines)
+
+
+def _notification_address(data, prefix):
+    address = data.get(prefix + '_address')
+    return address + reference_suffix(data.get(prefix + '_location_reference')) if address else '位置未知'
 
 
 def bark_message_for(kind, data):
@@ -432,8 +438,8 @@ class Monitor:
         # One worker owns the process lock; compare-and-set also guards claims.
         with self.tracks.connect() as db:
             extra = " AND kind!='trip_start'" + (" AND kind!='charge_start'" if alert_sender is not None else '')
-            rows = db.execute("SELECT id,message,attempts,kind,summary FROM monitor_events WHERE delivery='pending' AND next_attempt<=?" + extra + " ORDER BY created,rowid LIMIT 10", (now,)).fetchall()
-        for event_id, message, attempts, kind, encoded in rows:
+            rows = db.execute("SELECT id,message,attempts,kind,summary,vehicle FROM monitor_events WHERE delivery='pending' AND next_attempt<=?" + extra + " ORDER BY created,rowid LIMIT 10", (now,)).fetchall()
+        for event_id, message, attempts, kind, encoded, vehicle in rows:
             with self.tracks.connect() as db:
                 claimed = db.execute("UPDATE monitor_events SET delivery='sending', attempts=attempts+1 WHERE id=? AND delivery='pending'", (event_id,)).rowcount
             if not claimed:
@@ -453,14 +459,21 @@ class Monitor:
                         address = None
                         if self.address_resolver:
                             try:
-                                address = self.address_resolver(data.get(prefix + '_location'))
+                                with self.tracks.connect() as db:
+                                    location, reference = select_location(db, vehicle,
+                                        data.get(prefix + '_location'), data.get(prefix + '_time'))
+                                if location is not None:
+                                    address = self.address_resolver(location)
+                                if reference is not None:
+                                    data[prefix + '_location_reference'] = reference
                             except Exception:
                                 pass
                         data[prefix + '_address'] = ' '.join(address.split())[:100] if isinstance(address, str) else None
                     data['addresses_resolved'] = True
                     if data.get('report_v2'):
                         message, omitted = render(kind, data['report_v2'], event_id,
-                            {'start': data.get('start_address'), 'end': data.get('end_address')})
+                            {'start': data.get('start_address'), 'end': data.get('end_address')},
+                            references={prefix: data.get(prefix + '_location_reference') for prefix in ('start', 'end')})
                         data['report_v2']['render'] = {'version': 'zh-text-v2', 'omitted': omitted,
                                                        'message_frozen': True, 'bytes': len(message.encode()),
                                                        'frozen_at': now,

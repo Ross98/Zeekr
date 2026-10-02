@@ -30,7 +30,7 @@
           <div class="insight-actions">${button('预览条件','preview',loading)}${button('保存规则','save',loading)}</div>
           ${preview?`<div id="rule-preview-result" class="rule-preview"><strong>${preview.matches===true?'本条观测符合条件':preview.matches===false?'本条观测不符合条件':'暂不能判断'}</strong><p>${esc(reasons[preview.reason]||'未知')} · 车辆时间 ${esc(time(preview.state_time))}</p><p>预览不会触发提醒，不计入连续确认，不发送通知。</p></div>`:''}</section>
           <section class="card insight-panel"><h3>我的规则</h3><p class="insight-note">下方是最近一次评估，不保证当前车况。编辑、启停或恢复规则后重新确认；停用会阻止未发通知。</p><div id="rule-records"></div></section>
-          <section class="card insight-panel"><div class="insight-heading"><h3>提醒历史</h3><label>历史类型<select id="rule-history-filter" aria-label="历史类型"><option value="all" ${historyFilter==='all'?'selected':''}>全部</option><option value="raised" ${historyFilter==='raised'?'selected':''}>条件成立</option><option value="recovered" ${historyFilter==='recovered'?'selected':''}>条件恢复</option></select></label></div><p class="insight-note">展示最近 100 条；本机保留最近 10000 条。表单空闲时约 30 秒刷新，也可手动读取。站内历史不会推送系统通知。</p><div id="rule-history"></div></section>`:''}`;
+          <section class="card insight-panel"><div class="insight-heading"><h3>提醒历史</h3><label>历史类型<select id="rule-history-filter" aria-label="历史类型"><option value="all" ${historyFilter==='all'?'selected':''}>全部</option><option value="raised" ${historyFilter==='raised'?'selected':''}>条件成立</option><option value="recovered" ${historyFilter==='recovered'?'selected':''}>条件恢复</option></select></label></div><p class="insight-note">展示最近 100 条；本机保留最近 10000 条。点击“读取规则与历史”更新。站内历史不会推送系统通知。</p><div id="rule-history"></div></section>`:''}`;
       paintRecords();paintHistory();
       if(focus){const el=document.getElementById(focus.id);el?.focus({preventScroll:true});if(el&&focus.start!==null&&focus.start!==undefined)el.setSelectionRange(focus.start,focus.end);}
     }
@@ -78,7 +78,6 @@
       const changed=owner!==context(),remount=node!==container;node=container;
       if(changed){owner=context();data=null;draft=blank();attempted=false;loading=false;busy=false;dirty=false;serial++;writeSerial++;error='';status='';preview=null;lastLoaded=0;rulePage=historyPage=0;}
       if(changed||remount)paint();
-      if(owner&&!loading&&!busy&&(!attempted||!dirty&&!draft.id&&lastLoaded&&Date.now()-lastLoaded>=30000))load();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;

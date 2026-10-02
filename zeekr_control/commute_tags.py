@@ -1,9 +1,9 @@
 """Owner-scoped commute rules and evidence-bound endpoint matching."""
-import json
 import math
 import time
 
 from .tracks import TrackStore
+from .trip_endpoints import endpoint
 
 
 def _point(value):
@@ -95,26 +95,10 @@ class CommuteTags:
         if not self.tracks.path.exists():
             return None
         lower, upper = (start, min(start+180000,end)) if near_start else (max(start,end-180000),end)
-        direction = 'ASC' if near_start else 'DESC'
         with self.tracks.connect() as db:
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='observations'").fetchone():
                 return None
-            rows = db.execute('SELECT state_time,location FROM observations WHERE vehicle=? '
-                              'AND state_time>=? AND state_time<=? ORDER BY state_time '+direction+' LIMIT 128',
-                              (vehicle, lower, upper)).fetchall()
-        for timestamp, encoded in rows:
-            try:
-                point = json.loads(encoded)
-                lat, lon = point.get('latitude'), point.get('longitude')
-                if (point.get('trusted') is True and point.get('plottable') is True
-                        and point.get('coordinate_system') == 'WGS84（社区解释）'
-                        and type(lat) in (int,float) and type(lon) in (int,float)
-                        and math.isfinite(lat) and math.isfinite(lon)
-                        and -90 <= lat <= 90 and -180 <= lon <= 180):
-                    return timestamp, (lat, lon)
-            except (ValueError, TypeError, AttributeError):
-                continue
-        return None
+            return endpoint(db, vehicle, lower, upper, near_start)
 
     def _match(self, vehicle, event, rule):
         start, end = event['start_time'], event['end_time']

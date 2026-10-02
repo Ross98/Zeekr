@@ -27,6 +27,7 @@
       paintDetail();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
     }
     function paint(){
+      if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected || !active())return;
       if(data?.events){paintEvents();return;}
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
@@ -94,7 +95,7 @@
       const el=event.target;
       if(event.type==='input' && ['parking-start','parking-end'].includes(el.id)){
         if(el.id==='parking-start')start=el.value;else end=el.value;
-        node.querySelector('#parking-load').disabled=loading || !owner || !start || !end;return true;
+        data=null;loading=false;error='';selected=null;comparison=null;compareError='';comparing=false;page=0;serial++;compareSerial++;paint();return true;
       }
       if(event.type==='change'){
         if(el.id==='parking-category')category=el.value;

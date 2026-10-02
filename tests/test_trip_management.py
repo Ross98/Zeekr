@@ -225,7 +225,6 @@ class ManagementWebTests(TripFixtures, unittest.TestCase):
             report = self.app.insights('report','month','2024-01-02')
             self.assertEqual(report['current']['totals']['trip_count'], count)
             self.assertEqual(len(self.app.insights('calendar','2024-01-02')['events']), count)
-            self.assertEqual(len(self.app.insights('cards','2024-01-02')['trips']), count)
             tags = self.app.insights('trip-tags','2024-01-02')
             self.assertEqual(len(tags['events']), count)
             self.assertEqual(len(tags['groups']), int(count>0))

@@ -44,7 +44,6 @@ from .parameter_experiments import ParameterExperiments
 from .usage_calendar import UsageCalendar
 from .vehicle_life import VehicleLife
 from .data_quality import DataQuality
-from .trip_cards import TripCards
 from .vehicle_research import VehicleResearch, ResearchInputError, PUBLIC
 from .automatic_insights import Analyzer, InsightCache
 
@@ -80,7 +79,6 @@ class App:
         self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader)
         self.vehicle_life = VehicleLife(self.personal_store)
         self.data_quality = DataQuality(self.archive_reader)
-        self.trip_cards = TripCards(self.database_path)
         self.vehicle_research = VehicleResearch(self.archive_reader, self.database_path)
         self.query_path = self.session_path.parent / 'queries.sqlite3'
         self.client_factory = ((lambda session: Client(session, query_policy=QueryPolicy(self.query_path)))
@@ -471,7 +469,6 @@ class App:
                         'report': self.usage_reports.query,
                         'calendar': self.usage_calendar.query,
                         'quality': self.data_quality.query,
-                        'cards': lambda scope, car, date: self.trip_cards.query(car,date),
                         'life': lambda scope, car, start, end=None: self.vehicle_life.query(account_scope(session),car,start,self.raw,self.read_at,end=end),
                         'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
                         'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
@@ -637,12 +634,12 @@ class App:
         with self.lock:
             return self.trip_store.query(self._local_vehicle(), date, cursor)
 
-    def events(self, date, kind, cursor=None):
+    def events(self, date, kind, cursor=None, end_date=None):
         with self.lock:
             self._restore_snapshot(self._read_session())
             if not self.vehicle_key:
                 raise ValueError('请先选择车辆。')
-            return self.event_store.query(self.vehicle_key, date, kind, cursor=cursor)
+            return self.event_store.query(self.vehicle_key, date, kind, cursor=cursor, end_date=end_date)
 
     def storage_status(self):
         health = StorageHealth(self.session_path.parent)
@@ -804,8 +801,6 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                         return self.send(200, app.insights('life',value('date')))
                     if url.path == '/api/insights/quality':
                         return self.send(200, app.insights('quality',value('start'),value('end')))
-                    if url.path == '/api/insights/cards':
-                        return self.send(200, app.insights('cards',value('date')))
                     if url.path == '/api/insights/ledger':
                         return self.send(200, app.insights('ledger', value('date')))
                     if url.path == '/api/insights/rules':
@@ -853,7 +848,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.events(query.get('date', [''])[0],
                                                      query.get('kind', [''])[0],
-                                                     query.get('cursor', [None])[0]))
+                                                     query.get('cursor', [None])[0],
+                                                     query.get('end', [None])[0]))
                 if url.path == '/api/charging/session':
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.charging_session(query.get('id', [''])[0]))
@@ -884,8 +880,6 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/usage-calendar.js': ('usage-calendar.js', 'text/javascript; charset=utf-8'),
                           '/vehicle-life.js': ('vehicle-life.js', 'text/javascript; charset=utf-8'),
                           '/data-quality.js': ('data-quality.js', 'text/javascript; charset=utf-8'),
-                          '/trip-card-renderer.js': ('trip-card-renderer.js', 'text/javascript; charset=utf-8'),
-                          '/trip-cards.js': ('trip-cards.js', 'text/javascript; charset=utf-8'),
                           '/vehicle.js': ('vehicle.js', 'text/javascript; charset=utf-8'),
                           '/vehicle.css': ('vehicle.css', 'text/css; charset=utf-8'),
                           '/route-quality.js': ('route-quality.js', 'text/javascript; charset=utf-8'),

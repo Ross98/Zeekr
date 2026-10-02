@@ -57,6 +57,21 @@ class InsightsApiTests(unittest.TestCase):
             pass
         return status, body
 
+    def test_event_route_passes_inclusive_charge_range(self):
+        from zeekr_control.monitor import Monitor
+        monitor = Monitor(self.app.event_store.path)
+        for name, stamp in [('first', self.start), ('last', self.start + 2*86400000 - 1),
+                            ('outside', self.start + 2*86400000)]:
+            with monitor.tracks.connect() as db:
+                db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
+                           (name, self.vehicle, 'charge_end', json.dumps({'end_time': stamp}), '', stamp))
+        code, result = self.get('/api/events?date=2026-09-20&end=2026-09-21&kind=charge_end')
+        self.assertEqual(code, 200)
+        self.assertEqual([row['id'] for row in result['events']], ['last', 'first'])
+        code, result = self.get('/api/events?date=2026-09-20&kind=charge_end')
+        self.assertEqual(code, 200)
+        self.assertEqual([row['id'] for row in result['events']], ['first'])
+
     def test_full_readonly_flow_context_and_assets(self):
         state = self.get('/api/state')[1]
         code, page = self.get('/api/insights/timeline?date=2026-09-20')
@@ -297,8 +312,7 @@ class InsightsApiTests(unittest.TestCase):
         for route in ('report?period=month&date=2026-09-20','ledger?date=2026-09-20',
                       'rules','trip-tags?date=2026-09-20','charge-comparison/options?date=2026-07-12',
                       'charge-comparison?a=curve-a&b=curve-b','experiments','experiments/detail?id=missing',
-                      'calendar?date=2026-09-20','life?date=2026-09-20','quality?start=2026-09-20&end=2026-09-20',
-                      'cards?date=2026-09-20'):
+                      'calendar?date=2026-09-20','life?date=2026-09-20','quality?start=2026-09-20&end=2026-09-20'):
             self.assertEqual(self.get('/api/insights/'+route)[0],400,route)
 
     def test_charging_comparison_projection_and_account_context(self):
@@ -371,17 +385,9 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(self.get('/data-quality.js')[0],200)
         self.assertEqual(self.get('/api/insights/quality?start=2026-01-01&end=2026-09-20')[0],400)
 
-    def test_trip_card_choices_are_readonly_and_never_include_location(self):
-        from zeekr_control.monitor import Monitor
-        with Monitor(self.app.database_path).tracks.connect() as db:
-            db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
-                       ('card-trip',self.vehicle,'trip_end',json.dumps(dict(start_time=self.start,end_time=self.start+60000,
-                        duration_seconds=60,distance_km=1,partial=False,vin='PRIVATE-VIN',address='PRIVATE-ADDRESS')),'PRIVATE-MESSAGE',self.start))
-        code,result=self.get('/api/insights/cards?date=2026-09-20')
-        self.assertEqual(code,200);self.assertEqual(len(result['trips']),1)
-        self.assertNotIn('PRIVATE',json.dumps(result))
-        self.assertFalse(self.app.personal_store.path.exists())
-        for asset in ('trip-cards.js','trip-card-renderer.js'):self.assertEqual(self.get('/'+asset)[0],200)
+    def test_trip_cards_removed(self):
+        for route in ('/api/insights/cards?date=2026-09-20', '/trip-cards.js', '/trip-card-renderer.js'):
+            self.assertEqual(self.get(route)[0], 404)
 
 
 if __name__ == '__main__':
