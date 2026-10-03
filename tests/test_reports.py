@@ -109,9 +109,9 @@ class RenderTests(unittest.TestCase):
         self.assertIn('交流观测功率：3.5 kW（电压×电流）', text)
         text, _ = render('charge_end', report, 'synthetic-ac')
         self.assertIn('类型：交流', text)
-        self.assertIn('接口电压0 V · 电流0 A', text)
+        self.assertNotIn('停止观测：', text)
         self.assertNotIn('桩侧', text)
-        self.assertIn('停止原因：未确认', text)
+        self.assertNotIn('停止原因：未确认', text)
 
     def test_whole_minutes_and_percentages_keep_trailing_zeroes(self):
         start = {'state_time': BASE, 'observed_at': BASE, 'soc': 50,
@@ -128,7 +128,7 @@ class RenderTests(unittest.TestCase):
         self.assertIn('10 公里 · 10 分钟', text)
         self.assertIn('最大间隔60秒', text)
         text, _ = render('charge_end', report, 'synthetic-id')
-        self.assertIn('功率有效覆盖：8/10分钟（80%）', text)
+        self.assertNotIn('功率有效覆盖：', text)
         start['remaining_minutes'] = 0
         text, _ = render('charge_start', report, 'synthetic-id')
         self.assertIn('车辆估计剩余0分钟', text)
@@ -153,7 +153,8 @@ class RenderTests(unittest.TestCase):
         text,omitted=render('trip_end',report,'abcdef123456',{'start':'超长地址'*100,'end':'超长地址'*100},target=300)
         self.assertLessEqual(len(text.encode()),2048)
         self.assertIn('部分记录',text)
-        self.assertIn('未确认',text)
+        self.assertNotIn('锁车、门窗及尾门',text)
+        self.assertIn('缓存',text)
         self.assertTrue(omitted)
 
 

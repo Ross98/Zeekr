@@ -5,6 +5,18 @@ import unittest
 
 
 class ReleaseInfoTests(unittest.TestCase):
+    def test_notification_features_verify_their_running_sources(self):
+        from zeekr_control.release_info import read_release, write_manifest, FEATURES
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for feature in ('notification-brief','tyre-alerts'):
+                for relative in FEATURES[feature]['files']:
+                    path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('synthetic')
+            write_manifest(root,'a'*40,['notification-brief','tyre-alerts'])
+            self.assertTrue(all(f['status']=='matched' for f in read_release(root)['features']))
+            (root/'zeekr_control/tyre_notifications.py').write_text('changed')
+            self.assertEqual(read_release(root)['features'][1]['status'],'mismatch')
+
     def test_missing_manifest_is_unknown_and_hash_mismatch_not_online(self):
         from zeekr_control.release_info import read_release, write_manifest, FEATURES
         with tempfile.TemporaryDirectory() as temp:

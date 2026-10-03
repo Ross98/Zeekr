@@ -111,6 +111,28 @@ def _comparison(report):
     return lines
 
 
+def _status_alerts(report, include_cover=True):
+    """Only fresh, already verified attention items; unknown is not abnormal."""
+    attention = report.get('attention') or {}
+    if attention.get('fresh') is not True:
+        return []
+    pending = set(attention.get('pending_capabilities', []))
+    current = report.get('parking') or report.get('end') or {}
+    items = []
+    for item in attention.get('items', []):
+        if item.get('key') in pending:
+            continue
+        verified = item.get('level') in ('warning', 'critical')
+        # An open charging cover is expected during charging. An unknown
+        # charging state cannot establish that it was left open unexpectedly.
+        if include_cover and item.get('level') == 'status' and item.get('key') == 'dc_lid':
+            verified = current.get('dc_lid') == 'open' and current.get('charging') is False
+        text = clean_text(item.get('text'))
+        if verified and text:
+            items.append(text)
+    return ['', '【需留意】'] + list(dict.fromkeys(items)) if items else []
+
+
 def _fit(lines, report, event_id, partial, target):
     text='\n'.join(lines)
     if len(text.encode()) <= target: return text, []
@@ -133,11 +155,16 @@ def _fit(lines, report, event_id, partial, target):
     title=lines[0]
     core=[title,_range(report.get('start_time'),report.get('end_time')),
           '电量：%s%% → %s%%（变化%s个百分点）' % (_num(start.get('soc')),_num(end.get('soc')),_num(m.get('soc_delta')))]
-    if report.get('kind')=='trip_end': core.append('停车状态：锁车、门窗及尾门以报告中的未确认项为准。')
+    if report.get('kind')=='trip_end': core += _status_alerts(report)
     elif report.get('kind')=='charge_start': core += ['实际开始时间未知；首次观测时已在充电。','目标电量／充电枪连接：未确认']
-    else: core += ['目标电量：暂未取得','停止原因／充电枪连接：未确认']
+    else:
+        core[1] = '记录区间：' + core[1]
+        if project_start(report.get('start_evidence'))['basis'] != 'bounded':
+            core.append('实际开始时间未知，以上按记录区间汇总。')
+        core += ['估算充入：%s kWh' % _num(m.get('estimated_kwh'))]
+        core += _status_alerts(report, include_cover=False)
     if partial: core.append('部分记录：以上仅汇总已观测区间。')
-    core += _start_timing(report)
+    if report.get('kind') != 'charge_end': core += _start_timing(report)
     core += [marker,'状态来自车辆云端缓存，时间可能延迟。','编号：'+event_id[:12]]
     text='\n'.join(core)
     if len(text.encode())>HARD_BYTES: raise ValueError('报告核心模板超过2048字节')
@@ -175,12 +202,7 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES, references
         if m.get('sampled_max_speed_kmh') is not None:
             note = '（仅1次有效车速观测）' if m.get('speed_samples') == 1 else ''
             lines.append('采样最高速度：%s km/h%s' % (_num(m['sampled_max_speed_kmh']), note))
-        parking = report.get('parking') or {}
-        updated = report.get('quality',{}).get('parking_samples',0) > 0
-        label = '停车后状态' if updated else '结束点状态'
-        lines += ['', '【%s · %s】' % (label,_time(parking.get('state_time')).split()[-1])] + _status(report.get('parking'))
-        if not updated: lines.append('未取得更新停车状态。')
-        lines += _temperatures(report)
+        lines += _status_alerts(report)
     elif kind == 'charge_start':
         mode = {'dc': '｜直流', 'ac': '｜交流'}.get(report.get('start', {}).get('charging_mode'), '')
         location = _place((address or {}).get('start'), (references or {}).get('start'))
@@ -210,49 +232,45 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES, references
                       '打开' if start.get('ac_lid')=='open' else '关闭' if start.get('ac_lid')=='closed' else '未确认'))
         lines += _temperatures(report)
     else:
+        duration = m.get('duration_seconds')
         lines = ['🔋 充电已停止%s｜电量%s%%' % (suffix, _num(report.get('end', {}).get('soc'))),
                  '充电地点：%s' % _place((address or {}).get('start'), (references or {}).get('start')),
-                 _range(report.get('start_time'), report.get('end_time')), '', '【补电结果】',
+                 '记录区间：%s｜%s 分钟' % (_range(report.get('start_time'), report.get('end_time')), _num(duration/60 if duration is not None else None, 0)),
+                 '', '【补电结果】',
                  '电量：%s%% → %s%%（增加%s个百分点）' % (_num(report.get('start', {}).get('soc')), _num(report.get('end', {}).get('soc')), _num(m.get('soc_delta')))]
         if m.get('estimated_kwh') is not None:
-            lines.append(('%s估算充入：约%s kWh' % ('已记录区间' if partial else '', _num(m['estimated_kwh']))))
+            lines.append('%s估算充入：约%s kWh' % ('已记录区间' if partial else '', _num(m['estimated_kwh'])))
+        else:
+            lines.append('估算充入：未知（观测条件不足）')
         if m.get('range_delta_km') is not None:
             lines.append('云端续航：%s → %s 公里（增加%s公里）' % (_num(report['start'].get('range_km')), _num(report['end'].get('range_km')), _num(m['range_delta_km'])))
         lines += ['', '【充电过程】', '类型：%s' %
                   {'dc': '直流', 'ac': '交流'}.get(report.get('start', {}).get('charging_mode'), '未确认')]
         if report.get('start', {}).get('charging_mode') == 'ac':
             lines.append('交流功率由同次接口电压×电流计算。')
-        if m.get('sampled_peak_kw') is not None:
-            lines.append('最高采样功率：%s kW' % _num(m['sampled_peak_kw']))
-        if m.get('average_power_kw') is not None:
-            lines.append('观测区间平均功率：%s kW' % _num(m['average_power_kw']))
-        if m.get('tail_power_drop_percent') is not None:
-            lines.append('后段较前段观测功率下降约%s%%' % _num(m['tail_power_drop_percent'], 0))
-        covered,total,ratio=m.get('power_covered_seconds'),m.get('duration_seconds'),m.get('power_coverage')
-        lines += ['功率有效覆盖：%s/%s分钟（%s%%）' % (_num(covered/60 if covered is not None else None, 0), _num(total/60 if total is not None else None, 0), _num(100*ratio if ratio is not None else None, 0)),
-                  '目标电量：暂未取得', '停止原因：未确认', '充电枪连接：未确认']
-        stopped=report.get('end',{})
-        ac = report.get('start', {}).get('charging_mode') == 'ac'
-        voltage = stopped.get('ac_voltage' if ac else 'voltage', {}).get('value')
-        current = stopped.get('ac_current' if ac else 'current', {}).get('value')
-        if voltage is not None or current is not None:
-            lines.append('停止观测：%s电压%s V · 电流%s A' %
-                         ('接口' if ac else '桩侧', _num(voltage), _num(current)))
-        lines += ['', '【停止状态 · %s】' % _time(stopped.get('state_time')).split()[-1]] + _status(stopped)
-        lines += _temperatures(report)
-    lines += _comparison(report)
+        lines.append('最高采样功率：%s kW' % _num(m.get('sampled_peak_kw')))
+        average = m.get('average_power_kw')
+        lines.append('观测区间平均功率：%s' % (_num(average)+' kW' if average is not None else '未知（有效采样不足）'))
+        covered, total, ratio = m.get('power_covered_seconds'), duration, m.get('power_coverage')
+        if partial or ratio is not None and ratio < .8:
+            lines.append('功率有效覆盖：%s/%s分钟（%s%%）' % (_num(covered/60 if covered is not None else None, 0), _num(total/60 if total is not None else None, 0), _num(100*ratio if ratio is not None else None, 0)))
+        lines += _status_alerts(report, include_cover=False)
+    if kind != 'charge_end': lines += _comparison(report)
     attention = report.get('attention', {})
-    for change in attention.get('changes', []):
+    for change in (attention.get('changes', []) if kind not in ('trip_end', 'charge_end') else []):
         lines.append('%s：%s。' % (_time(change.get('time')).split()[-1], change['text']))
     if any(item.get('key') == 'stale' for item in attention.get('items', [])):
         lines.append('停车状态为旧观测，仅作记录，不代表当前状态。')
     quality = report.get('quality', {})
     count = quality.get('observation_count')
-    if count is not None:
+    if count is not None and kind != 'charge_end':
         gap = m.get('max_gap_seconds')
         lines.append('独立观测%s次%s。' % (count, '，最大间隔%s秒' % _num(gap,0) if gap is not None else ''))
     if partial:
         lines.append('数据不完整：以上仅汇总已观测区间。')
-    lines += _start_timing(report)
+    if kind != 'charge_end':
+        lines += _start_timing(report)
+    elif project_start(report.get('start_evidence'))['basis'] != 'bounded':
+        lines.append('实际开始时间未知，以上按记录区间汇总。')
     lines += ['状态来自车辆云端缓存，时间可能延迟。', '编号：' + event_id[:12]]
     return _fit(lines, report, event_id, partial, target)

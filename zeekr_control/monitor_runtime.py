@@ -24,6 +24,7 @@ from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
 from .personal_store import PersonalStore, account_scope
 from .custom_reminders import Reminders
+from .tyre_notifications import TyreNotifications, ObservationCancelled
 from .sampling import read_settings, save_settings
 from .query_policy import QueryPolicy
 from .archive_reader import ArchiveReader
@@ -228,6 +229,7 @@ class Runner:
         self.auth_failure_alert = AuthFailureAlert(self.root, self.alert_sender)
         self.storage_health = StorageHealth(self.root, self.sender, self.alert_sender)
         self.reminders = Reminders(PersonalStore(self.root / 'personal.sqlite3'))
+        self.tyre_notifications = TyreNotifications(self.reminders.store)
         self.reminders.recover()
         self.blocked_fingerprint = None
         self.failures = 0
@@ -326,6 +328,15 @@ class Runner:
                 self.reminder_sender = reminder_sender
                 self.reminders.observe(account_scope(session), binding, raw, observed,
                                        sender=reminder_sender, guard=reminder_guard)
+                def tyre_guard():
+                    reminder_guard()
+                    if not sampling_enabled(self.root):
+                        raise ObservationCancelled()
+                try:
+                    self.tyre_notifications.observe(account_scope(session), binding, raw, observed,
+                                                    bark=self.alert_sender, wecom=self.sender, guard=tyre_guard)
+                except ObservationCancelled:
+                    pass
                 self.analysis_input = (session_scope(session), binding, observed)
         except RateLimited as exc:
             delay = max(60, exc.seconds)

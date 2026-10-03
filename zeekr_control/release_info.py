@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 
 FEATURES={
+ 'notification-brief':dict(label='行程与充电通知精简',files=['zeekr_control/report_render.py']),
+ 'tyre-alerts':dict(label='胎压异常通知',files=['zeekr_control/tyre_notifications.py','zeekr_control/monitor_runtime.py','zeekr_control/personal_store.py','zeekr_control/web.py','zeekr_control/static/custom-reminders.js']),
  'charging-readability':dict(label='充电图表可读性',files=['zeekr_control/static/app.js','zeekr_control/static/app.css','zeekr_control/static/theme.css']),
  'home-attention':dict(label='首页异常提示',files=['zeekr_control/static/app.js','zeekr_control/static/app.css']),
  'pending-ledger':dict(label='充电待补账',files=['zeekr_control/static/charge-ledger.js','zeekr_control/static/app.css']),

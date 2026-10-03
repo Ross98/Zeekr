@@ -38,6 +38,7 @@ from .usage_reports import UsageReports
 from .personal_store import PersonalStore, account_scope
 from .charge_ledger import ChargeLedger
 from .custom_reminders import Reminders
+from .tyre_notifications import TyreNotifications
 from .trip_tags import TripTags
 from .travel_insights import TravelInsights
 from .release_info import read_release
@@ -75,6 +76,7 @@ class App:
         self.personal_store = PersonalStore(self.session_path.parent / 'personal.sqlite3')
         self.charge_ledger = ChargeLedger(self.personal_store, self.database_path)
         self.reminders = Reminders(self.personal_store)
+        self.tyre_notifications = TyreNotifications(self.personal_store)
         self.trip_tags = TripTags(self.personal_store, self.database_path)
         self.travel_insights = TravelInsights(self.personal_store, self.database_path)
         self.charge_comparison = ChargeComparison(self.database_path)
@@ -475,6 +477,7 @@ class App:
                         'life': lambda scope, car, start, end=None: self.vehicle_life.query(account_scope(session),car,start,self.raw,self.read_at,end=end),
                         'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
                         'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
+                        'tyres': lambda scope, car: self.tyre_notifications.query(account_scope(session),car),
                         'trip-tags': lambda scope, car, date: self.trip_tags.query(account_scope(session),car,date,
                             guard=lambda: self._guard_insight_session(session,context)),
                         'routes':lambda scope,car,date:self.travel_insights.routes(account_scope(session),car,date),
@@ -581,7 +584,7 @@ class App:
                 result = self.reminders.preview(account_scope(session),vehicle,data,self.raw,int(time.time()*1000))
                 guard()
             else:
-                manager = {'ledger':self.charge_ledger,'rules':self.reminders,'trip-tags':self.trip_tags,
+                manager = {'ledger':self.charge_ledger,'rules':self.reminders,'tyres':self.tyre_notifications,'trip-tags':self.trip_tags,
                            'experiments':self.experiments,'life':self.vehicle_life}[operation]
                 extra = {'scope':session_scope(session)} if operation=='experiments' else {}
                 result = manager.update(account_scope(session), vehicle, data, guard=guard,**extra)
@@ -808,6 +811,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                         return self.send(200, app.insights('quality',value('start'),value('end')))
                     if url.path == '/api/insights/ledger':
                         return self.send(200, app.insights('ledger', value('date')))
+                    if url.path == '/api/insights/tyres':
+                        return self.send(200, app.insights('tyres'))
                     if url.path == '/api/insights/rules':
                         return self.send(200, app.insights('rules'))
                     if url.path == '/api/insights/trip-tags':
@@ -943,6 +948,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     return self.send(200, app.manage_charges(self.path.rsplit('/',1)[1], data, owner))
                 if self.path == '/api/insights/ledger':
                     return self.send(200, app.update_insight_record('ledger',data))
+                if self.path == '/api/insights/tyres':
+                    return self.send(200, app.update_insight_record('tyres',data))
                 if self.path == '/api/insights/rules':
                     return self.send(200, app.update_insight_record('rules',data))
                 if self.path == '/api/insights/rules/preview':

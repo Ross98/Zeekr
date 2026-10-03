@@ -1,0 +1,5 @@
+# Tyre pressure notifications
+
+Approved: default light load 260 kPa; manual full load 290. Low at <=90%, 3 new observations spanning 120 seconds; severe <=80%, 2 new observations. Recovery >=95%, new observations spanning 120 seconds. Group simultaneous wheels, notify once per level, escalate only, one recovery. No high pressure or leak diagnosis, no zero/missing/stale inference, no raw native TPMS enum without verification.
+
+Implement pure transition logic first with synthetic tests, persistent owner/vehicle-isolated state and per-channel outbox, monitor integration under existing account guard, protected settings/history API and small controls within custom reminders. Bark short plus WeCom detail independent; durable sending/uncertain states prevent ambiguous resends, bounded clear-failure retries. New cache timestamps and observation time must advance; gaps >180 seconds reset candidates. Configuration revision/change cancels unsent notices. Verify renderer/UI, restart/scope/error/permissions and full tests. No real sends or deployment.

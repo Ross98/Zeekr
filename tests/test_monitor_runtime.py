@@ -11,6 +11,23 @@ from test_monitor import BASE, sample
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_tyre_reminders_use_existing_observations_and_independent_senders(self):
+        class Client:
+            seconds=0;calls=0
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):
+                Client.calls+=1
+                raw=sample(Client.seconds)
+                raw['additionalVehicleStatus']['maintenanceStatus']['tyreStatusDriver']=200
+                return raw
+        runner=self.runner(Client);bark=[];wecom=[]
+        runner.alert_sender=lambda *args:bark.append(args);runner.sender=wecom.append
+        runner.tick(BASE);Client.seconds=20;runner.tick(BASE+20000)
+        self.assertEqual(Client.calls,2)
+        self.assertEqual((len(bark),len(wecom)),(1,1))
+        self.assertIn('胎压明显偏低',bark[0][0]);self.assertIn('软件参考提醒',wecom[0])
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('zeekr_control.monitor_runtime'), '后台监控尚未实现')
         self.temp = tempfile.TemporaryDirectory()

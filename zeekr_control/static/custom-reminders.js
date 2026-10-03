@@ -7,6 +7,7 @@
   function create({getState,request,escape:esc,active,time}){
     let node=null,owner='',data=null,draft=blank(),attempted=false,loading=false,busy=false,dirty=false;
     let serial=0,writeSerial=0,lastLoaded=0,error='',status='',preview=null,rulePage=0,historyPage=0,historyFilter='all';
+    let tyreData=null,tyreDraft=null,tyreBusy=false,tyreSerial=0,tyreError='',tyreStatus='';
     const context=()=>getState()?.insights_context||'';
     const valid=(token,current,identity)=>token===current&&identity===owner&&identity===context();
     const button=(label,action,disabled=false,extra='')=>`<button class="button secondary" data-rule="${action}" ${disabled||busy?'disabled':''} ${extra}>${label}</button>`;
@@ -31,8 +32,30 @@
           ${preview?`<div id="rule-preview-result" class="rule-preview"><strong>${preview.matches===true?'本条观测符合条件':preview.matches===false?'本条观测不符合条件':'暂不能判断'}</strong><p>${esc(reasons[preview.reason]||'未知')} · 车辆时间 ${esc(time(preview.state_time))}</p><p>预览不会触发提醒，不计入连续确认，不发送通知。</p></div>`:''}</section>
           <section class="card insight-panel"><h3>我的规则</h3><p class="insight-note">下方是最近一次评估，不保证当前车况。编辑、启停或恢复规则后重新确认；停用会阻止未发通知。</p><div id="rule-records"></div></section>
           <section class="card insight-panel"><div class="insight-heading"><h3>提醒历史</h3><label>历史类型<select id="rule-history-filter" aria-label="历史类型"><option value="all" ${historyFilter==='all'?'selected':''}>全部</option><option value="raised" ${historyFilter==='raised'?'selected':''}>条件成立</option><option value="recovered" ${historyFilter==='recovered'?'selected':''}>条件恢复</option></select></label></div><p class="insight-note">展示最近 100 条；本机保留最近 10000 条。点击“读取规则与历史”更新。站内历史不会推送系统通知。</p><div id="rule-history"></div></section>`:''}`;
+      node.children[1].insertAdjacentHTML('afterend',tyrePanel());
       paintRecords();paintHistory();
       if(focus){const el=document.getElementById(focus.id);el?.focus({preventScroll:true});if(el&&focus.start!==null&&focus.start!==undefined)el.setSelectionRange(focus.start,focus.end);}
+    }
+    function tyrePanel(){
+      const base=tyreDraft?.load==='full'?290:260;
+      const control=(label,action,disabled=false)=>`<button class="button secondary" data-tyre="${action}" ${disabled||tyreBusy?'disabled':''}>${label}</button>`;
+      return `<section class="card insight-panel" id="tyre-settings"><div class="insight-heading"><h3>胎压异常提醒</h3>${control('读取胎压设置','load',!owner)}</div><p class="insight-note">255/55 R19 · 车门标牌：轻载 260 kPa，满载 290 kPa。载荷由你手动选择。</p>
+        ${tyreBusy?'<p role="status">正在处理胎压设置…</p>':''}${tyreError?`<p class="notice error" role="alert">${esc(tyreError)}</p>`:''}${tyreStatus?`<p role="status">${esc(tyreStatus)}</p>`:''}
+        ${tyreData?`<fieldset class="rule-form ledger-form" ${tyreBusy?'disabled':''}><label>载荷参考<select id="tyre-load" aria-label="载荷参考"><option value="light" ${tyreDraft.load==='light'?'selected':''}>轻载 · 260 kPa</option><option value="full" ${tyreDraft.load==='full'?'selected':''}>满载 · 290 kPa</option></select></label><label class="rule-check"><input id="tyre-enabled" type="checkbox" ${tyreDraft.enabled?'checked':''}>启用胎压异常提醒</label></fieldset><p id="tyre-thresholds">偏低 ≤ ${base*.9} kPa · 明显偏低 ≤ ${base*.8} kPa · 恢复 ≥ ${base*.95} kPa</p><p class="insight-note">偏低和恢复：至少 3 条新观测，持续 120 秒。明显偏低：至少 2 条新观测。重复缓存、未知值不凑次数；数据缺口重新确认。同一异常只报一次，升级才再报。</p><p class="insight-note">Bark 发简短提醒，企业微信发详情；两路独立发送。发送结果不明时不自动重发。采集暂停时不判断。软件参考提醒，非厂家报警标准。</p><div class="insight-actions">${control('保存胎压设置','save')}</div><h4>胎压提醒历史</h4><p class="insight-note">最近 30 条，点击“读取胎压设置”更新。设置变化后重新确认。</p>${tyreData.history.map(row=>`<article class="rule-record"><p>${esc(time(row.created))}</p><p>${row.events.map(e=>esc(e.wheel)+' '+esc(e.pressure)+' kPa · '+({0:'恢复',1:'偏低',2:'明显偏低'}[e.level]||'未知')).join('<br>')}</p><p>Bark：${esc(deliveries[row.bark]||'未知')} · 企业微信：${esc(deliveries[row.wecom]||'未知')}</p></article>`).join('')||'<p class="insight-empty">还没有胎压提醒历史</p>'}`:'<p>读取后，可查看当前设置、切换载荷参考。</p>'}</section>`;
+    }
+    async function tyreAction(action){
+      if(!owner||tyreBusy||action==='save'&&!tyreData)return;
+      const identity=owner,token=++tyreSerial;
+      const payload=action==='save'?{action:'save',...tyreDraft,revision:tyreData.config.revision,context:identity}:undefined;
+      tyreBusy=true;tyreError='';tyreStatus='';paint();
+      try{
+        const result=await request('/api/insights/tyres',payload);
+        if(!valid(token,tyreSerial,identity))return;
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
+        tyreData=result;tyreDraft={enabled:result.config.enabled,load:result.config.load};
+        if(action==='save')tyreStatus='胎压设置已保存。后台从新观测重新确认。';
+      }catch(failure){if(valid(token,tyreSerial,identity))tyreError=failure.message+' 请重新读取核对后操作。';}
+      finally{if(valid(token,tyreSerial,identity)){tyreBusy=false;paint();}}
     }
     function paintRecords(){
       const target=node?.querySelector('#rule-records');if(!data||!target)return;
@@ -77,11 +100,18 @@
     function mount(container){
       const changed=owner!==context(),remount=node!==container;node=container;
       if(changed){owner=context();data=null;draft=blank();attempted=false;loading=false;busy=false;dirty=false;serial++;writeSerial++;error='';status='';preview=null;lastLoaded=0;rulePage=historyPage=0;}
+      if(changed){tyreData=tyreDraft=null;tyreBusy=false;tyreSerial++;tyreError=tyreStatus='';}
       if(changed||remount)paint();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;
       const el=event.target;
+      if(event.type==='change'&&tyreDraft&&(el.id==='tyre-load'||el.id==='tyre-enabled')){
+        if(el.id==='tyre-load')tyreDraft.load=el.value;else tyreDraft.enabled=el.checked;
+        tyreStatus='';paint();return true;
+      }
+      const tyreTarget=event.type==='click'?el.closest('[data-tyre]'):null;
+      if(tyreTarget&&!tyreTarget.disabled){tyreAction(tyreTarget.dataset.tyre);return true;}
       if(event.type==='change'&&el.id==='rule-history-filter'){historyFilter=el.value;historyPage=0;paintHistory();return true;}
       if((event.type==='input'||event.type==='change')&&Object.hasOwn(draft,el.name)){
         draft[el.name]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;dirty=true;preview=null;node.querySelector('#rule-preview-result')?.remove();return true;

@@ -16,6 +16,19 @@ from zeekr_control.parking_analytics import ParkingAnalytics
 
 
 class InsightsApiTests(unittest.TestCase):
+    def test_tyre_settings_require_context_revision_and_request_key(self):
+        code,result=self.get('/api/insights/tyres')
+        self.assertEqual(code,200)
+        self.assertEqual(result['config'],dict(enabled=True,load='light',revision=0))
+        payload=dict(context=result['context'],action='save',revision=0,enabled=True,load='full')
+        self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''},'/api/insights/tyres')[0],403)
+        self.assertEqual(self.post_ledger(dict(payload,context='old'),route='/api/insights/tyres')[0],400)
+        code,result=self.post_ledger(payload,route='/api/insights/tyres')
+        self.assertEqual(code,200);self.assertEqual(result['base'],290)
+        self.assertEqual(result['config']['revision'],1)
+        self.assertEqual(self.post_ledger(payload,route='/api/insights/tyres')[0],400)
+        self.assertEqual(self.get('/api/insights/tyres')[1]['config']['load'],'full')
+
     def test_travel_tools_api_validation_and_assets(self):
         for path in ('/api/insights/routes?date=2026-09-20','/api/insights/review?date=2026-09-20','/travel-insights.js','/navigation-state.js'):
             self.assertEqual(self.get(path)[0],200)
