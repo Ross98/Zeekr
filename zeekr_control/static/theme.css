@@ -76,3 +76,21 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
  .car-summary-stats>div{border:0;flex-wrap:wrap}
  .car-summary-stats>div>span{min-width:4em}
 }
+
+/* Shared-time charging chart: units and series stay distinct in both themes. */
+.charging-chart-combined{--charging-power:#2166c2;--charging-soc:#197457}
+[data-theme="dark"] .charging-chart-combined{--charging-power:#9bc5f8;--charging-soc:#80d4bd}
+.charging-series-legend{display:flex;flex-wrap:wrap;gap:12px 22px;margin:14px 0 8px;color:var(--ink);font-size:14px}
+.charging-series-legend label{display:flex;align-items:center;gap:7px;min-height:44px;cursor:pointer}
+.charging-series-legend input{width:17px;height:17px;margin:0}
+.charging-line-key{display:inline-block;width:24px;height:3px;background:var(--charging-power)}
+.charging-line-key.soc{background:var(--charging-soc)}
+.chart-line-power{stroke:var(--charging-power)}.chart-line-soc{stroke:var(--charging-soc)}
+.chart-point-power{fill:var(--charging-power)}.chart-point-soc{fill:var(--charging-soc)}
+.chart-point-power.selected{stroke:var(--charging-power)}.chart-point-soc.selected{stroke:var(--charging-soc)}
+.chart-axis-power{fill:var(--charging-power)}.chart-axis-soc{fill:var(--charging-soc)}
+.charging-chart-combined .charging-chart-head span{color:var(--night-secondary,#536b73)}
+.charging-chart-note{margin:10px 0 0;color:var(--night-secondary,#536b73);font-size:13px;line-height:1.7}
+.charging-chart-scroll:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
+.charging-chart-combined svg{min-width:620px;touch-action:pan-x pan-y}
+.charging-point-picker span{line-height:1.6}
