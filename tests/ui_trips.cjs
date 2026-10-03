@@ -131,7 +131,7 @@ const fs = require('node:fs');
     assert.doesNotMatch(await page.locator('#local-trip-activity').innerText(),/暂无进行中/,'Failure is not an idle state');
     await page.unroute('**/api/trips?**');
     await page.getByRole('button',{name:'重试',exact:true}).click();
-    await page.getByText('这一天暂无已结束行程。仍可查看全天采样。',{exact:true}).waitFor();
+    await page.getByText('未记录到行程、停车或充电；不代表当天没用车。',{exact:true}).waitFor();
     // Current status comes from the local summary; this overlay exercises presentation only.
     let activity='driving';
     await page.route('**/api/trips?**',async route=>{

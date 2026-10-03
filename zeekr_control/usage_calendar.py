@@ -44,14 +44,15 @@ class UsageCalendar:
         observations={}
         def samples():
             if upper<=window['start']:return
-            for record,raw in self.archive.iter_records(scope,vehicle,window['start'],upper):
-                day=by_date[date_label(record['observed_at'])]
-                day['reads']+=1
-                if day['first_read'] is None:day['first_read']=record['observed_at']
-                day['last_read']=record['observed_at']
+            for record,raw in self.archive.iter_records(scope,vehicle,max(0,window['start']-DAY),min(window['end']+DAY,now+1)):
+                day=by_date.get(date_label(record['observed_at']))
+                if day is not None:
+                    day['reads']+=1
+                    if day['first_read'] is None:day['first_read']=record['observed_at']
+                    day['last_read']=record['observed_at']
                 state=decode(raw)
                 stamp=record['state_time']
-                if not record['flags'] and stamp is not None and stamp<=now and record['change'] not in ('repeat','regression'):
+                if day is not None and not record['flags'] and stamp is not None and stamp<=now and record['change'] not in ('repeat','regression'):
                     parked=state['off'] is True and state['speed']==0 and state['charging'] is False
                     observations[stamp]=(day['date'],parked)
                 if stamp is not None and stamp>now:
@@ -82,16 +83,46 @@ class UsageCalendar:
                 event['bill']={k:v for k,v in bill.items() if k!='event'} if bill else None
                 event['needs_bill']=bill is None or bill['actual_cents'] is None
         trips=[e for e in events if e['kind']=='trip_end']
+        parking_places=[]
         if self.store and trips:
             from .trip_places import TripPlaces
             from .trip_place_names import TripPlaceNames
             from .commute_tags import CommuteTags
             names=TripPlaceNames(self.store)
             stats=names.apply(owner,vehicle,TripPlaces(self.events.path).query(vehicle,trips,names.regions(owner,vehicle)),CommuteTags(self.store,self.events.path).rule(owner,vehicle))
-            labels={p['id']:p['label'] for p in stats['places']}
+            from .daily_timeline import DailyTimeline
+            interpreter=DailyTimeline(self.events.path,self.archive,self.store)
+            corrections=self.store.read(owner,vehicle,'place_corrections')
+            corrections['_regions']=names.regions(owner,vehicle)
+            places={p['id']:p for p in stats['places']}
             for event in trips:
-                event['start_label']=labels.get(event.pop('start_place',None),'起点未知')
-                event['end_label']=labels.get(event.pop('end_place',None),'终点未知')
+                for side in ('start','end'):
+                    interpreted=interpreter._interpret(owner,vehicle,places.get(event.pop(side+'_place',None)),event['id'],side,corrections)
+                    event[side+'_label']=interpreted['label'] if interpreted['key'] else ('起点未知' if side=='start' else '终点未知')
+                    event[side+'_place_key']=interpreted['key']
+        if self.store and parking:
+            from .trip_endpoints import endpoint
+            from .trip_place_names import TripPlaceNames
+            from .daily_timeline import DailyTimeline
+            from .commute_tags import _distance
+            interpreter=DailyTimeline(self.events.path,self.archive,self.store)
+            corrections=self.store.read(owner,vehicle,'place_corrections')
+            corrections['_regions']=TripPlaceNames(self.store).regions(owner,vehicle)
+            named_places=stats['places'] if trips else []
+            with self.events.connect() as db:
+                if db is not None and db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone():
+                    for session in parking:
+                        match=endpoint(db,vehicle,session['start_time'],min(session['end_time'],session['start_time']+180000),True)
+                        if not match:continue
+                        point=dict(latitude=match[1][0],longitude=match[1][1],label='未命名地点',name_source='reference')
+                        nearby=[p for p in named_places if _distance(match[1],(p['latitude'],p['longitude']))<=150]
+                        if nearby:point=min(nearby,key=lambda p:_distance(match[1],(p['latitude'],p['longitude'])))
+                        from .daily_timeline import digest
+                        identity='parking_'+digest(session['id'])[:32]
+                        place=interpreter._interpret(owner,vehicle,point,identity,'end',corrections)
+                        if place['source']!='unknown' and window['start']<=session['end_time']<window['end']:
+                            parking_places.append(dict(key=place['key'],label=place['label'],date=date_label(session['end_time']),
+                                                       record_id=identity,duration_seconds=session['duration_seconds']))
         consumption,quality=attach(self.events,vehicle,window,now,events,booked,parking)
         for day in days:
             day['energy_cost']=summarize([e for e in consumption if date_label(e['end_time'])==day['date']])
@@ -107,7 +138,7 @@ class UsageCalendar:
                        pending_count=sum(e.get('needs_bill',False) for e in ended))
         ended=[e for e in events if window['start']<=e['end_time']<window['end']]
         driving=[e for e in ended if e['kind']=='trip_end']
-        return dict(distance_km=total(e['distance_km'] for e in driving),
+        return dict(parking_places=parking_places,distance_km=total(e['distance_km'] for e in driving),
                     distance_samples=sum(e['distance_km'] is not None for e in driving),
                     trip_count=len(driving),charge_count=sum(e['kind']=='charge_end' for e in ended),
                     usage_days=sum(d['trip_count']>0 for d in days),

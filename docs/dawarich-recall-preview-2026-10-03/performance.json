@@ -1,0 +1,56 @@
+{
+  "timeline": {
+    "milliseconds": [
+      128.19999999925494,
+      125.80000000074506,
+      121.20000000111759
+    ],
+    "bytes": 160810,
+    "records": 126
+  },
+  "history": {
+    "milliseconds": [
+      102.5,
+      103.59999999962747,
+      104.69999999925494
+    ],
+    "bytes": 38640,
+    "records": 64,
+    "page_records": 30,
+    "has_next_page": true
+  },
+  "year": {
+    "milliseconds": [
+      232.30000000074506,
+      230.2999999988824,
+      230
+    ],
+    "bytes": 232742,
+    "days": 366,
+    "trips": 366
+  },
+  "map": {
+    "elapsed_ms": 279.7000000011176,
+    "observations": 4181,
+    "long_tasks_ms": [
+      75
+    ],
+    "max_long_task_ms": 75,
+    "connected": true
+  },
+  "selection": {
+    "elapsed_ms": 341.90000000037253,
+    "long_tasks_ms": [],
+    "max_long_task_ms": 0
+  },
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpu": "Apple M4",
+    "browser": "151.0.7922.138",
+    "viewport": "1440x1080",
+    "tiles": "local synthetic intercepted",
+    "sizes": "4000 dense points plus 181 minute samples; 120 extra daily trips; 366 yearly trips; 19 observed parking days; 60 place-history trips"
+  },
+  "measured_at": "2026-10-03T11:27:14.175Z"
+}

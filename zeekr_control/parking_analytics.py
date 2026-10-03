@@ -144,13 +144,14 @@ class ParkingAnalytics:
         self.archive = archive
         self.database = database
 
-    def query(self, scope, vehicle, start, end, capacity=None):
+    def query(self, scope, vehicle, start, end, capacity=None, *, context_days=0):
         lower, _ = day_bounds(start)
         _, upper = day_bounds(end)
         if not 0 < upper-lower <= 31*86400000:
             raise ValueError('请选择不超过 31 天的停车观察范围。')
+        padding=context_days*86400000 if context_days else MAX_GAP_MS
         def samples():
-            for record, raw in self.archive.iter_records(scope, vehicle, lower-MAX_GAP_MS, upper+MAX_GAP_MS):
+            for record, raw in self.archive.iter_records(scope, vehicle, max(0,lower-padding), upper+padding):
                 climate = raw.get('additionalVehicleStatus', {})
                 climate = climate.get('climateStatus', {}) if isinstance(climate, dict) else {}
                 inside = numeric(climate.get('interiorTemp'), -80, 100) if isinstance(climate, dict) else None

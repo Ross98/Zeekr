@@ -73,6 +73,7 @@ class TripPlaces:
                 votes[place_id][candidate['label']]+=1
         for place_id,counts in votes.items():
             ranked=counts.most_common()
+            by_id[place_id]['candidate_conflict']=len(ranked)>1
             if len(ranked)==1 or ranked[0][1]>ranked[1][1]:by_id[place_id]['address_label']=ranked[0][0]
         routes = Counter()
         unknown = Counter()

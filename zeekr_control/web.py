@@ -45,6 +45,7 @@ from .release_info import read_release
 from .charge_comparison import ChargeComparison
 from .parameter_experiments import ParameterExperiments
 from .usage_calendar import UsageCalendar
+from .daily_timeline import DailyTimeline
 from .vehicle_life import VehicleLife
 from .data_quality import DataQuality
 from .vehicle_research import VehicleResearch, ResearchInputError, PUBLIC
@@ -82,6 +83,7 @@ class App:
         self.charge_comparison = ChargeComparison(self.database_path)
         self.experiments = ParameterExperiments(self.personal_store, self.archive_reader)
         self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader, store=self.personal_store)
+        self.daily_timeline = DailyTimeline(self.database_path,self.archive_reader,self.personal_store)
         self.vehicle_life = VehicleLife(self.personal_store)
         self.data_quality = DataQuality(self.archive_reader)
         self.vehicle_research = VehicleResearch(self.archive_reader, self.database_path)
@@ -472,6 +474,9 @@ class App:
                         'charge-management': lambda scope, car, *query: self.charge_manager.query(car, *query),
                         'compare': self.archive_reader.compare,
                         'report': self.usage_reports.query,
+                        'day-timeline': lambda scope, car, date, positions=False: self.daily_timeline.query(scope,car,date,owner=account_scope(session),positions=positions),
+                        'place-history': lambda scope,car,start,end,key,cursor=None:self.daily_timeline.history(scope,car,start,end,key,cursor,owner=account_scope(session)),
+                        'year-review': lambda scope,car,year:self.daily_timeline.year(scope,car,year,owner=account_scope(session)),
                         'calendar': lambda scope, car, date: self.usage_calendar.query(scope,car,date,owner=account_scope(session)),
                         'quality': self.data_quality.query,
                         'life': lambda scope, car, start, end=None: self.vehicle_life.query(account_scope(session),car,start,self.raw,self.read_at,end=end),
@@ -585,8 +590,8 @@ class App:
                 guard()
             else:
                 manager = {'ledger':self.charge_ledger,'rules':self.reminders,'tyres':self.tyre_notifications,'trip-tags':self.trip_tags,
-                           'experiments':self.experiments,'life':self.vehicle_life}[operation]
-                extra = {'scope':session_scope(session)} if operation=='experiments' else {}
+                           'experiments':self.experiments,'life':self.vehicle_life,'place-corrections':self.daily_timeline}[operation]
+                extra = {'scope':session_scope(session)} if operation in ('experiments','place-corrections') else {}
                 result = manager.update(account_scope(session), vehicle, data, guard=guard,**extra)
             result['context'] = context
             return result
@@ -843,6 +848,12 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.tracks(query.get('date', [''])[0], query.get('vehicle', [None])[0],
                                                      trip=query.get('trip', [None])[0]))
+                if url.path in ('/api/timeline','/api/place-history','/api/year-review','/api/place-corrections'):
+                    query=parse_qs(url.query,keep_blank_values=True)
+                    get=lambda key,default='':query.get(key,[default])[0]
+                    if url.path=='/api/place-history':return self.send(200,app.insights('place-history',get('start'),get('end'),get('key'),get('cursor') or None))
+                    if url.path=='/api/year-review':return self.send(200,app.insights('year-review',get('year')))
+                    return self.send(200,app.insights('day-timeline',get('date'),get('positions')=='1' and url.path=='/api/timeline'))
                 if url.path == '/api/trips':
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.trips(query.get('date', [''])[0], query.get('cursor', [None])[0]))
@@ -892,6 +903,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/charge-comparison.js': ('charge-comparison.js', 'text/javascript; charset=utf-8'),
                           '/parameter-experiments.js': ('parameter-experiments.js', 'text/javascript; charset=utf-8'),
                           '/vehicle-research.js': ('vehicle-research.js', 'text/javascript; charset=utf-8'),
+                          '/daily-recall.js': ('daily-recall.js','text/javascript; charset=utf-8'),
                           '/usage-calendar.js': ('usage-calendar.js', 'text/javascript; charset=utf-8'),
                           '/vehicle-life.js': ('vehicle-life.js', 'text/javascript; charset=utf-8'),
                           '/data-quality.js': ('data-quality.js', 'text/javascript; charset=utf-8'),
@@ -947,6 +959,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                 if self.path in ('/api/charging/manage/preview','/api/charging/manage/execute'):
                     owner = hashlib.sha256(self.token().encode()).hexdigest()
                     return self.send(200, app.manage_charges(self.path.rsplit('/',1)[1], data, owner))
+                if self.path == '/api/place-corrections':
+                    return self.send(200,app.update_insight_record('place-corrections',data))
                 if self.path == '/api/insights/ledger':
                     return self.send(200, app.update_insight_record('ledger',data))
                 if self.path == '/api/insights/tyres':

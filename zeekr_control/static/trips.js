@@ -3,7 +3,7 @@
 // Local summaries never load coordinates. Only the shared position permission does.
 let localTrips = null;
 let tripManagementOpen = false;
-const tripStatusLabels = {driving:'行程记录中', waiting:'停车确认中', ended:'已结束'};
+const tripStatusLabels = {driving:'行程记录中', waiting:'停车确认中', ended:'已结束',observed:'观测片段'};
 const tripTime = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {
   timeZone:'Asia/Shanghai', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false
 }).format(new Date(value)) : '未知';
@@ -25,17 +25,19 @@ function syncLocalTrips() {
 function localTripsPage() {
   syncLocalTrips();
   return `<div id="local-trips">
-    <div class="local-trip-tools"><div class="local-date-nav">${action('前一天','local-day-before','secondary')}${action('今天','local-today','secondary')}${action('后一天','local-day-after','secondary')}</div><div class="local-date-nav">${action(tripManagementOpen?'收起管理':'管理行程','local-manage','secondary')}${action('查询行程','local-reload','secondary','refresh')}</div></div>
+    <div class="local-trip-tools"><div class="local-date-nav">${action('前一天','local-day-before','secondary')}${action('今天','local-today','secondary')}${action('后一天','local-day-after','secondary')}</div><div class="local-date-nav">${action(tripManagementOpen?'收起管理':'管理行程','local-manage','secondary')}${action('查询行程','local-reload','secondary','refresh')}<button class="button secondary recall-mobile-map" data-recall-map>查看地图</button></div></div>
     ${tripManagementOpen?'<div id="trip-management"></div>':''}
     <div id="local-trip-activity" class="notice info" role="status"></div>
-    <div class="local-trip-layout"><section class="card local-trip-list-card"><div class="card-head"><h2>行程记录</h2><span class="subtle">北京时间</span></div><div id="local-trip-list"></div></section>
+    <div id="recall-summary">${recallSummary()}</div>${recallYearPanel()}
+    <div class="local-trip-layout"><section class="card local-trip-list-card"><div class="card-head"><h2>当天时间线</h2><span class="subtle">北京时间</span></div><div id="local-trip-list"></div></section>
     <section class="card local-trip-detail" id="local-trip-detail"></section></div>
-    <p class="section-note local-trip-note">本地采样仅覆盖后台记录期间。行程按结束日期归档；单趟路线包含跨午夜部分。路线为采样折线，坐标对齐仍待核验。</p>
+    <p class="section-note local-trip-note">本地采样仅覆盖后台记录期间。时间线显示跨日记录；里程按结束日期归档。单趟详情保留全程采样。路线为采样折线，坐标对齐仍待核验。</p>
   </div>`;
 }
 
 function localTripRow(trip) {
   const selected = localTrips.selection === trip.id;
+  if(trip.type)return `<button class="local-trip-row ${selected?'selected':''}" data-local-trip="${esc(trip.id)}" aria-pressed="${selected}"><span class="local-trip-row-head"><strong>${recallTypes[trip.type]}</strong><span>${trip.cross_midnight?'跨午夜 · ':''}${trip.partial?'部分记录':'已结束'}${recallNeedsReview(trip)?' · 地点待核对':''}</span></span><span>${esc(tripTime(trip.start_time))} — ${esc(tripTime(trip.end_time))}</span><span>${esc(trip.end_place?.label||'位置未知')}</span><span>${trip.type==='trip'?esc(tripNumber(trip.distance_km,' km'))+' · ':''}${esc(tripDuration(trip.duration_seconds))}</span></button>`;
   const status = tripStatusLabels[trip.status] || '已结束';
   return `<button class="local-trip-row ${selected?'selected':''}" data-local-trip="${esc(trip.id)}" aria-pressed="${selected}" aria-label="查看行程 ${esc(tripTime(trip.start_time))}，${esc(tripNumber(trip.distance_km,' km'))}">
     <span class="local-trip-row-head"><strong>${esc(tripTime(trip.start_time))}</strong>${pill(status,trip.status==='driving'?'good':trip.status==='waiting'?'warn':'')}</span>
@@ -48,13 +50,13 @@ function localTripRow(trip) {
 function renderLocalTripList() {
   const h = localTrips, target = $('#local-trip-list');
   if (!target) return;
-  const compact=(h.events?.length || 0)+(h.active?1:0)<=3&&!h.nextCursor&&!h.previous.length;
+  const compact=false;
   target.closest('.local-trip-layout')?.classList.toggle('compact',compact);
   const focusId = document.activeElement?.dataset.localTrip;
   const current = h.active ? `<div class="local-trip-list-label">当前记录</div>${localTripRow(h.active)}` : '';
-  const records = h.events?.length ? h.events.map(localTripRow).join('') : h.events === null ? (h.listError ? '' : h.queried ? '<p class="card-body subtle">正在读取行程…</p>' : '<p class="card-body subtle">选择日期，点击查询行程后显示记录。</p>') : '<p class="card-body subtle">这一天暂无已结束行程。仍可查看全天采样。</p>';
-  target.innerHTML = `<button class="local-trip-day ${h.selection==='day'?'selected':''}" data-local-trip="day" aria-pressed="${h.selection==='day'}">${icon('map')}<span>全天总览</span>${icon('arrow')}</button>${current}<div class="local-trip-list-label">已结束行程</div>${h.listError?`<p class="card-body unknown" role="alert">${esc(h.listError)} ${action('重试','local-reload','quiet')}</p>`:''}${records}
-    <div class="event-pagination local-trip-pagination"><button class="button secondary" data-action="local-prev" ${!h.previous.length||h.listBusy?'disabled':''}>上一页</button><span>第 ${h.previous.length+1} 页</span><button class="button secondary" data-action="local-next" ${!h.nextCursor||h.listBusy?'disabled':''}>下一页</button></div>`;
+  const records = h.events?.length ? h.events.map(localTripRow).join('') : h.events === null ? (h.listError ? '' : h.queried ? '<p class="card-body subtle">正在读取行程…</p>' : '<p class="card-body subtle">选择日期，点击查询行程后显示记录。</p>') : '<p class="card-body subtle">未记录到行程、停车或充电；不代表当天没用车。</p>';
+  target.innerHTML = `<button class="local-trip-day ${h.selection==='day'?'selected':''}" data-local-trip="day" aria-pressed="${h.selection==='day'}">${icon('map')}<span>全天总览</span>${icon('arrow')}</button>${current}<div class="local-trip-list-label">按记录时间排列</div>${h.listError?`<p class="card-body unknown" role="alert">${esc(h.listError)} ${action('重试','local-reload','quiet')}</p>`:''}${records}
+    ${h.timeline?.correction_can_undo?'<button class="button quiet" data-recall-undo>撤销最近地点修正</button>':''}${h.nextCursor||h.previous.length?`<div class="event-pagination local-trip-pagination"><button class="button secondary" data-action="local-prev" ${!h.previous.length||h.listBusy?'disabled':''}>上一页</button><span>第 ${h.previous.length+1} 页</span><button class="button secondary" data-action="local-next" ${!h.nextCursor||h.listBusy?'disabled':''}>下一页</button></div>`:''}`;
   if (focusId) [...target.querySelectorAll('[data-local-trip]')].find(button=>button.dataset.localTrip===focusId)?.focus({preventScroll:true});
 }
 
@@ -71,6 +73,7 @@ function localTripFacts() {
   const h = localTrips, trip = h.selected;
   if (h.selection === 'day') return `<div class="local-trip-intro"><h2>全天采样总览</h2><p class="subtle">${esc(trackDate)} · 选择行程记录，可单独查看这一趟路线。</p></div>`;
   if (!trip) return '<p class="card-body subtle">正在读取行程…</p>';
+  if(trip.type)return recallFacts(trip);
   const endLabel = trip.status==='ended'?'结束时间':trip.status==='waiting'?'停车观测':'最近观测';
   const delta = Number.isFinite(trip.start_soc)&&Number.isFinite(trip.end_soc) ? trip.end_soc-trip.start_soc : null;
   return `<div class="local-trip-intro"><div class="local-trip-title"><h2>单趟行程</h2>${pill(tripStatusLabels[trip.status]||'已结束')}</div>
@@ -79,11 +82,24 @@ function localTripFacts() {
     ${startEvidenceView(trip.start_evidence)}<p class="subtle local-record-note">${trip.partial?'行程记录：部分记录，起止或过程存在缺失。':'行程记录：未标记为部分记录。'}路线采样情况另列，不代表 GPS 路线完整。</p></div>`;
 }
 
+function renderLocalTripFacts() {
+  const target=$('#local-trip-facts');if(!target)return;
+  const same=target.dataset.record===localTrips.selection;
+  const editor=same&&recallCorrection?.context===recallContext()?$('#recall-correction'):null;
+  const history=same&&recallHistory?$('#recall-history'):null;
+  const focus=editor?.contains(document.activeElement)?document.activeElement:null;
+  target.innerHTML=localTripFacts();target.dataset.record=localTrips.selection;
+  if(editor&&$('#recall-correction'))$('#recall-correction').replaceWith(editor);
+  if(history&&$('#recall-history'))$('#recall-history').replaceWith(history);
+  if(!editor&&recallCorrection?.context===recallContext())recallCorrectionPaint();
+  if(focus?.isConnected)focus.focus({preventScroll:true});
+}
+
 function renderLocalTripDetail() {
   const target = $('#local-trip-detail');
   if (!target) return;
-  target.innerHTML = `<div id="local-trip-facts">${localTripFacts()}</div><div id="local-trip-route"></div>`;
-  renderLocalRoute();
+  if(!$('#local-trip-route'))target.innerHTML='<div id="local-trip-route"></div><div id="local-trip-facts"></div>';
+  renderLocalTripFacts();renderLocalRoute();
 }
 
 function localTripVisible(h) {
@@ -106,12 +122,12 @@ async function fetchLocalTrips(h) {
   const request=++h.listRequest;
   renderLocalTripList();
   try {
-    const result=await api(`/api/trips?date=${encodeURIComponent(trackDate)}${h.cursor?`&cursor=${encodeURIComponent(h.cursor)}`:''}`);
+    const [timeline,result]=await Promise.all([api(`/api/timeline?date=${encodeURIComponent(trackDate)}${showPosition?'&positions=1':''}`),api(`/api/trips?date=${encodeURIComponent(trackDate)}`)]);
+    result.events=timeline.records;result.next_cursor=null;result.revision=timeline.revision;
     if (localTrips!==h || request!==h.listRequest) return;
-    if(h.revision!==undefined&&result.revision!==h.revision&&h.selection!=='day'&&h.selection!=='current'){
-      clearLocalRoute();h.selection='day';h.selected=null;h.notice='行程记录已变化，已回到全天总览。';renderLocalTripDetail();
-    }
-    h.revision=result.revision;
+    if(h.revision!==undefined&&h.revision!==result.revision){recallHistory=null;if(recallCorrection){recallCorrection.preview=null;recallCorrection.message='记录已更新，请重新预览后保存。';}}
+    h.revision=result.revision;h.timeline=timeline;h.personalRevision=window.recallPersonalRevision;
+    if(h.restoreSelection){h.selection=h.restoreSelection;h.restoreSelection=null;}
     h.events=result.events || [];h.active=result.active;h.nextCursor=result.next_cursor;
     if (h.selection==='current' && (!h.active || h.active.start_time!==h.selected?.start_time)) {
       const completed=h.events.find(event=>event.start_time===h.selected?.start_time);
@@ -119,15 +135,18 @@ async function fetchLocalTrips(h) {
       clearLocalRoute();h.notice='进行中记录已更新，请查看已结束行程。';
       renderLocalTripDetail();
     } else if (h.selection!=='day') {
-      h.selected=h.selection==='current'?h.active:h.events.find(event=>event.id===h.selection) || h.selected;
+      h.selected=h.selection==='current'?h.active:h.events.find(event=>event.id===h.selection) || null;
     }
+    if(h.selection!=='day'&&!h.selected){h.selection='day';clearLocalRoute();}
   } catch(error) {
     if (localTrips===h && request===h.listRequest) h.listError=error.message;
   } finally {
     if(request===h.listRequest)h.listBusy=false;
     if (localTripVisible(h) && request===h.listRequest) {
       renderLocalTripList();renderLocalTripActivity();
-      if ($('#local-trip-facts')) $('#local-trip-facts').innerHTML=localTripFacts();
+      if($('#recall-summary'))$('#recall-summary').innerHTML=recallSummary();
+      renderLocalTripFacts();
+      persistNavigation();
     }
   }
 }
@@ -135,7 +154,10 @@ async function fetchLocalTrips(h) {
 function mountLocalTrips() {
   const h=syncLocalTrips();
   renderLocalTripList();renderLocalTripActivity();renderLocalTripDetail();
+  $('#local-trip-list').scrollTop=h.listScroll||0;
   if(tripManagementOpen)tripManager.mount($('#trip-management'));
+  recallPaintYear();
+  if(h.queried&&h.personalRevision!==window.recallPersonalRevision)loadLocalTrips(true);
   if(h.queried&&showPosition&&!h.route)loadLocalRoute();
 }
 
@@ -152,9 +174,10 @@ function refreshLocalTrips() {
 function clearLocalRoute() {
   stopLocalPlayback();
   localTrips.routeRequest++;localTrips.route=null;localTrips.routeError='';localTrips.routeBusy=false;
-  localTrips.index=0;localTrips.viewport=null;localTrips.layers=null;
+  localTrips.index=0;localTrips.viewport=null;localTrips.fitSelection=true;
+  if(localTrips.layers)localTrips.layers.remove();localTrips.layers=null;
   trackData=null;playback=[];
-  if (map) {map.remove();map=null;mapMarker=null;}
+  if(mapMarker){mapMarker.remove();mapMarker=null;}
 }
 
 async function loadLocalRoute(force=false) {
@@ -164,7 +187,13 @@ async function loadLocalRoute(force=false) {
   const selection=h.selection, request=++h.routeRequest;
   if (!h.route) renderLocalRoute();
   try {
-    const result=await api(`/api/tracks?date=${encodeURIComponent(trackDate)}${selection==='day'?'':`&trip=${encodeURIComponent(selection)}`}`);
+    let result;
+    if(h.selected?.type&&h.selected.type!=='trip'){
+      if(!h.selected.position){await loadLocalTrips(true);if(!localTripVisible(h)||request!==h.routeRequest)return;}
+      const p=h.selected?.position,t=p?.state_time;
+      const observations=p?[{...p,state_time:t,observed_time:t,trusted:true,plottable:true,time_label:tripTime(t),time_source:'记录位置'}]:[];
+      result={observations,segments:[],gaps:[],count:observations.length};
+    }else result=await api(`/api/tracks?date=${encodeURIComponent(trackDate)}${selection==='day'?'':`&trip=${encodeURIComponent(selection)}`}`);
     if (!localTripVisible(h)||!showPosition||request!==h.routeRequest||selection!==h.selection) return;
     if (JSON.stringify(result)!==JSON.stringify(h.route)) {
       const point=tripPointKey(playback[h.index]);
@@ -174,6 +203,7 @@ async function loadLocalRoute(force=false) {
       h.index=matched>=0?matched:Math.min(h.index,Math.max(0,next.length-1));
       playback=next;
       renderLocalRoute();
+      if(h.fitSelection){fitLocalRoute();h.fitSelection=false;}
     }
   } catch(error) {
     if (localTripVisible(h)&&request===h.routeRequest&&showPosition) {h.routeError=error.message;renderLocalRoute();}
@@ -193,7 +223,7 @@ function localRouteQuality(result, density) {
     ${RouteQuality.summary(density)}
     ${result.truncated?'<p class="unknown">仅展示前 5000 条采样，后续记录未展示；末个采样点不代表行程终点。</p>':''}
     <p class="subtle">${!result.count?'本次范围没有采样，无法判断路线情况。':gaps.length?'存在采样缺口，地图分段展示。':'当前记录未发现超过阈值的间断；不能据此确认实际路线完整。'}首末标记仅代表可绘采样点。</p>
-    ${gaps.length?`<details class="local-gap-details"><summary>查看 ${gaps.length} 处采样间断</summary><ul>${gaps.map(gap=>`<li><span>${esc(tripTime(gap.start_time))} → ${esc(tripTime(gap.end_time))}</span><strong>${esc(tripDuration(gap.duration_seconds))}</strong><span class="subtle">${esc(gap.reason || '间断原因未确认')}</span></li>`).join('')}</ul></details>`:''}`;
+    ${gaps.length?`<details class="local-gap-details" data-detail="recall-gaps"><summary>查看 ${gaps.length} 处采样间断</summary><ul>${gaps.map(gap=>`<li><span>${esc(tripTime(gap.start_time))} → ${esc(tripTime(gap.end_time))}</span><strong>${esc(tripDuration(gap.duration_seconds))}</strong><span class="subtle">${esc(gap.reason || '间断原因未确认')}</span></li>`).join('')}</ul></details>`:''}`;
 }
 
 function renderLocalRouteStatus() {
@@ -207,19 +237,24 @@ function renderLocalRoute() {
   if (!showPosition) {target.innerHTML=privacyGate(true);return;}
   const result=h.route;
   if (!result) {
+    if(map&&map.getContainer()===$('#local-trips #map')){renderLocalRouteStatus();return;}
+    if(map){map.remove();map=null;mapMarker=null;}
     target.innerHTML=`<div class="local-route-toolbar">${action('隐藏位置','hide-position','secondary')}</div><div id="local-route-message" class="card-body" role="status"></div>`;
     renderLocalRouteStatus();return;
   }
-  const existing=!!map && !!$('#local-trips #map');
+  const existing=!!map && map.getContainer()===$('#local-trips #map');
+  if(map&&!existing){map.remove();map=null;mapMarker=null;}
   if (!existing) {
-    target.innerHTML=`<div class="local-route-toolbar"><span class="subtle">${h.selection==='day'?'全天采样':'本趟采样'} · 北京时间</span><div class="local-route-actions">${action('查看全程','local-fit','secondary')}${action('隐藏位置','hide-position','secondary')}</div></div><div id="local-route-message" class="card-body" role="status"></div><div id="local-route-quality" class="local-route-quality"></div>
-      <div id="map" class="map-canvas" aria-label="本地采样轨迹地图"></div><div id="map-status" class="map-status"></div>
+    target.innerHTML=`<div class="local-route-toolbar"><span class="subtle">${h.selection==='day'?'全天采样':'本趟采样'} · 北京时间</span><div class="local-route-actions">${action('查看全程','local-fit','secondary')}${action('隐藏位置','hide-position','secondary')}</div></div><div id="local-route-message" class="card-body" role="status"></div>
+      <div id="map" class="map-canvas" aria-label="本地采样轨迹地图"></div><div id="map-status" class="map-status"></div><div id="local-route-quality" class="local-route-quality"></div>
       <div class="track-timeline"><div id="playback-label" class="subtle" aria-live="off">暂无可回看的位置</div><input id="playback" type="range" aria-label="轨迹回看位置" min="0" max="0" value="0" disabled>
       <div class="local-playback-controls">${action('上一点','local-step-back','secondary')}${action('播放','local-play','secondary')}${action('下一点','local-step-next','secondary')}<label>速度 <select id="local-playback-speed" class="select" aria-label="回放速度"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></label></div><p class="subtle local-playback-note">1× 每秒前进一个采样点；按记录回看，不代表实际车速。缺口直接跳到下一段。</p></div>
-      <details class="local-observation-details"><summary>采样详情</summary><div id="local-observation-list" class="point-list"></div></details>`;
+      <details class="local-observation-details" data-detail="recall-observations"><summary>采样详情</summary><div id="local-observation-list" class="point-list"></div></details>`;
   }
   const density=RouteQuality.analyze(result.observations,result.segments,'state_time');
+  const gapOpen=$('.local-gap-details')?.open;
   $('#local-route-quality').innerHTML=localRouteQuality(result,density);
+  if($('.local-gap-details'))$('.local-gap-details').open=!!gapOpen;
   $('#local-observation-list').innerHTML=result.observations.map(point=>`<div class="point"><span>${esc(point.time_label)}<span class="field-path">${esc(point.time_source)}</span></span>${pill(point.trusted?'接口标记可信':'位置未确认',point.trusted?'':'warn')}</div>`).join('');
   $('#map-status').textContent=`${result.count} 条观测 · ${result.segments.length} 个可信片段 · 时间以缓存状态时间为准，缺失时使用本机观测时间`;
   playback=result.observations.filter(point=>point.plottable);
@@ -228,11 +263,12 @@ function renderLocalRoute() {
   renderLocalRouteStatus();
   if (!playback.length) {
     $('#map').classList.add('map-empty-state');
-    $('#map').innerHTML=empty(result.count?'没有可绘制的位置':h.selection==='day'?'这一天还没有本地记录':'本趟暂无位置采样',result.count?'观测已保存，但坐标无效或坐标系尚未适配。':'本次范围内没有采样，已有行程摘要仍可查看。','map');
+    if(!map)$('#map').innerHTML=empty(result.count?'没有可绘制的位置':h.selection==='day'?'这一天还没有本地记录':'本趟暂无位置采样',result.count?'观测已保存，但坐标无效或坐标系尚未适配。':'本次范围内没有采样，已有行程摘要仍可查看。','map');
     updateLocalPlaybackControls();return;
   }
   $('#map').classList.remove('map-empty-state');
-  if (!existing) createMap([playback[0].latitude,playback[0].longitude],13);
+  if(!map)$('#map').innerHTML='';
+  if (!map) createMap([playback[0].latitude,playback[0].longitude],13);
   if (h.layers) h.layers.remove();
   h.layers=L.layerGroup().addTo(map);
   density.parts.forEach(part=>{
@@ -307,7 +343,8 @@ function prepareLocalTripRender() {
   if (!localTrips) return;
   if (map && $('#local-trips')) localTrips.viewport={center:map.getCenter(),zoom:map.getZoom()};
   stopLocalPlayback();
-  if (!showPosition) {localTrips.routeRequest++;localTrips.route=null;localTrips.routeBusy=false;localTrips.routeError='';localTrips.index=0;localTrips.viewport=null;}
+  if($('#local-trip-list'))localTrips.listScroll=$('#local-trip-list').scrollTop;
+  if (!showPosition) {for(const row of localTrips.events||[])delete row.position;localTrips.routeRequest++;localTrips.route=null;localTrips.routeBusy=false;localTrips.routeError='';localTrips.index=0;localTrips.viewport=null;}
 }
 
 function handleLocalTripAction(target) {
@@ -318,9 +355,9 @@ function handleLocalTripAction(target) {
     if(h.selection===selection)return true;
     const trip=selection==='current'?h.active:h.events?.find(event=>event.id===selection);
     if(selection!=='day'&&!trip)return true;
-    clearLocalRoute();h.selection=selection;h.selected=trip || null;h.notice='';
+    clearLocalRoute();h.selection=selection;h.selected=trip || null;h.notice='';recallCorrection=null;recallHistory=null;
     renderLocalTripList();renderLocalTripDetail();
-    if(showPosition)loadLocalRoute();return true;
+    persistNavigation();if(showPosition)loadLocalRoute();return true;
   }
   switch(target.dataset.action) {
     case 'local-manage':tripManagementOpen=!tripManagementOpen;stopLocalPlayback();render();return true;

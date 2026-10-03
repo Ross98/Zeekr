@@ -275,7 +275,7 @@
       }
       return true;
     }
-    return {mount,handle,openField,openExperiment,openTool,openDate,currentTool:()=>tab};
+    return {mount,handle,openField,openExperiment,openTool,openDate,openLedgerEvent:ledgerPage.openEvent,currentTool:()=>tab};
   }
   root.InsightsPage={create,toolsFor};
 })(window);

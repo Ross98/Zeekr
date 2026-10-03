@@ -123,6 +123,7 @@ async function api(path, data, timeout = 50000) {
     let value;
     try { value = await response.json(); } catch { throw Error('本机服务响应无效，请重试。'); }
     if (!response.ok) throw Error(value.error || '请求失败，请稍后重试。');
+    if(data&&value.context===state?.insights_context&&['/api/place-corrections','/api/insights/ledger','/api/insights/trip-tags'].includes(path)&&data.operation!=='preview'&&!String(data.action||'').endsWith('preview'))window.recallInvalidate?.();
     return value;
   } catch(error) {
     if(error.name==='AbortError') throw Error('本机服务响应超时，请稍后重试。');
@@ -741,6 +742,7 @@ function render() {
   const insightsFocus = insightsNode?.contains(document.activeElement) ? document.activeElement : null;
   const tripTagsNode = page === 'tracks' && trackSource === 'tags' ? $('#trip-tags-workspace') : null;
   const tripTagsFocus = tripTagsNode?.contains(document.activeElement) ? document.activeElement : null;
+  const recallFocus=$('#recall-correction')?.contains(document.activeElement)?{id:document.activeElement.id,start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const vehicleFocus = page === 'car' ? vehiclePage.focusSnapshot() : null;
   prepareLocalTripRender();
   const fieldFocus = $('#field-results') ? reviewFocusSnapshot() : null;
@@ -784,7 +786,8 @@ function render() {
   if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);
   if (page === 'energy' && (!sectionTask||sectionTask==='records') && state?.model) { chargeManager.mount($('#charge-management')); ensureChargingAnalytics(chargingSelection); }
-  if (page === 'tracks' && trackSource === 'local') mountLocalTrips();
+  if (page === 'tracks' && trackSource === 'local'){mountLocalTrips();openDetails.filter(key=>key.startsWith('recall-')).forEach(key=>{const detail=$(`details[data-detail="${key}"]`);if(detail)detail.open=true;});if(focusedDetail?.startsWith('recall-'))$(`details[data-detail="${focusedDetail}"] > summary`)?.focus({preventScroll:true});}
+  if(recallFocus){const field=document.getElementById(recallFocus.id);field?.focus({preventScroll:true});if(typeof recallFocus.start==='number')field?.setSelectionRange?.(recallFocus.start,recallFocus.end);}
   if(page==='overview')overviewDashboard.mount();else overviewDashboard.suspend();
 }
 
@@ -983,6 +986,9 @@ function navigationSnapshot(){
   for(const [key,selector] of Object.entries(navigationFields)){
     const el=visibleNavigationField(selector);if(el)snapshot[key]=el.value;
   }
+  if(page==='tracks'&&trackSource==='local'){const selected=localTrips?.restoreSelection||localTrips?.selection;if(selected&&selected!=='day')snapshot.record=selected;}
+  if($('.recall-year-panel')?.open){snapshot.year=$('#recall-year').value;if(recallYear?.context===state?.insights_context){snapshot.review='1';snapshot.heat=recallYear.mode;}}
+  if(page==='tracks'&&trackSource==='local'&&localTrips?.queried)snapshot.q='1';
   const task=snapshot.t,query=navigationQueries[task];
   if(query&&visibleNavigationField(query[0]))snapshot.q='1';
   else if(restoringQuery?.signature===window.NavigationState.encode(snapshot))snapshot.q='1';
@@ -1010,6 +1016,8 @@ function restoreNavigation(snapshot,position=0){
   if(['car','energy','settings','tracks'].includes(page)&&snapshot.t&&
      (snapshot.t==='records'&&page==='energy'||window.InsightsPage.toolsFor(page).some(t=>t.id===snapshot.t)))sectionTask=snapshot.t;
   render();
+  if(page==='tracks'&&trackSource==='local'&&(snapshot.record||snapshot.q==='1')){const h=syncLocalTrips();h.restoreSelection=snapshot.record||'day';loadLocalTrips(true).then(()=>{if(h===localTrips&&showPosition)loadLocalRoute();});}
+  if(snapshot.year&&$('#recall-year')){$('#recall-year').value=snapshot.year;$('.recall-year-panel').open=true;if(snapshot.review==='1'){$('#recall-year-mode').value=snapshot.heat||'distance';recallLoadYear();}}
   if(page==='energy'){
     chargeQueryMode=snapshot.range||'day';
     if(snapshot.end)chargeEndDate=snapshot.end;

@@ -41,7 +41,7 @@
         if(linked)choices.unshift(linked);
         else if(entry?.source_event_removed)choices.unshift({id:entry.source_event_id,removed:true,recorded:true});
       }
-      node.innerHTML=`<section class="insight-hero"><div><h2>充电账本</h2><p>真实账单与估算各自列清，留空就保持未知。</p></div><span class="insight-source">手工记录 · 本机保存</span></section>
+      node.innerHTML=`<section class="insight-hero"><div><h2>充电账本</h2>${root.recallCanReturn?.()?'<button class="button secondary" data-recall-return>返回原充电记录</button>':''}<p>真实账单与估算各自列清，留空就保持未知。</p></div><span class="insight-source">手工记录 · 本机保存</span></section>
         <section class="card insight-panel"><div class="insight-toolbar"><label>账本月份<input id="ledger-month" type="month" value="${esc(month)}" ${busy?'disabled':''}></label>${button('读取账本','load',!owner||!month,'id="ledger-load"')}${button('撤销上一步','undo',!data?.can_undo)}</div>${!data&&!loading&&owner?'<p class="insight-note">选择查询条件后，点击“读取账本”显示结果。</p>':''}${loading?'<p role="status">正在读取账本…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<div class="notice error" role="alert">${esc(error)}</div>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可管理账本。</p>':''}${data?`<p id="ledger-range" class="insight-note">账本月份 ${data.window.start_date.slice(0,7)} · 按账单日期归期。本月有 ${data.events.length} 条结束充电记录，其中 ${data.events.filter(row=>row.recorded).length} 条已关联账单。未关联充电记录 ${data.events.filter(row=>!row.recorded).length} 条，费用尚未录入；未关联不代表免费充电。</p>`:''}</section>
         ${data?`${pendingSection()}<div class="insight-metrics report-totals"><div id="ledger-actual-total"><span>已填实际金额</span><strong>${money(t.actual_cents)} <small>元</small></strong><small>${t.actual_count} 笔账单</small></div><div><span>其余未填账单的估算</span><strong>${money(t.unbilled_estimated_cents)} <small>元</small></strong><small>${t.estimated_count} 笔估算；未并入实际金额</small></div><div><span>已录账单中费用未知</span><strong>${t.unpriced_count} <small>笔</small></strong><small>缺少实际金额或估算依据</small></div><div><span>已录桩端计量电量</span><strong>${num(t.metered_kwh)} <small>kWh</small></strong><small>${t.metered_count} 笔有计量值</small></div></div>
         <section class="card insight-panel"><div class="insight-heading"><h3>本月账单</h3>${button('新增账单','new')}</div><div id="ledger-entries"></div></section>
@@ -163,7 +163,14 @@
       }
       return true;
     }
-    return {mount,handle};
+    async function openEvent(eventId,date){
+      month=date.slice(0,7);const identity=context();
+      if(!await load()||identity!==context())return;
+      const bill=data.entries.find(row=>row.source_event_id===eventId);
+      if(bill)edit(bill.id);
+      else if(data.events.some(row=>row.id===eventId)){draft={...blank(date),event_id:eventId};editorOpen=true;error='';paint();openEditor('amount');}
+    }
+    return {mount,handle,openEvent};
   }
   root.ChargeLedgerPage={create};
 })(window);
