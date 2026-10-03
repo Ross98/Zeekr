@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 FEATURES={
+ 'energy-cost':dict(label='每日用电成本估算',files=['zeekr_control/energy_costs.py','zeekr_control/usage_calendar.py','zeekr_control/static/usage-calendar.js','zeekr_control/static/navigation-state.js','zeekr_control/static/insights.css']),
  'calendar-review':dict(label='日历用车回顾与充电对账',files=['zeekr_control/usage_calendar.py','zeekr_control/static/usage-calendar.js','zeekr_control/static/insights.css','zeekr_control/static/navigation-state.js','zeekr_control/static/app.js','zeekr_control/web.py']),
  'overview-layout':dict(label='桌面总览与记录待办',files=['zeekr_control/web.py','zeekr_control/static/overview-dashboard.js','zeekr_control/static/app.js','zeekr_control/static/app.css','zeekr_control/static/index.html']),
  'notification-brief':dict(label='行程与充电通知精简',files=['zeekr_control/report_render.py']),

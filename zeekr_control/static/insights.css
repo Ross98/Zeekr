@@ -201,3 +201,5 @@
 
 #insights-workspace .calendar-panel{--calendar-level-one:#f5f9f7;--calendar-level-two:#eaf2ed}
 [data-theme="dark"] #insights-workspace .calendar-panel{--calendar-level-one:#1d2e2a;--calendar-level-two:#203b31}
+
+.calendar-summary{grid-template-columns:repeat(5,minmax(0,1fr))}@media(max-width:600px){.calendar-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.calendar-summary>[data-calendar-mode="energy"]{grid-column:1/-1}}

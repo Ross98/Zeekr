@@ -46,6 +46,24 @@ class UsageCalendarTests(unittest.TestCase):
         self.assertIsNone(result['totals']['distance_km'])
         self.assertEqual(result['totals']['trip_count'],0)
 
+    def test_cost_basis_uses_prior_month_bill_without_changing_daily_payments(self):
+        from zeekr_control.personal_store import PersonalStore
+        from zeekr_control.charge_ledger import ChargeLedger
+        from zeekr_control.usage_calendar import UsageCalendar
+        store=PersonalStore(self.root/'personal.sqlite3')
+        self.add('charge',kind='charge_end',day='2026-08-31',start_soc=0,end_soc=20,soc_delta=20)
+        self.add('trip',day='2026-09-15',start_soc=20,end_soc=10,soc_delta=-10)
+        ChargeLedger(store,self.db).update('owner','car',dict(action='save',revision=0,event_id='charge',date='2026-08-31',source='home',amount='25',metered_kwh='20',parking_fee='9'))
+        self.calendar=UsageCalendar(self.db,self.archive,clock=lambda:self.now,store=store)
+        result=self.query()
+        self.assertEqual(result['days'][14]['energy_cost']['estimated_cents'],1250)
+        self.assertEqual(result['totals']['energy_cost']['known_kwh'],8.6)
+        self.assertIsNone(result['totals']['actual_cents'])
+        self.assertEqual(result['totals']['energy_cost']['parking_samples'],0)
+        foreign=self.calendar.query('other','car','2026-09-01',owner='other')
+        self.assertIsNone(foreign['totals']['energy_cost']['estimated_cents'])
+        self.assertNotIn('PRIVATE',json.dumps(result))
+
     add=report_fixtures.UsageReportsTests.add
 
     def setUp(self):

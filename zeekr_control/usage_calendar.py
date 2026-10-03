@@ -6,6 +6,8 @@ from .snapshot_archive import BEIJING
 from .usage_events import UsageEvents, total
 from .usage_reports import DAY, date_label, period_window
 from .vehicle_state import decode
+from .parking_analytics import analyze_parking
+from .energy_costs import attach, summarize
 
 
 class UsageCalendar:
@@ -40,20 +42,22 @@ class UsageCalendar:
                     day['partial_count']+=int(event['partial'])
         upper=min(window['end'],now+1)
         observations={}
-        if upper>window['start']:
+        def samples():
+            if upper<=window['start']:return
             for record,raw in self.archive.iter_records(scope,vehicle,window['start'],upper):
                 day=by_date[date_label(record['observed_at'])]
                 day['reads']+=1
                 if day['first_read'] is None:day['first_read']=record['observed_at']
                 day['last_read']=record['observed_at']
-                stamp=record['state_time']
-                if record['flags'] or stamp is None or stamp>now or record['change'] in ('repeat','regression'):
-                    continue
                 state=decode(raw)
-                # Exact positive evidence only; unknown speed or charging does
-                # not imply a parked vehicle. A later revision replaces state.
-                parked=state['off'] is True and state['speed']==0 and state['charging'] is False
-                observations[stamp]=(day['date'],parked)
+                stamp=record['state_time']
+                if not record['flags'] and stamp is not None and stamp<=now and record['change'] not in ('repeat','regression'):
+                    parked=state['off'] is True and state['speed']==0 and state['charging'] is False
+                    observations[stamp]=(day['date'],parked)
+                if stamp is not None and stamp>now:
+                    record=dict(record,flags=record['flags']+['future_time'])
+                yield dict(record=record,state=state)
+        parking=analyze_parking(samples(),window['start'],upper)['sessions']
         for stamp,(observed_date,parked) in observations.items():
             day=by_date[observed_date];day['effective_states']+=1
             if parked:
@@ -62,12 +66,12 @@ class UsageCalendar:
                 day['parking_last']=stamp if day['parking_last'] is None else max(day['parking_last'],stamp)
         for day in days:
             if day['reads']:day['coverage']='observed' if day['effective_states'] else 'limited'
-        totals,revision=self.enrich(owner or scope,vehicle,window,days,events)
+        totals,revision=self.enrich(owner or scope,vehicle,window,days,events,now,parking)
         return dict(window=window,as_of=now,weekday_offset=datetime.fromtimestamp(window['start']/1000,BEIJING).weekday(),
                     days=days,events=events,totals=totals,ledger_revision=revision,
                     history_quality={'unreadable_or_undated':found['unreadable_or_undated']})
 
-    def enrich(self,owner,vehicle,window,days,events):
+    def enrich(self,owner,vehicle,window,days,events,now,parking):
         saved=self.store.read(owner,vehicle,'charges') if self.store else dict(records=[],revision=0)
         entries=[dict(r['body'],id=r['id']) for r in saved['records'] if not r['deleted']]
         booked={r['event']['id']:r for r in entries if isinstance(r.get('event'),dict)}
@@ -88,7 +92,9 @@ class UsageCalendar:
             for event in trips:
                 event['start_label']=labels.get(event.pop('start_place',None),'起点未知')
                 event['end_label']=labels.get(event.pop('end_place',None),'终点未知')
+        consumption,quality=attach(self.events,vehicle,window,now,events,booked,parking)
         for day in days:
+            day['energy_cost']=summarize([e for e in consumption if date_label(e['end_time'])==day['date']])
             ended=[e for e in events if e['end_date']==day['date']]
             driving=[e for e in ended if e['kind']=='trip_end']
             bills=[r for r in entries if r['date']==day['date']]
@@ -105,6 +111,9 @@ class UsageCalendar:
                     distance_samples=sum(e['distance_km'] is not None for e in driving),
                     trip_count=len(driving),charge_count=sum(e['kind']=='charge_end' for e in ended),
                     usage_days=sum(d['trip_count']>0 for d in days),
+                    energy_cost=summarize([e for e in consumption if window['start']<=e['end_time']<window['end']]),
+                    energy_cost_quality=quality,
+                    parking_costs=[e for e in consumption if e['kind']=='parking'],
                     actual_cents=total(d['actual_cents'] for d in days),
                     actual_count=sum(d['actual_count'] for d in days),
                     unpriced_count=sum(d['unpriced_count'] for d in days),
