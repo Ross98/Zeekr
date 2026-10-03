@@ -49,6 +49,9 @@ def cached_names(db, vehicle, events):
 class TripPlaceNames:
     def __init__(self,store):self.store=store
 
+    def regions(self,owner,vehicle):
+        return [r for r in self.store.read(owner,vehicle,'place_names')['records'] if not r['deleted']]
+
     def apply(self,owner,vehicle,stats,rule):
         saved=self.store.read(owner,vehicle,'place_names')
         records=[r for r in saved['records'] if not r['deleted']]
@@ -60,9 +63,9 @@ class TripPlaceNames:
             bucket=cell(point)
             candidates=[r for delta in NEIGHBOURS for r in buckets.get(tuple(a+b for a,b in zip(bucket,delta)),())]
             nearby=sorted((_distance(point,(r['body']['latitude'],r['body']['longitude'])),r['id'],r)
-                          for r in candidates)
-            if nearby and nearby[0][0]<=stats['radius_m']:
-                record=nearby[0][2];place.update(label=record['body']['name'],name_source='manual',manual_name_id=record['id']);continue
+                          for r in candidates if _distance(point,(r['body']['latitude'],r['body']['longitude']))<=r['body'].get('radius_m',150)+1e-7)
+            if nearby:
+                record=nearby[0][2];place.update(label=record['body']['name'],name_source='manual',manual_name_id=record['id'],name_radius_m=record['body'].get('radius_m',150));continue
             matches=[]
             if not rule.get('deleted'):
                 for key,label in (('home','家'),('work','公司')):
@@ -75,8 +78,43 @@ class TripPlaceNames:
         for place in stats['places']:place.pop('address_label',None)
         return dict(stats,name_revision=saved['revision'],name_can_undo=saved['can_undo'])
 
+    def preview(self,owner,vehicle,data,stats):
+        place=next((p for p in stats['places'] if p['id']==data.get('place_id')),None)
+        if not place or place['name_key']!=data.get('place_key'):raise ValueError('地点分组已变化，请重新读取后命名。')
+        name=data.get('name');radius=data.get('radius_m',150)
+        if not isinstance(name,str) or not 1<=len(name.strip())<=40 or any(ord(c)<32 for c in name):raise ValueError('地点名称需为 1–40 字，不能含换行或控制字符。')
+        if type(radius) is not int or not 25<=radius<=150:raise ValueError('命名范围应为 25–150 米的整数。')
+        saved=self.store.read(owner,vehicle,'place_names')
+        if data.get('revision')!=saved['revision']:raise ValueError('地点名称已有更新，请重新读取。')
+        identity=place['manual_name_id'] or place['name_key']
+        old=next((r for r in saved['records'] if r['id']==identity and not r['deleted']),None)
+        anchor=(old['body']['latitude'],old['body']['longitude']) if old else (place['latitude'],place['longitude'])
+        extent=max(radius,old['body'].get('radius_m',150) if old else radius)
+        affected={}
+        for sample in stats.get('_endpoints',[]):
+            distance=_distance(anchor,sample['point'])
+            if distance<=extent+1e-7:
+                row=affected.setdefault(sample['event_id'],dict(id=sample['event_id'],sides=[],within_range=False))
+                row['sides'].append(sample['side']);row['within_range']|=distance<=radius+1e-7
+        conflicts=[dict(name=r['body']['name'],radius_m=r['body'].get('radius_m',150)) for r in saved['records']
+                   if not r['deleted'] and r['id']!=identity and _distance(anchor,(r['body']['latitude'],r['body']['longitude']))<=radius+r['body'].get('radius_m',150)]
+        body=dict(name=name.strip(),latitude=anchor[0],longitude=anchor[1],radius_m=radius)
+        evidence=dict(owner=owner,vehicle=vehicle,identity=identity,body=body,revision=saved['revision'],
+                      samples=stats.get('_endpoints',[]),records=saved['records'])
+        token=hashlib.sha256(json.dumps(evidence,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
+        return dict(preview_token=token,affected_count=len(affected),affected=list(affected.values()),conflicts=conflicts,
+                    radius_m=radius,name_revision=saved['revision']),identity,body
+
     def update(self,owner,vehicle,data,stats,guard=None):
         action=data.get('action')
+        if action in ('place-name-preview','place-name-save'):
+            preview,identity,body=self.preview(owner,vehicle,data,stats)
+            if action=='place-name-preview':
+                if guard:guard()
+                return preview
+            if data.get('preview_token')!=preview['preview_token']:raise ValueError('命名预览已变化，请重新预览后保存。')
+            saved=self.store.change(owner,vehicle,'place_names','save',identity,body,data.get('revision'),guard=guard)
+            return dict(name_revision=saved['revision'],name_can_undo=saved['can_undo'])
         if action=='place-name-undo':
             saved=self.store.change(owner,vehicle,'place_names','undo',None,None,data.get('revision'),guard=guard)
         else:
@@ -85,18 +123,7 @@ class TripPlaceNames:
                 raise ValueError('地点分组已变化，请重新读取后命名。')
             identity=place['manual_name_id'] or place['name_key']
             body=None
-            if action=='place-name-save':
-                name=data.get('name')
-                if not isinstance(name,str) or not 1<=len(name.strip())<=40 or any(ord(c)<32 for c in name):
-                    raise ValueError('地点名称需为 1–40 字，不能含换行或控制字符。')
-                body=dict(name=name.strip(),latitude=place['latitude'],longitude=place['longitude'])
-                # Keep the saved anchor fixed when editing a name found in another month.
-                if place['manual_name_id']:
-                    old=next((r for r in self.store.read(owner,vehicle,'place_names')['records'] if r['id']==identity),None)
-                    if old is None:raise ValueError('地点名称已有更新，请重新读取。')
-                    body.update(latitude=old['body']['latitude'],longitude=old['body']['longitude'])
-                operation='save'
-            elif action=='place-name-clear' and place['manual_name_id']:operation='delete'
+            if action=='place-name-clear' and place['manual_name_id']:operation='delete'
             else:raise ValueError('地点名称操作无效。')
             saved=self.store.change(owner,vehicle,'place_names',operation,identity,body,data.get('revision'),guard=guard)
         return dict(name_revision=saved['revision'],name_can_undo=saved['can_undo'])

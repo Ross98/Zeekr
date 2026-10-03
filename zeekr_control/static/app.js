@@ -130,6 +130,7 @@ function age(value, prefix = '') {
 }
 function waitSeconds() { return Math.max(0,Math.ceil((state?.next_query_at || 0)-Date.now()/1000)); }
 function updateClock() {
+  updateOverviewAttention();
   document.querySelectorAll('[data-age]').forEach(el => {
     const value=el.dataset.age===''?null:Number(el.dataset.age);
     el.textContent=el.dataset.prefix+relativeTime(value);
@@ -453,7 +454,8 @@ async function loadChargeEvents() {
 }
 
 function overview() {
-  if (!state?.model) return modelRequired();
+  const attention='<section id="overview-attention" class="overview-attention" aria-label="需要留意" hidden></section>';
+  if (!state?.model) return attention+modelRequired();
   const m = state.model, profile=state.profile || {name:'我的车辆',variant:'',image:''};
   const closure=m.closure || {doors:'未知',windows:'未知',trunk:'未知'};
   const recording=state.recording;
@@ -461,7 +463,7 @@ function overview() {
   const activity=state.monitoring?.charge==='charging'?'充电记录中':state.monitoring?.trip==='driving'?'行程记录中':state.monitoring?.trip==='waiting'?'等待行程结束确认':'没有进行中活动的证据';
   const recordingLabel={never:'尚未开启',paused:'已暂停',active:'正在记录',failed:'采集失败',offline:'后台未在线'}[recording.status] || (recording.active?'正在记录':'已暂停');
   return `<section class="hero"><div class="hero-copy"><div class="hero-title">${esc(profile.name)}</div><div class="hero-state">${pill(m.lock.confirmed?m.lock.value:'锁车状态未知',m.lock.confirmed?'good':'warn',m.lock.confirmed?'lock':'info')}${pill(m.charging.confirmed?m.charging.value:'充电状态未知',m.charging.confirmed?'':'warn','energy')}</div><div class="freshness">${icon('clock')}<div>${age(m.updated_time,'车辆数据更新于 ')}<span class="subtle">云端缓存 · 不代表实时状态</span></div></div><button class="closure-summary" data-page="car" aria-label="查看门窗详情">${[['doors','车门'],['windows','车窗'],['trunk','尾门']].map(([key,label])=>`<span class="${closure[key]==='未知'?'unknown':''}">${label}${esc(closure[key])}</span>`).join('')}${icon('arrow')}</button></div><div class="hero-car">${profile.image?`<img src="${esc(profile.image)}" alt="${esc(profile.image_alt)}">`:icon('car')}</div></section>
-  ${collectionSummary(true)}
+  ${attention}
   <section class="metric-grid overview-metrics">${metric('动力电池',m.metric_details?.battery || m.metrics.battery,'battery','',true)}${metric('预估续航',m.metric_details?.range || m.metrics.range,'range','以车辆实际表现为准')}</section>
   <div class="overview-secondary"><span>累计里程 <strong>${esc(m.metrics.odometer)}</strong></span><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用动力电池专用字段，与低压电池分开。续航是车辆返回的估计。</p><p>胎压轮位及单位已核对；总览四舍五入至一位小数，车辆详情保留接口精度。未设置未经核对的胎压报警阈值。</p><p>门窗及锁车仅解释本车已验证的组合；未知不代表正常，也不代表异常。车型图片仅供参考。</p>${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}</div></details></div>
   <div class="grid-two"><section class="card"><div class="card-head"><h2>座舱与环境</h2>${link('车辆详情','car')}</div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="divider"></div><div class="subtle">${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</div></div></section>
@@ -606,11 +608,69 @@ function tracksPage() {
   return toolbar + (trackSource==='tags'?'<div id="trip-tags-workspace" class="insight-content"></div>':trackSource==='cloud'?cloudHistoryPage():localTripsPage()) + '<div id="insights-workspace"></div>';
 }
 
-function collectionSummary(compact=false){
+function accountNeedsAttention(){
+  return state?.authenticated===false || state?.monitoring?.error?.startsWith('认证状态异常') ||
+    /认证|尚未登录|请重新登录/.test(state?.error||'');
+}
+
+function overviewAttentionItems(){
+  if(!state)return [];
+  const recording=state.recording||{},monitor=state.monitoring||{},items=[],accountIssue=accountNeedsAttention();
+  const add=(text,target='quality',urgent=true)=>items.push({text,target,urgent});
+  if(accountIssue)add(state.authenticated===false?'车辆账号未连接':monitor.error?.startsWith('认证状态异常')?'账号认证异常':'账号连接需要检查','account');
+  else if(state.error)add('车辆读取需要检查');
+  if(monitor.status==='unavailable')add('采集状态暂不可用');
+  else if(monitor.online===false || monitor.status==='not_started')add('后台未在线');
+  else if(!accountIssue&&(monitor.status==='blocked'||recording.status==='failed'))add('采集需要处理');
+  else if(monitor.status==='cooldown')add('接口冷却中','quality',false);
+  else if(monitor.status==='retrying')add('采集连接重试中','quality',false);
+  if(recording.active===false)add('采集已暂停');
+  // Public health contains only the latest ten events. Count each event once,
+  // even if both channels failed; charge-start uses the Bark channel only.
+  let failed=0,uncertain=0;
+  for(const event of monitor.events||[]){
+    const deliveries=event.kind==='charge_start'?[event.alert_delivery]:[event.alert_delivery,event.delivery];
+    if(deliveries.includes('failed'))failed++;
+    else if(deliveries.includes('uncertain'))uncertain++;
+  }
+  if(failed)add(`最近 ${failed} 条通知失败`,'notifications');
+  if(uncertain)add(`${uncertain} 条发送结果待确认`,'notifications');
+  if(state.model){
+    const timestamp=state.model.updated_time,elapsed=Date.now()-timestamp;
+    if(!Number.isFinite(timestamp))add('车辆更新时间未知','quality',false);
+    else if(elapsed < -30000)add('车辆时间超前，请核对时钟','quality',false);
+    // Same 180-second age window as monitor.MAX_AGE/start_evidence.MAX_GAP.
+    else if(elapsed>180000)add(`车况已 ${relativeTime(timestamp).replace(/前$/,'')}未更新`,'quality',false);
+  }
+  return items;
+}
+
+function updateOverviewAttention(){
+  if(page!=='overview')return;
+  const node=$('#overview-attention');if(!node)return;
+  const items=overviewAttentionItems();
+  node.hidden=!items.length;
+  if(!items.length){node.innerHTML='';return;}
+  const label=items.some(item=>item.urgent)?'需要留意':['cooldown','retrying'].includes(state.monitoring?.status)?'状态提示':'缓存提示';
+  const content=`${icon('info')}<div class="attention-items"><span class="attention-label">${label}</span>${items.map(item=>`<button class="text-link" data-attention-target="${item.target}">${esc(item.text)}</button>`).join('<span aria-hidden="true">·</span>')}</div><button class="button secondary" data-attention-target="${items[0].target}">查看处理</button>`;
+  // Clock ticks must not replace a focused recovery control.
+  if(node.innerHTML!==content&&!node.contains(document.activeElement))node.innerHTML=content;
+}
+
+function openAttention(target){
+  page='settings';
+  if(target==='quality'){openSectionTask('quality');return;}
+  sectionTask='';render();
+  const anchor=target==='notifications'?$('[data-detail="settings-notifications"]'):$('#settings-account');
+  if(target==='notifications'&&anchor)anchor.open=true;
+  anchor?.scrollIntoView({block:'start'});
+  (target==='notifications'?anchor?.querySelector('summary'):$('#settings-account-title'))?.focus({preventScroll:true});
+}
+
+function collectionSummary(){
   const recording=state?.recording||{},monitor=state?.monitoring||{};
   const online=monitor.online===true;
-  if(compact&&online&&recording.active)return '';
-  return `<section id="collection-status" class="collection-status${compact?' compact':''}" aria-label="采集运行状态"><div><h2>${compact?(online?'采集已暂停':'后台未在线'):'采集运行状态'}</h2><dl><div><dt>采集配置</dt><dd>${recording.active?'已启用':'已暂停'}</dd></div><div><dt>后台进程</dt><dd>${online?'在线':'未在线'}</dd></div><div><dt>最近成功观测</dt><dd>${esc(recording.last_new||'未知')}</dd></div></dl>${!online?'<p>页面连接正常不代表采集后台在线。请查看采集诊断；恢复后台需在运行服务的设备上处理。</p>':''}</div><button class="button secondary" data-collection-diagnosis>查看采集诊断</button></section>`;
+  return `<section id="collection-status" class="collection-status" aria-label="采集运行状态"><div><h2>采集运行状态</h2><dl><div><dt>采集配置</dt><dd>${recording.active?'已启用':'已暂停'}</dd></div><div><dt>后台进程</dt><dd>${online?'在线':'未在线'}</dd></div><div><dt>最近成功观测</dt><dd>${esc(recording.last_new||'未知')}</dd></div></dl>${!online?'<p>页面连接正常不代表采集后台在线。请查看采集诊断；恢复后台需在运行服务的设备上处理。</p>':''}</div><button class="button secondary" data-collection-diagnosis>查看采集诊断</button></section>`;
 }
 
 function monitoringPanel() {
@@ -623,10 +683,15 @@ function monitoringPanel() {
   return `<section class="card section-gap"><div class="card-head"><h2>自动行程与充电通知</h2>${pill(label,monitor.online && !['blocked','stale'].includes(monitor.status)?'good':'warn')}</div><div class="card-body"><p class="subtle">后台正常每 ${esc(state?.recording?.interval || 30)} 秒检查，停车、行驶和充电均保持此频率；故障或限流时退避。确认下电后等待 10 分钟发送行程总结；充电开始、停止时发送通知。云端数据延迟或缺失时，确认和通知也会延后。</p>${row('行程',activity[monitor.trip] || '待确认')}${row('充电',activity[monitor.charge] || '待确认')}${row('通知渠道','Bark 状态提醒＋企业微信详细报告')}${monitor.error?`<p class="unknown">${esc(monitor.error)}</p>`:''}<p class="subtle">采集与通知共用一个后台任务。关闭浏览器不停止；下方暂停会同时暂停车辆检查和新事件检测，服务重启后默认恢复。</p>${(monitor.events || []).length?`<h3>最近通知</h3>${monitor.events.map(event=>row(kinds[event.kind] || '通知',event.kind==='charge_start'?`Bark ${delivery[event.alert_delivery]||'未知'}`:`Bark ${delivery[event.alert_delivery]||'未知'} · 详情 ${delivery[event.delivery]||'未知'}`)).join('')}`:'<p class="subtle">暂无通知记录。</p>'}</div></section>`;
 }
 
+function releaseSummary(){
+  const info=state?.release;
+  return `<section class="card section-gap" id="release-summary"><div class="card-head"><h2>实际发布版本</h2></div><div class="card-body">${info?.status==='recorded'?`<p>基础版本 <code>${esc(info.base_version.slice(0,12))}</code></p><ul>${info.features.map(f=>`<li>${esc(f.label)} · ${f.status==='matched'?'已上线（文件一致）':'文件与发布清单不一致，请核对'}</li>`).join('')}</ul><p class="subtle">来自当前运行目录的发布清单与文件哈希，不代表本地所有修改均已发布。</p>`:`<p>${info?.status==='invalid'?'发布清单无效，请在下次发布时重建。':'尚未记录发布清单，基础版本与上线功能范围未知。'}</p>`}</div></section>`;
+}
+
 function settings() {
   const recording = state?.recording || {active:true,interval:30,last_sample:'未知',last_new:'未知'};
-  return `${collectionSummary()}<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('Web 服务已连接')}</div><div class="card-body"><div class="settings-row"><div><h3>账号会话</h3><p>${state?.authenticated?'已发现车辆会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在运行服务的设备上完成车辆登录。'}</p></div>${pill(state?.authenticated?'会话已保存':'未登录',state?.authenticated?'':'warn')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section><details class="settings-detail" data-detail="settings-notifications"><summary>通知状态与规则说明</summary>${monitoringPanel()}</details>
-  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会同时停止自动检查与通知处理，已有记录保留。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">默认 30 秒，可调为 10–60 秒；停车保持相同间隔。更快查询不保证车辆上传更快，重复数据不会增加轨迹点。故障或限流时等待会延长。</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="10" max="60" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><details class="settings-detail" data-detail="settings-storage"><summary>存储与归档管理</summary><div id="settings-storage-root"><section hidden></section></div></details><section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section><div id="insights-workspace"></div>`;
+  return `${collectionSummary()}<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('Web 服务已连接')}</div><div class="card-body"><div class="settings-row" id="settings-account"><div><h3 id="settings-account-title" tabindex="-1">账号会话</h3><p>${accountNeedsAttention()?'车辆账号未连接或认证异常。请在运行服务的设备上重新登录车辆账号，再查看采集诊断。':state?.authenticated?'已发现车辆会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在运行服务的设备上完成车辆登录。'}</p></div>${pill(accountNeedsAttention()?'需要重新连接':state?.authenticated?'会话已保存':'未登录',accountNeedsAttention()?'warn':'')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section><details class="settings-detail" data-detail="settings-notifications"><summary>通知状态与规则说明</summary>${monitoringPanel()}</details>
+  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会同时停止自动检查与通知处理，已有记录保留。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">默认 30 秒，可调为 10–60 秒；停车保持相同间隔。更快查询不保证车辆上传更快，重复数据不会增加轨迹点。故障或限流时等待会延长。</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="10" max="60" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><details class="settings-detail" data-detail="settings-storage"><summary>存储与归档管理</summary><div id="settings-storage-root"><section hidden></section></div></details>${releaseSummary()}<section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section><div id="insights-workspace"></div>`;
 }
 
 function updateHeartbeat() {
@@ -641,7 +706,7 @@ function updateHeartbeat() {
 function more() { return `<div class="more-grid">${['energy','insights','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
 function relatedTools() {
   if(!['car','energy','tracks','settings'].includes(page))return '';
-  if(page==='tracks')return '<nav class="related-tools" aria-label="行程子功能"><a href="#trip-tags-workspace" data-track-tags="true">行程标签</a></nav>';
+  if(page==='tracks')return '<nav class="related-tools" aria-label="行程子功能"><a href="#trip-tags-workspace" data-track-tags="true">行程标签</a><button class="button secondary" data-section-task="routes">常走路线对比</button></nav>';
   const base={car:'车辆状态',energy:'充电状态',settings:'采集与设置'}[page];
   const item=(id,label)=>`<button class="button secondary" data-section-task="${id}" aria-pressed="${sectionTask===id}">${label}</button>`;
   return `<nav class="related-tools task-navigation" aria-label="${pages[page]}子功能">${item('',base)}${page==='energy'?item('records','充电记录'):''}${window.InsightsPage.toolsFor(page).slice().sort((a,b)=>page==='energy'?Number(a.id!=='ledger')-Number(b.id!=='ledger'):0).map(tool=>item(tool.id,tool.label)).join('')}</nav>`;
@@ -663,6 +728,7 @@ function render() {
   const vehicleFocus = page === 'car' ? vehiclePage.focusSnapshot() : null;
   prepareLocalTripRender();
   const fieldFocus = $('#field-results') ? reviewFocusSnapshot() : null;
+  queueMicrotask(persistNavigation);
   generation++;
   const openDetails = $('#main').dataset.page === page
     ? [...document.querySelectorAll('#main details[data-detail][open]')].map(el => el.dataset.detail) : [];
@@ -674,7 +740,7 @@ function render() {
   updateConnection();
   $('.breadcrumb').textContent = `我的车库 / ${state?.profile?.name || '我的车辆'}`;
   const error = transientError || state?.error;
-  const taskPage=['car','energy','settings'].includes(page)&&sectionTask;
+  const taskPage=['car','energy','settings','tracks'].includes(page)&&sectionTask;
   const body = taskPage?(sectionTask==='records'?chargingWorkspace(state?.model?.charging_details)+'<div id="charge-management"></div><div id="insights-workspace" hidden></div>':'<div id="insights-workspace"></div>'):{overview,car,energy,map:mapPage,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
   $('#main').innerHTML = head() + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
   if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
@@ -783,11 +849,13 @@ async function updateRecording(saveInterval = false) {
 }
 
   document.addEventListener('click', event => {
+  const attentionLink=event.target.closest('[data-attention-target]');
+  if(attentionLink){openAttention(attentionLink.dataset.attentionTarget);return;}
   if(event.target.closest('[data-collection-diagnosis]')){page='settings';openSectionTask('quality');return;}
   const sectionLink=event.target.closest('[data-section-task]');
   if(sectionLink){event.preventDefault();openSectionTask(sectionLink.dataset.sectionTask);return;}
   const tagsLink=event.target.closest('[data-track-tags]');
-  if(tagsLink){event.preventDefault();trackSource='tags';render();$('#trip-tags-workspace')?.scrollIntoView({block:'start'});return;}
+  if(tagsLink){event.preventDefault();sectionTask='';trackSource='tags';render();$('#trip-tags-workspace')?.scrollIntoView({block:'start'});return;}
   const toolLink=event.target.closest('[data-insight-tool]');
   if(toolLink){event.preventDefault();if(page!=='insights'){openSectionTask(toolLink.dataset.insightTool);return;}if(insightsPage.openTool(toolLink.dataset.insightTool))$('#insights-workspace')?.scrollIntoView({block:'start'});return;}
   if (tripManager.handle(event)) return;
@@ -870,12 +938,91 @@ document.addEventListener('change', event => {
   if(event.target.id==='vehicle-select') {chargeRequest++;chargeQuery=null;chargeBusy=false;chargeError='';chargeNextCursor=null;chargeDateInitialized=false;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];chargingSelection='current';chargingSession=null;chargingSeries=null;chargingStats=null;chargingAnalyticsLoadedKey='';chargingAnalyticsLoadingKey='';refresh();}
 });
 
+let navigationReady=false,navigationRestoring=false,restoringQuery=null;
+const navigationQueries={
+  ledger:['#ledger-range','#ledger-load'],routes:['#routes-results','[data-travel="load"]'],
+  review:['#usage-review','[data-travel="load"]'],report:['#report-observations','[data-report="load"]'],
+  quality:['#quality-totals','[data-quality="load"]']
+};
+const navigationFields={
+  range:'#charge-query-mode',
+  month:'#ledger-month,#tag-month,#routes-month,#calendar-month',
+  date:'#track-date,#report-date,#insight-date,#review-date,#charge-date',
+  start:'#quality-start,#research-start,#life-start,#parking-start,#trip-manage-start,#charge-manage-start',
+  end:'#quality-end,#research-end,#life-end,#parking-end,#trip-manage-end,#charge-manage-end,#charge-end-date',
+  period:'#report-period'
+};
+function visibleNavigationField(selector){return [...document.querySelectorAll(selector)].find(el=>el.checkVisibility());}
+function navigationSnapshot(){
+  const snapshot={p:page};
+  if(sectionTask)snapshot.t=sectionTask;
+  else if(page==='insights')snapshot.t=insightsPage.currentTool();
+  if(page==='tracks'&&!sectionTask)snapshot.s=trackSource;
+  for(const [key,selector] of Object.entries(navigationFields)){
+    const el=visibleNavigationField(selector);if(el)snapshot[key]=el.value;
+  }
+  const task=snapshot.t,query=navigationQueries[task];
+  if(query&&visibleNavigationField(query[0]))snapshot.q='1';
+  else if(restoringQuery?.signature===window.NavigationState.encode(snapshot))snapshot.q='1';
+  return snapshot;
+}
+function persistNavigation(){
+  if(!navigationReady||navigationRestoring)return;
+  const query=window.NavigationState.encode(navigationSnapshot());
+  if(restoringQuery){
+    const snapshot=navigationSnapshot();delete snapshot.q;
+    if(window.NavigationState.encode(snapshot)!==restoringQuery.signature)restoringQuery=null;
+    else if(visibleNavigationField(navigationQueries[snapshot.t]?.[0]||'[data-no-navigation-result]')){
+      const position=restoringQuery.scroll;restoringQuery=null;
+      requestAnimationFrame(()=>window.scrollTo({top:position,behavior:'instant'}));
+    }
+  }
+  if(query===location.search.slice(1))return;
+  history.pushState({scroll:0},'',location.pathname+(query?'?'+query:''));
+}
+function restoreNavigation(snapshot,position=0){
+  navigationRestoring=true;restoringQuery=null;
+  page=snapshot.p||'overview';sectionTask='';
+  trackSource=snapshot.s||'local';
+  if(page==='tracks'&&snapshot.date)trackDate=snapshot.date;
+  if(['car','energy','settings','tracks'].includes(page)&&snapshot.t&&
+     (snapshot.t==='records'&&page==='energy'||window.InsightsPage.toolsFor(page).some(t=>t.id===snapshot.t)))sectionTask=snapshot.t;
+  render();
+  if(page==='energy'){
+    chargeQueryMode=snapshot.range||'day';
+    if(snapshot.end)chargeEndDate=snapshot.end;
+    if(snapshot.date){chargeDate=snapshot.date;chargeDateInitialized=true;}
+    render();
+  }
+  if(snapshot.t&&insightSections.includes(page))insightsPage.openTool(snapshot.t);
+  for(const [key,selector] of Object.entries(navigationFields)){
+    const el=visibleNavigationField(selector);
+    if(el&&snapshot[key]&&el.value!==snapshot[key]){el.value=snapshot[key];el.dispatchEvent(new Event(el.tagName==='SELECT'||['charge-date','charge-end-date','track-date'].includes(el.id)?'change':'input',{bubbles:true}));}
+  }
+  if(snapshot.q==='1'&&navigationQueries[snapshot.t]){
+    const current=navigationSnapshot();delete current.q;
+    restoringQuery={signature:window.NavigationState.encode(current),scroll:position};
+    visibleNavigationField(navigationQueries[snapshot.t][1])?.click();
+  }
+  navigationRestoring=false;navigationReady=true;
+  history.replaceState({...history.state,scroll:position},'',location.pathname+(window.NavigationState.encode(navigationSnapshot())?'?'+window.NavigationState.encode(navigationSnapshot()):''));
+  requestAnimationFrame(()=>window.scrollTo({top:position,behavior:'instant'}));
+}
+window.addEventListener('popstate',()=>restoreNavigation(window.NavigationState.read(location.search),history.state?.scroll||0));
+for(const type of ['click','input','change'])document.addEventListener(type,()=>queueMicrotask(persistNavigation));
+new MutationObserver(()=>queueMicrotask(persistNavigation)).observe($('#main'),{childList:true,subtree:true});
+window.addEventListener('scroll',()=>{if(navigationReady&&!navigationRestoring)history.replaceState({...history.state,scroll:scrollY},'',location.href);},{passive:true});
+
 async function pollState(force = false) {
   if(polling || busy || (!force && document.hidden)) return;
   polling=true;
   try {
     const latest=await api('/api/state',undefined,8000);
     const changed=!state || latest.read_time!==state.read_time || latest.error!==state.error ||
+      latest.authenticated!==state.authenticated ||
+      latest.monitoring?.status!==state.monitoring?.status || latest.monitoring?.online!==state.monitoring?.online ||
+      latest.monitoring?.error!==state.monitoring?.error ||
+      JSON.stringify(latest.monitoring?.events)!==JSON.stringify(state.monitoring?.events) ||
       latest.recording.interval!==state.recording.interval || latest.recording.active!==state.recording.active ||
       latest.recording.effective_interval!==state.recording.effective_interval || latest.recording.status!==state.recording.status ||
       latest.next_query_at!==state.next_query_at ||
@@ -889,6 +1036,7 @@ async function pollState(force = false) {
       JSON.stringify(latest.field_reviews)!==JSON.stringify(state.field_reviews);
     const restarted=state && latest.request_key!==state.request_key;
     state=latest; connectionFailures=0;
+    if(!navigationReady){restoreNavigation(window.NavigationState.read(location.search),history.state?.scroll||0);return;}
     if(restarted) { transientError='';refreshMessage='';samplingDraft=null; }
     if(changed) {
       if(page==='tracks' && trackSource==='local' && refreshLocalTrips()) {updateConnection();updateClock();}

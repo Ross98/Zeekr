@@ -16,6 +16,11 @@ from zeekr_control.parking_analytics import ParkingAnalytics
 
 
 class InsightsApiTests(unittest.TestCase):
+    def test_travel_tools_api_validation_and_assets(self):
+        for path in ('/api/insights/routes?date=2026-09-20','/api/insights/review?date=2026-09-20','/travel-insights.js','/navigation-state.js'):
+            self.assertEqual(self.get(path)[0],200)
+        self.assertEqual(self.get('/api/insights/routes?date=invalid')[0],400)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -165,7 +170,7 @@ class InsightsApiTests(unittest.TestCase):
         protected = make_server(self.app, 0, auth=WebAuth(password_record('synthetic-password')))
         thread = threading.Thread(target=protected.serve_forever, daemon=True); thread.start()
         try:
-            for path in ('/api/insights/automatic', '/automatic-insights.js'):
+            for path in ('/api/insights/automatic', '/automatic-insights.js','/api/insights/routes?date=2026-09-20','/api/insights/review?date=2026-09-20','/travel-insights.js','/navigation-state.js'):
                 conn = http.client.HTTPConnection('127.0.0.1', protected.server_port)
                 conn.request('GET', path); response = conn.getresponse()
                 self.assertEqual(response.status, 401); response.read(); conn.close()

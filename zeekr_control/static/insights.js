@@ -23,7 +23,9 @@
       {id:'rules',label:'自定义提醒',description:'电量条件、提醒规则与触发记录'},
       {id:'quality',label:'数据质量雷达',description:'采集诊断：覆盖、延迟、重复缓存与缺口'}
     ]},
+    {name:'行程',page:'tracks',tools:[{id:'routes',label:'常走路线对比',description:'方向、用时、里程与有效耗电样本'}]},
     {name:'用车回顾',tools:[
+      {id:'review',label:'轻量用车回顾',description:'本周参考地点、实际费用与待补记录'},
       {id:'report',label:'周报与月报',description:'周期里程、能耗估算、日趋势与样本'},
       {id:'calendar',label:'用车日历',description:'按日期查看行程、充电与停车'}
     ]}
@@ -43,7 +45,9 @@
     const calendarPage=root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate});
     const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
     const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
-    const views={fields:dictionary,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
+    const routesPage=root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate});
+    const reviewPage=root.TravelInsightsPage.create({kind:'review',getState,request,escape:esc,active:()=>active()&&tab==='review',time,navigate});
+    const views={routes:routesPage,review:reviewPage,fields:dictionary,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
@@ -63,8 +67,11 @@
       if(destination!==section){navigate(destination,view,target);return;}
       tab=view;toolQuery='';
       if(view==='time'){date=target;reset();paint();}
-
-
+      else{
+        paint();
+        const field=node.querySelector({ledger:'#ledger-month',routes:'#routes-month',review:'#review-date',report:'#report-date',calendar:'#calendar-month'}[view]||'input[type="date"]');
+        if(field){field.value=field.type==='month'?target.slice(0,7):target;field.dispatchEvent(new Event('input',{bubbles:true}));}
+      }
     }
     function valid(serial, current, identity) {return serial===current && owner===identity && identity===context();}
     function button(label, action, disabled=false) {return `<button class="button secondary" id="insight-${action}" data-insight="${action}" ${disabled?'disabled':''}>${label}</button>`;}
@@ -268,7 +275,7 @@
       }
       return true;
     }
-    return {mount,handle,openField,openExperiment,openTool,openDate};
+    return {mount,handle,openField,openExperiment,openTool,openDate,currentTool:()=>tab};
   }
   root.InsightsPage={create,toolsFor};
 })(window);

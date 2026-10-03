@@ -6,7 +6,7 @@
     let node=null,owner='',month=monthNow(),data=null,selected=null,tags='',note='',attempted=false,loading=false,busy=false;
     let serial=0,writeSerial=0,error='',status='',filter='',completeness='all',groupA='',groupB='',page=0,trashPage=0;
     let routeShown=false,routeBusy=false,routeData=null,routeError='',routeSerial=0,routeMap=null;
-    let namePlace=null,nameDraft='';
+    let namePlace=null,nameDraft='',nameRadius=150,namePreview=null;
     let placesShown=false,placesMap=null,placePage=0,focusedPlace=null,placesViewport=null;
     let commuteDraft={home:null,work:null,homeRadius:300,workRadius:300},commuteDirty=false;
     let commuteMap=null,commuteShown=false,placeMode=null,commuteBusy=false;
@@ -36,7 +36,7 @@
     }
     const placeLabel=id=>data?.place_statistics?.places.find(p=>p.id===id)?.label||'未知';
     const placeLink=id=>data?.place_statistics?.places.some(p=>p.id===id)?`<button type="button" class="tag-place-link" data-tag="place-focus" data-id="${esc(id)}" aria-label="在地图定位 ${esc(placeLabel(id))}" ${busy?'disabled':''}>${esc(placeLabel(id))}</button>`:esc(placeLabel(id));
-    function closePlacesMap(){placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=placesViewport=null;namePlace=null;nameDraft='';}
+    function closePlacesMap(){placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=placesViewport=null;namePlace=null;nameDraft='';namePreview=null;}
     function focusPlace(id){
       if(!data?.place_statistics?.places.some(p=>p.id===id))return;
       focusedPlace=id;placesViewport=null;placesShown=true;placesMap?.remove();placesMap=null;paint();
@@ -47,13 +47,16 @@
       const places=[...stats.places].sort((a,b)=>(b.departures+b.arrivals)-(a.departures+a.arrivals)||a.id.localeCompare(b.id));
       const pages=Math.max(1,Math.ceil(places.length/20));placePage=Math.min(placePage,pages-1);
       return `<section class="card insight-panel" id="tag-place-statistics"><div class="insight-heading"><h3>本月出发与到达地点</h3><span class="insight-note">${places.length} 个参考地点</span></div>
-        <p class="insight-note">距固定参考中心 ${stats.radius_m} 米内归为同一地点，出发与到达共用分组；不会沿相邻点串联合并。使用起止三分钟内的可信采样，参考地点不一定是真实目的地。编号仅用于本月查询，地图默认隐藏。</p>
+        <p class="insight-note">距固定参考中心 ${stats.radius_m} 米内归为同一地点，出发与到达共用分组；手动名称按所选小范围单独分组，不沿相邻点串联合并。使用起止三分钟内的可信采样，参考地点不一定是真实目的地。编号仅用于本月查询，地图默认隐藏。</p>
         <p class="insight-note">名称优先使用手动命名，其次按当前设置匹配家／公司，再采用已有可信地址。地址带“附近”，无法确认时保留编号；读取统计不会额外查询地址。</p>
         <p class="insight-note">出发地点未知 ${stats.unknown_departures} 次 · 到达地点未知 ${stats.unknown_arrivals} 次。完整与片段均按有效端点计入；次数表示行程端点，不表示停车时长。</p>
         ${places.length?`<table class="tag-place-table"><thead><tr><th scope="col">地点</th><th scope="col">出发</th><th scope="col">到达</th><th scope="col">名称</th></tr></thead><tbody>${places.slice(placePage*20,placePage*20+20).map(p=>`<tr><th scope="row">${placeLink(p.id)}<small class="tag-place-source">${({manual:'手动名称',commute:'按当前设置',address:'已有地址',reference:'参考编号'})[p.name_source]||'参考编号'}</small></th><td>${p.departures}</td><td>${p.arrivals}</td><td>${button('改名','place-name-edit',!p.name_key,`data-id="${esc(p.id)}" aria-label="修改地点名称 ${esc(p.label)}"`)}</td></tr>`).join('')}</tbody></table>${pages>1?`<div class="insight-pagination">${button('上一页地点','places-previous',placePage===0)}<span>${placePage+1} / ${pages}</span>${button('下一页地点','places-next',placePage+1===pages)}</div>`:''}
-        ${namePlace?`<div id="tag-place-name-editor" role="group" aria-labelledby="tag-place-name-heading"><h4 id="tag-place-name-heading">修改地点名称 · ${esc(namePlace.label)}</h4><label>地点名称<input id="tag-place-name" aria-label="地点名称" maxlength="40" value="${esc(nameDraft)}" ${busy?'disabled':''}></label><p class="insight-note">名称优先于自动识别；保存后在该地点 150 米范围内跨月份复用。恢复自动名称只清除手动名。</p><div class="insight-actions">${button('保存地点名称','place-name-save',loading)}${namePlace.manual_name_id?button('恢复自动名称','place-name-clear',loading):''}${button('取消地点命名','place-name-cancel')}</div></div>`:''}
+        ${namePlace?nameEditor():''}
         <div class="insight-actions">${button(placesShown?'隐藏地点地图':'查看地点地图','places-map')}${placesShown?button('查看全部地点','places-all'):''}</div>${placesShown?'<p class="insight-note">点地点名称可放大定位；点编号查看详情和地图网站跳转。</p><div id="tag-places-map" role="region" tabindex="0" aria-label="本月地点地图"></div>':''}`:'<p>本月暂无可信起止定位，无法归类地点；不代表没有出行。</p>'}
         <h4>常见方向</h4>${stats.routes.length?`<div class="tag-place-routes">${stats.routes.slice(0,10).map(r=>`<p><span>${placeLink(r.start_place)} → ${placeLink(r.end_place)}</span><strong>${r.count} 趟</strong></p>`).join('')}</div><p class="insight-note">按方向分别统计，仅列次数最多的前 10 组；缺少任一端点不计入方向。同地点往返也保留。</p>`:'<p class="insight-note">尚无两端都能归类的行程。</p>'}</section>`;
+    }
+    function nameEditor(){
+      return `<div id="tag-place-name-editor" role="group" aria-labelledby="tag-place-name-heading"><h4 id="tag-place-name-heading">修改地点名称 · ${esc(namePlace.label)}</h4><label>地点名称<input id="tag-place-name" aria-label="地点名称" maxlength="40" value="${esc(nameDraft)}" ${busy?'disabled':''}></label><label>命名匹配范围<select id="tag-name-radius" aria-label="命名匹配范围" ${busy?'disabled':''}>${[25,50,100,150].map(r=>`<option value="${r}" ${nameRadius===r?'selected':''}>${r} 米</option>`).join('')}</select></label><p class="insight-note">先预览本月可能受影响的行程。小范围会分开相邻地点；名称沿固定中心与所选范围跨月复用。预览不改记录，恢复自动名称只清除手动名。</p>${namePreview?`<div id="tag-name-preview"><p>本月可能影响 ${namePreview.affected_count} 趟行程 · 命名范围 ${namePreview.radius_m} 米</p>${namePreview.conflicts.length?`<p class="notice error">与 ${namePreview.conflicts.map(c=>esc(c.name)).join('、')} 的命名范围重叠；建议缩小范围后重新预览。</p>`:''}<div class="report-event-list">${namePreview.affected.slice(0,20).map(r=>`<article><span>${esc(time(data.events.find(e=>e.id===r.id)?.end_time))}</span><span>${r.sides.map(side=>side==='start'?'出发':'到达').join('、')} · ${r.within_range?'范围内':'缩小后在范围外'}</span></article>`).join('')}</div>${namePreview.affected_count>20?'<p>仅展示前 20 趟；数量为本月全部可能受影响行程。</p>':''}</div>`:''}<div class="insight-actions">${button('预览影响行程','place-name-preview',loading)}${button('保存地点名称','place-name-save',loading||!namePreview)}${namePlace.manual_name_id?button('恢复自动名称','place-name-clear',loading):''}${button('取消地点命名','place-name-cancel')}</div></div>`;
     }
     function paintPlacesMap(){
       const el=node?.querySelector('#tag-places-map'),places=data?.place_statistics?.places;if(!el||!places?.length||placesMap)return;
@@ -62,7 +65,7 @@
       const bounds=[],markers=new Map();
       for(const [index,p] of places.entries()){
         const center=[p.latitude,p.longitude];bounds.push(center);
-        L.circle(center,{radius:data.place_statistics.radius_m,color:'#20776e',fillOpacity:.12}).addTo(placesMap);
+        L.circle(center,{radius:p.name_radius_m||data.place_statistics.radius_m,color:'#20776e',fillOpacity:.12}).addTo(placesMap);
         const icon=L.divIcon({className:'tag-place-marker',html:`<span>${index+1}</span>`,iconSize:[32,32],iconAnchor:[16,16]});
         const href=`https://www.openstreetmap.org/?mlat=${p.latitude}&mlon=${p.longitude}#map=18/${p.latitude}/${p.longitude}`;
         const marker=L.marker(center,{icon,title:p.label}).addTo(placesMap)
@@ -193,13 +196,14 @@
     async function mutatePlaceName(action){
       if(busy||loading||!namePlace||!data)return;
       const identity=owner,token=++writeSerial;
-      const payload={action,date:month+'-01',place_id:namePlace.id,place_key:namePlace.name_key,name:nameDraft,revision:data.place_statistics.name_revision,context:owner};
+      const payload={action,date:month+'-01',place_id:namePlace.id,place_key:namePlace.name_key,name:nameDraft,radius_m:nameRadius,preview_token:namePreview?.preview_token,revision:data.place_statistics.name_revision,context:owner};
       busy=true;error='';status='';paint();
       try{
         const result=await request('/api/insights/trip-tags',payload);
         if(!valid(token,writeSerial,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        data.place_statistics.name_revision=result.name_revision;namePlace=null;nameDraft='';status='地点名称已保存。';
+        if(action==='place-name-preview'){namePreview=result;return;}
+        data.place_statistics.name_revision=result.name_revision;namePlace=null;nameDraft='';namePreview=null;status='地点名称已保存。';
         if(!await load()&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新读取核对。';
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 名称草稿保留；请重新读取后再保存。';}
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
@@ -236,7 +240,7 @@
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;const el=event.target;
       if((event.type==='input'||event.type==='change')&&el.id==='tag-month'){if(month===el.value)return true;month=el.value;serial++;writeSerial++;loading=busy=false;data=selected=null;tags=note=error='';status='日期已修改，请重新读取行程标签。';page=trashPage=0;filter=groupA=groupB='';closeRoute();closeCommuteMap();closePlacesMap();paint();return true;}
-      if(event.type==='input'&&el.id==='tag-place-name'){nameDraft=el.value;return true;}
+      if(event.type==='input'&&el.id==='tag-place-name'){nameDraft=el.value;namePreview=null;node.querySelector('[data-tag="place-name-save"]')?.setAttribute('disabled','');node.querySelector('#tag-name-preview')?.remove();return true;}
       if(event.type==='input'&&el.id==='tag-labels'){tags=el.value;syncQuickLabels();return true;}
       if(event.type==='input'&&el.id==='tag-note'){note=el.value;return true;}
       if(event.type==='input'&&['commute-home-radius','commute-work-radius'].includes(el.id)){
@@ -244,6 +248,7 @@
         if(commuteMap){commuteMap.remove();commuteMap=null;paintCommuteMap();}return true;
       }
       if(event.type==='change'){
+        if(el.id==='tag-name-radius'){nameRadius=Number(el.value);namePreview=null;paint();return true;}
         if(el.id==='tag-group-a'){groupA=el.value;paintGroups();return true;}
         if(el.id==='tag-group-b'){groupB=el.value;paintGroups();return true;}
         if(el.id==='tag-filter'){filter=el.value;page=0;paintEvents();return true;}
@@ -252,9 +257,9 @@
       if(event.type!=='click')return false;
       const target=el.closest('[data-tag]');if(!target||target.disabled)return false;
       const action=target.dataset.tag,id=target.dataset.id;
-      if(action==='place-name-edit'){namePlace=data.place_statistics.places.find(p=>p.id===id);nameDraft=namePlace.name_source==='manual'?namePlace.label:'';paint();node.querySelector('#tag-place-name').focus({preventScroll:true});node.querySelector('#tag-place-name-editor').scrollIntoView({block:'nearest'});return true;}
-      if(action==='place-name-cancel'){namePlace=null;nameDraft='';paint();return true;}
-      if(action==='place-name-save'||action==='place-name-clear'){mutatePlaceName(action);return true;}
+      if(action==='place-name-edit'){namePlace=data.place_statistics.places.find(p=>p.id===id);nameDraft=namePlace.name_source==='manual'?namePlace.label:'';nameRadius=namePlace.name_radius_m||150;namePreview=null;paint();node.querySelector('#tag-place-name').focus({preventScroll:true});node.querySelector('#tag-place-name-editor').scrollIntoView({block:'nearest'});return true;}
+      if(action==='place-name-cancel'){namePlace=null;nameDraft='';namePreview=null;paint();return true;}
+      if(action==='place-name-save'||action==='place-name-clear'||action==='place-name-preview'){mutatePlaceName(action);return true;}
       if(action==='place-focus'){focusPlace(id);return true;}
       if(action==='places-all'){focusedPlace=placesViewport=null;placesMap?.remove();placesMap=null;paint();return true;}
       if(action==='places-map'){placesShown=!placesShown;if(!placesShown){focusedPlace=placesViewport=null;placesMap?.remove();placesMap=null;}paint();return true;}

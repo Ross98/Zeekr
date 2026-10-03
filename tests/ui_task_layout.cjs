@@ -6,7 +6,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.setViewportSize({width:390,height:844});
   await page.locator('#navigation [data-page="overview"]').evaluate(el=>el.click());
   assert.ok(await page.locator('.overview-metrics').evaluate(el=>el.getBoundingClientRect().bottom)<844,'battery and range fit first mobile viewport');
-  await page.getByRole('button',{name:'查看采集诊断',exact:true}).click();
+  await page.locator('#overview-attention').getByRole('button',{name:'查看处理',exact:true}).click();
   await page.locator('#quality-workspace').waitFor();
   assert.equal(await page.locator('#sampling-help').count(),0,'diagnostics replaces settings parent content');
   await page.locator('#navigation [data-page="energy"]').evaluate(el=>el.click());

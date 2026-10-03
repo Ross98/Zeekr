@@ -21,6 +21,8 @@ class TripPlaceNameTests(unittest.TestCase):
         p=self.places()['places'][0]
         data=dict(action='place-name-save',date='2026-09-28',place_id=p['id'],place_key=p['name_key'],name=name,revision=revision)
         data.update(extra)
+        preview=self.tags.update('owner','car',dict(data,action='place-name-preview'))
+        data['preview_token']=preview['preview_token']
         return self.tags.update('owner','car',data)
 
     def address(self,name='浦东新区·测试园区',trusted=True):
@@ -95,6 +97,8 @@ class TripPlaceNameTests(unittest.TestCase):
     def test_guard_rolls_back_name_write_and_events_unchanged(self):
         before=self.db.read_bytes();p=self.places()['places'][0]
         def guard():raise ValueError('changed session')
-        with self.assertRaises(ValueError):self.tags.update('owner','car',dict(action='place-name-save',date='2026-09-28',place_id=p['id'],place_key=p['name_key'],name='车库',revision=0),guard=guard)
+        data=dict(action='place-name-preview',date='2026-09-28',place_id=p['id'],place_key=p['name_key'],name='车库',revision=0)
+        preview=self.tags.update('owner','car',data)
+        with self.assertRaises(ValueError):self.tags.update('owner','car',dict(data,action='place-name-save',preview_token=preview['preview_token']),guard=guard)
         self.assertEqual(self.places()['name_revision'],0)
         self.assertEqual(self.db.read_bytes(),before)

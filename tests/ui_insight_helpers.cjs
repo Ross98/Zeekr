@@ -24,13 +24,13 @@ async function fixture({demo=false,partialCharge=false,automatic=false}={}){
     return {page,browser,origin,errors,posts,external,close:async()=>{await browser.close();server.kill();}};
   }catch(error){if(browser)await browser.close();server.kill();throw error;}
 }
-async function contrast(page){
-  const bad=await page.evaluate(()=>{
+async function contrast(page,scope='#insights-workspace'){
+  const bad=await page.evaluate(scope=>{
     const rgb=s=>(s.match(/[\d.]+/g)||[]).map(Number);
     const blend=(a,b)=>a.slice(0,3).map((v,i)=>v*(a[3]??1)+b[i]*(1-(a[3]??1)));
     const lum=c=>c.slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
     const failures=[];
-    for(const el of document.querySelectorAll('#insights-workspace *')){
+    for(const el of document.querySelectorAll(`${scope} *`)){
       if(!el.checkVisibility({checkVisibilityCSS:true})||el.closest('svg,option,button:disabled')||!Array.from(el.childNodes).some(n=>n.nodeType===3&&n.textContent.trim()))continue;
       const style=getComputedStyle(el),chain=[];let p=el;
       while(p){chain.unshift(p);p=p.parentElement;}
@@ -38,7 +38,7 @@ async function contrast(page){
       const fg=blend(rgb(style.color),bg),ratio=(Math.max(lum(fg),lum(bg))+.05)/(Math.min(lum(fg),lum(bg))+.05);
       if(ratio<4.5)failures.push({text:el.textContent.slice(0,30),ratio:ratio.toFixed(2)});
     }return failures;
-  });
+  },scope);
   assert.deepEqual(bad,[],'Visible non-disabled text contrast >=4.5:1');
 }
 async function layouts(page,name){

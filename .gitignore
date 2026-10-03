@@ -32,6 +32,8 @@ test-results/
 *.har
 *.pcap
 *.pcapng
+/release-manifest.json
+/release-manifest.json.tmp
 *.zip
 *.tar
 *.gz

@@ -39,6 +39,8 @@ from .personal_store import PersonalStore, account_scope
 from .charge_ledger import ChargeLedger
 from .custom_reminders import Reminders
 from .trip_tags import TripTags
+from .travel_insights import TravelInsights
+from .release_info import read_release
 from .charge_comparison import ChargeComparison
 from .parameter_experiments import ParameterExperiments
 from .usage_calendar import UsageCalendar
@@ -74,6 +76,7 @@ class App:
         self.charge_ledger = ChargeLedger(self.personal_store, self.database_path)
         self.reminders = Reminders(self.personal_store)
         self.trip_tags = TripTags(self.personal_store, self.database_path)
+        self.travel_insights = TravelInsights(self.personal_store, self.database_path)
         self.charge_comparison = ChargeComparison(self.database_path)
         self.experiments = ParameterExperiments(self.personal_store, self.archive_reader)
         self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader)
@@ -180,7 +183,7 @@ class App:
                 charge_revision = self.charge_manager.revision(self.vehicle_key) if authenticated and self.vehicle_key else None
             except Exception:
                 charge_revision = None
-            return {'field_reviews': field_reviews, 'request_key': self.request_key, 'authenticated': authenticated,
+            return {'release':read_release(), 'field_reviews': field_reviews, 'request_key': self.request_key, 'authenticated': authenticated,
                     'insights_context': self._insights_context(),
                     'trip_records_revision': trip_revision,
                     'charge_records_revision': charge_revision,
@@ -474,6 +477,8 @@ class App:
                         'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
                         'trip-tags': lambda scope, car, date: self.trip_tags.query(account_scope(session),car,date,
                             guard=lambda: self._guard_insight_session(session,context)),
+                        'routes':lambda scope,car,date:self.travel_insights.routes(account_scope(session),car,date),
+                        'review':lambda scope,car,date:self.travel_insights.review(account_scope(session),car,date),
                         'charge-options': lambda scope, car, date: self.charge_comparison.options(car,date),
                         'charge-comparison': lambda scope, car, a, b: self.charge_comparison.query(car,a,b),
                         'experiments': lambda scope, car: self.experiments.query(account_scope(session),car),
@@ -807,6 +812,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                         return self.send(200, app.insights('rules'))
                     if url.path == '/api/insights/trip-tags':
                         return self.send(200, app.insights('trip-tags',value('date')))
+                    if url.path in ('/api/insights/routes','/api/insights/review'):
+                        return self.send(200,app.insights(url.path.rsplit('/',1)[1],value('date')))
                     if url.path == '/api/insights/charge-comparison/options':
                         return self.send(200, app.insights('charge-options',value('date')))
                     if url.path == '/api/insights/charge-comparison':
@@ -874,6 +881,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/charge-ledger.js': ('charge-ledger.js', 'text/javascript; charset=utf-8'),
                           '/custom-reminders.js': ('custom-reminders.js', 'text/javascript; charset=utf-8'),
                           '/trip-tags.js': ('trip-tags.js', 'text/javascript; charset=utf-8'),
+                          '/travel-insights.js':('travel-insights.js','text/javascript; charset=utf-8'),
+                          '/navigation-state.js':('navigation-state.js','text/javascript; charset=utf-8'),
                           '/charge-comparison.js': ('charge-comparison.js', 'text/javascript; charset=utf-8'),
                           '/parameter-experiments.js': ('parameter-experiments.js', 'text/javascript; charset=utf-8'),
                           '/vehicle-research.js': ('vehicle-research.js', 'text/javascript; charset=utf-8'),

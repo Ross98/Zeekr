@@ -11,7 +11,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
       ['行程与轨迹', []],
       ['车辆', ['生活账本']],
       ['设置', ['自定义提醒', '数据质量雷达']],
-      ['用车研究', ['参数字典', '数据利用', '自动洞察', '参数实验室', '车辆时间机', '周报与月报', '用车日历']]
+      ['用车研究', ['参数字典', '数据利用', '自动洞察', '参数实验室', '车辆时间机', '轻量用车回顾', '周报与月报', '用车日历']]
     ];
     for (const [section, labels] of groups) {
       await page.getByRole('button', {name:section, exact:true}).first().click();

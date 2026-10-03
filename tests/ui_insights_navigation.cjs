@@ -5,7 +5,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
   const f = await fixture(), {page} = f;
   try {
     assert.equal(await page.locator('[data-insight-group]').count(), 2);
-    assert.equal(await page.locator('[data-insight-view]').count(), 7);
+    assert.equal(await page.locator('[data-insight-view]').count(), 8);
     const search = page.getByLabel('查找研究工具', {exact:true});
     await search.fill('归档');
     assert.deepEqual(await page.locator('[data-insight-view]:visible').allTextContents(), ['车辆时间机']);

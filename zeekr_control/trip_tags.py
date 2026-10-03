@@ -43,7 +43,7 @@ class TripTags:
                 if not isinstance(data.get('date'),str):raise ValueError('请选择地点统计月份。')
                 window=period_window('month',data.get('date'))
                 events=[r for r in self.events.between(vehicle,window['start'],window['end'])['events'] if r['kind']=='trip_end']
-                stats=self.place_names.apply(owner,vehicle,self.places.query(vehicle,events),self.commute.rule(owner,vehicle))
+                stats=self.place_names.apply(owner,vehicle,self.places.query(vehicle,events,self.place_names.regions(owner,vehicle),include_samples=True),self.commute.rule(owner,vehicle))
             return self.place_names.update(owner,vehicle,data,stats,guard=guard)
         if isinstance(action,str) and action.startswith('commute-'):
             if action in ('commute-exclude','commute-include'):
@@ -81,7 +81,7 @@ class TripTags:
     def query(self,owner,vehicle,date,guard=None):
         window=period_window('month',date)
         events=[row for row in self.events.between(vehicle,window['start'],window['end'])['events'] if row['kind']=='trip_end']
-        place_statistics=self.place_names.apply(owner,vehicle,self.places.query(vehicle,events),self.commute.rule(owner,vehicle))
+        place_statistics=self.place_names.apply(owner,vehicle,self.places.query(vehicle,events,self.place_names.regions(owner,vehicle)),self.commute.rule(owner,vehicle))
         saved=self.store.read(owner,vehicle,'tags')
         annotations={r['body']['event_id']:r for r in saved['records']}
         automatic=self.commute.decisions(owner,vehicle,events,guard=guard)

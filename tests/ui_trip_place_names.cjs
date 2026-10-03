@@ -5,7 +5,11 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
  try{
   await page.route('**/api/insights/trip-tags*',async route=>{
    if(route.request().method()==='POST'){
-    const body=route.request().postDataJSON();writes.push(body);
+    const body=route.request().postDataJSON();
+    if(body.action==='place-name-preview'){
+     await route.fulfill({json:{context:body.context,preview_token:'synthetic-preview',affected_count:2,radius_m:body.radius_m,affected:[{id:'report-trip',sides:['start'],within_range:true}],conflicts:[]}});return;
+    }
+    writes.push(body);
     if(fail){await route.fulfill({status:409,json:{error:'合成版本冲突'}});return;}
     manual=body.action==='place-name-save'?body.name:'';rev++;
     await route.fulfill({json:{context:body.context,name_revision:rev,name_can_undo:true}});return;
@@ -21,6 +25,10 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   await page.getByRole('button',{name:'修改地点名称 家',exact:true}).click();
   await page.getByLabel('地点名称',{exact:true}).fill('地下车库');await page.evaluate(()=>render());
   assert.equal(await page.getByLabel('地点名称',{exact:true}).inputValue(),'地下车库');
+  assert.equal(await page.getByRole('button',{name:'保存地点名称',exact:true}).isDisabled(),true);
+  await page.getByLabel('命名匹配范围',{exact:true}).selectOption('50');
+  await page.getByRole('button',{name:'预览影响行程',exact:true}).click();
+  await page.getByText(/本月可能影响 2 趟行程/).waitFor();
   await page.getByRole('button',{name:'保存地点名称',exact:true}).click();
   await page.getByRole('button',{name:'修改地点名称 地下车库',exact:true}).waitFor();
   assert.equal(writes[0].revision,0);assert.equal(writes[0].place_key,'synthetic-anchor');assert.equal(writes[0].date,'2026-09-01');
@@ -30,6 +38,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   await page.getByRole('button',{name:'修改地点名称 家',exact:true}).waitFor();
   await page.getByRole('button',{name:'修改地点名称 家',exact:true}).click();
   await page.getByLabel('地点名称',{exact:true}).fill('<img src=x onerror=alert(1)>');fail=true;
+  await page.getByRole('button',{name:'预览影响行程',exact:true}).click();
   await page.getByRole('button',{name:'保存地点名称',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'合成版本冲突'}).waitFor();
   assert.equal(await page.getByLabel('地点名称',{exact:true}).inputValue(),'<img src=x onerror=alert(1)>');
