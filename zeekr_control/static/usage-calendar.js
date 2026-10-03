@@ -38,7 +38,7 @@
       if(day.coverage==='future'||!cost.samples)return '';
       const partial=cost.missing_energy_count>0||cost.partial_count>0;
       const description=`当日已记录耗电 ${number(cost.energy_kwh)} kWh，用电成本估算 ${money(cost.estimated_cents)} 元${partial?'；存在未知或部分记录':''}${cost.loss_unknown?'；充电损耗未计全':''}`;
-      return `<span class="calendar-day-consumption" aria-label="${esc(description)}" title="${esc(description)}"><span><span>${number(cost.energy_kwh)}</span><small>kWh</small></span><span><span>${money(cost.estimated_cents)}</span><small>元${cost.estimated_cents!==null&&partial?'·部分':''}</small></span></span>`;
+      return `<span class="calendar-day-consumption" aria-label="${esc(description)}" title="${esc(description)}"><span><span>${number(cost.energy_kwh)}</span><small>kWh</small></span><span><span>${money(cost.estimated_cents)}</span><small>元</small></span></span>`;
     }
     function dayLevel(day){
       if(mode==='energy'){const maximum=Math.max(0,...data.days.map(d=>d.energy_cost.estimated_cents||0)),value=day.energy_cost.estimated_cents;return value>0?'calendar-level-'+Math.min(3,Math.ceil(value/maximum*3)):'';}
