@@ -820,7 +820,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('X-Frame-Options', 'DENY')
             self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
-            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+            self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://wprd01.is.autonavi.com https://wprd02.is.autonavi.com https://wprd03.is.autonavi.com https://wprd04.is.autonavi.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
             try:
                 self.end_headers()
                 self.wfile.write(payload)
@@ -970,6 +970,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/data-quality.js': ('data-quality.js', 'text/javascript; charset=utf-8'),
                           '/vehicle.js': ('vehicle.js', 'text/javascript; charset=utf-8'),
                           '/vehicle.css': ('vehicle.css', 'text/css; charset=utf-8'),
+                          '/amap-maps.js': ('amap-maps.js', 'text/javascript; charset=utf-8'),
                           '/route-quality.js': ('route-quality.js', 'text/javascript; charset=utf-8'),
                           '/history.js': ('history.js', 'text/javascript; charset=utf-8'),
                           '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),

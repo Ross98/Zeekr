@@ -41,8 +41,13 @@ const output='/tmp/zeekr-tyre-display-qa';
  for(const reading of await page.locator('.car-tyre-reading').all()){const r=await reading.boundingBox();assert.ok(r.y+r.height<=box.y+box.height+1,'All readings fit');}
  await page.locator('.car-tyres').screenshot({path:output+'/'+width+'-'+theme+'.png'});
  }
+ await page.setViewportSize({width:1440,height:1200});
+ await page.locator('.sidebar [data-page="overview"]').click();
+ assert.equal(await page.locator('.overview-health .car-tyre-reading').count(),4);
+ await page.locator('.overview-health .car-tyre-art img').evaluate(img=>img.decode());
+ await page.locator('.overview-health').screenshot({path:output+'/homepage.png'});
  assert.deepEqual(errors,[]);
  console.log('TYRE_UI_PASS: wheel mapping, unknowns, image route, 4 viewport/theme checks');
- console.log(JSON.stringify({output,cardWidth:await page.locator('.car-tyres').evaluate(el=>el.clientWidth),overflow:await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)}));
+ console.log(JSON.stringify({output,cardWidth:await page.locator('.overview-health .car-tyre-diagram').evaluate(el=>el.clientWidth),overflow:await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)}));
  } finally {if(browser)await browser.close();server.kill();}
 })().catch(e=>{console.error(e);process.exitCode=1});

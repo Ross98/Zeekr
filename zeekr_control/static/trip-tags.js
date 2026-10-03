@@ -60,14 +60,14 @@
     }
     function paintPlacesMap(){
       const el=node?.querySelector('#tag-places-map'),places=data?.place_statistics?.places;if(!el||!places?.length||placesMap)return;
-      placesMap=L.map(el,{scrollWheelZoom:false});
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:18}).addTo(placesMap);
+      placesMap=AmapMaps.createMap(el,{scrollWheelZoom:false});
+      AmapMaps.addTiles(placesMap);
       const bounds=[],markers=new Map();
       for(const [index,p] of places.entries()){
         const center=[p.latitude,p.longitude];bounds.push(center);
         L.circle(center,{radius:p.name_radius_m||data.place_statistics.radius_m,color:'#20776e',fillOpacity:.12}).addTo(placesMap);
         const icon=L.divIcon({className:'tag-place-marker',html:`<span>${index+1}</span>`,iconSize:[32,32],iconAnchor:[16,16]});
-        const href=`https://www.openstreetmap.org/?mlat=${p.latitude}&mlon=${p.longitude}#map=18/${p.latitude}/${p.longitude}`;
+        const href=`https://uri.amap.com/marker?position=${p.longitude},${p.latitude}&coordinate=wgs84&name=${encodeURIComponent(p.display_name||p.name||"地点")}`;
         const marker=L.marker(center,{icon,title:p.label}).addTo(placesMap)
           .bindTooltip(esc(p.label))
           .bindPopup(`<strong>${esc(p.label)}</strong><p>出发 ${p.departures} 次 · 到达 ${p.arrivals} 次<br>归并范围 ${data.place_statistics.radius_m} 米</p><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">打开地图网站</a>`);
@@ -91,8 +91,8 @@
     }
     function paintCommuteMap(){
       const el=node?.querySelector('#commute-map');if(!el||commuteMap)return;
-      commuteMap=L.map(el,{scrollWheelZoom:false});
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:18}).addTo(commuteMap);
+      commuteMap=AmapMaps.createMap(el,{scrollWheelZoom:false});
+      AmapMaps.addTiles(commuteMap);
       const points=[commuteDraft.home,commuteDraft.work].filter(Boolean);
       if(points.length===2)commuteMap.fitBounds(points.map(p=>[p.latitude,p.longitude]),{padding:[45,45],maxZoom:15});
       else if(points.length)commuteMap.setView([points[0].latitude,points[0].longitude],14);
@@ -136,8 +136,8 @@
       const el=node?.querySelector('#tag-route-map');if(!el||!routeData)return;
       const points=(routeData.observations||[]).filter(p=>p.trusted===true&&p.plottable===true&&Number.isFinite(p.latitude)&&Number.isFinite(p.longitude));
       if(!points.length){el.textContent='本趟暂无位置采样，无法绘制路线。';return;}
-      routeMap=L.map(el,{zoomControl:false,scrollWheelZoom:false});
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:18}).addTo(routeMap);
+      routeMap=AmapMaps.createMap(el,{zoomControl:false,scrollWheelZoom:false});
+      AmapMaps.addTiles(routeMap);
       const layer=L.layerGroup().addTo(routeMap);
       const density=RouteQuality.analyze(routeData.observations||[],routeData.segments||[],'state_time');
       density.parts.forEach(part=>L.polyline(part.points.map(p=>[p.latitude,p.longitude]),RouteQuality.lineOptions(part)).addTo(layer));

@@ -545,10 +545,10 @@ function overview() {
   ${attention}
   <section class="card overview-temperature"><h2>座舱与环境</h2><div class="overview-temperature-values"><span>车内温度 <strong>${esc(m.metrics.inside)}</strong></span><span>车外温度 <strong>${esc(m.metrics.outside)}</strong></span></div>${link('车辆详情','car')}<p class="subtle">${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</p></section>
   <section class="metric-grid overview-metrics overview-four">${metric('动力电池',m.metric_details?.battery || m.metrics.battery,'battery','',true)}${metric('预估续航',m.metric_details?.range || m.metrics.range,'range','以车辆实际表现为准')}<div class="metric"><div class="metric-label">今日已记录里程</div><div class="metric-value"><span id="overview-today-value">未知</span><span class="metric-unit">km</span></div><div class="metric-foot" id="overview-today-note">正在读取已保存记录…</div></div><div class="metric"><div class="metric-label">本月已记录费用</div><div class="metric-value"><span id="overview-cost-value">未知</span><span class="metric-unit">元</span></div><div class="metric-foot" id="overview-cost-note">仅汇总已填实际金额</div></div></section>
-  <div class="overview-secondary"><span>累计里程 <strong>${esc(m.metrics.odometer)}</strong></span><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用动力电池专用字段，与低压电池分开。续航是车辆返回的估计。</p><p>胎压轮位及单位已核对；总览四舍五入至一位小数，车辆详情保留接口精度。未设置未经核对的胎压报警阈值。</p><p>门窗及锁车仅解释本车已验证的组合；未知不代表正常，也不代表异常。车型图片仅供参考。</p>${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}</div></details></div>
+  <div class="overview-secondary"><span>累计里程 <strong>${esc(m.metrics.odometer)}</strong></span><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用动力电池专用字段，与低压电池分开。续航是车辆返回的估计。</p><p>胎压轮位及单位已核对；总览与车辆详情均保留接口精度。未设置未经核对的胎压报警阈值。</p><p>门窗及锁车仅解释本车已验证的组合；未知不代表正常，也不代表异常。车型图片仅供参考。</p>${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}</div></details></div>
 
   <div class="overview-work-grid"><section class="card recent-events"><div class="card-head"><h2>最近行程与充电</h2><select class="select" id="overview-record-filter" aria-label="总览记录类型"><option value="all">全部记录</option><option value="trip_end">行程</option><option value="charge_end">充电</option></select></div><div class="card-body"><details data-detail="overview-latest"><summary>最近完成行程与充电摘要</summary><h3>最近完成行程</h3>${eventSummary(recent.trip_end,'trip_end')}<h3>最近完成充电</h3>${eventSummary(recent.charge_end,'charge_end')}</details><div id="overview-records"></div><button class="button secondary" data-overview-reload>重新读取记录汇总</button></div></section><aside class="card"><div class="card-head"><h2>待处理</h2></div><div class="card-body" id="overview-tasks"></div></aside></div>
-  <div class="grid-two grid-equal overview-health"><section class="card"><div class="card-head"><h2>最近观测活动</h2>${link('采集详情','settings')}</div><div class="card-body">${row('当前活动',activity)}${row('本地采集',recordingLabel)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<p class="subtle">活动来自后台最近观测，不代表实时状态。</p></div></section><section class="card"><div class="card-head"><h2>轮胎状态</h2>${link('查看详情','car')}</div><div class="card-body">${tyres(true)}</div></section></div>
+  <div class="grid-two grid-equal overview-health"><section class="card"><div class="card-head"><h2>最近观测活动</h2>${link('采集详情','settings')}</div><div class="card-body">${row('当前活动',activity)}${row('本地采集',recordingLabel)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<p class="subtle">活动来自后台最近观测，不代表实时状态。</p></div></section><section class="card"><div class="card-head"><h2>轮胎状态</h2>${link('查看详情','car')}</div><div class="card-body">${carTyreDiagram(m)}</div></section></div>
   ${overviewLocation()}
   <section class="card overview-trend-panel"><div class="card-head"><h2>每日已记录里程</h2><div class="overview-span"><button class="button secondary" data-overview-span="7" aria-pressed="true">7 天</button><button class="button secondary" data-overview-span="30" aria-pressed="false">30 天</button></div></div><div class="card-body"><p class="subtle" id="overview-trend-range"></p><div class="overview-trend" id="overview-trend" tabindex="0" role="group" aria-label="每日里程趋势"></div><p class="subtle">片段按有效指标计入。— 表示无有效里程观测，不视为零；没有记录不证明没有用车。</p></div></section>`;
 }
@@ -688,7 +688,7 @@ function energy() {
 }
 
 function privacyGate(track = false) {
-  return `<div class="map-empty">${icon(track?'tracks':'map')}<h2>${track?'按日期回看采样轨迹':'让位置，只在需要时出现'}</h2><p>显示位置后将加载 OpenStreetMap 底图，底图服务会收到对应区域的瓦片请求。经纬度文本默认隐藏。</p>${action('显示位置并加载地图','show-position')}<p class="subtle">随时可隐藏位置 · 不主动唤醒车辆</p></div>`;
+  return `<div class="map-empty">${icon(track?'tracks':'map')}<h2>${track?'按日期回看采样轨迹':'让位置，只在需要时出现'}</h2><p>显示位置后将加载高德地图底图，底图服务会收到对应区域的瓦片请求。经纬度文本默认隐藏。</p>${action('显示位置并加载地图','show-position')}<p class="subtle">随时可隐藏位置 · 不主动唤醒车辆</p></div>`;
 }
 
 function overviewLocation() {
@@ -875,9 +875,8 @@ function createMap(center, zoom = 14, options = {}) {
     note.textContent='地图底图保持原配色，以保证道路与地名可读。';
     $('#map').after(note);
   }
-  map = L.map('map', { attributionControl:true, scrollWheelZoom:false, ...options }).setView(center,zoom);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { minZoom:2,maxZoom:19,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' })
-    .on('tileerror', () => { if ($('#map-status')) $('#map-status').textContent = '部分底图未加载，可稍后重试；位置标记仅依据已返回数据。'; }).addTo(map);
+  map = AmapMaps.createMap('map', { attributionControl:true, scrollWheelZoom:false, ...options }).setView(center,zoom);
+  AmapMaps.addTiles(map);
   return map;
 }
 

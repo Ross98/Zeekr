@@ -3,6 +3,12 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    const projection=await page.evaluate(()=>{
+      const crs=AmapMaps.crs,source=L.latLng(31.2,121.4);
+      const pixel=crs.latLngToPoint(source,16),restored=crs.pointToLatLng(pixel,16);
+      return {lat:restored.lat,lng:restored.lng};
+    });
+    assert.ok(Math.abs(projection.lat-31.2)<1e-7&&Math.abs(projection.lng-121.4)<1e-7);
     const trackRequests=[];
     page.on('request',request=>{if(new URL(request.url()).pathname==='/api/tracks')trackRequests.push(request.url());});
     await page.route('**/api/tracks?**',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(route.request().url().includes('report-partial')?{
@@ -13,7 +19,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
       segments:[[{trusted:true,plottable:true,latitude:31.2,longitude:121.4,state_time:1},
                  {trusted:true,plottable:true,latitude:31.21,longitude:121.41,state_time:2001}]],count:2,gaps:[]
     })}));
-    await page.route('https://tile.openstreetmap.org/**',route=>route.fulfill({status:200,contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==','base64')}));
+    await page.route('https://wprd0*.is.autonavi.com/**',route=>route.fulfill({status:200,contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==','base64')}));
     assert.equal(await page.locator('[data-insight-view="tags"]').count(),0);
     await page.getByRole('button',{name:'行程与轨迹',exact:true}).click();
     await page.getByRole('button',{name:'行程标签',exact:true}).click();
@@ -128,7 +134,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     assert.equal(await page.getByLabel('行程标签（逗号分隔）',{exact:true}).inputValue(),'接娃');
     assert.equal(await page.getByRole('button',{name:'取消本趟自动通勤'}).count(),1);
     assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/trip-tags'));
-    assert.ok(f.external.every(url=>url.startsWith('https://tile.openstreetmap.org/')));
+    assert.ok(f.external.every(url=>/^https:\/\/wprd0[1-4]\.is\.autonavi\.com\//.test(url)));
     assert.deepEqual(f.errors,[]);
     console.log('UI_TRIP_TAGS_PASS: custom/multiple tags, notes escaping/preservation, group comparison and denominators, filters, delete/restore, persistence, themes/mobile/zoom/contrast');
   }finally{await f.close();}
