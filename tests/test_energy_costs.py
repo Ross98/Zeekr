@@ -1,5 +1,5 @@
 import unittest
-from zeekr_control.energy_costs import estimate
+from zeekr_control.energy_costs import estimate, summarize
 
 def event(identity,kind,start,end,a,b,capacity=100,partial=False):
     delta=b-a if a is not None and b is not None else None
@@ -36,12 +36,14 @@ class EnergyCostTests(unittest.TestCase):
         self.assertEqual(estimate(rows,{'c':dict(actual_cents=0,metered_kwh=20)})['t']['estimated_cents'],0)
         self.assertIsNone(estimate(rows,{'c':dict(actual_cents=None,metered_kwh=20)})['t']['estimated_cents'])
 
-    def test_invalid_meter_or_partial_charge_does_not_price_stock(self):
+    def test_invalid_meter_does_not_price_stock(self):
         rows=[event('c','charge_end',1,2,0,20),event('t','trip_end',3,4,20,10)]
         for meter in (None,0,10):
             self.assertIsNone(estimate(rows,{'c':dict(actual_cents=2000,metered_kwh=meter)})['t']['estimated_cents'])
         rows[0]['partial']=True
-        self.assertIsNone(estimate(rows,{'c':dict(actual_cents=2000,metered_kwh=20)})['t']['estimated_cents'])
+        cost=estimate(rows,{'c':dict(actual_cents=2000,metered_kwh=25)})['t']
+        self.assertEqual(cost['estimated_cents'],800)
+        self.assertTrue(cost['loss_unknown'])
 
     def test_unknown_soc_gain_and_capacity_change_do_not_inherit_all_prices(self):
         rows=[event('c','charge_end',1,2,0,20),event('t','trip_end',3,4,40,20)]
@@ -64,3 +66,20 @@ class EnergyCostTests(unittest.TestCase):
         cost=estimate(rows,{})['t'];self.assertIsNone(cost['estimated_cents']);self.assertIsNone(cost['energy_kwh'])
         cost=estimate([event('t','trip_end',1,2,20,20)],{})['t']
         self.assertEqual(cost['estimated_cents'],0)
+
+    def test_zero_energy_does_not_turn_unknown_consumption_into_zero_daily_cost(self):
+        costs=estimate([event('zero','trip_end',1,2,20,20),event('unknown','trip_end',3,4,20,10)],{})
+        rows=[dict(kind='trip_end',energy_cost=costs[key]) for key in ('zero','unknown')]
+        self.assertIsNone(summarize(rows)['estimated_cents'])
+        self.assertEqual(summarize(rows)['known_cents'],0)
+
+    def test_known_free_energy_remains_partial_when_unknown_energy_exists(self):
+        costs=estimate([event('c','charge_end',1,2,20,40),event('t','trip_end',3,4,40,20)],{'c':dict(actual_cents=0,metered_kwh=20)})
+        summary=summarize([dict(kind='trip_end',energy_cost=costs['t'])])
+        self.assertEqual(summary['estimated_cents'],0)
+        self.assertGreater(summary['unknown_kwh'],0)
+
+    def test_partial_charge_without_valid_energy_still_remains_unknown(self):
+        rows=[event('c','charge_end',1,2,0,20,partial=True),event('t','trip_end',3,4,20,10)]
+        rows[0]['estimated_kwh']=None
+        self.assertIsNone(estimate(rows,{'c':dict(actual_cents=2000,metered_kwh=25)})['t']['estimated_cents'])

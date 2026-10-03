@@ -7,6 +7,7 @@ def estimate(events, books):
     result = {}
     capacity = stock = known = cents = None
     last_end = None
+    meter_known = 0
     for row in sorted(events, key=lambda e: (e['end_time'], e.get('start_time') or e['end_time'], e['id'])):
         cap = number(row.get('battery_capacity_kwh'), .001, 1000)
         if row['kind'] == 'parking' and cap is None:
@@ -24,18 +25,18 @@ def estimate(events, books):
         valid = valid and not overlap and energy is not None and delta >= 0 and abs(delta-energy) < .02
         cost = dict(energy_kwh=energy, known_kwh=0, unknown_kwh=energy,
                     estimated_cents=None, reference_cents_per_kwh=None, status='unknown',
-                    data_partial=bool(row.get('partial')), overlap=overlap)
+                    data_partial=bool(row.get('partial')), overlap=overlap, loss_unknown=False)
         if not valid:
             capacity = cap
             stock = b*cap/100 if b is not None and cap is not None else None
-            known = cents = 0
+            known = cents = meter_known = 0
         else:
             initial = a*cap/100
             if stock is None or capacity != cap:
-                stock, known, cents = initial, 0, 0
+                stock, known, cents, meter_known = initial, 0, 0, 0
             elif initial < stock:
                 ratio = initial/stock if stock else 0
-                known *= ratio; cents *= ratio; stock = initial
+                known *= ratio; cents *= ratio; meter_known *= ratio; stock = initial
             elif initial > stock:
                 stock = initial  # unobserved gain is unknown-priced energy
             capacity = cap
@@ -43,13 +44,16 @@ def estimate(events, books):
                 book = books.get(row['id'], {})
                 fee = number(book.get('actual_cents'), 0, 100000000)
                 meter = number(book.get('metered_kwh'), .000001, 10000)
-                priced = not row.get('partial') and fee is not None and meter is not None and meter >= energy and energy > 0
+                priced = fee is not None and meter is not None and meter >= energy and energy > 0
                 stock += energy
                 if priced:
-                    known += energy; cents += fee
+                    allocated = fee*energy/meter if row.get('partial') else fee
+                    known += energy; cents += allocated
+                    if row.get('partial'):meter_known += energy
                 cost.update(known_kwh=energy if priced else 0, unknown_kwh=0 if priced else energy,
-                            estimated_cents=fee if priced else None,
-                            reference_cents_per_kwh=fee/energy if priced else None,
+                            estimated_cents=allocated if priced else None,
+                            loss_unknown=bool(priced and row.get('partial')),
+                            reference_cents_per_kwh=allocated/energy if priced else None,
                             status='priced' if priced else 'unknown')
             else:
                 ratio = min(1, energy/stock) if stock else 0
@@ -57,8 +61,9 @@ def estimate(events, books):
                 cost.update(known_kwh=round(used_known, 6), unknown_kwh=round(max(0, energy-used_known), 6),
                             estimated_cents=round(used_cents, 6) if used_known > 0 or energy == 0 else None,
                             reference_cents_per_kwh=cents/known if known > 0 else None,
+                            loss_unknown=meter_known > .000001 and energy > 0,
                             status='priced' if abs(energy-used_known)<.000001 else 'partial' if used_known > 0 else 'unknown')
-                stock = max(0, stock-energy); known -= used_known; cents -= used_cents
+                stock = max(0, stock-energy); known -= used_known; cents -= used_cents; meter_known *= 1-ratio
         result[row['id']] = cost
         last_end = max(last_end or end, end)
     return result
@@ -66,7 +71,11 @@ def estimate(events, books):
 
 def summarize(rows):
     costs = [r['energy_cost'] for r in rows]
-    return dict(estimated_cents=total(c['estimated_cents'] for c in costs),
+    subtotal = total(c['estimated_cents'] for c in costs)
+    unknown = any(c['energy_kwh'] is None or (c['unknown_kwh'] or 0)>0 for c in costs)
+    priced_energy = sum(c['known_kwh'] for c in costs)
+    return dict(estimated_cents=None if unknown and priced_energy==0 else subtotal,
+                known_cents=subtotal, loss_unknown=any(c['loss_unknown'] for c in costs),
                 energy_kwh=total(c['energy_kwh'] for c in costs),
                 known_kwh=total(c['known_kwh'] for c in costs),
                 unknown_kwh=total(c['unknown_kwh'] for c in costs),

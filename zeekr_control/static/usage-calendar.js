@@ -26,7 +26,7 @@
           const label=`${day.date}${day.date===today?'，今天':''}，行程 ${day.trip_count} 趟，充电 ${day.charge_count} 次，停车观测 ${day.parked_samples} 条，待补账 ${day.pending_count} 次，${coverage[day.coverage]}`;
           return `<button id="calendar-day-${day.date}" data-calendar-day="${day.date}" aria-label="${label}" aria-pressed="${selected===day.date}" ${day.date===today?'aria-current="date"':''} class="calendar-day ${day.coverage} ${dayLevel(day)} ${mode==='pending'&&!day.pending_count?'calendar-muted':''} ${day.pending_count?'calendar-needs-bill':''}"><span class="calendar-date"><strong>${Number(day.date.slice(-2))}</strong>${day.date===today?'<small>今天</small>':''}</span>${dayValue(day)}<span class="calendar-flags">${day.trip_count?`<span class="calendar-trip"><span>行程</span><span class="calendar-count">${day.trip_count} 趟</span></span>`:''}${day.charge_count?`<span class="calendar-charge"><span>充电</span><span class="calendar-count">${day.charge_count} 次</span></span>`:''}</span>${day.pending_count?`<span class="calendar-pending">待补 ${day.pending_count}</span>`:''}${marks[day.coverage]?`<span class="calendar-coverage">${marks[day.coverage]}</span>`:!day.trip_count&&!day.charge_count&&!day.parked_samples?'<span class="calendar-coverage">有观测</span>':''}</button>`;
         }).join('')}</div><p class="insight-note calendar-legend">深色表示本月数值较高。里程与用电成本按结束日、账单金额按账单日；无归档不代表没有用车。</p><p class="insight-note calendar-as-of">数据截至 ${esc(time(data.as_of))}</p></section><aside class="calendar-detail-column" aria-label="选中日期的记录"><div id="calendar-day-detail"></div><div id="calendar-event-detail"></div></aside></div>
-        <details class="card calendar-data-notes"><summary>数据说明 · 跨午夜、观测与估算口径</summary><p>跨午夜的已结束记录，在涉及日期都显示；各日数量不能直接相加。日格与月摘要按结束日期统计里程，不按天拆分；花费按账单日期统计实际充电费用，不含估算和停车费。尚未结束的记录不计入本页。</p><p>用电成本按实际充电费用与有效 SOC 补入量建立加权电池成本，包含充电损耗，不含停车费；起始存量、未补金额或电表电量的充电价格未知。仅估已记录行程与可靠停车片段，不代表全天总支出；跨午夜归结束日，不拆分。</p><p>价格依据回看最近 180 天。${data.totals.energy_cost_quality.history_limited?'历史超出读取上限，价格依据受限。':''}${data.totals.energy_cost_quality.unreadable_or_undated?'存在无法读取或归期的历史，成本依据可能不完整。':''}</p><p>“停车观测”仅表示采到明确下电、有效零速且未充电的状态；不代表全天停放。无归档也不代表没有用车。“观测受限”表示仅有重复或异常时间观测。</p>${data.history_quality.unreadable_or_undated?`<p>事件库另有 ${data.history_quality.unreadable_or_undated} 条格式无效或无法归期的历史记录，未纳入日历。</p>`:''}</details>`:''}`;
+        <details class="card calendar-data-notes"><summary>数据说明 · 跨午夜、观测与估算口径</summary><p>跨午夜的已结束记录，在涉及日期都显示；各日数量不能直接相加。日格与月摘要按结束日期统计里程，不按天拆分；花费按账单日期统计实际充电费用，不含估算和停车费。尚未结束的记录不计入本页。</p><p>完整充电按实际费用与有效 SOC 补入量建立加权电池成本，包含充电损耗。片段充电只将有效补入量按实际账单的桩端单价计入参考成本，损耗未计全。不含停车费；起始存量、未补金额或电表电量的充电价格未知。仅估已记录行程与可靠停车片段，不代表全天总支出；跨午夜归结束日，不拆分。</p><p>价格依据回看最近 180 天。${data.totals.energy_cost_quality.history_limited?'历史超出读取上限，价格依据受限。':''}${data.totals.energy_cost_quality.unreadable_or_undated?'存在无法读取或归期的历史，成本依据可能不完整。':''}</p><p>“停车观测”仅表示采到明确下电、有效零速且未充电的状态；不代表全天停放。无归档也不代表没有用车。“观测受限”表示仅有重复或异常时间观测。</p>${data.history_quality.unreadable_or_undated?`<p>事件库另有 ${data.history_quality.unreadable_or_undated} 条格式无效或无法归期的历史记录，未纳入日历。</p>`:''}</details>`:''}`;
       paintDay();paintEvent();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
     }
     function monthSummary(){
@@ -41,18 +41,18 @@
     }
     function dayValue(day){
       if(day.coverage==='future'&&mode!=='cost')return '';
-      if(mode==='energy')return day.energy_cost.samples?`<span class="calendar-primary">${money(day.energy_cost.estimated_cents)}<small>${day.energy_cost.estimated_cents===null?'':'元'}</small></span><span class="calendar-coverage">${day.energy_cost.partial_count?'部分可估':'记录可估'}</span>`:'';
+      if(mode==='energy')return day.energy_cost.samples?`<span class="calendar-primary">${money(day.energy_cost.estimated_cents)}<small>${day.energy_cost.estimated_cents===null?'':'元'}</small></span><span class="calendar-coverage">${day.energy_cost.estimated_cents===null?'成本未知':day.energy_cost.partial_count?'部分可估':'记录可估'}</span>`:'';
       if(mode==='cost')return day.actual_count?`<span class="calendar-primary">${money(day.actual_cents)}<small>元</small></span>`:day.unpriced_count?'<span class="calendar-primary calendar-unknown">金额未填</span>':'';
       if(mode==='pending')return day.pending_count?`<span class="calendar-primary">${day.pending_count}<small>次待补</small></span>`:'';
       return day.distance_km!==null?`<span class="calendar-primary">${number(day.distance_km)}<small>km</small></span>`:day.ended_trip_count?'<span class="calendar-primary calendar-unknown">里程未知</span>':'';
     }
     function costCoverage(cost){
       if(!cost.samples)return '暂无有效消费记录';
-      return `${cost.partial_count&&cost.estimated_cents!==null?'仅已知部分 · ':''}有价格 ${number(cost.known_kwh)} / ${number(cost.energy_kwh)} kWh${cost.missing_energy_count?' · '+cost.missing_energy_count+' 段耗电未知':''}`;
+      return `${cost.partial_count&&cost.estimated_cents!==null?'仅已知部分 · ':''}有价格 ${number(cost.known_kwh)} / ${number(cost.energy_kwh)} kWh${cost.missing_energy_count?' · '+cost.missing_energy_count+' 段耗电未知':''}${cost.loss_unknown?' · 损耗未计全':''}`;
     }
     function costReading(cost){
       if(!cost)return '';
-      return `<p class="calendar-event-value">用电成本估算 <strong>${money(cost.estimated_cents)} 元</strong>${cost.status==='partial'?' · 仅已知价格部分':''}<br>有价格 ${number(cost.known_kwh)} / ${number(cost.energy_kwh)} kWh${cost.reference_cents_per_kwh!==null?` · 电池参考成本 ${number(cost.reference_cents_per_kwh/100)} 元/kWh`:''}${cost.overlap?' · 时间重叠，不能估价':''}</p>`;
+      return `<p class="calendar-event-value">用电成本估算 <strong>${money(cost.estimated_cents)} 元</strong>${cost.status==='partial'?' · 仅已知价格部分':''}<br>有价格 ${number(cost.known_kwh)} / ${number(cost.energy_kwh)} kWh${cost.reference_cents_per_kwh!==null?` · 电池参考成本 ${number(cost.reference_cents_per_kwh/100)} 元/kWh`:''}${cost.overlap?' · 时间重叠，不能估价':''}${cost.loss_unknown?'<br>含片段充电的账单单价参考，充电损耗未计全。':''}${cost.energy_kwh===0?'<br>未观测到有效 SOC 下降，不代表实际没有耗电。':''}</p>`;
     }
     function paintDay(){
       const el=node?.querySelector('#calendar-day-detail'),day=data?.days.find(d=>d.date===selected);if(!el||!day)return;
