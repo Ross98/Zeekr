@@ -206,3 +206,16 @@
 
 .calendar-date{align-items:flex-start;flex-wrap:wrap}.calendar-day-consumption{margin-inline-start:auto;display:grid;gap:2px;text-align:right;font-size:11px;line-height:1.35;font-variant-numeric:tabular-nums;max-width:100%;color:var(--ink)}.calendar-day-consumption>span{display:flex;justify-content:flex-end;align-items:baseline;gap:2px;flex-wrap:wrap}.calendar-day-consumption small{font-size:9px;color:var(--night-secondary,#50656e)}
 @media(max-width:600px){.calendar-date{flex-direction:row;min-height:50px}.calendar-day-consumption{width:100%;font-size:10px}.calendar-day-consumption small{font-size:8px}.calendar-day-consumption>span{gap:1px}.calendar-day .calendar-date strong{font-size:14px}#insights-workspace .calendar-day{min-height:132px}}
+
+/* Continuous mileage color uses the same curve for every month. */
+#insights-workspace .calendar-panel .calendar-day.calendar-distance{background:var(--distance-light);color:var(--distance-light-text);--night-secondary:var(--distance-light-text);--night-warning:var(--distance-light-text)}
+[data-theme="dark"] #insights-workspace .calendar-panel .calendar-day.calendar-distance{background:var(--distance-dark);color:var(--distance-dark-text);--night-secondary:var(--distance-dark-text);--night-warning:var(--distance-dark-text)}
+#insights-workspace .calendar-distance .calendar-day-consumption,#insights-workspace .calendar-distance .calendar-trip,#insights-workspace .calendar-distance .calendar-charge{color:inherit}
+#insights-workspace .calendar-day.calendar-distance[aria-current=date] .calendar-date strong{color:inherit}
+#insights-workspace .calendar-day.calendar-distance[aria-pressed=true]{outline-color:currentColor}
+.calendar-heatmap-legend{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:16px;font-size:11px;color:var(--ink)}
+.calendar-heatmap-legend>span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.calendar-heatmap-legend i{display:inline-block;width:16px;height:16px;border:1px solid var(--line);border-radius:3px}
+.calendar-heatmap-legend .calendar-distance-ramp{width:140px;background:linear-gradient(to right,#f6faf7,#14502d)}
+[data-theme="dark"] .calendar-heatmap-legend .calendar-distance-ramp{background:linear-gradient(to right,#262f3a,#b8c2cd)}
+.calendar-distance-unknown{background:var(--paper);border-style:dashed!important}
