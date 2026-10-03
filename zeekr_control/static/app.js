@@ -68,6 +68,20 @@ function openSectionTask(task){sectionTask=task;render();if(task&&task!=='record
 const insightSections = ['car','energy','tracks','insights','settings'];
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false},
   navigate:(section,view,date)=>{page=section;sectionTask=section==='insights'?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
+const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
+  openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{page=tool==='ledger'?'energy':'settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
+async function openOverviewRecord(record){
+  const context=state?.insights_context,date=beijingDate(record.end_time);
+  if(record.kind==='trip_end'){
+    page='tracks';sectionTask='';trackSource='local';trackDate=date;render();
+    const h=syncLocalTrips();await loadLocalTrips(true);
+    if(page!=='tracks'||context!==state?.insights_context||localTrips!==h)return;
+    clearLocalRoute();h.selection=record.id;h.selected=h.events?.find(e=>e.id===record.id)||{...record,status:'ended'};renderLocalTripList();renderLocalTripDetail();if(showPosition)loadLocalRoute();
+  }else{
+    page='energy';sectionTask='records';render();chargeDate=date;chargeQueryMode='day';chargeQuery={start:date};chargeCursor=null;chargeCursorStack=[];chargeSelected=record;render();await loadChargeEvents();
+  }
+  if(context===state?.insights_context)window.scrollTo(0,0);
+}
 const tripTagTime = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '未知';
 const tripTagsPage = window.TripTagsPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='tracks'&&trackSource==='tags',time:tripTagTime});
 const tripManager = window.TripManagement.create({getState:()=>state,getDate:()=>trackDate,request:api,escape:esc,
@@ -464,11 +478,13 @@ function overview() {
   const recordingLabel={never:'尚未开启',paused:'已暂停',active:'正在记录',failed:'采集失败',offline:'后台未在线'}[recording.status] || (recording.active?'正在记录':'已暂停');
   return `<section class="hero"><div class="hero-copy"><div class="hero-title">${esc(profile.name)}</div><div class="hero-state">${pill(m.lock.confirmed?m.lock.value:'锁车状态未知',m.lock.confirmed?'good':'warn',m.lock.confirmed?'lock':'info')}${pill(m.charging.confirmed?m.charging.value:'充电状态未知',m.charging.confirmed?'':'warn','energy')}</div><div class="freshness">${icon('clock')}<div>${age(m.updated_time,'车辆数据更新于 ')}<span class="subtle">云端缓存 · 不代表实时状态</span></div></div><button class="closure-summary" data-page="car" aria-label="查看门窗详情">${[['doors','车门'],['windows','车窗'],['trunk','尾门']].map(([key,label])=>`<span class="${closure[key]==='未知'?'unknown':''}">${label}${esc(closure[key])}</span>`).join('')}${icon('arrow')}</button></div><div class="hero-car">${profile.image?`<img src="${esc(profile.image)}" alt="${esc(profile.image_alt)}">`:icon('car')}</div></section>
   ${attention}
-  <section class="metric-grid overview-metrics">${metric('动力电池',m.metric_details?.battery || m.metrics.battery,'battery','',true)}${metric('预估续航',m.metric_details?.range || m.metrics.range,'range','以车辆实际表现为准')}</section>
+  <section class="card overview-temperature"><h2>座舱与环境</h2><div class="overview-temperature-values"><span>车内温度 <strong>${esc(m.metrics.inside)}</strong></span><span>车外温度 <strong>${esc(m.metrics.outside)}</strong></span></div>${link('车辆详情','car')}<p class="subtle">${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</p></section>
+  <section class="metric-grid overview-metrics overview-four">${metric('动力电池',m.metric_details?.battery || m.metrics.battery,'battery','',true)}${metric('预估续航',m.metric_details?.range || m.metrics.range,'range','以车辆实际表现为准')}<div class="metric"><div class="metric-label">今日已记录里程</div><div class="metric-value"><span id="overview-today-value">未知</span><span class="metric-unit">km</span></div><div class="metric-foot" id="overview-today-note">正在读取已保存记录…</div></div><div class="metric"><div class="metric-label">本月已记录费用</div><div class="metric-value"><span id="overview-cost-value">未知</span><span class="metric-unit">元</span></div><div class="metric-foot" id="overview-cost-note">仅汇总已填实际金额</div></div></section>
   <div class="overview-secondary"><span>累计里程 <strong>${esc(m.metrics.odometer)}</strong></span><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用动力电池专用字段，与低压电池分开。续航是车辆返回的估计。</p><p>胎压轮位及单位已核对；总览四舍五入至一位小数，车辆详情保留接口精度。未设置未经核对的胎压报警阈值。</p><p>门窗及锁车仅解释本车已验证的组合；未知不代表正常，也不代表异常。车型图片仅供参考。</p>${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}</div></details></div>
-  <div class="grid-two"><section class="card"><div class="card-head"><h2>座舱与环境</h2>${link('车辆详情','car')}</div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="divider"></div><div class="subtle">${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</div></div></section>
-  <section class="card"><div class="card-head"><h2>轮胎状态</h2>${link('查看详情','car')}</div><div class="card-body">${tyres(true)}</div></section></div>
-  <div class="grid-two grid-equal overview-links recent-events"><section class="card"><div class="card-head"><h2>最近观测活动</h2>${link('查看行程','tracks')}</div><div class="card-body">${row('当前活动',activity)}${row('本地采集',recordingLabel)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<p class="subtle">状态来自后台最近观测，不代表车辆实时状态。</p></div></section><section class="card"><div class="card-head"><h2>最近完成行程</h2>${link('行程详情','tracks')}</div><div class="card-body">${eventSummary(recent.trip_end,'trip_end')}</div></section><section class="card"><div class="card-head"><h2>最近完成充电</h2>${link('能源详情','energy')}</div><div class="card-body">${eventSummary(recent.charge_end,'charge_end')}</div></section><section class="card"><div class="card-head"><h2>位置</h2>${link('打开地图','map')}</div><div class="card-body"><div class="location-preview">${icon('map')}<span>${showPosition?'位置显示已开启 · 前往地图查看':'位置默认隐藏 · 按需打开地图'}</span></div></div></section></div>`;
+
+  <div class="overview-work-grid"><section class="card recent-events"><div class="card-head"><h2>最近行程与充电</h2><select class="select" id="overview-record-filter" aria-label="总览记录类型"><option value="all">全部记录</option><option value="trip_end">行程</option><option value="charge_end">充电</option></select></div><div class="card-body"><details data-detail="overview-latest"><summary>最近完成行程与充电摘要</summary><h3>最近完成行程</h3>${eventSummary(recent.trip_end,'trip_end')}<h3>最近完成充电</h3>${eventSummary(recent.charge_end,'charge_end')}</details><div id="overview-records"></div><button class="button secondary" data-overview-reload>重新读取记录汇总</button></div></section><aside class="card"><div class="card-head"><h2>待处理</h2></div><div class="card-body" id="overview-tasks"></div></aside></div>
+  <div class="grid-two grid-equal overview-health"><section class="card"><div class="card-head"><h2>最近观测活动</h2>${link('采集详情','settings')}</div><div class="card-body">${row('当前活动',activity)}${row('本地采集',recordingLabel)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<div class="overview-location"><span>位置</span>${link('打开地图','map')}</div><p class="subtle">${showPosition?'位置显示已开启 · 前往地图查看':'位置默认隐藏 · 按需打开地图'}。活动来自后台最近观测，不代表实时状态。</p></div></section><section class="card"><div class="card-head"><h2>轮胎状态</h2>${link('查看详情','car')}</div><div class="card-body">${tyres(true)}</div></section></div>
+  <section class="card overview-trend-panel"><div class="card-head"><h2>每日已记录里程</h2><div class="overview-span"><button class="button secondary" data-overview-span="7" aria-pressed="true">7 天</button><button class="button secondary" data-overview-span="30" aria-pressed="false">30 天</button></div></div><div class="card-body"><p class="subtle" id="overview-trend-range"></p><div class="overview-trend" id="overview-trend" tabindex="0" role="group" aria-label="每日里程趋势"></div><p class="subtle">片段按有效指标计入。— 表示无有效里程观测，不视为零；没有记录不证明没有用车。</p></div></section>`;
 }
 
 function table(fields, paths = false) {
@@ -742,7 +758,7 @@ function render() {
   const error = transientError || state?.error;
   const taskPage=['car','energy','settings','tracks'].includes(page)&&sectionTask;
   const body = taskPage?(sectionTask==='records'?chargingWorkspace(state?.model?.charging_details)+'<div id="charge-management"></div><div id="insights-workspace" hidden></div>':'<div id="insights-workspace"></div>'):{overview,car,energy,map:mapPage,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
-  $('#main').innerHTML = head() + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
+  $('#main').innerHTML = head() + (page!=='overview'?overviewDashboard.backButton():'') + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
   if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
   if(chargeManagerNode&&$('#charge-management')){$('#charge-management').replaceWith(chargeManagerNode);if(chargeManagerFocus?.isConnected)chargeManagerFocus.focus({preventScroll:true});}
   if (insightSections.includes(page)) {
@@ -769,6 +785,7 @@ function render() {
   if (page === 'map' && showPosition && state?.model) loadLocation(generation);
   if (page === 'energy' && (!sectionTask||sectionTask==='records') && state?.model) { chargeManager.mount($('#charge-management')); ensureChargingAnalytics(chargingSelection); }
   if (page === 'tracks' && trackSource === 'local') mountLocalTrips();
+  if(page==='overview')overviewDashboard.mount();else overviewDashboard.suspend();
 }
 
 function createMap(center, zoom = 14, options = {}) {
@@ -849,6 +866,8 @@ async function updateRecording(saveInterval = false) {
 }
 
   document.addEventListener('click', event => {
+  if(event.target.closest('[data-overview-back]')){page='overview';sectionTask='';render();overviewDashboard.restore();return;}
+  if(overviewDashboard.handle(event))return;
   const attentionLink=event.target.closest('[data-attention-target]');
   if(attentionLink){openAttention(attentionLink.dataset.attentionTarget);return;}
   if(event.target.closest('[data-collection-diagnosis]')){page='settings';openSectionTask('quality');return;}
@@ -916,6 +935,7 @@ document.addEventListener('input', event => {
   if(event.target.id==='charging-point') {chargingPoint=Number(event.target.value);renderChargingWorkspace();}
 });
 document.addEventListener('change', event => {
+  if(overviewDashboard.handle(event))return;
   if (tripManager.handle(event)) return;
   if (chargeManager.handle(event)) return;
   if (tripTagsPage.handle(event)) return;

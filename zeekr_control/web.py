@@ -888,6 +888,7 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/trip-tags.js': ('trip-tags.js', 'text/javascript; charset=utf-8'),
                           '/travel-insights.js':('travel-insights.js','text/javascript; charset=utf-8'),
                           '/navigation-state.js':('navigation-state.js','text/javascript; charset=utf-8'),
+                          '/overview-dashboard.js':('overview-dashboard.js','text/javascript; charset=utf-8'),
                           '/charge-comparison.js': ('charge-comparison.js', 'text/javascript; charset=utf-8'),
                           '/parameter-experiments.js': ('parameter-experiments.js', 'text/javascript; charset=utf-8'),
                           '/vehicle-research.js': ('vehicle-research.js', 'text/javascript; charset=utf-8'),

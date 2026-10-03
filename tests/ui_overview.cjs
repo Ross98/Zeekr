@@ -18,6 +18,7 @@ const fs = require('node:fs');
     assert.match(await page.locator('.hero').innerText(),/车辆数据更新于.*20 分钟前/);
     assert.match(await page.locator('.closure-summary').innerText(),/车门关闭.*车窗关闭.*尾门关闭/s);
     assert.match(await page.locator('main').innerText(),/后台未在线/);
+    await page.locator('[data-detail="overview-latest"] summary').click();
     assert.match(await page.locator('.recent-events').innerText(),/最近完成行程.*8\.4 km.*70%.*68%/s);
     assert.match(await page.locator('.recent-events').innerText(),/最近完成充电.*40%.*64%/s);
     assert.match(await page.locator('.tyre-grid').innerText(),/265\.1 kPa/);

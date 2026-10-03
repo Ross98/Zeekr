@@ -50,3 +50,14 @@ class ReleaseInfoTests(unittest.TestCase):
             self.assertEqual(read_release(root)['features'][0]['status'],'matched')
             (root/'zeekr_control/static/theme.css').write_text('changed')
             self.assertEqual(read_release(root)['features'][0]['status'],'mismatch')
+
+    def test_overview_layout_checks_scoped_script_and_route(self):
+        from zeekr_control.release_info import read_release, write_manifest, FEATURES
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for relative in FEATURES['overview-layout']['files']:
+                p=root/relative;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('synthetic')
+            write_manifest(root,'a'*40,['overview-layout'])
+            self.assertEqual(read_release(root)['features'][0]['status'],'matched')
+            (root/'zeekr_control/static/overview-dashboard.js').write_text('changed')
+            self.assertEqual(read_release(root)['features'][0]['status'],'mismatch')
