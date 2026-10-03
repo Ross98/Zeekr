@@ -28,9 +28,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .charging-legend i{display:inline-block;width:12px;height:12px;margin-right:5px;background:var(--chart-ac)}
 .charging-legend .dc{background:var(--chart-dc)}
 .charging-legend .unknown{background:var(--chart-unknown)}
-.charging-day{min-width:28px}
-.charging-day>span{writing-mode:horizontal-tb;font-size:12px}
-.charging-bars{gap:10px}
 .charging-bar:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
 .map-theme-note{display:none}
 [data-theme="dark"] .map-theme-note{display:block;margin:0;padding:10px 16px;background:var(--paper);color:var(--muted);font-size:13px}

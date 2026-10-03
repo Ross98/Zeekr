@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 FEATURES={
+ 'charging-readability':dict(label='充电图表可读性',files=['zeekr_control/static/app.js','zeekr_control/static/app.css','zeekr_control/static/theme.css']),
  'home-attention':dict(label='首页异常提示',files=['zeekr_control/static/app.js','zeekr_control/static/app.css']),
  'pending-ledger':dict(label='充电待补账',files=['zeekr_control/static/charge-ledger.js','zeekr_control/static/app.css']),
  'place-names':dict(label='地点命名与范围预览',files=['zeekr_control/trip_place_names.py','zeekr_control/trip_places.py','zeekr_control/trip_tags.py','zeekr_control/static/trip-tags.js','zeekr_control/static/insights.css']),

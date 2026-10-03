@@ -27,3 +27,14 @@ class ReleaseInfoTests(unittest.TestCase):
             result=read_release(root)
             self.assertEqual(result['status'],'invalid')
             self.assertNotIn('SECRET',json.dumps(result));self.assertNotIn('PRIVATE',json.dumps(result))
+
+    def test_charging_readability_verifies_theme_and_chart_files(self):
+        from zeekr_control.release_info import read_release, write_manifest, FEATURES
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for relative in FEATURES['charging-readability']['files']:
+                p=root/relative;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('synthetic')
+            write_manifest(root,'a'*40,['charging-readability'])
+            self.assertEqual(read_release(root)['features'][0]['status'],'matched')
+            (root/'zeekr_control/static/theme.css').write_text('changed')
+            self.assertEqual(read_release(root)['features'][0]['status'],'mismatch')
