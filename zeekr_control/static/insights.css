@@ -203,3 +203,6 @@
 [data-theme="dark"] #insights-workspace .calendar-panel{--calendar-level-one:#1d2e2a;--calendar-level-two:#203b31}
 
 .calendar-summary{grid-template-columns:repeat(5,minmax(0,1fr))}@media(max-width:600px){.calendar-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.calendar-summary>[data-calendar-mode="energy"]{grid-column:1/-1}}
+
+.calendar-date{align-items:flex-start;flex-wrap:wrap}.calendar-day-consumption{margin-inline-start:auto;display:grid;gap:2px;text-align:right;font-size:11px;line-height:1.35;font-variant-numeric:tabular-nums;max-width:100%;color:var(--ink)}.calendar-day-consumption>span{display:flex;justify-content:flex-end;align-items:baseline;gap:2px;flex-wrap:wrap}.calendar-day-consumption small{font-size:9px;color:var(--night-secondary,#50656e)}
+@media(max-width:600px){.calendar-date{flex-direction:row;min-height:50px}.calendar-day-consumption{width:100%;font-size:10px}.calendar-day-consumption small{font-size:8px}.calendar-day-consumption>span{gap:1px}.calendar-day .calendar-date strong{font-size:14px}#insights-workspace .calendar-day{min-height:132px}}
