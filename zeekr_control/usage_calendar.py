@@ -3,18 +3,19 @@ from datetime import datetime
 import time
 
 from .snapshot_archive import BEIJING
-from .usage_events import UsageEvents
+from .usage_events import UsageEvents, total
 from .usage_reports import DAY, date_label, period_window
 from .vehicle_state import decode
 
 
 class UsageCalendar:
-    def __init__(self,database,archive,clock=None):
+    def __init__(self,database,archive,clock=None,store=None):
         self.events=UsageEvents(database)
+        self.store=store
         self.archive=archive
         self.clock=clock or (lambda:int(time.time()*1000))
 
-    def query(self,scope,vehicle,date,now=None):
+    def query(self,scope,vehicle,date,now=None,owner=None):
         now=self.clock() if now is None else now
         window=period_window('month',date)
         days=[dict(date=date_label(window['start']+i*DAY),trip_count=0,charge_count=0,
@@ -61,5 +62,50 @@ class UsageCalendar:
                 day['parking_last']=stamp if day['parking_last'] is None else max(day['parking_last'],stamp)
         for day in days:
             if day['reads']:day['coverage']='observed' if day['effective_states'] else 'limited'
+        totals,revision=self.enrich(owner or scope,vehicle,window,days,events)
         return dict(window=window,as_of=now,weekday_offset=datetime.fromtimestamp(window['start']/1000,BEIJING).weekday(),
-                    days=days,events=events,history_quality={'unreadable_or_undated':found['unreadable_or_undated']})
+                    days=days,events=events,totals=totals,ledger_revision=revision,
+                    history_quality={'unreadable_or_undated':found['unreadable_or_undated']})
+
+    def enrich(self,owner,vehicle,window,days,events):
+        saved=self.store.read(owner,vehicle,'charges') if self.store else dict(records=[],revision=0)
+        entries=[dict(r['body'],id=r['id']) for r in saved['records'] if not r['deleted']]
+        booked={r['event']['id']:r for r in entries if isinstance(r.get('event'),dict)}
+        for event in events:
+            event['end_date']=date_label(event['end_time'])
+            if event['kind']=='charge_end':
+                bill=booked.get(event['id'])
+                event['bill']={k:v for k,v in bill.items() if k!='event'} if bill else None
+                event['needs_bill']=bill is None or bill['actual_cents'] is None
+        trips=[e for e in events if e['kind']=='trip_end']
+        if self.store and trips:
+            from .trip_places import TripPlaces
+            from .trip_place_names import TripPlaceNames
+            from .commute_tags import CommuteTags
+            names=TripPlaceNames(self.store)
+            stats=names.apply(owner,vehicle,TripPlaces(self.events.path).query(vehicle,trips,names.regions(owner,vehicle)),CommuteTags(self.store,self.events.path).rule(owner,vehicle))
+            labels={p['id']:p['label'] for p in stats['places']}
+            for event in trips:
+                event['start_label']=labels.get(event.pop('start_place',None),'起点未知')
+                event['end_label']=labels.get(event.pop('end_place',None),'终点未知')
+        for day in days:
+            ended=[e for e in events if e['end_date']==day['date']]
+            driving=[e for e in ended if e['kind']=='trip_end']
+            bills=[r for r in entries if r['date']==day['date']]
+            day.update(distance_km=total(e['distance_km'] for e in driving),
+                       distance_samples=sum(e['distance_km'] is not None for e in driving),
+                       ended_trip_count=len(driving),
+                       actual_cents=total(r['actual_cents'] for r in bills),
+                       actual_count=sum(r['actual_cents'] is not None for r in bills),
+                       unpriced_count=sum(r['actual_cents'] is None for r in bills),
+                       pending_count=sum(e.get('needs_bill',False) for e in ended))
+        ended=[e for e in events if window['start']<=e['end_time']<window['end']]
+        driving=[e for e in ended if e['kind']=='trip_end']
+        return dict(distance_km=total(e['distance_km'] for e in driving),
+                    distance_samples=sum(e['distance_km'] is not None for e in driving),
+                    trip_count=len(driving),charge_count=sum(e['kind']=='charge_end' for e in ended),
+                    usage_days=sum(d['trip_count']>0 for d in days),
+                    actual_cents=total(d['actual_cents'] for d in days),
+                    actual_count=sum(d['actual_count'] for d in days),
+                    unpriced_count=sum(d['unpriced_count'] for d in days),
+                    pending_count=sum(e.get('needs_bill',False) for e in ended)),saved['revision']

@@ -7,6 +7,45 @@ from zeekr_control.tracks import day_bounds
 
 
 class UsageCalendarTests(unittest.TestCase):
+    def test_daily_metrics_and_month_totals_use_event_end_day_without_double_counting(self):
+        boundary=day_bounds('2026-09-16')[0]
+        self.add(start_time=boundary-1800000,end_time=boundary+1800000,duration_seconds=3600)
+        self.add('unknown-distance',distance_km=None)
+        result=self.query()
+        self.assertIsNone(result['days'][14]['distance_km'])
+        self.assertEqual(result['days'][15]['distance_km'],40)
+        self.assertEqual(result['totals']['distance_km'],40)
+        self.assertEqual(result['totals']['distance_samples'],1)
+        self.assertEqual(result['totals']['trip_count'],2)
+
+    def test_actual_bill_dates_zero_missing_amount_and_scoped_pending(self):
+        from zeekr_control.personal_store import PersonalStore
+        from zeekr_control.charge_ledger import ChargeLedger
+        from zeekr_control.usage_calendar import UsageCalendar
+        store=PersonalStore(self.root/'personal.sqlite3');ledger=ChargeLedger(store,self.db)
+        self.add('charge-a',kind='charge_end',start_soc=40,end_soc=80,soc_delta=40)
+        self.add('charge-b',kind='charge_end',start_soc=40,end_soc=80,soc_delta=40)
+        ledger.update('owner','car',dict(action='save',revision=0,event_id='charge-a',date='2026-09-17',source='unknown',amount='0'))
+        ledger.update('owner','car',dict(action='save',revision=1,event_id='charge-b',date='2026-09-15',source='public'))
+        self.calendar=UsageCalendar(self.db,self.archive,clock=lambda:self.now,store=store)
+        result=self.query()
+        self.assertEqual(result['totals']['actual_cents'],0)
+        self.assertEqual(result['totals']['pending_count'],1)
+        self.assertIsNone(result['days'][14]['actual_cents'])
+        self.assertEqual(result['days'][16]['actual_cents'],0)
+        events={e['id']:e for e in result['events']}
+        self.assertFalse(events['charge-a']['needs_bill']);self.assertTrue(events['charge-b']['needs_bill'])
+        self.assertEqual(events['charge-b']['bill']['source'],'public')
+        foreign=self.calendar.query('other','car','2026-09-01',owner='other')
+        self.assertIsNone(foreign['totals']['actual_cents']);self.assertEqual(foreign['totals']['pending_count'],2)
+
+    def test_next_month_end_does_not_inflate_month_distance(self):
+        boundary=day_bounds('2026-10-01')[0]
+        self.add(start_time=boundary-1800000,end_time=boundary+1800000)
+        result=self.query()
+        self.assertIsNone(result['totals']['distance_km'])
+        self.assertEqual(result['totals']['trip_count'],0)
+
     add=report_fixtures.UsageReportsTests.add
 
     def setUp(self):

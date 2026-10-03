@@ -940,6 +940,7 @@ document.addEventListener('change', event => {
 
 let navigationReady=false,navigationRestoring=false,restoringQuery=null;
 const navigationQueries={
+  calendar:['#calendar-result-month','[data-calendar=load]'],
   ledger:['#ledger-range','#ledger-load'],routes:['#routes-results','[data-travel="load"]'],
   review:['#usage-review','[data-travel="load"]'],report:['#report-observations','[data-report="load"]'],
   quality:['#quality-totals','[data-quality="load"]']
@@ -947,9 +948,10 @@ const navigationQueries={
 const navigationFields={
   range:'#charge-query-mode',
   month:'#ledger-month,#tag-month,#routes-month,#calendar-month',
-  date:'#track-date,#report-date,#insight-date,#review-date,#charge-date',
+  date:'#calendar-selected,#track-date,#report-date,#insight-date,#review-date,#charge-date',
   start:'#quality-start,#research-start,#life-start,#parking-start,#trip-manage-start,#charge-manage-start',
   end:'#quality-end,#research-end,#life-end,#parking-end,#trip-manage-end,#charge-manage-end,#charge-end-date',
+  view:'#calendar-view',
   period:'#report-period'
 };
 function visibleNavigationField(selector){return [...document.querySelectorAll(selector)].find(el=>el.checkVisibility());}

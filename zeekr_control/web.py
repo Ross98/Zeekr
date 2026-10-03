@@ -81,7 +81,7 @@ class App:
         self.travel_insights = TravelInsights(self.personal_store, self.database_path)
         self.charge_comparison = ChargeComparison(self.database_path)
         self.experiments = ParameterExperiments(self.personal_store, self.archive_reader)
-        self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader)
+        self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader, store=self.personal_store)
         self.vehicle_life = VehicleLife(self.personal_store)
         self.data_quality = DataQuality(self.archive_reader)
         self.vehicle_research = VehicleResearch(self.archive_reader, self.database_path)
@@ -472,7 +472,7 @@ class App:
                         'charge-management': lambda scope, car, *query: self.charge_manager.query(car, *query),
                         'compare': self.archive_reader.compare,
                         'report': self.usage_reports.query,
-                        'calendar': self.usage_calendar.query,
+                        'calendar': lambda scope, car, date: self.usage_calendar.query(scope,car,date,owner=account_scope(session)),
                         'quality': self.data_quality.query,
                         'life': lambda scope, car, start, end=None: self.vehicle_life.query(account_scope(session),car,start,self.raw,self.read_at,end=end),
                         'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
