@@ -22,12 +22,16 @@ from .trips import TripStore
 from .trip_management import TripRecordManager
 from .charge_management import ChargeRecordManager
 from .web_model import build_model, parse_location
+from .geocoding import AmapGeocoder
+from .trip_map import AmapStaticMap
+from .trip_place_names import current_location_name, cached_names
 from .field_reviews import FieldReviewStore
 from .profiles import vehicle_profile
 from .energy import read_attainment
 from .history import HistoryClient, HistoryError, connection_status, day_window, integer
 from .snapshots import SnapshotStore, session_scope
 from .events import EventStore
+from .trip_visibility import visible_clause
 from .storage_management import StorageManager
 from .storage_health import StorageHealth, severity
 from .charging_analytics import ChargingAnalytics
@@ -65,6 +69,10 @@ class App:
         self.field_review_store = FieldReviewStore(self.database_path.with_name("field-reviews.sqlite3"))
         self.snapshot_store = SnapshotStore(self.session_path.parent / 'snapshots.sqlite3')
         self.event_store = EventStore(self.database_path)
+        self.location_names = {}
+        self.location_maps = {}
+        self.location_map_renderer = AmapStaticMap(self.session_path.parent / "amap-geocoding.json")
+        self.location_geocoder = AmapGeocoder(self.session_path.parent / "amap-geocoding.json")
         self.trip_store = TripStore(self.database_path)
         self.trip_manager = TripRecordManager(self.database_path)
         self.charge_manager = ChargeRecordManager(self.database_path)
@@ -608,10 +616,60 @@ class App:
 
     def location(self):
         with self.lock:
-            self._restore_snapshot(self._read_session())
+            session = self._read_session()
+            self._restore_snapshot(session)
             result = parse_location(self.raw or {})
             result['read_at'] = updated_at(self.read_at)
-            return result
+            owner, vehicle = account_scope(session), self.vehicle_key
+            addresses = {}
+            tracks = self.trip_tags.places.tracks
+            if tracks.path.exists() and vehicle:
+                with tracks.connect() as db:
+                    if db.execute("SELECT 1 FROM sqlite_master WHERE name='monitor_events' AND type='table'").fetchone():
+                        events = [dict(id=row[0]) for row in db.execute(
+                            'SELECT id FROM monitor_events WHERE vehicle=? AND '+visible_clause(db)+' ORDER BY created DESC LIMIT 100', (vehicle,))]
+                        addresses = cached_names(db, vehicle, events)
+            result['approximate_name'] = current_location_name(result,
+                self.trip_tags.place_names.regions(owner, vehicle), self.trip_tags.commute.rule(owner, vehicle), addresses) if vehicle else None
+            key = (owner, vehicle, result['latitude'], result['longitude'], result['coordinate_system'])
+            cached = self.location_names.get(key)
+        if not result['approximate_name']:
+            if cached and cached[0] > time.monotonic():
+                name = cached[1]
+            else:
+                name = self.location_geocoder(result, estimate=True)
+                with self.lock:
+                    if len(self.location_names) >= 32:
+                        self.location_names.clear()
+                    self.location_names[key] = (time.monotonic() + (3600 if name else 60), name)
+            result['approximate_name'] = name if not name or name.endswith('附近') else name + '附近'
+        result['map_revision'] = self.location_map_revision(result)
+        return result
+
+    @staticmethod
+    def location_map_revision(location):
+        fields = {key: location.get(key) for key in ('latitude','longitude','coordinate_system','trusted','updated_at')}
+        return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()[:24]
+
+    def location_map(self, zoom, revision):
+        if not isinstance(zoom, str) or not zoom.isdigit() or not 3 <= int(zoom) <= 17:
+            raise ValueError('地图缩放级别无效')
+        with self.lock:
+            session = self._read_session()
+            self._restore_snapshot(session)
+            location = parse_location(self.raw or {})
+            if revision != self.location_map_revision(location):
+                raise ValueError('缓存位置已变化，请重新读取地图')
+            key = (account_scope(session), self.vehicle_key, revision, int(zoom))
+            cached = self.location_maps.get(key)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
+        image = self.location_map_renderer.position(location, int(zoom))
+        with self.lock:
+            if len(self.location_maps) >= 32:
+                self.location_maps.clear()
+            self.location_maps[key] = (time.monotonic() + 300, image)
+        return image
 
     def _local_vehicle(self, archive=None):
         self._restore_snapshot(self._read_session())
@@ -836,6 +894,9 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                     return self.send(200, app.storage_status())
                 if url.path == '/api/storage/archives':
                     return self.send(200, app.storage_manager.inventory())
+                if url.path == '/api/location/map':
+                    query = parse_qs(url.query)
+                    return self.send(200, app.location_map(query.get('zoom',['15'])[0], query.get('revision',[''])[0]), content_type='image/png')
                 if url.path == '/api/location':
                     return self.send(200, app.location())
                 if url.path == '/api/history':

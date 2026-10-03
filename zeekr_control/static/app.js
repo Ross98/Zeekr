@@ -23,6 +23,8 @@ document.addEventListener('focusout', event => {
 
 const icons = {
   overview: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2m4 0h2"/>',
+  report: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5"/>',
   car: '<path d="m4 10 2-6h12l2 6M4 10h16v8H4zM2 10h20M7 18v2m10-2v2M7 13h1m8 0h1"/>',
   energy: '<path d="m13 2-8 12h6l-1 8 9-13h-7z"/>',
   map: '<path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 0 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/>',
@@ -39,12 +41,13 @@ const icons = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
 };
-const pages = { overview: '总览', car: '车辆', energy: '能源与充电', map: '定位地图', tracks: '行程与轨迹', fields: '参数字典', insights: '用车研究', settings: '设置', more: '更多' };
-const descriptions = { overview: '', car: '完整参数与状态总览，保留原值、解释依据和来源时间。', energy: '查看当前观测状态、充电记录与计算依据。', map: '最近返回的位置，保留可信度与时间信息。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', insights: '从历史观测，看懂每一次变化。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
+const pages = { overview: '总览', calendar: '用车日历', tracks: '行程与轨迹', energy: '能源与充电', report: '用车周报', car: '车辆', fields: '参数字典', insights: '用车研究', settings: '设置', more: '更多' };
+const descriptions = { overview: '', calendar: '按日期回看行程、充电与费用，补齐待录记录。', report: '查看每周用车汇总，也可切换月报。', car: '完整参数与状态总览，保留原值、解释依据和来源时间。', energy: '查看当前观测状态、充电记录与计算依据。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', insights: '从历史观测，看懂每一次变化。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.info}</svg>`;
-let state = null, page = 'overview', busy = false, transientError = '', showPosition = false, showCoordinates = false;
+let state = null, page = 'overview', busy = false, transientError = '', showPosition = true, showCoordinates = false;
+let locationZoom=15;
 let map = null, mapMarker = null, generation = 0, toastTimer;
 let trackSource = 'local', trackDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year:'numeric',month:'2-digit',day:'2-digit' }).format(new Date());
 let trackData = null, playback = [], search = '', groupFilter = '', unknownOnly = false;
@@ -65,9 +68,9 @@ const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,re
 
 let sectionTask='';
 function openSectionTask(task){sectionTask=task;render();if(task&&task!=='records')insightsPage.openTool(task);window.scrollTo({top:0,left:0,behavior:'instant'});}
-const insightSections = ['car','energy','tracks','insights','settings'];
+const insightSections = ['car','energy','tracks','insights','settings','calendar','report'];
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false},
-  navigate:(section,view,date)=>{page=section;sectionTask=section==='insights'?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
+  navigate:(section,view,date)=>{page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
   openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{page=tool==='ledger'?'energy':'settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
 async function openOverviewRecord(record){
@@ -110,7 +113,7 @@ const chargeManager = window.ChargeManagement.create({getState:()=>state,getDate
 
 function navigation() {
   $('#navigation').innerHTML = Object.entries(pages).filter(([key]) => !['more','fields'].includes(key)).map(([key, label]) => `<button class="nav-item ${page === key ? 'active' : ''}" data-page="${key}" ${page === key ? 'aria-current="page"' : ''}>${icon(key)}${label}</button>`).join('');
-  $('#mobile-navigation').innerHTML = ['overview','car','map','tracks','more'].map(key => `<button data-page="${key}" class="${page === key || (key === 'more' && ['energy','fields','insights','settings'].includes(page)) ? 'active' : ''}" aria-label="${pages[key]}">${icon(key)}<span>${{overview:'总览',car:'车辆',map:'地图',tracks:'轨迹',more:'更多'}[key]}</span></button>`).join('');
+  $('#mobile-navigation').innerHTML = ['overview','car','tracks','more'].map(key => `<button data-page="${key}" class="${page === key || (key === 'more' && ['energy','fields','insights','settings','calendar','report'].includes(page)) ? 'active' : ''}" aria-label="${pages[key]}">${icon(key)}<span>${{overview:'总览',car:'车辆',map:'地图',tracks:'轨迹',more:'更多'}[key]}</span></button>`).join('');
 }
 
 async function api(path, data, timeout = 50000) {
@@ -484,7 +487,8 @@ function overview() {
   <div class="overview-secondary"><span>累计里程 <strong>${esc(m.metrics.odometer)}</strong></span><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用动力电池专用字段，与低压电池分开。续航是车辆返回的估计。</p><p>胎压轮位及单位已核对；总览四舍五入至一位小数，车辆详情保留接口精度。未设置未经核对的胎压报警阈值。</p><p>门窗及锁车仅解释本车已验证的组合；未知不代表正常，也不代表异常。车型图片仅供参考。</p>${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}</div></details></div>
 
   <div class="overview-work-grid"><section class="card recent-events"><div class="card-head"><h2>最近行程与充电</h2><select class="select" id="overview-record-filter" aria-label="总览记录类型"><option value="all">全部记录</option><option value="trip_end">行程</option><option value="charge_end">充电</option></select></div><div class="card-body"><details data-detail="overview-latest"><summary>最近完成行程与充电摘要</summary><h3>最近完成行程</h3>${eventSummary(recent.trip_end,'trip_end')}<h3>最近完成充电</h3>${eventSummary(recent.charge_end,'charge_end')}</details><div id="overview-records"></div><button class="button secondary" data-overview-reload>重新读取记录汇总</button></div></section><aside class="card"><div class="card-head"><h2>待处理</h2></div><div class="card-body" id="overview-tasks"></div></aside></div>
-  <div class="grid-two grid-equal overview-health"><section class="card"><div class="card-head"><h2>最近观测活动</h2>${link('采集详情','settings')}</div><div class="card-body">${row('当前活动',activity)}${row('本地采集',recordingLabel)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<div class="overview-location"><span>位置</span>${link('打开地图','map')}</div><p class="subtle">${showPosition?'位置显示已开启 · 前往地图查看':'位置默认隐藏 · 按需打开地图'}。活动来自后台最近观测，不代表实时状态。</p></div></section><section class="card"><div class="card-head"><h2>轮胎状态</h2>${link('查看详情','car')}</div><div class="card-body">${tyres(true)}</div></section></div>
+  <div class="grid-two grid-equal overview-health"><section class="card"><div class="card-head"><h2>最近观测活动</h2>${link('采集详情','settings')}</div><div class="card-body">${row('当前活动',activity)}${row('本地采集',recordingLabel)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<p class="subtle">活动来自后台最近观测，不代表实时状态。</p></div></section><section class="card"><div class="card-head"><h2>轮胎状态</h2>${link('查看详情','car')}</div><div class="card-body">${tyres(true)}</div></section></div>
+  ${overviewLocation()}
   <section class="card overview-trend-panel"><div class="card-head"><h2>每日已记录里程</h2><div class="overview-span"><button class="button secondary" data-overview-span="7" aria-pressed="true">7 天</button><button class="button secondary" data-overview-span="30" aria-pressed="false">30 天</button></div></div><div class="card-body"><p class="subtle" id="overview-trend-range"></p><div class="overview-trend" id="overview-trend" tabindex="0" role="group" aria-label="每日里程趋势"></div><p class="subtle">片段按有效指标计入。— 表示无有效里程观测，不视为零；没有记录不证明没有用车。</p></div></section>`;
 }
 
@@ -614,10 +618,10 @@ function privacyGate(track = false) {
   return `<div class="map-empty">${icon(track?'tracks':'map')}<h2>${track?'按日期回看采样轨迹':'让位置，只在需要时出现'}</h2><p>显示位置后将加载 OpenStreetMap 底图，底图服务会收到对应区域的瓦片请求。经纬度文本默认隐藏。</p>${action('显示位置并加载地图','show-position')}<p class="subtle">随时可隐藏位置 · 不主动唤醒车辆</p></div>`;
 }
 
-function mapPage() {
+function overviewLocation() {
   if (!state?.model) return modelRequired();
   if (!showPosition) return `<section class="card">${privacyGate()}</section>`;
-  return `<div class="filters">${action('隐藏位置','hide-position','secondary')}${action('回到最近位置','recenter','secondary')}</div><div class="map-layout"><section class="card map-card"><div id="map" class="map-canvas" aria-label="车辆位置地图"></div><div id="map-status" class="map-status" role="status">正在读取最近位置…</div></section><section class="card"><div class="card-head"><h2>定位信息</h2></div><div class="map-meta" id="location-info"><div class="subtle">正在读取…</div></div></section></div>`;
+  return `<section class="overview-location-section section-gap" aria-label="车辆位置"><div class="location-heading"><div><h2 id="overview-location-title">定位地图 · 正在推算附近位置</h2><p class="subtle">最近返回的缓存位置，可能有延迟，不代表实时当前位置。</p></div><div class="location-actions">${action('隐藏位置','hide-position','secondary')}${action('缩小','location-zoom-out','secondary')}${action('放大','location-zoom-in','secondary')}${action('回到最近位置','recenter','secondary')}</div></div><div class="map-layout"><section class="card map-card"><div id="map" class="map-canvas" aria-label="车辆位置地图"></div><div id="map-status" class="map-status" role="status">正在读取最近位置…</div></section><section class="card location-details"><div class="card-head"><h2>定位信息</h2></div><div class="map-meta" id="location-info"><div class="subtle">正在读取…</div></div></section></div></section>`;
 }
 
 function tracksPage() {
@@ -707,7 +711,7 @@ function releaseSummary(){
 
 function settings() {
   const recording = state?.recording || {active:true,interval:30,last_sample:'未知',last_new:'未知'};
-  return `${collectionSummary()}<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('Web 服务已连接')}</div><div class="card-body"><div class="settings-row" id="settings-account"><div><h3 id="settings-account-title" tabindex="-1">账号会话</h3><p>${accountNeedsAttention()?'车辆账号未连接或认证异常。请在运行服务的设备上重新登录车辆账号，再查看采集诊断。':state?.authenticated?'已发现车辆会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在运行服务的设备上完成车辆登录。'}</p></div>${pill(accountNeedsAttention()?'需要重新连接':state?.authenticated?'会话已保存':'未登录',accountNeedsAttention()?'warn':'')}</div><div class="settings-row"><div><h3>位置显示</h3><p>地图及轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section><details class="settings-detail" data-detail="settings-notifications"><summary>通知状态与规则说明</summary>${monitoringPanel()}</details>
+  return `${collectionSummary()}<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('Web 服务已连接')}</div><div class="card-body"><div class="settings-row" id="settings-account"><div><h3 id="settings-account-title" tabindex="-1">账号会话</h3><p>${accountNeedsAttention()?'车辆账号未连接或认证异常。请在运行服务的设备上重新登录车辆账号，再查看采集诊断。':state?.authenticated?'已发现车辆会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在运行服务的设备上完成车辆登录。'}</p></div>${pill(accountNeedsAttention()?'需要重新连接':state?.authenticated?'会话已保存':'未登录',accountNeedsAttention()?'warn':'')}</div><div class="settings-row"><div><h3>位置显示</h3><p>总览地图默认显示，和轨迹共用开关。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section><details class="settings-detail" data-detail="settings-notifications"><summary>通知状态与规则说明</summary>${monitoringPanel()}</details>
   <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会同时停止自动检查与通知处理，已有记录保留。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">默认 30 秒，可调为 10–60 秒；停车保持相同间隔。更快查询不保证车辆上传更快，重复数据不会增加轨迹点。故障或限流时等待会延长。</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="10" max="60" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><details class="settings-detail" data-detail="settings-storage"><summary>存储与归档管理</summary><div id="settings-storage-root"><section hidden></section></div></details>${releaseSummary()}<section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section><div id="insights-workspace"></div>`;
 }
 
@@ -720,7 +724,7 @@ function updateHeartbeat() {
   updateConnection();updateClock();
 }
 
-function more() { return `<div class="more-grid">${['energy','insights','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
+function more() { return `<div class="more-grid">${['calendar','energy','report','insights','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
 function relatedTools() {
   if(!['car','energy','tracks','settings'].includes(page))return '';
   if(page==='tracks')return '<nav class="related-tools" aria-label="行程子功能"><a href="#trip-tags-workspace" data-track-tags="true">行程标签</a><button class="button secondary" data-section-task="routes">常走路线对比</button></nav>';
@@ -759,13 +763,13 @@ function render() {
   $('.breadcrumb').textContent = `我的车库 / ${state?.profile?.name || '我的车辆'}`;
   const error = transientError || state?.error;
   const taskPage=['car','energy','settings','tracks'].includes(page)&&sectionTask;
-  const body = taskPage?(sectionTask==='records'?chargingWorkspace(state?.model?.charging_details)+'<div id="charge-management"></div><div id="insights-workspace" hidden></div>':'<div id="insights-workspace"></div>'):{overview,car,energy,map:mapPage,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
+  const body = taskPage?(sectionTask==='records'?chargingWorkspace(state?.model?.charging_details)+'<div id="charge-management"></div><div id="insights-workspace" hidden></div>':'<div id="insights-workspace"></div>'):{overview,car,energy,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',calendar:()=>'<div id="insights-workspace"></div>',report:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
   $('#main').innerHTML = head() + (page!=='overview'?overviewDashboard.backButton():'') + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
   if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
   if(chargeManagerNode&&$('#charge-management')){$('#charge-management').replaceWith(chargeManagerNode);if(chargeManagerFocus?.isConnected)chargeManagerFocus.focus({preventScroll:true});}
   if (insightSections.includes(page)) {
     const workspace=document.getElementById('insights-workspace');
-    const hidden=page!=='insights'&&!sectionTask || sectionTask==='records';
+    const hidden=!['insights','calendar','report'].includes(page)&&!sectionTask || sectionTask==='records';
     if(insightsNode&&workspace)workspace.replaceWith(insightsNode);
     $('#insights-workspace').hidden=hidden;
     insightsPage.mount(document.getElementById('insights-workspace'),page);
@@ -784,7 +788,7 @@ function render() {
   if (page === 'settings' && !sectionTask && window.StorageManagement) window.StorageManagement.mount($('#settings-storage-root'),api);
   if ($('#field-results')) {renderFields();reviewRestoreFocus(fieldFocus);}
   if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
-  if (page === 'map' && showPosition && state?.model) loadLocation(generation);
+  if (page === 'overview' && showPosition && state?.model) loadLocation(generation);
   if (page === 'energy' && (!sectionTask||sectionTask==='records') && state?.model) { chargeManager.mount($('#charge-management')); ensureChargingAnalytics(chargingSelection); }
   if (page === 'tracks' && trackSource === 'local'){mountLocalTrips();openDetails.filter(key=>key.startsWith('recall-')).forEach(key=>{const detail=$(`details[data-detail="${key}"]`);if(detail)detail.open=true;});if(focusedDetail?.startsWith('recall-'))$(`details[data-detail="${focusedDetail}"] > summary`)?.focus({preventScroll:true});}
   if(recallFocus){const field=document.getElementById(recallFocus.id);field?.focus({preventScroll:true});if(typeof recallFocus.start==='number')field?.setSelectionRange?.(recallFocus.start,recallFocus.end);}
@@ -808,21 +812,26 @@ async function loadLocation(version) {
   try {
     const location = await api('/api/location');
     if (generation !== version || !showPosition) return;
+    $('#overview-location-title').textContent = location.approximate_name ? `定位地图 · ${location.approximate_name}（推算）` : '定位地图 · 暂未取得附近地名';
     $('#location-info').innerHTML = `${row('位置可信度',location.trusted?'接口标记可信':'位置未确认')}${row('整车缓存更新时间',location.updated_at)}${row('本次读取时间',location.read_at)}${row('GPS 采集时间','定位采集时间未提供')}${row('坐标系',location.coordinate_system)}<p class="subtle">${esc(location.transform)}。不以速度 0 判断停车。</p>${action(showCoordinates?'隐藏经纬度':'显示经纬度','coordinates','quiet')}${showCoordinates ? row('经纬度',location.valid?`${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`:'未知') : ''}`;
-    if (!location.plottable) {
+    if (!location.valid) {
       $('#map').classList.add('map-empty-state');
-      $('#map').innerHTML = empty(location.valid?'坐标系尚未适配':'暂无有效位置',location.valid?'当前坐标系未核验与底图转换，暂不落点。':'接口未返回有效经纬度，不使用零点或演示位置代替。','map');
+      $('#map').innerHTML = empty('暂时无法绘制位置','没有有效坐标，待车辆返回位置后再显示高德地图。','map');
       $('#map-status').textContent = '未绘制位置';
       return;
     }
+    const image = document.createElement('img');
+    image.className='amap-position-image';image.alt='高德地图 · 最近缓存位置';
+    image.onload=()=>{if(generation!==version||!showPosition)return;$('#map-status').textContent=location.trusted?'高德地图 · 缓存位置，不代表实时位置。':'高德地图 · 灰色候选位置，未确认实时位置。';};
+    image.onerror=()=>{if(generation!==version||!showPosition)return;$('#map').classList.add('map-empty-state');$('#map').innerHTML=empty('高德底图暂未加载','请稍后重试；缓存位置与地名信息仍保留。','map');$('#map-status').textContent='高德地图加载失败';};
     $('#map').classList.remove('map-empty-state');
-    createMap([location.latitude,location.longitude]);
-    mapMarker = L.circleMarker([location.latitude,location.longitude],{radius:10,color:location.trusted?'#20776e':'#7e898a',weight:3,fillOpacity:.3}).addTo(map);
-    mapMarker.bindTooltip(location.trusted?'接口标记可信 · 坐标对齐待核验':'位置未确认 · 候选位置');
-    $('#map-status').textContent = location.trusted?'接口标记可信；缓存位置，坐标对齐待核验。':'灰色候选位置：本次可信标记为 false 或缺失，不代表已确认当前位置。';
+    $('#map').replaceChildren(image);
+    image.src=`/api/location/map?zoom=${locationZoom}&revision=${encodeURIComponent(location.map_revision||'')}`;
+    $('#map-status').textContent='正在读取高德底图…';
   } catch (error) {
-    if (generation !== version) return;
+    if (generation !== version || !showPosition || !$('#map')) return;
     $('#map').classList.add('map-empty-state');
+    $('#overview-location-title').textContent = '定位地图 · 附近地名读取失败';
     $('#map').innerHTML = empty('位置读取失败',error.message,'map');
     $('#map-status').textContent = '位置不可用';
   }
@@ -893,7 +902,7 @@ async function updateRecording(saveInterval = false) {
   if (handleReviewAction(target)) return;
   if (handleCloudAction(target)) return;
   if (handleLocalTripAction(target)) return;
-  if (target.dataset.page) { sectionTask='';page=target.dataset.page==='fields'?'insights':target.dataset.page; render(); if(target.dataset.page==='fields')insightsPage.openTool('fields');window.scrollTo(0,0); return; }
+  if (target.dataset.page) { sectionTask='';page=target.dataset.page==='map'?'overview':target.dataset.page==='fields'?'insights':target.dataset.page; render(); if(target.dataset.page==='fields')insightsPage.openTool('fields');window.scrollTo(0,0); return; }
   if (target.dataset.source) { trackSource=target.dataset.source; render(); return; }
   switch(target.dataset.action) {
     case 'refresh': refresh(); break;
@@ -901,7 +910,9 @@ async function updateRecording(saveInterval = false) {
     case 'show-position': showPosition=true;render();break;
     case 'hide-position': showPosition=false;showCoordinates=false;trackData=null;playback=[];if(cloudHistory){cloudHistory.detail=null;cloudHistory.detailBusy=false;cloudHistory.detailRequest++;}render();break;
     case 'coordinates': showCoordinates=!showCoordinates;render();break;
-    case 'recenter': if(map && mapMarker) map.setView(mapMarker.getLatLng(),15);break;
+    case 'recenter': if(page==='overview'){locationZoom=15;render();}else if(map&&mapMarker)map.setView(mapMarker.getLatLng(),15);break;
+    case 'location-zoom-in': locationZoom=Math.min(17,locationZoom+1);render();break;
+    case 'location-zoom-out': locationZoom=Math.max(3,locationZoom-1);render();break;
     case 'reload-tracks': render();break;
     case 'charge-select': chargeSelected=chargeEvents.find(item=>item.id===target.dataset.eventId)||chargeSelected;chargingSelection=chargeSelected.id;renderChargeHistory();if(chargingTab==='process')loadChargingAnalytics(chargingSelection);break;
     case 'charge-next': if(chargeNextCursor){chargeCursorStack.push(chargeCursor);chargeCursor=chargeNextCursor;chargeSelected=null;loadChargeEvents();}break;
@@ -981,7 +992,7 @@ function visibleNavigationField(selector){return [...document.querySelectorAll(s
 function navigationSnapshot(){
   const snapshot={p:page};
   if(sectionTask)snapshot.t=sectionTask;
-  else if(page==='insights')snapshot.t=insightsPage.currentTool();
+  else if(['insights','calendar','report'].includes(page))snapshot.t=insightsPage.currentTool();
   if(page==='tracks'&&!sectionTask)snapshot.s=trackSource;
   for(const [key,selector] of Object.entries(navigationFields)){
     const el=visibleNavigationField(selector);if(el)snapshot[key]=el.value;
@@ -1010,7 +1021,7 @@ function persistNavigation(){
 }
 function restoreNavigation(snapshot,position=0){
   navigationRestoring=true;restoringQuery=null;
-  page=snapshot.p||'overview';sectionTask='';
+  page=snapshot.p==='map'?'overview':snapshot.p||'overview';sectionTask='';
   trackSource=snapshot.s||'local';
   if(page==='tracks'&&snapshot.date)trackDate=snapshot.date;
   if(['car','energy','settings','tracks'].includes(page)&&snapshot.t&&

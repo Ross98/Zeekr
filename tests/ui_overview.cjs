@@ -11,6 +11,7 @@ const fs = require('node:fs');
     const page=await browser.newPage({viewport:{width:1440,height:1000}});
     const errors=[];const external=[];
     page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(!r.url().startsWith(`http://127.0.0.1:${port}`))external.push(r.url())});
+    await page.route('https://tile.openstreetmap.org/**', r=>r.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYZkAAAAASUVORK5CYII=','base64')}));
     await page.goto(`http://127.0.0.1:${port}`);
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
@@ -76,7 +77,7 @@ const fs = require('node:fs');
     await page.getByRole('button',{name:'重新连接',exact:true}).waitFor();
     await page.unroute('**/api/state');await page.getByRole('button',{name:'重新连接',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
-    assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+    assert.deepEqual(errors,[]);assert.ok(external.every(url=>url.startsWith('https://tile.openstreetmap.org/')));
     console.log('Desktop overview passed: layouts, timestamps, closure, precision, refresh outcomes, countdown, missing data, offline recovery.');
   }finally{if(browser)await browser.close();server.kill('SIGTERM')}
 })().catch(e=>{console.error(e);process.exitCode=1});

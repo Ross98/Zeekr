@@ -3,7 +3,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
-    await page.getByRole('button',{name:'周报与月报',exact:true}).click();
+    await page.getByRole('button',{name:'用车周报',exact:true}).click();
     await page.getByLabel('报告周期',{exact:true}).selectOption('month');
     await page.getByLabel('周期内日期',{exact:true}).fill('2026-09-20');
     await page.getByRole('button',{name:'查看报告',exact:true}).click();

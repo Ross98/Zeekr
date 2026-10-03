@@ -41,6 +41,34 @@ class AmapStaticMap:
             return points
         return [points[round(index * (len(points) - 1) / (limit - 1))] for index in range(limit)]
 
+    def position(self, location, zoom=15):
+        """Draw a cached candidate position; preserve its original trust flag."""
+        if type(zoom) is not int or not 3 <= zoom <= 17:
+            raise ValueError('地图缩放级别无效')
+        if not isinstance(location, dict) or location.get('valid') is not True:
+            raise ValueError('车辆未返回有效位置')
+        lon, lat, system = self._point(dict(location, trusted=True))
+        key = load(self.config_path).get('api_key', '').strip()
+        if not key:
+            raise ValueError('未配置高德 Web 服务 Key')
+        if system == 'WGS84（社区解释）':
+            result = self._request('/v3/assistant/coordinate/convert',
+                {'key': key, 'locations': '%.6f,%.6f' % (lon, lat), 'coordsys': 'gps', 'output': 'JSON'})
+            try:
+                if not isinstance(result, dict) or result.get('status') != '1':
+                    raise ValueError()
+                lon, lat = map(float, result['locations'].split(','))
+                self._point(dict(trusted=True, longitude=lon, latitude=lat, coordinate_system='GCJ-02（社区解释）'))
+            except (KeyError, TypeError, ValueError):
+                raise ValueError('高德坐标转换失败') from None
+        point = '%.6f,%.6f' % (lon, lat)
+        color = '0x20776e' if location.get('trusted') is True else '0x7e898a'
+        image = self._request('/v3/staticmap', {'key': key, 'location': point, 'zoom': zoom,
+            'size': '750*400', 'scale': 2, 'markers': 'mid,%s,:%s' % (color, point), 'traffic': 0}, binary=True)
+        if not isinstance(image, bytes) or not image.startswith(b'\x89PNG\r\n\x1a\n'):
+            raise ValueError('高德底图暂不可用，请稍后重试')
+        return image
+
     def __call__(self, route):
         key = load(self.config_path).get('api_key', '').strip()
         if not key:

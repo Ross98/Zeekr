@@ -70,10 +70,11 @@ class AmapGeocoder:
         with build_opener(NoRedirect()).open(request, timeout=5) as response:
             return json.loads(response.read(65536))
 
-    def __call__(self, location):
-        # Never guess a coordinate system or send untrusted positions to a provider.
+    def __call__(self, location, *, estimate=False):
+        # Notification lookups require trusted coordinates. The overview may explicitly
+        # request an estimate from valid coordinates without changing their trust flag.
         try:
-            if not is_trusted_location(location):
+            if not is_trusted_location(dict(location, trusted=True) if estimate and isinstance(location, dict) else location):
                 return None
             system = location.get('coordinate_system')
             lat, lon = location.get('latitude'), location.get('longitude')
@@ -93,10 +94,25 @@ class AmapGeocoder:
                 if not -180 <= x <= 180 or not -90 <= y <= 90:
                     return None
             result = self._request('/v3/geocode/regeo',
-                {'key': key, 'location': coordinates, 'extensions': 'base', 'output': 'JSON'})
+                {'key': key, 'location': coordinates, 'extensions': 'all' if estimate else 'base', 'output': 'JSON'})
             if not isinstance(result, dict) or result.get('status') != '1':
                 return None
-            return short_address(result.get('regeocode'))
+            regeocode = result.get('regeocode')
+            if estimate and isinstance(regeocode, dict):
+                landmarks = []
+                for poi in regeocode.get('pois', []) if isinstance(regeocode.get('pois'), list) else []:
+                    if not isinstance(poi, dict):
+                        continue
+                    try:
+                        distance = float(poi.get('distance'))
+                    except (TypeError, ValueError):
+                        continue
+                    name = _without_units(poi.get('name'))
+                    if name and math.isfinite(distance) and 0 <= distance <= 500:
+                        landmarks.append((distance, name))
+                if landmarks:
+                    return min(landmarks)[1][:50]
+            return short_address(regeocode)
         except Exception:
             # Provider errors can contain the key or coordinates; never log them.
             return None

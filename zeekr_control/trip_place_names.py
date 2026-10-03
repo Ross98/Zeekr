@@ -127,3 +127,23 @@ class TripPlaceNames:
             else:raise ValueError('地点名称操作无效。')
             saved=self.store.change(owner,vehicle,'place_names',operation,identity,body,data.get('revision'),guard=guard)
         return dict(name_revision=saved['revision'],name_can_undo=saved['can_undo'])
+
+
+def current_location_name(location, regions, rule, addresses):
+    """Estimate a nearby name from local evidence in the same coordinate system."""
+    if not is_trusted_location(location) or location['coordinate_system'] != 'WGS84（社区解释）':
+        return None
+    point = (location['latitude'], location['longitude'])
+    nearby = sorted((_distance(point, (r['body']['latitude'], r['body']['longitude'])), r['body']['name'])
+                    for r in regions if _distance(point, (r['body']['latitude'], r['body']['longitude'])) <= r['body'].get('radius_m', 150))
+    label = nearby[0][1] if nearby else None
+    if not label and not rule.get('deleted'):
+        matches = [name for key, name in (('home', '家'), ('work', '公司'))
+                   if rule.get(key) and _distance(point, (rule[key]['latitude'], rule[key]['longitude'])) <= rule[key]['radius_m']]
+        if len(matches) == 1:
+            label = matches[0]
+    if not label:
+        nearby = sorted((_distance(point, value['point']), value['label']) for value in addresses.values()
+                        if _distance(point, value['point']) <= 150)
+        label = nearby[0][1] if nearby else None
+    return label if not label or label.endswith('附近') else label + '附近'

@@ -25,10 +25,10 @@
     ]},
     {name:'行程',page:'tracks',tools:[{id:'routes',label:'常走路线对比',description:'方向、用时、里程与有效耗电样本'}]},
     {name:'用车回顾',tools:[
-      {id:'review',label:'轻量用车回顾',description:'本周参考地点、实际费用与待补记录'},
-      {id:'report',label:'周报与月报',description:'周期里程、能耗估算、日趋势与样本'},
-      {id:'calendar',label:'用车日历',description:'按日期查看行程、充电与停车'}
-    ]}
+      {id:'review',label:'轻量用车回顾',description:'本周参考地点、实际费用与待补记录'}
+    ]},
+    {name:'用车日历',page:'calendar',tools:[{id:'calendar',label:'用车日历',description:'按日期查看行程、充电与停车'}]},
+    {name:'用车周报',page:'report',tools:[{id:'report',label:'用车周报',description:'周期里程、能耗估算、日趋势与样本'}]}
   ];
   const toolsFor=section=>toolGroups.filter(group=>(group.page || 'insights')===section).flatMap(group=>group.tools);
 
@@ -61,7 +61,7 @@
     function context() {return getState()?.insights_context || '';}
     function openField(path){tab='research';toolQuery='';paint();researchPage.openField(path);}
     function openExperiment(selection){tab='lab';toolQuery='';paint();labPage.openEvidence(selection);}
-    function openTool(id){if(!toolsFor(section).some(tool=>tool.id===id))return false;tab=id;toolQuery='';toolsExpanded=false;paint();return true;}
+    function openTool(id){if(['calendar','report'].includes(id)&&section!==id){navigate(id,id);return true;}if(!toolsFor(section).some(tool=>tool.id===id))return false;tab=id;toolQuery='';toolsExpanded=false;paint();return true;}
     function openDate(view,target){
       const destination=toolGroups.find(group=>group.tools.some(tool=>tool.id===view))?.page || 'insights';
       if(destination!==section){navigate(destination,view,target);return;}
@@ -231,7 +231,7 @@
     }
     function mount(container, nextSection='insights') {
       const changed=context()!==owner, sectionChanged=section!==nextSection, remount=node!==container;
-      if(sectionChanged){section=nextSection;tab=section==='insights'?'research':'';toolQuery='';toolsExpanded=false;}
+      if(sectionChanged){section=nextSection;tab=section==='insights'?'research':['calendar','report'].includes(section)?section:'';toolQuery='';toolsExpanded=false;}
       if(changed){owner=context();toolQuery='';toolsExpanded=false;reset();}
       node=container;
       node.classList.toggle('standalone-task',section!=='insights');
