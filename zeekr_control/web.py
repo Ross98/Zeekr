@@ -985,7 +985,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
                           '/vendor/leaflet.css': ('vendor/leaflet.css', 'text/css; charset=utf-8'),
                           '/zeekr-logo.png': ('zeekr-logo.png', 'image/png'),
                           '/car.svg': ('car.svg', 'image/svg+xml'),
-                          '/car-001.png': ('car-001.png', 'image/png')}
+                          '/car-001.png': ('car-001.png', 'image/png'),
+                          '/car-001-top.png': ('car-001-top.png', 'image/png')}
                 if url.path in assets:
                     name, content_type = assets[url.path]
                     return self.send(200, (STATIC / name).read_bytes(), content_type)

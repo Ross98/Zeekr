@@ -519,6 +519,18 @@ function carDisclosure(key, label, fields) {
   return `<details class="car-disclosure" data-detail="${key}"><summary><span>${label}</span><span class="car-detail-count">${fields.length ? `${fields.length} 项${uncertain ? ` · ${uncertain} 项待核实 / 未知` : ''}` : '暂无返回数据'}</span></summary>${table(fields,true)}</details>`;
 }
 function car() { return vehiclePage.render(carOverview,modelRequired) + '<div id="insights-workspace"></div>'; }
+function carTyreDiagram(model) {
+  const wheels = [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']];
+  const artwork = state.profile?.image === '/car.svg'
+    ? '<div class="car-tyre-art"><img src="/car-001-top.png" width="1024" height="1536" alt="极氪 001 俯视图，车头朝左"></div>'
+    : '<span class="car-tyre-no-art">车型图片待配置</span>';
+  return `<div class="car-tyre-diagram" aria-label="四轮胎压与胎温，车头朝左">${artwork}${wheels.map(([position,name]) => {
+    const tyre = model.tyres.find(item => item.name === name);
+    const pressure = tyre?.pressure ?? '未知';
+    const hasUnit = / kPa$/.test(pressure);
+    return `<div class="car-tyre-reading car-tyre-${position}" data-position="${name}"><span class="car-tyre-name">${name}</span><strong>${esc(hasUnit ? pressure.slice(0,-4) : pressure)}</strong>${hasUnit ? '<span class="car-tyre-unit">kPa</span>' : ''}<span class="car-tyre-temp">胎温 ${esc(tyre?.temperature ?? '未知')}</span></div>`;
+  }).join('')}</div>`;
+}
 function carOverview() {
   if (!state?.model) return modelRequired();
   const m = state.model;
@@ -550,7 +562,7 @@ function carOverview() {
     <div id="car-center-lock" tabindex="-1" class="car-lock-row"><span>${icon('lock')}中控锁</span>${carState(lock)}</div>
     <p class="car-caption car-legend"><span class="state-safe">关闭 / 锁止</span><span class="state-attention">打开 / 未锁</span><span class="state-unknown">未知</span><span>状态以文字为准</span></p>
   </div></section>
-  <div class="car-secondary"><section class="card car-tyres"><div class="card-head"><h2>四轮胎压与胎温</h2><span class="car-caption">车头朝上</span></div><div class="card-body"><div class="tyre-grid car-wheel-grid">${positions.map(name => { const t = m.tyres.find(t => t.name === name); return `<div class="car-wheel" data-position="${name}"><span class="car-wheel-name">${name}</span><strong>${esc(t?.pressure ?? '未知')}</strong><span>胎温 ${esc(t?.temperature ?? '未知')}</span></div>`; }).join('')}</div><div class="car-tyre-time">${age(m.updated_time,'整车快照更新于 ')} · 轮胎独立时间未提供</div><p class="car-caption car-tyre-note">保留接口精度；暂无已核对的胎压报警阈值。</p></div></section>
+  <div class="car-secondary"><section class="card car-tyres"><div class="card-head"><h2>四轮胎压与胎温</h2><span class="car-caption">车头朝左</span></div><div class="card-body">${carTyreDiagram(m)}</div></section>
   <section class="card car-cabin"><div class="card-head"><h2>座舱与环境</h2></div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="car-temperature-time">${icon('clock')}${age(m.temperature_updated_time,'温度更新于 ')}</div><p class="car-caption">温度与整车状态可能不同步</p><div class="car-pm25"><div class="car-pm25-reading"><span class="small-label">车内 PM2.5</span><strong class="car-pm25-value">${hasPm25 ? esc(pm25) : '暂无数据'}</strong></div><p class="car-caption">${hasPm25 ? '单位待核实 · 独立更新时间未提供' : '未返回有效读数'}</p></div></div></section></div></div>
   <section class="card car-data"><div class="card-head"><h2>参数与数据详情</h2><button class="text-link" data-vehicle="parameters">全部参数${icon('arrow')}</button></div><p class="card-meta">按需展开查看。待核实参数不代表本车配备或正在运行该设备。</p>
     <details class="car-disclosure" data-detail="closures"><summary><span>门窗数据与解释依据</span><span class="car-detail-count">四门 / 中控锁 / 尾门 / 前舱盖</span></summary><p class="car-disclosure-note">原值仅用于核对。只解释本车已核对组合；其他值显示未知，不从单个编码推测开闭或锁止。</p>${table(doorFields)}${table(m.fields.filter(f => /^(winStatus|doorPos)/.test(f.key) || ['centralLockingStatus','trunkOpenStatus','trunkLockStatus','engineHoodOpenStatus'].includes(f.key)),true)}</details>
