@@ -1,0 +1,17 @@
+{
+  "batches_ms": [
+    50.69999999552965,
+    49.30000000447035,
+    62.099999994039536,
+    48.600000001490116,
+    48.20000000298023
+  ],
+  "iterations_per_batch": 100,
+  "record_dom_mutations": 500,
+  "retains_focus": false,
+  "repeated_clicks": 10,
+  "report_requests": 10,
+  "ledger_requests": 10,
+  "events": 5000,
+  "browser": "151.0.7922.138"
+}

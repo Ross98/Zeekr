@@ -11,7 +11,7 @@ await page.getByRole('button',{name:'总览',exact:true}).first().click();
 await page.waitForFunction(()=>document.querySelector('#overview-today-value')?.textContent==='8.4');
 assert.equal(await page.locator('#overview-cost-value').innerText(),'0');assert.match(await page.locator('#overview-cost-note').innerText(),/2 项待补/);assert.match(await page.locator('#overview-today-note').innerText(),/片段/);
 const trip=original.current.events.concat(original.previous.events).find(e=>e.kind==='trip_end');
-if(trip){await page.locator(`[data-overview-record="${trip.id}"]`).click();await page.waitForFunction(id=>localTrips?.selected?.id===id,trip.id);assert.match(await page.locator('#local-trip-facts').innerText(),/单趟行程/);await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();}
+if(trip){await page.locator(`[data-overview-record="${trip.id}"]`).click();await page.waitForFunction(id=>localTrips?.selected?.id===id,trip.id);assert.ok((await page.locator('#local-trip-facts').innerText()).includes(`里程 ${trip.distance_km} km`),'selected overview trip retains its observed distance');await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();}
 const charge=original.current.events.concat(original.previous.events).find(e=>e.kind==='charge_end');
 if(charge){await page.locator(`[data-overview-record="${charge.id}"]`).click();await page.waitForFunction(id=>chargeSelected?.id===id,charge.id);await page.locator('#charge-detail').waitFor();await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();}
 await page.locator('#overview-record-filter').selectOption('charge_end');
