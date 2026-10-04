@@ -104,7 +104,6 @@ class UsageCalendar:
             from .trip_endpoints import endpoint
             from .trip_place_names import TripPlaceNames
             from .daily_timeline import DailyTimeline
-            from .commute_tags import _distance
             interpreter=DailyTimeline(self.events.path,self.archive,self.store)
             corrections=self.store.read(owner,vehicle,'place_corrections')
             corrections['_regions']=TripPlaceNames(self.store).regions(owner,vehicle)
@@ -114,9 +113,8 @@ class UsageCalendar:
                     for session in parking:
                         match=endpoint(db,vehicle,session['start_time'],min(session['end_time'],session['start_time']+180000),True)
                         if not match:continue
-                        point=dict(latitude=match[1][0],longitude=match[1][1],label='未命名地点',name_source='reference')
-                        nearby=[p for p in named_places if _distance(match[1],(p['latitude'],p['longitude']))<=150]
-                        if nearby:point=min(nearby,key=lambda p:_distance(match[1],(p['latitude'],p['longitude'])))
+                        point=interpreter._parking_place(dict(latitude=match[1][0],longitude=match[1][1]),
+                                                         named_places,corrections['_regions'])
                         from .daily_timeline import digest
                         identity='parking_'+digest(session['id'])[:32]
                         place=interpreter._interpret(owner,vehicle,point,identity,'end',corrections)

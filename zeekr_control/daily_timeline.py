@@ -8,7 +8,7 @@ import time
 from .commute_tags import CommuteTags, _distance
 from .parking_analytics import ParkingAnalytics
 from .trip_place_names import TripPlaceNames, anchor_key
-from .trip_places import TripPlaces
+from .trip_places import TripPlaces, cluster_endpoints
 from .tracks import day_bounds
 from .usage_calendar import UsageCalendar
 from .usage_events import UsageEvents, total
@@ -26,6 +26,22 @@ class DailyTimeline:
         self.archive=archive
         self.store=store
         self.calendar=UsageCalendar(database,archive,store=store)
+
+    @staticmethod
+    def _parking_place(position,places,regions):
+        point=(position['latitude'],position['longitude'])
+        grouped=cluster_endpoints([dict(event_id='parking',side='end',time=0,point=point)],regions)
+        place=grouped['places'][0]
+        region=next((r for r in regions if r['id']==place['name_region_id']),None)
+        if region:
+            return dict(latitude=place['latitude'],longitude=place['longitude'],
+                        label=region['body']['name'],name_source='manual')
+        # Automatic nearby context may be reused, but manual names only apply
+        # inside their saved radius, as resolved by the shared endpoint matcher.
+        nearby=[p for p in places if p['name_source']!='manual' and
+                _distance(point,(p['latitude'],p['longitude']))<=150]
+        if nearby:return min(nearby,key=lambda p:_distance(point,(p['latitude'],p['longitude'])))
+        return dict(latitude=point[0],longitude=point[1],label='未命名地点',name_source='reference')
 
     def _interpret(self, owner, vehicle, place, identity, side, saved):
         if place is None:
@@ -100,9 +116,7 @@ class DailyTimeline:
                     match=endpoint(db,vehicle,row['start_time'],min(row['end_time'],row['start_time']+180000),True)
                     if match:
                         observed_position=dict(latitude=match[1][0],longitude=match[1][1],state_time=match[0])
-                        point=dict(latitude=match[1][0],longitude=match[1][1],label='未命名地点',name_source='reference')
-                        candidates=[p for p in stats['places'] if _distance(match[1],(p['latitude'],p['longitude']))<=150]
-                        if candidates:point=min(candidates,key=lambda p:_distance(match[1],(p['latitude'],p['longitude'])))
+                        point=self._parking_place(observed_position,stats['places'],corrections['_regions'])
             row['_position']=observed_position
             row.update(id='parking_'+digest(session['id'])[:32],type='parking',status='observed',partial=bool(session['reasons']),bill=None)
             row['start_place']=self._interpret(owner,vehicle,point,row['id'],'start',corrections)
@@ -118,7 +132,6 @@ class DailyTimeline:
     @staticmethod
     def _positions(records,enabled):
         for row in records:
-            p=row['end_place'] if row['end_place']['key'] else row['start_place']
             actual=row.pop('_position',None)
             if enabled and actual:row['position']=actual
             for side in ('start','end'):
@@ -187,7 +200,15 @@ class DailyTimeline:
         anchor=next((r[side+'_place'] for r in selected for side in ('start','end') if r[side+'_place']['key']==key),None)
         if anchor is None:
             anchor=next((r[side+'_place'] for r in rows for side in ('start','end') if r[side+'_place']['key']==key),None)
-        rows=[r for r in rows if any(p['key']==key or anchor and p['key'] and _distance((p['latitude'],p['longitude']),(anchor['latitude'],anchor['longitude']))<=150 for p in (r['start_place'],r['end_place']))]
+        def matches(place):
+            if place['key']==key:return True
+            # Proximity reconciles automatic cluster anchors across date ranges.
+            # Explicit names and corrections already define membership; distance
+            # must not merge nearby regions or override a user's assignment.
+            return bool(anchor and place['key'] and
+                        all(p['source']!='manual' and p['decision']=='automatic' for p in (place,anchor)) and
+                        _distance((place['latitude'],place['longitude']),(anchor['latitude'],anchor['longitude']))<=150)
+        rows=[r for r in rows if any(matches(p) for p in (r['start_place'],r['end_place']))]
         revision=digest(dict(rows=rows,meta=meta))
         offset=0
         if cursor:

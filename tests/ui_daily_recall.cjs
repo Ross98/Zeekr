@@ -8,8 +8,12 @@ const {contrast}=require('./ui_insight_helpers.cjs');
  const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('fixture timeout')),30000);server.stdout.once('data',d=>{clearTimeout(timer);resolve(Number(String(d).trim()));});server.stderr.on('data',d=>process.stderr.write(d));server.once('exit',code=>reject(Error('fixture exited '+code)));});
  browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});const page=await browser.newPage({viewport:{width:1440,height:1080}});page.setDefaultTimeout(10000);
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.route('https://tile.openstreetmap.org/**',r=>r.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e5ece6"/><path d="M0 128H256M128 0V256" stroke="#fff" stroke-width="8"/></svg>'}));
- await page.goto('http://127.0.0.1:'+port);await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();await page.getByLabel('轨迹日期').fill('2026-09-20');await page.getByRole('button',{name:'查询行程',exact:true}).click();
+ await page.route('https://wprd0*.is.autonavi.com/**',r=>r.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e5ece6"/><path d="M0 128H256M128 0V256" stroke="#fff" stroke-width="8"/></svg>'}));
+ await page.goto('http://127.0.0.1:'+port);
+ // Current overview shows location by default; exercise the user's hide action
+ // before checking that summaries retain the explicitly hidden state.
+ await page.getByRole('button',{name:'隐藏位置',exact:true}).click();
+ await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();await page.getByLabel('轨迹日期').fill('2026-09-20');await page.getByRole('button',{name:'查询行程',exact:true}).click();
  await page.locator('[data-local-trip="recall-charge"]').waitFor();assert.match(await page.locator('#recall-summary').innerText(),/27 km/);
  assert.ok(await page.locator('[data-local-trip^="parking_"]').count());assert.equal(await page.locator('#map').count(),0);
  const hidden=await page.evaluate(()=>localTrips.events);assert.ok(hidden.every(r=>!r.position));

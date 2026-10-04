@@ -109,6 +109,41 @@ class TimelineTests(unittest.TestCase):
         self.correction('assign',name='新名称')
         with self.assertRaises(ValueError):self.timeline.history('scope','car','2026-09-01','2026-09-28',key,page['next_cursor'],owner='owner')
 
+    def test_history_keeps_nearby_manually_named_places_separate(self):
+        from zeekr_control.trip_place_names import anchor_key
+        nearby=(31.2105,121.41)
+        self.trip('nearby',self.start+7200000,(31.2,121.4),nearby)
+        keys=[]
+        for revision,(point,name) in enumerate([((31.21,121.41),'车库'),(nearby,'商店')]):
+            key=anchor_key(dict(latitude=point[0],longitude=point[1]));keys.append(key)
+            self.tags.store.change('owner','car','place_names','save',key,
+                                   dict(name=name,latitude=point[0],longitude=point[1],radius_m=25),revision)
+        self.assertEqual({r['end_place']['label'] for r in self.day()['records']},{'车库','商店'})
+        for key,identity in zip(keys,['a','nearby']):
+            result=self.timeline.history('scope','car','2026-09-01','2026-09-28',key,owner='owner')
+            self.assertEqual([r['id'] for r in result['records']],[identity])
+
+    def test_history_respects_explicit_assignment_to_another_place(self):
+        from zeekr_control.trip_place_names import anchor_key
+        self.trip('b',self.start+7200000,(31.2,121.4),(31.21,121.41))
+        original_key=self.day()['records'][0]['end_place']['key']
+        target=anchor_key(dict(latitude=31.3,longitude=121.5))
+        self.tags.store.change('owner','car','place_names','save',target,
+                               dict(name='指定车库',latitude=31.3,longitude=121.5,radius_m=25),0)
+        data=dict(date='2026-09-28',record_id='a',side='end',action='assign',target_key=target,revision=0)
+        preview=self.timeline.update('owner','car',dict(data,operation='preview'),scope='scope')
+        self.timeline.update('owner','car',dict(data,operation='save',preview_token=preview['preview_token']),scope='scope')
+        assigned=self.timeline.history('scope','car','2026-09-01','2026-09-28',target,owner='owner')
+        self.assertEqual([r['id'] for r in assigned['records']],['a'])
+        original=self.timeline.history('scope','car','2026-09-01','2026-09-28',original_key,owner='owner')
+        self.assertEqual([r['id'] for r in original['records']],['b'])
+
+    def test_history_still_reconciles_automatic_anchors_across_days(self):
+        self.trip('earlier',self.start-86400000+3600000,(31.2,121.4),(31.2105,121.41))
+        key=self.day()['records'][0]['end_place']['key']
+        result=self.timeline.history('scope','car','2026-09-01','2026-09-28',key,owner='owner')
+        self.assertEqual([r['id'] for r in result['records']],['earlier','a'])
+
     def test_assign_existing_place_tracks_its_name_and_manual_beats_rejection(self):
         from zeekr_control.trip_place_names import anchor_key
         key=anchor_key(dict(latitude=31.21,longitude=121.41))
@@ -185,6 +220,50 @@ class RecallEvidenceTests(unittest.TestCase):
         self.app._restore_snapshot(session)
         self.owner=account_scope(session);self.scope=session_scope(session)
         self.timeline=self.app.daily_timeline
+
+    def test_parking_uses_saved_place_even_without_trips(self):
+        import sqlite3
+        from zeekr_control.trip_place_names import anchor_key
+        vehicle=self.app.vehicle_key
+        key=anchor_key(dict(latitude=31.21,longitude=121.41))
+        self.app.personal_store.change(self.owner,vehicle,'place_names','save',key,
+                                      dict(name='停车车库',latitude=31.21,longitude=121.41,radius_m=25),0)
+        with sqlite3.connect(self.app.database_path) as db:db.execute('DELETE FROM monitor_events')
+        day=self.timeline.query(self.scope,vehicle,'2026-09-20',owner=self.owner)
+        self.assertTrue(day['records'])
+        self.assertTrue(all(r['end_place']['label']=='停车车库' for r in day['records']))
+        month=self.timeline.calendar.query(self.scope,vehicle,'2026-09-20',owner=self.owner)
+        self.assertTrue(month['totals']['parking_places'])
+        self.assertTrue(all(p['key']==key for p in month['totals']['parking_places']))
+        foreign=self.timeline.query(self.scope,vehicle,'2026-09-20',owner='other')
+        self.assertTrue(all(r['end_place']['label']!='停车车库' for r in foreign['records']))
+
+    def test_parking_does_not_borrow_name_outside_saved_radius(self):
+        import json,sqlite3
+        from zeekr_control.trip_place_names import anchor_key
+        from zeekr_control.tracks import day_bounds
+        vehicle=self.app.vehicle_key;self.db=self.app.database_path
+        point=(31.2105,121.41)
+        start=day_bounds('2026-09-20')[0]+7*3600000;end=start+1200000
+        with sqlite3.connect(self.db) as db:
+            summary=dict(start_time=start,end_time=end,duration_seconds=1200,distance_km=20,partial=False)
+            db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
+                       ('nearby-shop',vehicle,'trip_end',json.dumps(summary),'SYNTHETIC',end))
+            for stamp,position in ((start+30000,(31.2,121.4)),(end-30000,point)):
+                location=dict(latitude=position[0],longitude=position[1],trusted=True,plottable=True,
+                              coordinate_system='WGS84（社区解释）')
+                db.execute('INSERT INTO observations(vehicle,cache_key,state_time,observed_time,gap_seconds,location) VALUES(?,?,?,?,?,?)',
+                           (vehicle,'nearby-shop-'+str(stamp),stamp,stamp,30,json.dumps(location)))
+            db.execute("DELETE FROM monitor_events WHERE id!='nearby-shop'")
+        key=anchor_key(dict(latitude=point[0],longitude=point[1]))
+        self.app.personal_store.change(self.owner,vehicle,'place_names','save',key,
+                                      dict(name='附近商店',latitude=point[0],longitude=point[1],radius_m=25),0)
+        day=self.timeline.query(self.scope,vehicle,'2026-09-20',owner=self.owner)
+        parked=[r for r in day['records'] if r['type']=='parking']
+        self.assertTrue(parked)
+        self.assertTrue(all(r['end_place']['label']!='附近商店' for r in parked))
+        month=self.timeline.calendar.query(self.scope,vehicle,'2026-09-20',owner=self.owner)
+        self.assertTrue(all(p['label']!='附近商店' for p in month['totals']['parking_places']))
 
     def test_parking_charge_overlap_and_fact_preservation(self):
         from zeekr_control.usage_events import UsageEvents

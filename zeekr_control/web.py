@@ -784,19 +784,29 @@ def make_server(app, port=8765, auth=None, public_origin=None):
         def signed_in(self):
             return auth is None or auth.valid(self.token())
 
+        def read_json(self, limit):
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= limit or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
+                    raise ValueError()
+                data = json.loads(self.rfile.read(length))
+                # Python's decoder permits nonfinite numbers and lone Unicode
+                # surrogates. Reject both before hashing, storing or responding.
+                json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8')
+            except (ValueError, OSError, RecursionError):
+                raise ValueError('请求格式无效。') from None
+            if not isinstance(data, dict):
+                raise ValueError('请求必须为 JSON 对象。')
+            return data
+
         def auth_post(self):
             host = self.headers.get('Host', '')
             expected = public_origin if public_origin and host == urlsplit(public_origin).netloc else 'http://' + host
             if not self.permitted() or self.headers.get('Origin') != expected:
                 return self.send(403, {'error': '请求来源无效。'})
             try:
-                length = int(self.headers.get('Content-Length', '0'))
-                if not 0 < length <= 1024 or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
-                    raise ValueError()
-                data = json.loads(self.rfile.read(length))
-                if not isinstance(data, dict):
-                    raise ValueError()
-            except (ValueError, OSError):
+                data = self.read_json(1024)
+            except ValueError:
                 return self.send(400, {'error': '请求格式无效。'})
             secure = '; Secure' if expected.startswith('https://') else ''
             if self.path == '/auth/logout':
@@ -1007,13 +1017,8 @@ def make_server(app, port=8765, auth=None, public_origin=None):
             if not self.permitted(mutation=True):
                 return self.send(403, {'error': '请求校验失败，请从本机页面操作。'})
             try:
-                length = int(self.headers.get('Content-Length', '0'))
                 limit = 32768 if self.path == '/api/field-reviews' else 16384 if self.path.startswith(('/api/insights/','/api/trips/manage/','/api/charging/manage/')) else 4096
-                if not 0 < length <= limit or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
-                    raise ValueError('请求格式无效。')
-                data = json.loads(self.rfile.read(length))
-                if not isinstance(data, dict):
-                    raise ValueError('请求必须为 JSON 对象。')
+                data = self.read_json(limit)
                 if self.path == '/api/refresh':
                     return self.send(200, app.refresh(data.get('vehicle', 1)))
                 if self.path in ('/api/trips/manage/preview','/api/trips/manage/execute'):
