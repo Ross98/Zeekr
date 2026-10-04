@@ -2,7 +2,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../zeekr_control/static/app.js'),'utf8');
 const context={};vm.createContext(context);
-vm.runInContext(source.slice(source.indexOf('function chartGeometry('),source.indexOf('function chargingChart(')),context);
+vm.runInContext(source.slice(source.indexOf('function chartGeometry('),source.indexOf('function chargingPointText(')),context);
 const points=[{time:100,power_kw:6,segment_id:0},{time:200,power_kw:7,segment_id:0},{time:300,power_kw:null,segment_id:0},{time:400,power_kw:8,segment_id:0},{time:500,power_kw:9,segment_id:1}];
 let chart=context.chartGeometry(points,'power_kw');
 assert.equal((chart.path.match(/M/g)||[]).length,3,'missing values and segment changes both break lines');

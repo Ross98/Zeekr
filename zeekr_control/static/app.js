@@ -57,7 +57,7 @@ let chargeQueryMode='day', chargeEndDate=chargeDate, chargeQuery=null, chargeOwn
 let chargeEvents = [], chargeSelected = null, chargeCursor = null, chargeCursorStack = [], chargeNextCursor = null, chargeBusy = false, chargeError = '', chargeRequest = 0;
 let chargingTab = 'process', chargingView = 'power-soc', chargingDays = 30, chargingMode = 'all';
 let chargingSelection = 'current';
-let chargingVisible = {power_kw:true,soc:true};
+let chargingVisible = {power_kw:true,soc:true,voltage:true,current:true};
 let chargingSession = null, chargingSeries = null, chargingStats = null, chargingAnalyticsError = '', chargingAnalyticsBusy = false, chargingAnalyticsRequest = 0, chargingPoint = 0;
 let chargingAnalyticsLoadedKey = '', chargingAnalyticsLoadingKey = '';
 let connectionFailures = 0, polling = false;
@@ -301,21 +301,31 @@ function chargingPointText(point) {
   return `${point?eventTime(point.time):'未知'} · SOC ${chargeNumber(point?.soc,'%')} · ${chargingView==='power-soc'?`功率 ${chargeNumber(point?.power_kw,'kW')}`:`电压 ${chargeNumber(point?.voltage,'V')} / 电流 ${chargeNumber(point?.current,'A')}`}`;
 }
 
-function chargingCombinedChart() {
+function chargingCombinedChart(electrical = false) {
   const points=chargingSeries?.points||[],bounds=chargingTimeBounds(points);
-  const powerValues=points.map(point=>point.power_kw).filter(Number.isFinite);
-  const series=[
-    {key:'power_kw',name:'功率',kind:'power',chart:chartGeometry(points,'power_kw',{...bounds,minY:0,maxY:Math.max(1,...powerValues)*1.1})},
-    {key:'soc',name:'动力电池 SOC',kind:'soc',chart:chartGeometry(points,'soc',{...bounds,minY:0,maxY:100,step:true})}
+  const definitions=electrical ? [
+    {key:'voltage',name:'电压',unit:'V',kind:'power'},
+    {key:'current',name:'电流',unit:'A',kind:'soc',zero:true}
+  ] : [
+    {key:'power_kw',name:'功率',unit:'kW',kind:'power',zero:true},
+    {key:'soc',name:'动力电池 SOC',unit:'%',kind:'soc',fixed:true}
   ];
+  const series=definitions.map(item=>{
+    const values=points.map(point=>point[item.key]).filter(Number.isFinite);
+    const limits=item.fixed?{minY:0,maxY:100,step:true}:item.zero?{minY:Math.min(0,...values),maxY:Math.max(1,...values)*1.1}:{};
+    return {...item,chart:chartGeometry(points,item.key,{...bounds,...limits})};
+  });
+  const heading=electrical?'电压与电流':'功率与动力电池 SOC';
+  const empty=electrical?'电压或电流':'功率或电量';
+  const axisNote=electrical?'蓝线读左轴电压，绿线读右轴电流':'蓝线读左轴功率，绿线读右轴电量';
   const reference=series.find(item=>item.chart)?.chart;
   const legend=series.map(item=>`<label><input type="checkbox" data-charging-series="${item.key}" aria-label="显示${item.name}" ${chargingVisible[item.key]?'checked':''}><i class="charging-line-key ${item.kind}" aria-hidden="true"></i>${item.name}${item.chart?'':'（无有效采样）'}</label>`).join('');
-  const title=`<div class="charging-chart-head"><h3>功率与动力电池 SOC</h3><span>共用时间轴 · 左轴 kW / 右轴 %</span></div><div class="charging-series-legend">${legend}</div>`;
-  if(!reference)return `<section class="charging-chart charging-chart-combined">${title}<div class="chart-empty">该记录未保存有效功率或电量采样</div></section>`;
+  const title=`<div class="charging-chart-head"><h3>${heading}</h3><span>共用时间轴 · 左轴 ${definitions[0].unit} / 右轴 ${definitions[1].unit}</span></div><div class="charging-series-legend">${legend}</div>`;
+  if(!reference)return `<section class="charging-chart charging-chart-combined">${title}<div class="chart-empty">该记录未保存有效${empty}采样</div></section>`;
   const labels=series.map(item=>{
     if(!item.chart||!chargingVisible[item.key])return '';
     const right=item.kind==='soc',chart=item.chart;
-    return `<text class="chart-axis chart-axis-${item.kind}" x="${right?736:64}" y="15" text-anchor="${right?'end':'start'}">${right?'SOC %':'功率 kW'}</text>`+[chart.maxY,(chart.minY+chart.maxY)/2,chart.minY].map(value=>`<text class="chart-axis chart-axis-${item.kind}" x="${right?748:56}" y="${chart.y(value)+5}" text-anchor="${right?'start':'end'}">${Number(value.toPrecision(4))}${right?'%':''}</text>`).join('');
+    return `<text class="chart-axis chart-axis-${item.kind}" x="${right?736:64}" y="15" text-anchor="${right?'end':'start'}">${item.key==='soc'?'SOC':item.name} ${item.unit}</text>`+[chart.maxY,(chart.minY+chart.maxY)/2,chart.minY].map(value=>`<text class="chart-axis chart-axis-${item.kind}" x="${right?748:56}" y="${chart.y(value)+5}" text-anchor="${right?'start':'end'}">${Number(value.toPrecision(4))}${item.unit==='%'?'%':''}</text>`).join('');
   }).join('');
   const gaps=[...new Set(series.filter(item=>chargingVisible[item.key]).flatMap(item=>item.chart?.gaps.map(gap=>gap.x.toFixed(1))||[]))].map(x=>`<line class="chart-gap" x1="${x}" y1="24" x2="${x}" y2="180"><title>观测缺口，缺失采样不连线</title></line>`).join('');
   const lines=series.filter(item=>chargingVisible[item.key]&&item.chart).map(item=>`<path class="chart-line chart-line-${item.kind}" d="${item.chart.path}"/>`+item.chart.dots.map(dot=>`<circle class="chart-point chart-point-${item.kind}${dot.index===chargingPoint?' selected':''}" data-point-index="${dot.index}" cx="${dot.x.toFixed(1)}" cy="${dot.y.toFixed(1)}" r="${dot.index===chargingPoint?5:2.5}"/>`).join('')).join('');
@@ -324,7 +334,7 @@ function chargingCombinedChart() {
   const time=value=>new Date(value).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
   const ticks=reference.minX===reference.maxX?[reference.minX]:[reference.minX,(reference.minX+reference.maxX)/2,reference.maxX];
   const timeLabels=ticks.map((value,index)=>`<text class="chart-axis" x="${reference.x(value)}" y="212" text-anchor="${ticks.length===1?'middle':index===0?'start':index===ticks.length-1?'end':'middle'}">${esc(time(value))}</text>`).join('');
-  return `<section class="charging-chart charging-chart-combined">${title}<div class="charging-chart-scroll" tabindex="0" role="region" aria-label="充电功率与电量图表，可横向滚动，下方时间选择器可用方向键选择"><svg viewBox="0 0 820 242" data-charging-chart data-min-time="${reference.minX}" data-max-time="${reference.maxX}" role="img" aria-label="功率与动力电池 SOC 双轴图，共用北京时间横轴；缺口断线，电量为阶梯线"><path class="chart-grid" d="M64 24H736M64 102H736M64 180H736"/>${labels}${timeLabels}<text class="chart-axis" x="736" y="237" text-anchor="end">北京时间</text>${gaps}${cursorLine}${lines}</svg></div><p class="charging-chart-note">${chargingVisible.power_kw||chargingVisible.soc?'蓝线读左轴功率，绿线读右轴电量；移动或点选游标查看同一观测。':'曲线已隐藏；勾选上方图例可恢复。'}缺口断线，缺值不补零。目标电量与预计剩余时间未提供或未核验。</p></section>`;
+  return `<section class="charging-chart charging-chart-combined">${title}<div class="charging-chart-scroll" tabindex="0" role="region" aria-label="${heading}图表，可横向滚动，下方时间选择器可用方向键选择"><svg viewBox="0 0 820 242" data-charging-chart data-min-time="${reference.minX}" data-max-time="${reference.maxX}" role="img" aria-label="${heading}双轴图，共用北京时间横轴；缺口断线${electrical?"":"，电量为阶梯线"}"><path class="chart-grid" d="M64 24H736M64 102H736M64 180H736"/>${labels}${timeLabels}<text class="chart-axis" x="736" y="237" text-anchor="end">北京时间</text>${gaps}${cursorLine}${lines}</svg></div><p class="charging-chart-note">${series.some(item=>chargingVisible[item.key])?axisNote+'；移动或点选游标查看同一观测。':'曲线已隐藏；勾选上方图例可恢复。'}缺口断线，缺值不补零。${electrical?"":"目标电量与预计剩余时间未提供或未核验。"}</p></section>`;
 }
 
 function setChargingPoint(index) {
@@ -352,24 +362,6 @@ function selectChargingChartPoint(event) {
   if(nearest>=0&&nearest!==chargingPoint)setChargingPoint(nearest);
 }
 
-function chargingChart(title, key, unit) {
-  const points=chargingSeries?.points || [];
-  const values=points.map(point=>point[key]).filter(Number.isFinite);
-  const options=key==='soc'?{minY:0,maxY:100,step:true}:key==='power_kw'?{minY:0,maxY:Math.max(1,...values)*1.1}:{};
-  const chart=chartGeometry(points,key,{...options,...chargingTimeBounds(points)});
-  if(!chart) return `<section class="charging-chart"><h3>${esc(title)}</h3><div class="chart-empty">该记录未保存有效过程采样</div></section>`;
-  const ticks=[chart.maxY,(chart.minY+chart.maxY)/2,chart.minY];
-  const number=value=>Number(value.toPrecision(4)).toString();
-  const time=value=>new Date(value).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  const labels=ticks.map(value=>`<text class="chart-axis" x="56" y="${chart.y(value)+5}" text-anchor="end">${esc(number(value))}</text>`).join('');
-  const dots=chart.dots.map(point=>`<circle data-point-index="${point.index}" class="chart-point${point.index===chargingPoint?' selected':''}" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="${point.index===chargingPoint?'5':'2.5'}"/>`).join('');
-  const selected=points[chargingPoint], cursor=Number.isFinite(selected?.time)?chart.x(selected.time):null;
-  const cursorLine=Number.isFinite(cursor)?`<line class="chart-cursor" x1="${cursor.toFixed(1)}" y1="24" x2="${cursor.toFixed(1)}" y2="180"/>`:'';
-  const gaps=chart.gaps.map(gap=>`<line class="chart-gap" x1="${gap.x.toFixed(1)}" y1="24" x2="${gap.x.toFixed(1)}" y2="180"><title>观测缺口</title></line>`).join('');
-  const gapLabel=chart.gaps.length?` · ${chart.gaps.length} 处缺口`:'';
-  return `<section class="charging-chart"><div class="charging-chart-head"><h3>${esc(title)}</h3><span>${chart.dots.length} 个有效点${gapLabel} · ${esc(unit)}</span></div><div class="charging-chart-scroll" tabindex="0" role="region" aria-label="${esc(title)}图表，可横向滚动"><svg viewBox="0 0 760 225" data-min-time="${chart.minX}" data-max-time="${chart.maxX}" role="img" aria-label="${esc(title)}折线图，单位 ${esc(unit)}，横轴为北京时间；缺失采样不连线"><path class="chart-grid" d="M64 24H736M64 102H736M64 180H736"/>${labels}<text class="chart-axis" x="64" y="216">${esc(time(chart.minX))}</text><text class="chart-axis" x="736" y="216" text-anchor="end">${esc(time(chart.maxX))} 北京时间</text>${gaps}${cursorLine}<path class="chart-line" d="${chart.path}"/>${dots}</svg></div></section>`;
-}
-
 function selectedChargingPoint() {
   const points=chargingSeries?.points || [];
   return points[Math.min(chargingPoint,Math.max(0,points.length-1))] || null;
@@ -386,7 +378,7 @@ function chargingProcess() {
   const historical=chargingSession.status==='ended', point=selectedChargingPoint(), points=chargingSeries?.points || [];
   const summary=`<div class="charging-process-summary"><div><span>${historical?'历史起点':'本次起点'}</span><strong>${Number.isFinite(chargingSession.start_soc)?chargingFormat(chargingSession.start_soc)+'%':'未知'}</strong></div><div><span>${historical?'历史终点':'当前 SOC'}</span><strong>${Number.isFinite(chargingSession.end_soc)?chargingFormat(chargingSession.end_soc)+'%':'未知'}</strong></div><div><span>观测功率</span><strong>${chargeNumber(chargingSession.power_kw,'kW')}</strong></div><div><span>采样覆盖</span><strong>${chargingSeries?.raw_count||0} 点${chargingSeries?.has_gaps?' · 有缺口':''}</strong></div></div>`;
   const selector=points.length?`<label class="charging-point-picker">时间选择器<input id="charging-point" type="range" min="0" max="${points.length-1}" value="${Math.min(chargingPoint,points.length-1)}"><span>${chargingPointText(point)}</span></label>`:'';
-  return `<div class="charging-process-title">${historical?pill('历史详情','warn'):pill('本次观测','good')}<span>${esc(eventTime(chargingSession.start_time))} 至 ${esc(eventTime(chargingSession.end_time))}</span></div>${summary}${startEvidenceView(chargingSession.start_evidence)}<div class="charging-view-switch"><button data-action="charging-view" data-view="power-soc" class="${chargingView==='power-soc'?'active':''}">功率与 SOC</button><button data-action="charging-view" data-view="electrical" class="${chargingView==='electrical'?'active':''}">电气细节</button></div><div class="charging-charts">${chargingView==='power-soc'?chargingCombinedChart():chargingChart('电压','voltage','V')+chargingChart('电流','current','A')}</div>${selector}<p class="energy-caption">同一车辆状态时间轴；缺口断线，缺值不补零。停止只表示已观测停止，不解释为充满、达到目标或已拔枪。</p>${chargeHistoryPanel()}`;
+  return `<div class="charging-process-title">${historical?pill('历史详情','warn'):pill('本次观测','good')}<span>${esc(eventTime(chargingSession.start_time))} 至 ${esc(eventTime(chargingSession.end_time))}</span></div>${summary}${startEvidenceView(chargingSession.start_evidence)}<div class="charging-view-switch"><button data-action="charging-view" data-view="power-soc" class="${chargingView==='power-soc'?'active':''}">功率与 SOC</button><button data-action="charging-view" data-view="electrical" class="${chargingView==='electrical'?'active':''}">电气细节</button></div><div class="charging-charts">${chargingView==='power-soc'?chargingCombinedChart():chargingCombinedChart(true)}</div>${selector}<p class="energy-caption">同一车辆状态时间轴；缺口断线，缺值不补零。停止只表示已观测停止，不解释为充满、达到目标或已拔枪。</p>${chargeHistoryPanel()}`;
 }
 
 function chargingStatistics() {

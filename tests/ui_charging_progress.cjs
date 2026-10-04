@@ -60,8 +60,30 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   await page.evaluate(()=>{chargingSeries.points=[{time:1704067200000,soc:null,power_kw:null,segment_id:0}];renderChargingWorkspace();});
   assert.match(await chart.innerText(),/未保存有效功率或电量采样/);assert.equal(await chart.locator('svg').count(),0);
   await page.getByRole('button',{name:'电气细节',exact:true}).click();
-  await page.locator('.charging-chart').first().waitFor();
-  assert.equal(await page.locator('.charging-chart-combined').count(),0,'electrical retains separate units');
+  await page.waitForFunction(()=>!chargingAnalyticsBusy);
+  await page.evaluate(()=>{chargingSession={id:'current',status:'active',start_time:1704067200000,end_time:1704067380000,mode:'dc'};chargingSeries={points:[
+   {time:1704067200000,voltage:350,current:null,segment_id:0},
+   {time:1704067260000,voltage:360,current:250,segment_id:0},
+   {time:1704067320000,voltage:null,current:200,segment_id:0},
+   {time:1704067380000,voltage:390,current:0,segment_id:1}]};chargingPoint=1;renderChargingWorkspace();});
+  assert.equal(await page.locator('.charging-chart').count(),1);
+  assert.match(await chart.innerText(),/左轴 V.*右轴 A/);
+  assert.equal((await chart.locator('.chart-line-power').getAttribute('d')).match(/M/g).length,2);
+  assert.doesNotMatch(await chart.locator('.chart-line-soc').getAttribute('d'),/H.*V/,'current is not a SOC staircase');
+  assert.equal(await chart.locator('.chart-point-soc[data-point-index="3"]').getAttribute('cy'),'180.0');
+  const electricalXs=await chart.evaluate(el=>['power','soc'].map(key=>el.querySelector(`.chart-point-${key}[data-point-index="1"]`).getAttribute('cx')));
+  assert.equal(electricalXs[0],electricalXs[1]);
+  await page.getByLabel('显示电压').uncheck();assert.equal(await chart.locator('.chart-line-power').count(),0);
+  await page.getByLabel('显示电流').uncheck();assert.match(await chart.innerText(),/曲线已隐藏/);
+  await page.getByLabel('显示电压').check();await page.getByLabel('显示电流').check();
+  for(const width of [1440,390]){
+   await page.setViewportSize({width,height:1000});
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+   await contrast(page,'.charging-chart-combined');
+   await chart.screenshot({path:`/tmp/zeekr-charging-progress-qa/electrical-${width}.png`});
+  }
+  await page.evaluate(()=>{chargingSeries.points=[{time:1704067200000,voltage:null,current:null}];renderChargingWorkspace();});
+  assert.match(await chart.innerText(),/未保存有效电压或电流采样/);
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.posts,[]);
   console.log('UI_CHARGING_PROGRESS_PASS: shared axes, missing/zero/gaps, toggles, selection/focus, themes, widths');
  }finally{await f.close();}
