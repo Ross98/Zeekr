@@ -87,9 +87,9 @@ async function openOverviewRecord(record){
   if(context===state?.insights_context)window.scrollTo(0,0);
 }
 const tripTagTime = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '未知';
-const tripTagsPage = window.TripTagsPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='tracks'&&trackSource==='tags',time:tripTagTime});
+const tripTagsPage = window.TripTagsPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='tracks'&&!sectionTask&&trackSource==='tags',time:tripTagTime});
 const tripManager = window.TripManagement.create({getState:()=>state,getDate:()=>trackDate,request:api,escape:esc,
-  active:()=>page==='tracks'&&trackSource==='local'&&tripManagementOpen,
+  active:()=>page==='tracks'&&!sectionTask&&trackSource==='local'&&tripManagementOpen,
   changed:revision=>{
     state.trip_records_revision=revision;
     if(localTrips){clearLocalRoute();localTrips.selection='day';localTrips.selected=null;localTrips.events=null;
@@ -112,8 +112,14 @@ const chargeManager = window.ChargeManagement.create({getState:()=>state,getDate
     pollState(true);
   }});
 
+const navigationGroups = [
+  {label:'日常用车',pages:['overview','tracks','energy','car']},
+  {label:'回顾与研究',pages:['calendar','report','insights']},
+  {label:'采集与设置',pages:['settings']}
+];
+
 function navigation() {
-  $('#navigation').innerHTML = Object.entries(pages).filter(([key]) => !['more','fields'].includes(key)).map(([key, label]) => `<button class="nav-item ${page === key ? 'active' : ''}" data-page="${key}" ${page === key ? 'aria-current="page"' : ''}>${icon(key)}${label}</button>`).join('');
+  $('#navigation').innerHTML = navigationGroups.map(group=>`<section class="navigation-group" aria-label="${group.label}"><h2>${group.label}</h2>${group.pages.map(key=>`<button class="nav-item ${page===key?'active':''}" data-page="${key}" ${page===key?'aria-current="page"':''}>${icon(key)}${pages[key]}</button>`).join('')}</section>`).join('');
   $('#mobile-navigation').innerHTML = ['overview','car','tracks','more'].map(key => `<button data-page="${key}" class="${page === key || (key === 'more' && ['energy','fields','insights','settings','calendar','report'].includes(page)) ? 'active' : ''}" aria-label="${pages[key]}">${icon(key)}<span>${{overview:'总览',car:'车辆',map:'地图',tracks:'轨迹',more:'更多'}[key]}</span></button>`).join('');
 }
 
@@ -690,7 +696,7 @@ function overviewLocation() {
 }
 
 function tracksPage() {
-  const toolbar = `<div class="track-toolbar"><div class="tabs" aria-label="行程视图"><button class="tab ${trackSource==='local'?'active':''}" data-source="local">本地记录</button><button class="tab ${trackSource==='cloud'?'active':''}" data-source="cloud">云端历史</button><button class="tab ${trackSource==='tags'?'active':''}" data-source="tags">行程标签</button></div>${trackSource==='tags'?'':`<label><span class="subtle">北京时间 </span><input type="date" id="track-date" aria-label="轨迹日期" value="${esc(trackDate)}"></label>`}</div>`;
+  const toolbar = trackSource==='tags'?'':`<div class="track-toolbar"><label><span class="subtle">北京时间 </span><input type="date" id="track-date" aria-label="轨迹日期" value="${esc(trackDate)}"></label></div>`;
   return toolbar + (trackSource==='tags'?'<div id="trip-tags-workspace" class="insight-content"></div>':trackSource==='cloud'?cloudHistoryPage():localTripsPage()) + '<div id="insights-workspace"></div>';
 }
 
@@ -789,10 +795,15 @@ function updateHeartbeat() {
   updateConnection();updateClock();
 }
 
-function more() { return `<div class="more-grid">${['calendar','energy','report','insights','settings'].map(key => `<button data-page="${key}">${icon(key)}${pages[key]}${icon('arrow')}</button>`).join('')}</div>`; }
+function more() {
+  return navigationGroups.map(group=>{
+    const keys=group.pages.filter(key=>!['overview','car','tracks'].includes(key));
+    return keys.length?`<section class="more-section" aria-label="${group.label}"><h2>${group.label}</h2><div class="more-grid">${keys.map(key=>`<button data-page="${key}">${icon(key)}<span>${pages[key]}<small>${descriptions[key]}</small></span>${icon('arrow')}</button>`).join('')}</div></section>`:'';
+  }).join('');
+}
 function relatedTools() {
   if(!['car','energy','tracks','settings'].includes(page))return '';
-  if(page==='tracks')return '<nav class="related-tools" aria-label="行程子功能"><a href="#trip-tags-workspace" data-track-tags="true">行程标签</a><button class="button secondary" data-section-task="routes">常走路线对比</button></nav>';
+  if(page==='tracks')return `<nav class="related-tools task-navigation" aria-label="行程与轨迹子功能">${[['local','本地记录'],['cloud','云端历史'],['tags','行程标签']].map(([source,label])=>`<button class="button secondary" data-source="${source}" ${source==='tags'?'data-track-tags="true"':''} aria-pressed="${!sectionTask&&trackSource===source}">${label}</button>`).join('')}<button class="button secondary" data-section-task="routes" aria-pressed="${sectionTask==='routes'}">常走路线对比</button></nav>`;
   const base={car:'车辆状态',energy:'充电状态',settings:'采集与设置'}[page];
   const item=(id,label)=>`<button class="button secondary" data-section-task="${id}" aria-pressed="${sectionTask===id}">${label}</button>`;
   return `<nav class="related-tools task-navigation" aria-label="${pages[page]}子功能">${item('',base)}${page==='energy'?item('records','充电记录'):''}${window.InsightsPage.toolsFor(page).slice().sort((a,b)=>page==='energy'?Number(a.id!=='ledger')-Number(b.id!=='ledger'):0).map(tool=>item(tool.id,tool.label)).join('')}</nav>`;
@@ -801,15 +812,15 @@ function relatedTools() {
 function render() {
   if (deferDateRender(render)) return;
   const samplingFocused = page==='settings' && document.activeElement?.id==='interval';
-  const managerNode=page==='tracks'&&trackSource==='local'&&tripManagementOpen?$('#trip-management'):null;
+  const managerNode=page==='tracks'&&!sectionTask&&trackSource==='local'&&tripManagementOpen?$('#trip-management'):null;
   const managerFocus=managerNode?.contains(document.activeElement)?document.activeElement:null;
-  if(!(page==='tracks'&&trackSource==='local'&&tripManagementOpen))tripManager.suspend();
+  if(!(page==='tracks'&&!sectionTask&&trackSource==='local'&&tripManagementOpen))tripManager.suspend();
   const chargeManagerNode=page==='energy'?$('#charge-management'):null;
   const chargeManagerFocus=chargeManagerNode?.contains(document.activeElement)?document.activeElement:null;
   if(page!=='energy')chargeManager.suspend();
   const insightsNode = insightSections.includes(page) ? document.getElementById('insights-workspace') : null;
   const insightsFocus = insightsNode?.contains(document.activeElement) ? document.activeElement : null;
-  const tripTagsNode = page === 'tracks' && trackSource === 'tags' ? $('#trip-tags-workspace') : null;
+  const tripTagsNode = page === 'tracks' && !sectionTask && trackSource === 'tags' ? $('#trip-tags-workspace') : null;
   const tripTagsFocus = tripTagsNode?.contains(document.activeElement) ? document.activeElement : null;
   const recallFocus=$('#recall-correction')?.contains(document.activeElement)?{id:document.activeElement.id,start:document.activeElement.selectionStart,end:document.activeElement.selectionEnd}:null;
   const vehicleFocus = page === 'car' ? vehiclePage.focusSnapshot() : null;
@@ -840,7 +851,7 @@ function render() {
     insightsPage.mount(document.getElementById('insights-workspace'),page);
     if (insightsFocus?.isConnected) insightsFocus.focus({preventScroll:true});
   }
-  if (page === 'tracks' && trackSource === 'tags') {
+  if (page === 'tracks' && !sectionTask && trackSource === 'tags') {
     if(tripTagsNode)$('#trip-tags-workspace').replaceWith(tripTagsNode);
     tripTagsPage.mount($('#trip-tags-workspace'));
     if(tripTagsFocus?.isConnected)tripTagsFocus.focus({preventScroll:true});
@@ -852,10 +863,10 @@ function render() {
   if (page === 'car'&&!sectionTask) {vehiclePage.restoreFocus(vehicleFocus);vehiclePage.ensure();}
   if (page === 'settings' && !sectionTask && window.StorageManagement) window.StorageManagement.mount($('#settings-storage-root'),api);
   if ($('#field-results')) {renderFields();reviewRestoreFocus(fieldFocus);}
-  if (page === 'tracks' && trackSource === 'cloud') renderCloudMap();
+  if (page === 'tracks' && !sectionTask && trackSource === 'cloud') renderCloudMap();
   if (page === 'overview' && showPosition && state?.model) loadLocation(generation);
   if (page === 'energy' && (!sectionTask||sectionTask==='records') && state?.model) { chargeManager.mount($('#charge-management')); ensureChargingAnalytics(chargingSelection); }
-  if (page === 'tracks' && trackSource === 'local'){mountLocalTrips();openDetails.filter(key=>key.startsWith('recall-')).forEach(key=>{const detail=$(`details[data-detail="${key}"]`);if(detail)detail.open=true;});if(focusedDetail?.startsWith('recall-'))$(`details[data-detail="${focusedDetail}"] > summary`)?.focus({preventScroll:true});}
+  if (page === 'tracks' && !sectionTask && trackSource === 'local'){mountLocalTrips();openDetails.filter(key=>key.startsWith('recall-')).forEach(key=>{const detail=$(`details[data-detail="${key}"]`);if(detail)detail.open=true;});if(focusedDetail?.startsWith('recall-'))$(`details[data-detail="${focusedDetail}"] > summary`)?.focus({preventScroll:true});}
   if(recallFocus){const field=document.getElementById(recallFocus.id);field?.focus({preventScroll:true});if(typeof recallFocus.start==='number')field?.setSelectionRange?.(recallFocus.start,recallFocus.end);}
   if(page==='overview')overviewDashboard.mount();else overviewDashboard.suspend();
 }
@@ -950,7 +961,7 @@ async function updateRecording(saveInterval = false) {
   const sectionLink=event.target.closest('[data-section-task]');
   if(sectionLink){event.preventDefault();openSectionTask(sectionLink.dataset.sectionTask);return;}
   const tagsLink=event.target.closest('[data-track-tags]');
-  if(tagsLink){event.preventDefault();sectionTask='';trackSource='tags';render();$('#trip-tags-workspace')?.scrollIntoView({block:'start'});return;}
+  if(tagsLink){event.preventDefault();sectionTask='';trackSource='tags';render();window.scrollTo(0,0);return;}
   const toolLink=event.target.closest('[data-insight-tool]');
   if(toolLink){event.preventDefault();if(page!=='insights'){openSectionTask(toolLink.dataset.insightTool);return;}if(insightsPage.openTool(toolLink.dataset.insightTool))$('#insights-workspace')?.scrollIntoView({block:'start'});return;}
   if (tripManager.handle(event)) return;
@@ -967,7 +978,7 @@ async function updateRecording(saveInterval = false) {
   if (handleCloudAction(target)) return;
   if (handleLocalTripAction(target)) return;
   if (target.dataset.page) { sectionTask='';page=target.dataset.page==='map'?'overview':target.dataset.page==='fields'?'insights':target.dataset.page; render(); if(target.dataset.page==='fields')insightsPage.openTool('fields');window.scrollTo(0,0); return; }
-  if (target.dataset.source) { trackSource=target.dataset.source; render(); return; }
+  if (target.dataset.source) { sectionTask='';trackSource=target.dataset.source; render();window.scrollTo(0,0); return; }
   switch(target.dataset.action) {
     case 'refresh': refresh(); break;
     case 'reconnect': pollState(true); break;
@@ -1064,9 +1075,9 @@ function navigationSnapshot(){
   for(const [key,selector] of Object.entries(navigationFields)){
     const el=visibleNavigationField(selector);if(el)snapshot[key]=el.value;
   }
-  if(page==='tracks'&&trackSource==='local'){const selected=localTrips?.restoreSelection||localTrips?.selection;if(selected&&selected!=='day')snapshot.record=selected;}
+  if(page==='tracks'&&!sectionTask&&trackSource==='local'){const selected=localTrips?.restoreSelection||localTrips?.selection;if(selected&&selected!=='day')snapshot.record=selected;}
   if($('.recall-year-panel')?.open){snapshot.year=$('#recall-year').value;if(recallYear?.context===state?.insights_context){snapshot.review='1';snapshot.heat=recallYear.mode;}}
-  if(page==='tracks'&&trackSource==='local'&&localTrips?.queried)snapshot.q='1';
+  if(page==='tracks'&&!sectionTask&&trackSource==='local'&&localTrips?.queried)snapshot.q='1';
   const task=snapshot.t,query=navigationQueries[task];
   if(query&&visibleNavigationField(query[0]))snapshot.q='1';
   else if(restoringQuery?.signature===window.NavigationState.encode(snapshot))snapshot.q='1';
@@ -1094,7 +1105,7 @@ function restoreNavigation(snapshot,position=0){
   if(['car','energy','settings','tracks'].includes(page)&&snapshot.t&&
      (snapshot.t==='records'&&page==='energy'||window.InsightsPage.toolsFor(page).some(t=>t.id===snapshot.t)))sectionTask=snapshot.t;
   render();
-  if(page==='tracks'&&trackSource==='local'&&(snapshot.record||snapshot.q==='1')){const h=syncLocalTrips();h.restoreSelection=snapshot.record||'day';loadLocalTrips(true).then(()=>{if(h===localTrips&&showPosition)loadLocalRoute();});}
+  if(page==='tracks'&&!sectionTask&&trackSource==='local'&&(snapshot.record||snapshot.q==='1')){const h=syncLocalTrips();h.restoreSelection=snapshot.record||'day';loadLocalTrips(true).then(()=>{if(h===localTrips&&showPosition)loadLocalRoute();});}
   if(snapshot.year&&$('#recall-year')){$('#recall-year').value=snapshot.year;$('.recall-year-panel').open=true;if(snapshot.review==='1'){$('#recall-year-mode').value=snapshot.heat||'distance';recallLoadYear();}}
   if(page==='energy'){
     chargeQueryMode=snapshot.range||'day';
@@ -1147,10 +1158,10 @@ async function pollState(force = false) {
     if(!navigationReady){restoreNavigation(window.NavigationState.read(location.search),history.state?.scroll||0);return;}
     if(restarted) { transientError='';refreshMessage='';samplingDraft=null; }
     if(changed) {
-      if(page==='tracks' && trackSource==='local' && refreshLocalTrips()) {updateConnection();updateClock();}
+      if(page==='tracks' && !sectionTask && trackSource==='local' && refreshLocalTrips()) {updateConnection();updateClock();}
       else render();
     }
-    else { if(insightSections.includes(page))insightsPage.mount($('#insights-workspace'),page);if(page==='tracks'&&trackSource==='tags')tripTagsPage.mount($('#trip-tags-workspace'));updateHeartbeat(); }
+    else { if(insightSections.includes(page))insightsPage.mount($('#insights-workspace'),page);if(page==='tracks'&&!sectionTask&&trackSource==='tags')tripTagsPage.mount($('#trip-tags-workspace'));updateHeartbeat(); }
   } catch(error) {
     connectionFailures=state?connectionFailures+1:2;
     updateConnection();

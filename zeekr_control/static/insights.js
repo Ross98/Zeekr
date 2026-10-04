@@ -5,12 +5,17 @@
   const time = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '未知';
   const today = () => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   const toolGroups = [
-    {name:'全量研究',tools:[
-      {id:'fields',label:'参数字典',description:'中文解释、原始字段与参数核实'},
+    {name:'数据分析',tools:[
       {id:'research',label:'数据利用',description:'全部字段、历史变化、场景分析与证据'},
-      {id:'automatic',label:'自动洞察',description:'近期估算能耗与历史基线对照'},
-      {id:'lab',label:'参数实验室',description:'保存实验、动作、样本与研究备注'},
-      {id:'time',label:'车辆时间机',description:'历史归档、车况回看、前后参数变化'}
+      {id:'automatic',label:'自动洞察',description:'近期估算能耗与历史基线对照'}
+    ]},
+    {name:'历史回看',tools:[
+      {id:'time',label:'车辆时间机',description:'历史归档、车况回看、前后参数变化'},
+      {id:'review',label:'轻量用车回顾',description:'本周参考地点、实际费用与待补记录'}
+    ]},
+    {name:'参数核实',tools:[
+      {id:'fields',label:'参数字典',description:'中文解释、原始字段与参数核实'},
+      {id:'lab',label:'参数实验室',description:'保存实验、动作、样本与研究备注'}
     ]},
     {name:'能源与充电',page:'energy',tools:[
       {id:'charge-comparison',label:'充电曲线对比',description:'对照两次充电的功率、温度与耗时'},
@@ -24,9 +29,6 @@
       {id:'quality',label:'数据质量雷达',description:'采集诊断：覆盖、延迟、重复缓存与缺口'}
     ]},
     {name:'行程',page:'tracks',tools:[{id:'routes',label:'常走路线对比',description:'方向、用时、里程与有效耗电样本'}]},
-    {name:'用车回顾',tools:[
-      {id:'review',label:'轻量用车回顾',description:'本周参考地点、实际费用与待补记录'}
-    ]},
     {name:'用车日历',page:'calendar',tools:[{id:'calendar',label:'用车日历',description:'按日期查看行程、充电与停车'}]},
     {name:'用车周报',page:'report',tools:[{id:'report',label:'用车周报',description:'周期里程、能耗估算、日趋势与样本'}]}
   ];

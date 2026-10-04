@@ -4,7 +4,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
 (async () => {
   const f = await fixture(), {page} = f;
   try {
-    assert.equal(await page.locator('[data-insight-group]').count(), 2);
+    assert.equal(await page.locator('[data-insight-group]').count(), 3);
     assert.equal(await page.locator('[data-insight-view]').count(), 6);
     const search = page.getByLabel('查找研究工具', {exact:true});
     await search.fill('归档');

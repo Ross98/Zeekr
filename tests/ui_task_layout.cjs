@@ -5,7 +5,9 @@ const {fixture}=require('./ui_insight_helpers.cjs');
  try{
   await page.setViewportSize({width:390,height:844});
   await page.locator('#navigation [data-page="overview"]').evaluate(el=>el.click());
-  assert.ok(await page.locator('.overview-metrics').evaluate(el=>el.getBoundingClientRect().bottom)<844,'battery and range fit first mobile viewport');
+  const coreBottom=await page.locator('.overview-metrics .metric').evaluateAll(els=>Math.max(...els.slice(0,2).map(el=>el.getBoundingClientRect().bottom)));
+  const navigationTop=await page.locator('#mobile-navigation').evaluate(el=>el.getBoundingClientRect().top);
+  assert.ok(coreBottom<=navigationTop,'battery and range fit above mobile navigation');
   await page.locator('#overview-attention').getByRole('button',{name:'查看处理',exact:true}).click();
   await page.locator('#quality-workspace').waitFor();
   assert.equal(await page.locator('#sampling-help').count(),0,'diagnostics replaces settings parent content');

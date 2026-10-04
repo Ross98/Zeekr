@@ -6,12 +6,15 @@ const {fixture} = require('./ui_insight_helpers.cjs');
   const {page} = f;
   try {
     assert.equal(await page.locator('#navigation [data-page="fields"]').count(),0);
+    assert.deepEqual(await page.locator('#navigation .navigation-group h2').allTextContents(),['日常用车','回顾与研究','采集与设置']);
+    assert.equal(await page.locator('#navigation [data-page]').count(),8);
+    assert.deepEqual(await page.locator('.insight-tabs h2').allTextContents(),['数据分析','历史回看','参数核实']);
     const groups = [
       ['能源与充电', ['充电账本', '充电曲线对比']],
-      ['行程与轨迹', []],
+      ['行程与轨迹', ['常走路线对比']],
       ['车辆', ['生活账本']],
       ['设置', ['自定义提醒', '数据质量雷达']],
-      ['用车研究', ['参数字典', '数据利用', '自动洞察', '参数实验室', '车辆时间机', '轻量用车回顾', '周报与月报', '用车日历']]
+      ['用车研究', ['数据利用', '自动洞察', '车辆时间机', '轻量用车回顾', '参数字典', '参数实验室']]
     ];
     for (const [section, labels] of groups) {
       await page.getByRole('button', {name:section, exact:true}).first().click();
@@ -31,8 +34,18 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     await page.locator('#field-results').waitFor();
     assert.equal(await page.locator('#navigation [data-page="insights"]').getAttribute('aria-current'),'page');
     await page.getByRole('button', {name:'行程与轨迹',exact:true}).first().click();
+    const trackNavigation=page.getByRole('navigation',{name:'行程与轨迹子功能',exact:true});
+    assert.deepEqual(await trackNavigation.locator('button').allTextContents(),['本地记录','云端历史','行程标签','常走路线对比']);
+    await trackNavigation.getByRole('button',{name:'常走路线对比',exact:true}).click();
+    assert.equal(await trackNavigation.getByRole('button',{name:'常走路线对比',exact:true}).getAttribute('aria-pressed'),'true');
+    await trackNavigation.getByRole('button',{name:'云端历史',exact:true}).click();
+    assert.equal(await trackNavigation.getByRole('button',{name:'云端历史',exact:true}).getAttribute('aria-pressed'),'true');
+    assert.equal(await page.locator('.track-toolbar [data-source]').count(),0);
+    await trackNavigation.getByRole('button',{name:'本地记录',exact:true}).click();
+    assert.equal(await trackNavigation.getByRole('button',{name:'本地记录',exact:true}).getAttribute('aria-pressed'),'true');
     await page.locator('.related-tools [data-track-tags]').click();
     assert.equal(await page.getByRole('heading',{name:'通勤自动标注'}).count(),1);
+    assert.equal(await page.evaluate(()=>scrollY),0,'task navigation remains available after opening tags');
     await page.getByRole('button', {name:'能源与充电', exact:true}).first().click();
     await page.getByRole('button', {name:'充电曲线对比', exact:true}).click();
     await page.getByLabel('充电 A 月份', {exact:true}).waitFor();
@@ -48,9 +61,21 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     await page.setViewportSize({width:390,height:844});
     await page.locator('#mobile-navigation [data-page="more"]').click();
     assert.equal(await page.locator('main [data-page="fields"]').count(),0);
+    assert.deepEqual(await page.locator('.more-section h2').allTextContents(),['日常用车','回顾与研究','采集与设置']);
     await page.locator('main [data-page="insights"]').click();
     await page.getByLabel('当前研究工具',{exact:true}).selectOption('fields');
     await page.locator('#field-results').waitFor();
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await page.locator('#mobile-navigation [data-page="tracks"]').click();
+    const mobileTracks=page.getByRole('navigation',{name:'行程与轨迹子功能',exact:true});
+    await mobileTracks.getByRole('button',{name:'行程标签',exact:true}).click();
+    await mobileTracks.getByRole('button',{name:'常走路线对比',exact:true}).click();
+    assert.equal(await mobileTracks.getByRole('button',{name:'常走路线对比',exact:true}).getAttribute('aria-pressed'),'true');
+    await page.reload();
+    assert.equal(await mobileTracks.getByRole('button',{name:'常走路线对比',exact:true}).getAttribute('aria-pressed'),'true','refresh retains selected task');
+    await mobileTracks.getByRole('button',{name:'本地记录',exact:true}).click();
+    assert.equal(await mobileTracks.getByRole('button',{name:'本地记录',exact:true}).getAttribute('aria-pressed'),'true');
+    assert.equal(await page.locator('#local-trips').count(),1);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     assert.deepEqual(f.errors, []);
     console.log('UI_TOOL_NAVIGATION_PASS');
