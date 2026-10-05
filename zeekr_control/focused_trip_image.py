@@ -16,7 +16,7 @@ def build_geometry(route,network_dir=None):
     if sum(len(s) for s in source)>1500:raise ValueError('轨迹点数超过上限')
     systems=set();raw=[]
     for segment in source:
-        if not isinstance(segment,list) or len(segment)<2:raise ValueError('轨迹片段点数不足')
+        if not isinstance(segment,list) or not segment:raise ValueError('轨迹片段点数不足')
         line=[]
         for p in segment:
             if not isinstance(p,dict) or p.get('trusted') is not True:raise ValueError('轨迹不可信')
@@ -26,6 +26,7 @@ def build_geometry(route,network_dir=None):
             if any(type(v) not in (int,float) or not math.isfinite(v) for v in (lon,lat)) or not -180<=lon<=180 or not -85<=lat<=85 or (lon,lat)==(0,0):raise ValueError('轨迹坐标无效')
             line.append((lon,lat))
         raw.append(line)
+    if not any(len(s)>=2 for s in raw):raise ValueError('轨迹片段点数不足')
     if len(systems)!=1:raise ValueError('轨迹坐标系混杂')
     flat=[p for s in raw for p in s]
     def project(lon,lat):return ((lon+180)/360,(1-math.asinh(math.tan(math.radians(lat)))/math.pi)/2)
@@ -165,6 +166,7 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
                 map_surface.data[target+j]=round(top*(1-fy)+bottom*fy)
     for color,width in (((255,255,255),9),((0,102,80),5)):
         for segment in fitted['segments']:
+            if len(segment)==1:map_surface.circle(*segment[0],width/2,color)
             for a,b in zip(segment,segment[1:]):map_surface.line(a,b,color,width)
     for letter,point,color in (('A',fitted['segments'][0][0],(0,102,80)),('B',fitted['segments'][-1][-1],(175,91,17))):
         x,y=point;map_surface.circle(x,y,14,(255,255,255));map_surface.circle(x,y,11,color);map_surface.text(x-4.5,y-6,letter,13,(255,255,255))

@@ -40,3 +40,8 @@ class FocusedTripTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as folder:
    build_network({'elements':[{'type':'node','id':1,'lon':118.,'lat':32.},{'type':'node','id':2,'lon':118.001,'lat':32.004},{'type':'way','id':3,'nodes':[1,2],'tags':{'highway':'primary','name':'背景禁止出现此名称'}}]},Path(folder)/'region.sqlite3')
    g=build_geometry(self.route(),Path(folder));self.assertTrue(g['network_available']);self.assertEqual(len(g['roads']),1);self.assertNotIn('背景禁止出现此名称',json.dumps(g,ensure_ascii=False))
+
+ def test_isolated_trusted_point_kept_without_bridging_gap(self):
+  route=self.route();route['segments'].insert(1,[dict(route['segments'][0][-1])]);before=copy.deepcopy(route)
+  g=build_geometry(route);self.assertEqual([len(s) for s in g['segments']],[3,1,2]);self.assertEqual(route,before)
+  png=render_focused_trip_png({'metrics':{}},route,g,None);self.assertTrue(png.startswith(b'\x89PNG'))
