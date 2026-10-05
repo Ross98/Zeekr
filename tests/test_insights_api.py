@@ -29,6 +29,35 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(self.post_ledger(payload,route='/api/insights/tyres')[0],400)
         self.assertEqual(self.get('/api/insights/tyres')[1]['config']['load'],'full')
 
+    def test_hypothesis_api_reads_all_public_fields_and_rejects_private_anchor(self):
+        code,result=self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=trip')
+        self.assertEqual(code,200)
+        self.assertGreater(len(result['candidates']),100)
+        self.assertNotIn('samples',result)
+        self.assertNotIn('PRIVATE-VIN',json.dumps(result))
+        self.assertEqual(result['context'],self.get('/api/state')[1]['insights_context'])
+        self.assertTrue(all(r['proposal']['source']=='自动假设，未确认' for r in result['candidates']))
+        self.assertEqual(self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=anchor&anchor=configuration.vin&value=x')[0],400)
+        self.assertEqual(self.get('/hypothesis-lab.js')[0],200)
+
+    def test_hypothesis_save_is_context_guarded_and_does_not_confirm_or_decode(self):
+        code,result=self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=trip')
+        record=next(r for r in result['candidates'] if r['status']=='missing')
+        payload=dict(action='save',hypothesis_context=result['context'],vehicle=result['reviews']['vehicle'],
+                     revision=result['reviews']['revision'],path=record['path'],scope='field',raw='',status='question',meaning='大胆假设，待核实')
+        self.assertEqual(self.post_ledger(dict(payload,hypothesis_context='old'),route='/api/field-reviews')[0],400)
+        self.assertEqual(self.post_ledger(dict(payload,status='confirmed'),route='/api/field-reviews')[0],400)
+        code,saved=self.post_ledger(payload,route='/api/field-reviews')
+        self.assertEqual(code,200)
+        self.assertEqual(saved['records'][0]['status'],'question')
+        self.assertEqual(self.post_ledger(payload,route='/api/field-reviews')[0],400)
+        soc='additionalVehicleStatus.electricVehicleStatus.chargeLevel'
+        confirmed=dict(payload,path=soc,revision=saved['revision'],raw='70',status='confirmed',meaning='电量')
+        confirmed.pop('hypothesis_context')
+        code,existing=self.post_ledger(confirmed,route='/api/field-reviews')
+        self.assertEqual(code,200)
+        self.assertEqual(self.post_ledger(dict(payload,path=soc,revision=existing['revision']),route='/api/field-reviews')[0],400)
+
     def test_travel_tools_api_validation_and_assets(self):
         for path in ('/api/insights/routes?date=2026-09-20','/api/insights/review?date=2026-09-20','/travel-insights.js','/navigation-state.js'):
             self.assertEqual(self.get(path)[0],200)

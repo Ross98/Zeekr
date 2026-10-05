@@ -32,6 +32,30 @@ class ArchiveReaderTests(unittest.TestCase):
         self.writer.append(scope, vehicle, json.dumps(raw), raw.get('updateTime'), now, now, 'monitor')
         return raw
 
+    def test_new_times_with_unchanged_telemetry_remain_continuous_parking(self):
+        from zeekr_control.parking_analytics import ParkingAnalytics
+        def raw(parked):
+            return {'basicVehicleStatus': {'engineStatus': 'engine_off' if parked else 'engine_running',
+                                           'speedValidity': True, 'speed': 0 if parked else 30},
+                    'additionalVehicleStatus': {
+                        'electricVehicleStatus': {'ptReady': 0 if parked else 1, 'chargeLevel': 70,
+                                                  'chargeSts': 0, 'chargerState': 0,
+                                                  'statusOfChargerConnection': 0},
+                        'maintenanceStatus': {'odometer': 1000}}}
+        self.append(0, extra=raw(False))
+        for minute in range(5, 66, 5):
+            self.append(minute * 60000, extra=raw(True))
+        self.append(70 * 60000, extra=raw(False))
+        records = self.reader.timeline('owner', 'car', '2026-09-20')['items']
+        self.assertTrue(all(r['change'] == 'new' for r in records[1:]))
+        result = ParkingAnalytics(self.reader).query('owner', 'car', '2026-09-20', '2026-09-20', 86)
+        row = result['sessions'][0]
+        self.assertEqual(row['sample_count'], 13)
+        self.assertEqual(row['duration_seconds'], 3600)
+        self.assertEqual(row['soc_drop'], 0)
+        self.assertTrue(row['eligible'])
+        self.assertNotIn('gap', row['reasons'])
+
     def test_empty_read_does_not_create_directories(self):
         result = self.reader.timeline('owner', 'car', '2026-09-20')
         self.assertEqual(result['items'], [])

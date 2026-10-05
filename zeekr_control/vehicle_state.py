@@ -2,6 +2,11 @@
 from .summary import number, section
 
 
+# Owner-selected mapping (2026-10-05); not a manufacturer-verified enum.
+GEAR_CODES = {0: 'P', 1: 'R', 2: 'N', 3: 'D'}
+GEAR_LABELS = {'P': '驻车', 'R': '倒车', 'N': '空挡', 'D': '前进'}
+
+
 def numeric(value, minimum=0, maximum=1e9):
     result = number(value, minimum, maximum)
     return float(result) if result is not None else None
@@ -12,6 +17,7 @@ def decode(raw, active_codes=(), stopped_codes=()):
     extra = section(raw.get('additionalVehicleStatus'))
     electric = section(extra.get('electricVehicleStatus'))
     maintenance = section(extra.get('maintenanceStatus'))
+    gear = GEAR_CODES.get(number(section(extra.get('drivingBehaviourStatus')).get('gearAutoStatus')))
     valid_speed = basic.get('speedValidity') is True or basic.get('speedValidity') == 'true'
     speed = numeric(basic.get('speed'), 0, 400) if valid_speed else None
     engine = basic.get('engineStatus')
@@ -83,7 +89,7 @@ def decode(raw, active_codes=(), stopped_codes=()):
     if charging is True and ((speed is not None and speed > 0) or off is False):
         charging = None  # Conflicting drive-ready evidence requires calibration.
     return {'time': numeric(raw.get('updateTime'), 1, 32503680000000),
-            'speed': speed, 'off': off, 'charging': charging,
+            'speed': speed, 'off': off, 'charging': charging, 'gear': gear,
             'charging_phase': 'stopped' if verified_stopped else 'active' if charging is True else 'idle' if charging is False else 'unknown',
             'charging_mode': ('dc' if verified_dc else 'ac' if verified_ac else None)
                              if charging is True else None,

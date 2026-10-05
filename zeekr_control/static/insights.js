@@ -14,12 +14,14 @@
       {id:'review',label:'轻量用车回顾',description:'本周参考地点、实际费用与待补记录'}
     ]},
     {name:'参数核实',tools:[
+      {id:'hypotheses',label:'假设与验证',description:'全目录起草解释、查状态变化与两种反例'},
       {id:'fields',label:'参数字典',description:'中文解释、原始字段与参数核实'},
       {id:'lab',label:'参数实验室',description:'保存实验、动作、样本与研究备注'}
     ]},
     {name:'能源与充电',page:'energy',tools:[
       {id:'charge-comparison',label:'充电曲线对比',description:'对照两次充电的功率、温度与耗时'},
-      {id:'ledger',label:'充电账本',description:'充电费用、桩端电量与实际电价'}
+      {id:'ledger',label:'充电账本',description:'充电费用、桩端电量与实际电价'},
+      {id:'parking',label:'停车观测',description:'停车区间、有效车辆观测与 SOC 变化'}
     ]},
     {name:'车辆',page:'car',tools:[
       {id:'life',label:'生活账本',description:'保险、停车费用、洗车支出与保养待办'}
@@ -39,17 +41,19 @@
     const groups=()=>toolGroups.filter(group=>(group.page || 'insights')===section);
     const automaticPage=root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time,navigate});
     const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
+    const parkingPage=root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time});
     const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
     const rulesPage=root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time});
     const chargeComparisonPage=root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time});
     const labPage=root.ParameterExperimentsPage.create({getState,request,escape:esc,active:()=>active() && tab==='lab',time});
+    const hypothesisPage=root.HypothesisLabPage.create({getState,request,escape:esc,active:()=>active()&&tab==='hypotheses',time,review});
     const researchPage=root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review,diagnose:()=>navigate('settings','quality')});
     const calendarPage=root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate});
     const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
     const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
     const routesPage=root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate});
     const reviewPage=root.TravelInsightsPage.create({kind:'review',getState,request,escape:esc,active:()=>active()&&tab==='review',time,navigate});
-    const views={routes:routesPage,review:reviewPage,fields:dictionary,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
+    const views={hypotheses:hypothesisPage,parking:parkingPage,routes:routesPage,review:reviewPage,fields:dictionary,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;

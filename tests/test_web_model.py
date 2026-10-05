@@ -178,7 +178,7 @@ class WebModelTests(unittest.TestCase):
         self.assertEqual(rows['doorOpenStatusDriver']['value'], '关闭')
         self.assertEqual(rows['doorLockStatusDriver']['evidence'], '待核实')
         self.assertEqual(rows['dcChargePileUAct']['value'], '401.7 V')
-        self.assertEqual(rows['gearAutoStatus']['evidence'], '本车场景观察')
+        self.assertEqual(rows['gearAutoStatus']['evidence'], '用户指定映射')
         self.assertEqual(rows['engineHoodOpenStatus']['evidence'], '本车已核对')
         self.assertEqual(rows['chargeSts']['value'], '0')
         self.assertIs(decode(data)['off'], False)
@@ -187,10 +187,25 @@ class WebModelTests(unittest.TestCase):
         rows = {r['key']: r for r in fields_for(data)}
         self.assertEqual(rows['chargeLidAcStatus']['value'], '打开')
         self.assertEqual(rows['chargeLidAcStatus']['evidence'], '本车场景观察')
-        self.assertEqual(rows['gearAutoStatus']['value'], '0')
+        self.assertEqual(rows['gearAutoStatus']['value'], 'P 挡（驻车）')
         data['additionalVehicleStatus']['electricVehicleStatus']['chargeLidAcStatus'] = 99
         rows = {r['key']: r for r in fields_for(data)}
         self.assertEqual(rows['chargeLidAcStatus']['evidence'], '待核实')
+
+    def test_owner_selected_gear_mapping_preserves_unknown_codes(self):
+        from zeekr_control.web_model import fields_for
+        from zeekr_control.vehicle_state import decode
+        for code, gear, label in ((0, 'P', '驻车'), (1, 'R', '倒车'),
+                                  (2, 'N', '空挡'), (3, 'D', '前进')):
+            for raw_code in (code, str(code)):
+                data = {'additionalVehicleStatus': {'drivingBehaviourStatus': {'gearAutoStatus': raw_code}}}
+                self.assertEqual(decode(data)['gear'], gear)
+                row = next(row for row in fields_for(data) if row['key'] == 'gearAutoStatus')
+                self.assertEqual(row['value'], f'{gear} 挡（{label}）')
+                self.assertEqual(row['evidence'], '用户指定映射')
+        for code in (None, True, False, 4, -1, 'bad', 1.5):
+            data = {'additionalVehicleStatus': {'drivingBehaviourStatus': {'gearAutoStatus': code}}}
+            self.assertIsNone(decode(data)['gear'])
 
     def test_running_power_conflicts_with_cached_charging(self):
         from zeekr_control.vehicle_state import decode

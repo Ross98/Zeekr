@@ -59,6 +59,20 @@ class ParkingAnalyticsTests(unittest.TestCase):
         self.assertTrue(all(row['reasons'] for row in result['sessions']))
         self.assertGreater(result['quality']['excluded_reads'], 0)
 
+    def test_advancing_time_with_identical_values_is_continuous_parking(self):
+        points = [self.point(0, off=False, speed=30)]
+        points += [self.point(minute, change='repeat' if minute > 5 else 'new')
+                   for minute in range(5, 66, 5)]
+        points += [self.point(70, off=False, speed=30)]
+        result = self.result(points)
+        row = result['sessions'][0]
+        self.assertEqual(row['sample_count'], 13)
+        self.assertEqual(row['duration_seconds'], 3600)
+        self.assertNotIn('gap', row['reasons'])
+        self.assertEqual(result['quality']['repeat_reads'], 0)
+        self.assertEqual(row['soc_drop'], 0)
+        self.assertTrue(row['eligible'])
+
     def test_repeats_do_not_add_samples_or_extend_vehicle_duration(self):
         points = self.complete()
         repeat = deepcopy(points[1]);repeat['record']['observed_at'] += 60000

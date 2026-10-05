@@ -1,6 +1,6 @@
 """Presentation data with conservative, vehicle-specific interpretations."""
 from .summary import SIDES, POSITIONS, display, number, section, updated_at
-from .vehicle_state import decode
+from .vehicle_state import decode, GEAR_LABELS
 from .parameter_dictionary import definition, reference
 from .report_telemetry import normalize
 from .charging_details import snapshot_details
@@ -131,8 +131,8 @@ def fields_for(data):
                     if numeric == 0 and key in ['winPos' + side for side in SIDES]:
                         calibrated = ('关闭', '本车已核对')
                 elif path == 'additionalVehicleStatus.drivingBehaviourStatus':
-                    if key == 'gearAutoStatus' and numeric == 3:
-                        calibrated = ('D 挡（挂 D 时观察到）', '本车场景观察')
+                    if key == 'gearAutoStatus' and state['gear'] is not None:
+                        calibrated = (f"{state['gear']} 挡（{GEAR_LABELS[state['gear']]}）", '用户指定映射')
                 elif path == 'basicVehicleStatus':
                     if key == 'engineStatus' and item in ('engine_running', 'engine_off'):
                         calibrated = ('动力运行' if item == 'engine_running' else '动力关闭', '本车场景观察')

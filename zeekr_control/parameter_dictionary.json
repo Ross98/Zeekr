@@ -794,8 +794,8 @@
     "additionalVehicleStatus.drivingBehaviourStatus.gearAutoStatus": {
       "name": "自动挡位状态",
       "unit": "—",
-      "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "basis": "用户指定映射（2026-10-05）；3 在挂 D 时已有本车场景观察",
+      "note": "暂按 0=P 驻车、1=R 倒车、2=N 空挡、3=D 前进解释；不是厂商核实枚举。P 档仅作停车辅助证据，不能覆盖行程或充电记录；其他编码保留未知。",
       "sources": [],
       "private": false,
       "applicability": "通用平台字段；含义与可用性可能随车型、年款、动力形式、版本和选装配置变化，需核对本车。",

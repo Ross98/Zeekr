@@ -56,6 +56,7 @@ from .daily_timeline import DailyTimeline
 from .vehicle_life import VehicleLife
 from .data_quality import DataQuality
 from .vehicle_research import VehicleResearch, ResearchInputError, PUBLIC
+from .hypothesis_lab import HypothesisLab
 from .automatic_insights import Analyzer, InsightCache
 
 STATIC = Path(__file__).parent / 'static'
@@ -377,6 +378,13 @@ class App:
                 if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
                     raise ValueError('账号或车辆已切换，本次核实未保存。')
             paths = {field['path'] for field in (self.model or {}).get('fields', [])}
+            if 'hypothesis_context' in data:
+                if data['hypothesis_context'] != context or data.get('status') != 'question' or data.get('scope') != 'field' or data.get('action') != 'save':
+                    raise ValueError('研究上下文或假设保存方式无效。')
+                if any(r['path']==data.get('path') and r['scope']=='field' and r['status']!='question'
+                       for r in self.field_review_store.read(self.vehicle_key)['records']):
+                    raise ValueError('已有人工确认记录，请到参数字典核对；未覆盖原记录。')
+                paths.update(PUBLIC)
             evidence = None
             if data.get('experiment_id') and data.get('action') == 'save':
                 if data.get('context') != self._insights_context():
@@ -423,6 +431,23 @@ class App:
             result['context'] = context
         return result
 
+    def hypotheses(self,start,end,state='trip',anchor='',value=''):
+        with self.lock:
+            session=self._read_session()
+            if not session.get('accessToken'):
+                raise ValueError('请先连接车辆账号。')
+            self._restore_snapshot(session)
+            scope,vehicle,context=session_scope(session),self.vehicle_key,self._insights_context()
+            if not context or not vehicle:
+                raise ValueError('等待当前账号的车辆缓存后再研究。')
+        result=HypothesisLab(self.archive_reader,self.database_path).query(scope,vehicle,start,end,state,anchor,value)
+        with self.lock:
+            if session_scope(self._read_session())!=scope or self._insights_context()!=context:
+                raise ValueError('账号或车辆已切换，请重新分析。')
+            result['context']=context
+            result['reviews']=self.field_review_store.read(vehicle)
+        return result
+
     def vehicle_parameters(self):
         with self.lock:
             current = self.state()  # Restore only the shared local snapshot; never refresh the cloud.
@@ -454,6 +479,8 @@ class App:
             raise ValueError('账号或车辆已切换，本次修改已取消。')
 
     def insights(self, operation, *args):
+        if operation == 'hypotheses':
+            return self.hypotheses(*args)
         if operation == 'research':
             return self.research(*args)
         if operation == 'parking':
@@ -906,6 +933,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                 if url.path.startswith('/api/insights/'):
                     query = parse_qs(url.query, keep_blank_values=True)
                     value = lambda name, default='': query.get(name, [default])[0]
+                    if url.path == '/api/insights/hypotheses':
+                        return self.send(200, app.insights('hypotheses', value('start'), value('end'), value('state','trip'), value('anchor'), value('value')))
                     if url.path == '/api/insights/research':
                         return self.send(200, app.insights('research', value('start'), value('end'), value('path')))
                     if url.path == '/api/insights/automatic':
@@ -1019,6 +1048,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/overview-dashboard.js':('overview-dashboard.js','text/javascript; charset=utf-8'),
                           '/charge-comparison.js': ('charge-comparison.js', 'text/javascript; charset=utf-8'),
                           '/parameter-experiments.js': ('parameter-experiments.js', 'text/javascript; charset=utf-8'),
+                          '/hypothesis-lab.js': ('hypothesis-lab.js', 'text/javascript; charset=utf-8'),
+                          '/hypothesis-lab.css': ('hypothesis-lab.css', 'text/css; charset=utf-8'),
                           '/vehicle-research.js': ('vehicle-research.js', 'text/javascript; charset=utf-8'),
                           '/daily-recall.js': ('daily-recall.js','text/javascript; charset=utf-8'),
                           '/usage-calendar.js': ('usage-calendar.js', 'text/javascript; charset=utf-8'),
