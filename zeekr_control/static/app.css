@@ -202,4 +202,11 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 .overview-health .location-heading{padding:21px 24px 13px;flex-wrap:wrap;margin-bottom:0}
 .overview-health .location-actions{flex-wrap:wrap;max-width:100%;justify-content:flex-start}
 .overview-health .map-layout{grid-template-columns:minmax(0,1fr)}
+.overview-health #map{display:flex;align-items:center;justify-content:center}
+.overview-health .amap-position-image{width:auto;height:auto;max-width:100%;max-height:100%;border-radius:12px;flex-shrink:1}
+.overview-health .car-tyre-diagram{aspect-ratio:auto;height:380px;min-height:0;margin:0 -8px}
+.overview-health .car-tyre-art{top:50%}
+.overview-health .car-tyre-lf,.overview-health .car-tyre-lr{top:auto;bottom:0}
+.overview-health>.card>.card-body{padding-bottom:16px}
+@media(max-width:620px){.overview-health .car-tyre-diagram{height:320px}}
 .overview-activity{margin-bottom:20px}
