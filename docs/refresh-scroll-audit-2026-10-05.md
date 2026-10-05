@@ -1,6 +1,6 @@
 # 全页自动刷新位置检查 — 2026-10-05
 
-状态：本地修复、验证；未 commit、未部署、未 push。生产仍为 remembered-login d9ce7ab 发布。
+初次检查为本地修复。更新：用户随后授权 commit、部署，已发布 `8007f8e`，未 push。实际发布证据见 `refresh-scroll-release-2026-10-05.md`。
 
 ## 复现与修复
 
@@ -26,6 +26,6 @@ Chrome headless，合成车辆/本地归档，无真实账号数据。1440×600 
 
 6 个现存套件失败，在 HEAD 7451a28 的独立临时基线上使用相同测试逐项复现，不由本次修改新增：usage_reports（日期编辑尚未 blur，原生日期编辑防重绘导致立即断言仍有旧 DOM）、insights（旧车辆时间机入口）、storage（未展开设置存储区）、research_workbench（无归档目录折叠）、trip_management 和 history（位置显示基线断言）。这些原有测试修改未覆盖、未提交；没有把它们计作通过。
 
-验证范围是本地合成浏览器。未验证真实 Safari/物理手机/已登录生产页面，未部署。内容永久减少时浏览器仍只能滚到实际页面末尾；此次解决后台清空和临时重绘造成的位置跳动。
+验证范围是本地合成浏览器。未验证真实 Safari/物理手机/已登录生产页面。后续部署验证见发布记录。内容永久减少时浏览器仍只能滚到实际页面末尾；此次解决后台清空和临时重绘造成的位置跳动。
 
 原理参考：[MDN Scroll anchoring](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Scroll_anchoring/Overview)。修复结论以以上本地实测为依据。
