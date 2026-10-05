@@ -179,7 +179,7 @@ class WebModelTests(unittest.TestCase):
         self.assertEqual(rows['doorLockStatusDriver']['evidence'], '待核实')
         self.assertEqual(rows['dcChargePileUAct']['value'], '401.7 V')
         self.assertEqual(rows['gearAutoStatus']['evidence'], '本车场景观察')
-        self.assertEqual(rows['engineHoodOpenStatus']['evidence'], '待核实')
+        self.assertEqual(rows['engineHoodOpenStatus']['evidence'], '本车已核对')
         self.assertEqual(rows['chargeSts']['value'], '0')
         self.assertIs(decode(data)['off'], False)
         data['additionalVehicleStatus']['electricVehicleStatus']['chargeLidAcStatus'] = 1

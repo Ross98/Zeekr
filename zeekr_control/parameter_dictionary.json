@@ -2097,8 +2097,8 @@
     "additionalVehicleStatus.drivingSafetyStatus.engineHoodOpenStatus": {
       "name": "前舱盖",
       "unit": "—",
-      "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "basis": "本车实车关闭确认与缓存返回值 0 对照（2026-10-05）",
+      "note": "本车已核对 0 为关闭；其他值及缺失保持未知，不据此推断打开。",
       "sources": [],
       "private": false,
       "applicability": "通用平台字段；含义与可用性可能随车型、年款、动力形式、版本和选装配置变化，需核对本车。",

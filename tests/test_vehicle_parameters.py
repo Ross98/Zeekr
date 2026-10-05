@@ -49,14 +49,26 @@ class VehicleParameterTests(unittest.TestCase):
             self.assertNotIn('PRIVATE', json.dumps(result))
             json.dumps(result, allow_nan=False)
 
-    def test_unverified_hood_and_lights_keep_raw_without_guessed_closed_state(self):
+    def test_confirmed_closed_hood_and_unverified_lights(self):
         result = self.project({'additionalVehicleStatus': {'drivingSafetyStatus': {'engineHoodOpenStatus': 0},
                                                           'runningStatus': {'loBeam': 0}}})
-        for suffix in ('engineHoodOpenStatus', 'loBeam'):
+        hood = self.row(result, 'engineHoodOpenStatus')
+        self.assertEqual(hood['status'], 'known')
+        self.assertEqual(hood['value'], '关闭')
+        for suffix in ('loBeam',):
             row = self.row(result, suffix)
             self.assertEqual(row['status'], 'pending')
             self.assertEqual(row['raw'], '0')
             self.assertNotIn('关闭', row['value'])
+
+    def test_hood_only_confirmed_zero_is_closed(self):
+        for value in (0, '0'):
+            raw = {'additionalVehicleStatus': {'drivingSafetyStatus': {'engineHoodOpenStatus': value}}}
+            self.assertEqual(build_model(raw)['hood'], '关闭')
+        for value in (None, 1, '1', 2, -1, True, False, '', 'NaN', {}, []):
+            raw = {'additionalVehicleStatus': {'drivingSafetyStatus': {'engineHoodOpenStatus': value}}}
+            self.assertEqual(build_model(raw)['hood'], '未知', repr(value))
+        self.assertEqual(build_model({})['hood'], '未知')
 
     def test_metadata_and_battery_paths_do_not_collide(self):
         result = self.project({'additionalVehicleStatus': {

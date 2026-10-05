@@ -29,7 +29,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.locator('#vehicle-reset').click();
   await page.getByLabel('搜索参数',{exact:true}).fill('engineHood');
   assert.equal(await page.locator('[data-parameter]').count(),1);
-  assert.match(await page.locator('.vehicle-table').innerText(),/含义待核实/);assert.doesNotMatch(await page.locator('.vehicle-table').innerText(),/人工确认|关闭/);
+  assert.match(await page.locator('.vehicle-table').innerText(),/关闭/);assert.doesNotMatch(await page.locator('.vehicle-table').innerText(),/人工确认/);
   assert.equal(await page.locator('[data-label="原始值"]').innerText(),'0');
   await page.locator('summary').filter({hasText:'字段说明'}).focus();await page.keyboard.press('Enter');
   await page.evaluate(()=>render());assert.equal(await page.locator('details[data-detail][open]').count(),1);
@@ -75,7 +75,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     await page.locator('#vehicle-parameters').click();
    }
   }
-  await page.locator('#vehicle-overview').click();await page.locator('.car-pending summary').click();await page.getByRole('button',{name:'前舱盖 · 未知',exact:true}).click();
+  await page.locator('#vehicle-overview').click();
+  assert.match(await page.locator('#car-hood').innerText(),/关闭/);
+  await page.evaluate(()=>{state.model.hood='未知';render();});
+  await page.locator('.car-pending summary').click();await page.getByRole('button',{name:'前舱盖 · 未知',exact:true}).click();
   assert.equal(await page.evaluate(()=>document.activeElement.id),'car-hood');
   await page.locator('#vehicle-parameters').click();
   // Refresh failure retains exact readings and times; filters survive application renders.

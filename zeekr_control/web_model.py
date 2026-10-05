@@ -123,7 +123,7 @@ def fields_for(data):
                         number(value.get('doorLockStatus' + side)) == 1 for side in SIDES)
                     if locked and key in ['centralLockingStatus'] + ['doorLockStatus' + side for side in SIDES]:
                         calibrated = ('已锁车' if key == 'centralLockingStatus' else '已锁', '本车已核对（组合）')
-                    elif numeric == 0 and key in ['trunkOpenStatus'] + ['doorOpenStatus' + side for side in SIDES]:
+                    elif numeric == 0 and key in ['trunkOpenStatus', 'engineHoodOpenStatus'] + ['doorOpenStatus' + side for side in SIDES]:
                         calibrated = ('关闭', '本车已核对')
                     elif key == 'electricParkBrakeStatus' and numeric in (0, 1):
                         calibrated = ('行驶样本值 0' if numeric == 0 else '停车／充电样本值 1', '本车场景观察')
@@ -261,7 +261,7 @@ def build_model(data, vehicle=None):
                            'window': scalar(climate.get('winPos' + side))}}
                   for index, (side, name) in enumerate(zip(SIDES, POSITIONS))],
         'trunk': '关闭' if number(safety.get('trunkOpenStatus')) == 0 else '未知',
-        'hood': '未知',
+        'hood': '关闭' if number(safety.get('engineHoodOpenStatus')) == 0 else '未知',
         'tyres': [{'name': name, 'pressure': display(maintenance.get('tyreStatus' + side), ' kPa', 0),
                    'pressure_value': metric_detail(maintenance.get('tyreStatus' + side), 'kPa', status_time, 0)['value'],
                    'temperature': display(maintenance.get('tyreTemp' + side), '°C', -80, 150)}
