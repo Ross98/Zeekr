@@ -1,6 +1,7 @@
 """Loopback-only Web UI and shared background cached-position collection."""
 import hashlib
 import hmac
+import ipaddress
 import os
 from http.cookies import SimpleCookie
 from .auth import WebAuth
@@ -8,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import secrets
+import sqlite3
 import threading
 import time
 from urllib.parse import parse_qs, urlsplit
@@ -749,7 +751,7 @@ class App:
             self.monitor_thread.join(timeout=1.5)
 
 
-def make_server(app, port=8765, auth=None, public_origin=None):
+def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=False):
     if public_origin and (not auth or not public_origin.startswith("https://") or urlsplit(public_origin).path):
         raise ValueError("Public origin requires HTTPS and authentication")
     class Handler(BaseHTTPRequestHandler):
@@ -781,8 +783,22 @@ def make_server(app, port=8765, auth=None, public_origin=None):
             except Exception:
                 return ''
 
+        def client_ip(self):
+            peer = self.client_address[0]
+            if public_origin and self.headers.get('Host') == urlsplit(public_origin).netloc:
+                # Opt-in only: the loopback proxy must overwrite X-Real-IP with
+                # its actual peer address. Never accept a caller's X-Forwarded-For.
+                if not trusted_proxy or not ipaddress.ip_address(peer).is_loopback:
+                    return ''
+                peer = self.headers.get('X-Real-IP', '')
+            try:
+                return str(ipaddress.ip_address(peer))
+            except ValueError:
+                return ''
+
         def signed_in(self):
-            return auth is None or auth.valid(self.token())
+            return auth is None or auth.valid(self.token(), client_ip=self.client_ip(),
+                                              user_agent=self.headers.get('User-Agent', ''))
 
         def read_json(self, limit):
             try:
@@ -809,15 +825,27 @@ def make_server(app, port=8765, auth=None, public_origin=None):
             except ValueError:
                 return self.send(400, {'error': '请求格式无效。'})
             secure = '; Secure' if expected.startswith('https://') else ''
-            if self.path == '/auth/logout':
-                auth.logout(self.token())
-                return self.send(200, {}, cookie='zeekr_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + secure)
-            if auth.limited():
-                return self.send(429, {'error': '尝试过多，请五分钟后再试。'})
-            token = auth.login(data.get('password'))
-            if not token:
-                return self.send(401, {'error': '密码错误或尝试过多。'})
-            return self.send(200, {}, cookie='zeekr_session=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200' + secure)
+            try:
+                if self.path == '/auth/logout':
+                    auth.logout(self.token())
+                    return self.send(200, {}, cookie='zeekr_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + secure)
+                if auth.limited():
+                    return self.send(429, {'error': '尝试过多，请五分钟后再试。'})
+                days = data.get('remember_days', 0)
+                token = auth.login(data.get('password'), remember_days=days,
+                                   client_ip=self.client_ip(), user_agent=self.headers.get('User-Agent', ''))
+                if not token:
+                    return self.send(401, {'error': '密码错误或尝试过多。'})
+                # A fresh login replaces this browser's old credential, including
+                # when the user changes their choice back to “不记住”.
+                if self.token():
+                    auth.logout(self.token())
+                max_age = days * 86400 if days else 43200
+                return self.send(200, {}, cookie='zeekr_session=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d' % max_age + secure)
+            except ValueError as exc:
+                return self.send(400, {'error': str(exc)})
+            except (OSError, sqlite3.Error):
+                return self.send(503, {'error': '登录凭证暂时无法保存或撤销，请稍后重试。'})
 
         def send(self, status, value, content_type='application/json; charset=utf-8', cookie=None):
             payload = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
@@ -1081,8 +1109,9 @@ def serve(port=8765):
         auth = None
         if auth_path:
             from .storage import load
-            auth = WebAuth(load(auth_path))
-        server = make_server(app, port, auth=auth, public_origin=os.environ.get('ZEEKR_PUBLIC_ORIGIN'))
+            auth = WebAuth(load(auth_path), remembered_path=app.session_path.parent / 'web-remembered.sqlite3')
+        server = make_server(app, port, auth=auth, public_origin=os.environ.get('ZEEKR_PUBLIC_ORIGIN'),
+                             trusted_proxy=os.environ.get('ZEEKR_TRUST_PROXY_IP') == '1')
         app.start_monitor()
         print('Zeekr Web：http://127.0.0.1:%d（仅本机；统一采集默认开启；Ctrl+C 退出）' % server.server_port, flush=True)
         try:

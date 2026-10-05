@@ -3,6 +3,9 @@ main{box-sizing:border-box;background:var(--paper,white);padding:32px;border:1px
 form label,form input,form button{display:block;box-sizing:border-box;width:100%;margin-top:16px}
 form input,form button{min-height:44px;padding:12px;border:1px solid var(--control-border,#bccbc3);border-radius:8px;font:inherit}
 form input{background:var(--surface,white);color:var(--ink,#253d35)}
+form select{box-sizing:border-box;width:100%;min-height:44px;padding:10px;border:1px solid var(--control-border,#bccbc3);border-radius:8px;font:inherit;background:var(--surface,white);color:var(--ink,#253d35)}
+.remember-help{font-size:14px;margin:8px 0 20px}
+form :focus-visible{outline:2px solid var(--accent,#245e47);outline-offset:3px}
 form button{background:var(--accent,#245e47);color:var(--on-accent,white);cursor:pointer}
 form button:disabled{background:var(--surface,#eaf0ed);color:var(--muted,#536b73);cursor:wait}
 #error{color:var(--night-danger,#a12727);overflow-wrap:anywhere}

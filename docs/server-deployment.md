@@ -80,8 +80,18 @@ sudo -u zeekr-control python3 /opt/zeekr-control/check-release.py <候选目录>
 
 服务通过 `ZEEKR_AUTH_FILE` 指定权限 600、归服务用户所有的 JSON 密码哈希文件，字段为 salt 和 digest，使用 PBKDF2-HMAC-SHA256（600000 次）。配置缺失或格式错误时启动失败，不降级为免登录。未设置此环境变量的本地开发服务仍是原来的本机模式，不得公开。
 
-登录会话最长 12 小时，重启全部失效；每五分钟最多五次失败登录，单账户全局限速，可被恶意请求暂时锁定。最多 32 个有效会话；Cookie 使用 HttpOnly、SameSite=Strict，HTTPS 域名入口额外使用 Secure。退出立即撤销当前会话。密码更改需替换哈希文件并重启服务，会注销全部会话。
+默认会话最长 12 小时，重启后失效。登录页可选记住此设备 7 天或 30 天；期限从登录时固定计算，访问不会延长。随机 Cookie 凭证、浏览器 User-Agent 和 IP 共同识别浏览器，不依赖硬件指纹，不保存密码。更换浏览器、清除 Cookie、浏览器标识或 IP 改变、到期后需要密码；网页不能验证物理主机身份。
+
+普通会话和记住设备凭证各最多 32 个；每五分钟最多五次失败登录，仍是单账户全局限速。Cookie 使用 HttpOnly、SameSite=Strict，HTTPS 域名入口额外使用 Secure。退出立即撤销当前凭证，重新登录会替换此浏览器旧凭证；其他设备不受影响。密码更改需替换哈希文件并重启服务，新密码记录会使旧记住凭证失效。
+
+`web-remembered.sqlite3` 位于 `session.json` 所在的私有数据目录，文件权限 600、目录 700，归服务用户所有，只存凭证哈希、密码记录指纹、IP/浏览器组合哈希和到期时间。保留此库才能跨重启或部署继续免密；勿放在临时版本目录，勿提交或打印内容。读取故障时拒绝免密；保存或撤销故障返回 503，不声称成功。回滚到不支持记住设备的代码后，记住凭证不能使用。
 
 公开域名须设置 `ZEEKR_PUBLIC_ORIGIN=https://<专用域名>`，不能信任任意 Host 或转发头。Nginx 示例位于 deploy/nginx-zeekr.conf.example，必须先有 DNS 和专用 TLS 证书，禁止以明文 HTTP 暴露车辆或登录接口。
+
+公网免密还需代理用 `proxy_set_header X-Real-IP $remote_addr;` 覆盖请求头，并为 Web 服务设置 `ZEEKR_TRUST_PROXY_IP=1` 后重启。仅指定公开域名、回环代理连接且开启此配置时，才读取单一合法 `X-Real-IP`；不读取 `X-Forwarded-For`。缺失、无效或未启用可信 IP 配置时，记住登录返回 400，普通密码登录仍可用。代理前若有 CDN 或负载均衡，这里的 IP 可能只是上游出口，应先单独核对可信代理链。
+
+本机与 SSH 隧道入口使用实际连接 IP，忽略转发头。SSH 隧道在服务器侧通常为 `127.0.0.1`，无法感知客户端原始公网 IP 变化；仍用各浏览器独立 Cookie 和 User-Agent 区分。物理电脑或原始客户端 IP 的识别不在此入口的可验证范围。
+
+Cookie 与会话期限参考 [MDN Cookie 配置](https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/Cookies)及 [OWASP 会话管理](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
 
 上线回滚前先关闭公网入口，再恢复旧代码及 unit，防止旧版免登录服务被公网代理访问。保留最新数据，重启后采集需手动恢复。密码文件与备份不得进入 Git。

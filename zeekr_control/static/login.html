@@ -19,6 +19,13 @@
     <form>
       <label for="password">访问密码</label>
       <input id="password" type="password" autocomplete="current-password" maxlength="256" required>
+      <label for="remember">下次免输密码</label>
+      <select id="remember" aria-describedby="remember-help">
+        <option value="0">不记住</option>
+        <option value="7">记住此设备 7 天</option>
+        <option value="30">记住此设备 30 天</option>
+      </select>
+      <p id="remember-help" class="remember-help">每次登录仍需输入密码。</p>
       <button>登录</button>
       <p id="error" role="alert"></p>
     </form>
