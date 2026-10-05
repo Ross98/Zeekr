@@ -196,3 +196,10 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
  main[data-page="overview"] .overview-temperature-values{gap:4px 14px;font-size:13px}
  main[data-page="overview"] .overview-temperature-values strong{font-size:18px;margin-left:6px}
 }
+
+/* Overview map occupies the former activity slot beside tyre status. */
+.overview-health>.overview-location-section{margin:0;min-width:0}
+.overview-health .location-heading{padding:21px 24px 13px;flex-wrap:wrap;margin-bottom:0}
+.overview-health .location-actions{flex-wrap:wrap;max-width:100%;justify-content:flex-start}
+.overview-health .map-layout{grid-template-columns:minmax(0,1fr)}
+.overview-activity{margin-bottom:20px}

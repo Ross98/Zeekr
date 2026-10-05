@@ -16,7 +16,10 @@ const charge=original.current.events.concat(original.previous.events).find(e=>e.
 if(charge){await page.locator(`[data-overview-record="${charge.id}"]`).click();await page.waitForFunction(id=>chargeSelected?.id===id,charge.id);await page.locator('#charge-detail').waitFor();await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();}
 await page.locator('#overview-record-filter').selectOption('charge_end');
 await page.getByRole('button',{name:'30 天',exact:true}).click();assert.equal(await page.locator('.overview-day').count(),30);assert.ok(await page.locator('.overview-gap').count());
-await page.evaluate(()=>scrollTo(0,700));const scroll=await page.evaluate(()=>scrollY);
+await page.evaluate(()=>scrollTo(0,700));
+// Save the actual click position after the approved map/records group swap.
+await page.getByRole('button',{name:'去补账',exact:true}).scrollIntoViewIfNeeded();
+const scroll=await page.evaluate(()=>scrollY);
 await page.getByRole('button',{name:'去补账',exact:true}).click();await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();assert.equal(await page.locator('#overview-record-filter').inputValue(),'charge_end');assert.ok(Math.abs(await page.evaluate(()=>scrollY)-scroll)<2);
 for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1279,390,320]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${theme} ${width} overflow`);}}
 await page.setViewportSize({width:1440,height:1000});await page.locator('#overview-record-filter').selectOption('all');await page.getByLabel('外观',{exact:true}).selectOption('light');await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'/tmp/zeekr-overview-production-desktop.png',fullPage:true});
