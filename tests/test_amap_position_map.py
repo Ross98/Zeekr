@@ -26,6 +26,13 @@ class AmapPositionMapTests(unittest.TestCase):
    with self.assertRaises(ValueError):self.renderer.position(dict(self.location,coordinate_system='GCJ-02（社区解释）'),15)
 
 class LocationMapCacheTests(unittest.TestCase):
+ def test_map_revision_tracks_visual_position_not_observation_time(self):
+  from zeekr_control.web import App
+  point=dict(valid=True,trusted=False,latitude=31.2,longitude=121.4,coordinate_system='GCJ-02（社区解释）',updated_at='first')
+  revision=App.location_map_revision(point)
+  self.assertEqual(revision,App.location_map_revision(dict(point,updated_at='later')))
+  for changes in [dict(latitude=31.3),dict(trusted=True),dict(valid=False),dict(coordinate_system='未知')]:
+   self.assertNotEqual(revision,App.location_map_revision(dict(point,**changes)))
  def test_revision_guard_and_owner_zoom_cache(self):
   import threading
   from types import SimpleNamespace

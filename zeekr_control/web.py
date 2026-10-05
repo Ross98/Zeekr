@@ -59,6 +59,7 @@ from .vehicle_research import VehicleResearch, ResearchInputError, PUBLIC
 from .automatic_insights import Analyzer, InsightCache
 
 STATIC = Path(__file__).parent / 'static'
+VERSIONED_IMAGES = frozenset(('car-hero-530-b50b228bdd5b.webp', 'car-hero-1060-3d95179dfcc2.webp', 'car-photo-600-15846a50293e.webp', 'car-photo-1200-337464614403.webp', 'car-top-512-a02b0e693dee.webp', 'car-top-1024-32aab937fc29.webp'))
 
 
 class RefreshBusy(ValueError):
@@ -652,7 +653,7 @@ class App:
 
     @staticmethod
     def location_map_revision(location):
-        fields = {key: location.get(key) for key in ('latitude','longitude','coordinate_system','trusted','updated_at')}
+        fields = {key: location.get(key) for key in ('valid','latitude','longitude','coordinate_system','trusted')}
         return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()[:24]
 
     def location_map(self, zoom, revision):
@@ -852,14 +853,17 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
             except (OSError, sqlite3.Error):
                 return self.send(503, {'error': '登录凭证暂时无法保存或撤销，请稍后重试。'})
 
-        def send(self, status, value, content_type='application/json; charset=utf-8', cookie=None):
+        def send(self, status, value, content_type='application/json; charset=utf-8', cookie=None, cache_control='no-store', etag=None):
             payload = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
             self.send_response(status)
             if cookie:
                 self.send_header('Set-Cookie', cookie)
             self.send_header('Content-Type', content_type)
-            self.send_header('Content-Length', str(len(payload)))
-            self.send_header('Cache-Control', 'no-store')
+            if status != 304:
+                self.send_header('Content-Length', str(len(payload)))
+            self.send_header('Cache-Control', cache_control)
+            if etag:
+                self.send_header('ETag', etag)
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('X-Frame-Options', 'DENY')
             self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -871,6 +875,15 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                 # Closing a tab can cancel an in-flight response. The client is
                 # already gone: do not retry with a 500 or alter application state.
                 self.close_connection = True
+
+        def send_image(self, name, content_type, versioned=False):
+            payload = (STATIC / name).read_bytes()
+            etag = '"' + hashlib.sha256(payload).hexdigest() + '"'
+            cache = 'private, max-age=86400, immutable' if versioned else 'private, no-cache'
+            matches = self.headers.get('If-None-Match', '').split(',')
+            unchanged = any(value.strip().removeprefix('W/') in (etag, '*') for value in matches)
+            return self.send(304 if unchanged else 200, b'' if unchanged else payload,
+                             content_type, cache_control=cache, etag=etag)
 
         def do_GET(self):
             if not self.permitted():
@@ -1031,8 +1044,12 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/car.svg': ('car.svg', 'image/svg+xml'),
                           '/car-001.png': ('car-001.png', 'image/png'),
                           '/car-001-top.png': ('car-001-top.png', 'image/png')}
+                if url.path[1:] in VERSIONED_IMAGES:
+                    return self.send_image(url.path[1:], 'image/webp', versioned=True)
                 if url.path in assets:
                     name, content_type = assets[url.path]
+                    if content_type.startswith('image/'):
+                        return self.send_image(name, content_type)
                     return self.send(200, (STATIC / name).read_bytes(), content_type)
                 return self.send(404, {'error': '页面不存在。'})
             except ResearchInputError as exc:

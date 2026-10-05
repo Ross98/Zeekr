@@ -536,6 +536,19 @@ async function loadChargeEvents() {
   }
 }
 
+const carArtwork = {
+  hero: {files:['car-hero-530-b50b228bdd5b.webp','car-hero-1060-3d95179dfcc2.webp'],width:1060,height:450,sizes:'(max-width: 850px) 420px, 600px'},
+  photo: {files:['car-photo-600-15846a50293e.webp','car-photo-1200-337464614403.webp'],width:1200,height:671,sizes:'(max-width: 620px) 360px, 600px'},
+  top: {files:['car-top-512-a02b0e693dee.webp','car-top-1024-32aab937fc29.webp'],width:1024,height:1536,sizes:'(max-width: 620px) 180px, 300px'},
+};
+function carImage(kind, alt, priority = false) {
+  const {files,width,height,sizes}=carArtwork[kind];
+  return `<img src="/${files[1]}" srcset="/${files[0]} ${width/2}w, /${files[1]} ${width}w" sizes="${sizes}" width="${width}" height="${height}" loading="${priority?'eager':'lazy'}" decoding="async" ${priority?'fetchpriority="high"':''} alt="${esc(alt)}">`;
+}
+function mapOwner() {
+  return JSON.stringify([state?.request_key,state?.insights_context,state?.vehicle]);
+}
+
 function overview() {
   const attention='<section id="overview-attention" class="overview-attention" aria-label="需要留意" hidden></section>';
   if (!state?.model) return attention+modelRequired();
@@ -545,7 +558,7 @@ function overview() {
   const recent=state.recent_events || {};
   const activity=state.monitoring?.charge==='charging'?'充电记录中':state.monitoring?.trip==='driving'?'行程记录中':state.monitoring?.trip==='waiting'?'等待行程结束确认':'没有进行中活动的证据';
   const recordingLabel={never:'尚未开启',paused:'已暂停',active:'正在记录',failed:'采集失败',offline:'后台未在线'}[recording.status] || (recording.active?'正在记录':'已暂停');
-  return `<section class="hero"><div class="hero-copy"><div class="hero-title">${esc(profile.name)}</div><div class="hero-state">${pill(m.lock.confirmed?m.lock.value:'锁车状态未知',m.lock.confirmed?'good':'warn',m.lock.confirmed?'lock':'info')}${pill(m.charging.confirmed?m.charging.value:'充电状态未知',m.charging.confirmed?'':'warn','energy')}</div><div class="freshness">${icon('clock')}<div>${age(m.updated_time,'车辆数据更新于 ')}<span class="subtle">云端缓存 · 不代表实时状态</span></div></div><button class="closure-summary" data-page="car" aria-label="查看门窗详情">${[['doors','车门'],['windows','车窗'],['trunk','尾门']].map(([key,label])=>`<span class="${closure[key]==='未知'?'unknown':''}">${label}${esc(closure[key])}</span>`).join('')}${icon('arrow')}</button></div><div class="hero-car">${profile.image?`<img src="${esc(profile.image)}" alt="${esc(profile.image_alt)}">`:icon('car')}</div></section>
+  return `<section class="hero"><div class="hero-copy"><div class="hero-title">${esc(profile.name)}</div><div class="hero-state">${pill(m.lock.confirmed?m.lock.value:'锁车状态未知',m.lock.confirmed?'good':'warn',m.lock.confirmed?'lock':'info')}${pill(m.charging.confirmed?m.charging.value:'充电状态未知',m.charging.confirmed?'':'warn','energy')}</div><div class="freshness">${icon('clock')}<div>${age(m.updated_time,'车辆数据更新于 ')}<span class="subtle">云端缓存 · 不代表实时状态</span></div></div><button class="closure-summary" data-page="car" aria-label="查看门窗详情">${[['doors','车门'],['windows','车窗'],['trunk','尾门']].map(([key,label])=>`<span class="${closure[key]==='未知'?'unknown':''}">${label}${esc(closure[key])}</span>`).join('')}${icon('arrow')}</button></div><div class="hero-car">${profile.image==='/car.svg'?carImage('hero',profile.image_alt,true):profile.image?`<img src="${esc(profile.image)}" alt="${esc(profile.image_alt)}">`:icon('car')}</div></section>
   ${attention}
   <section class="card overview-temperature"><h2>座舱与环境</h2><div class="overview-temperature-values"><span>车内温度 <strong>${esc(m.metrics.inside)}</strong></span><span>车外温度 <strong>${esc(m.metrics.outside)}</strong></span></div>${link('车辆详情','car')}<p class="subtle">${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</p></section>
   <section class="metric-grid overview-metrics overview-four">${metric('动力电池',m.metric_details?.battery || m.metrics.battery,'battery','',true)}${metric('预估续航',m.metric_details?.range || m.metrics.range,'range','以车辆实际表现为准')}<div class="metric"><div class="metric-label">今日已记录里程</div><div class="metric-value"><span id="overview-today-value">未知</span><span class="metric-unit">km</span></div><div class="metric-foot" id="overview-today-note">正在读取已保存记录…</div></div><div class="metric"><div class="metric-label">本月已记录费用</div><div class="metric-value"><span id="overview-cost-value">未知</span><span class="metric-unit">元</span></div><div class="metric-foot" id="overview-cost-note">仅汇总已填实际金额</div></div></section>
@@ -577,7 +590,7 @@ function carPhoto() {
   // existing profile association so an unconfigured vehicle gets no wrong model.
   const profile = state.profile;
   if (profile?.image !== '/car.svg') return '<div class="car-photo-empty">车型图片待配置</div>';
-  return `<figure class="car-photo"><img src="/car-001.png" alt="${esc(profile.image_alt || profile.name)}"></figure>`;
+  return `<figure class="car-photo">${carImage('photo',profile.image_alt || profile.name)}</figure>`;
 }
 function carDisclosure(key, label, fields) {
   const uncertain = fields.filter(f => ['未知','待核实'].includes(f.evidence)).length;
@@ -587,7 +600,7 @@ function car() { return vehiclePage.render(carOverview,modelRequired) + '<div id
 function carTyreDiagram(model) {
   const wheels = [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']];
   const artwork = state.profile?.image === '/car.svg'
-    ? '<div class="car-tyre-art"><img src="/car-001-top.png" width="1024" height="1536" alt="极氪 001 俯视图，车头朝左"></div>'
+    ? `<div class="car-tyre-art">${carImage('top','极氪 001 俯视图，车头朝左')}</div>`
     : '<span class="car-tyre-no-art">车型图片待配置</span>';
   return `<div class="car-tyre-diagram" aria-label="四轮胎压与胎温，车头朝左">${artwork}${wheels.map(([position,name]) => {
     const tyre = model.tyres.find(item => item.name === name);
@@ -849,7 +862,20 @@ function renderContent() {
   const error = transientError || state?.error;
   const taskPage=['car','energy','settings','tracks'].includes(page)&&sectionTask;
   const body = taskPage?(sectionTask==='records'?chargingWorkspace(state?.model?.charging_details)+'<div id="charge-management"></div><div id="insights-workspace" hidden></div>':'<div id="insights-workspace"></div>'):{overview,car,energy,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',calendar:()=>'<div id="insights-workspace"></div>',report:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
-  $('#main').innerHTML = head() + (page!=='overview'?overviewDashboard.backButton():'') + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
+  const retainedImages = [...$('#main').querySelectorAll('img')].filter(image=>!image.closest('#map'));
+  const retainedMap = $('#map')?.dataset.owner===mapOwner() ? $('#map').querySelector('img') : null;
+  const content = document.createElement('template');
+  content.innerHTML = head() + (page!=='overview'?overviewDashboard.backButton():'') + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
+  // Adopt the inert fragment before moving loaded images into it. Moving them
+  // to the template's separate document would restart no-store image requests.
+  const fragment=document.adoptNode(content.content);
+  for (const image of fragment.querySelectorAll('img')) {
+    const index=retainedImages.findIndex(old=>old.getAttribute('src')===image.getAttribute('src')&&old.getAttribute('srcset')===image.getAttribute('srcset'));
+    if(index>=0){const old=retainedImages.splice(index,1)[0];for(const attr of image.attributes)old.setAttribute(attr.name,attr.value);image.replaceWith(old);}
+  }
+  const nextMap=fragment.querySelector('#map');
+  if(nextMap){nextMap.dataset.owner=mapOwner();if(retainedMap){nextMap.replaceChildren(retainedMap);fragment.querySelector('#map-status').textContent='正在核对缓存位置 · 当前为上次底图，位置可能已变化。';}}
+  $('#main').replaceChildren(fragment);
   if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
   if(chargeManagerNode&&$('#charge-management')){$('#charge-management').replaceWith(chargeManagerNode);if(chargeManagerFocus?.isConnected)chargeManagerFocus.focus({preventScroll:true});}
   if (insightSections.includes(page)) {
@@ -904,14 +930,17 @@ async function loadLocation(version) {
       $('#map-status').textContent = '未绘制位置';
       return;
     }
-    const image = document.createElement('img');
+    const container=$('#map');
+    const source=`/api/location/map?zoom=${locationZoom}&revision=${encodeURIComponent(location.map_revision||'')}`;
+    const status=location.trusted?'高德地图 · 缓存位置，不代表实时位置。':'高德地图 · 灰色候选位置，未确认实时位置。';
+    const previous=container.querySelector('img');
+    const image=previous?.getAttribute('src')===source?previous:document.createElement('img');
     image.className='amap-position-image';image.alt='高德地图 · 最近缓存位置';
-    image.onload=()=>{if(generation!==version||!showPosition)return;$('#map-status').textContent=location.trusted?'高德地图 · 缓存位置，不代表实时位置。':'高德地图 · 灰色候选位置，未确认实时位置。';};
-    image.onerror=()=>{if(generation!==version||!showPosition)return;$('#map').classList.add('map-empty-state');$('#map').innerHTML=empty('高德底图暂未加载','请稍后重试；缓存位置与地名信息仍保留。','map');$('#map-status').textContent='高德地图加载失败';};
-    $('#map').classList.remove('map-empty-state');
-    $('#map').replaceChildren(image);
-    image.src=`/api/location/map?zoom=${locationZoom}&revision=${encodeURIComponent(location.map_revision||'')}`;
-    $('#map-status').textContent='正在读取高德底图…';
+    image.onload=()=>{if(generation!==version||!showPosition)return;container.classList.remove('map-empty-state');container.replaceChildren(image);$('#map-status').textContent=status;};
+    image.onerror=()=>{if(generation!==version||!showPosition)return;if(!previous){container.classList.add('map-empty-state');container.innerHTML=empty('高德底图暂未加载','请稍后重试；缓存位置与地名信息仍保留。','map');}$('#map-status').textContent=previous?'新底图加载失败 · 保留上次底图，位置可能已变化。':'高德地图加载失败';};
+    if(image===previous){$('#map-status').textContent=image.complete&&image.naturalWidth?status:'正在读取高德底图…';return;}
+    image.src=source;
+    $('#map-status').textContent=previous?'正在更新底图 · 当前为上次底图，位置可能已变化。':'正在读取高德底图…';
   } catch (error) {
     if (generation !== version || !showPosition || !$('#map')) return;
     $('#map').classList.add('map-empty-state');
