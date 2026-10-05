@@ -23,3 +23,19 @@
 .car-tyre-lf{left:10%;top:68%}.car-tyre-rf{left:10%;top:0}
 .car-tyre-lr{right:13%;top:68%}.car-tyre-rr{right:13%;top:0}
 .car-tyre-no-art{position:absolute;left:0;top:46%;width:100%;text-align:center;color:var(--night-secondary,#50656e);font-size:13px}
+
+/* Desktop status overview: six explicit closure groups, cabin below both panels. */
+.car-summary-stats{gap:18px 24px}
+.car-summary-stats>div{flex-direction:column;gap:6px;border:0}
+.car-summary-stats strong{font-size:20px;white-space:normal;line-height:1.4}
+.car-summary-stats>div:nth-child(n+4){border-top:1px solid var(--line);padding-top:14px}
+.car-secondary{display:contents}
+.car-main-grid{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);align-items:stretch}
+.car-cabin{grid-column:1/-1}
+.car-cabin .card-body{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:24px;align-items:center}
+.car-cabin .car-pm25{border:0;padding:0;margin:0}
+.car-cabin .car-temperature-time{margin:0}
+.car-cabin p{margin-bottom:0}
+.car-tyres .car-tyre-diagram{aspect-ratio:auto;height:390px;min-height:0;margin-bottom:0}
+.car-tyres .car-tyre-art{top:50%}
+.car-tyres .car-tyre-lf,.car-tyres .car-tyre-lr{top:auto;bottom:0}

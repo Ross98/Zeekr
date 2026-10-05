@@ -4,6 +4,8 @@ Always speak in caveman mode (default intensity: full). Keep technical accuracy.
 
 # Development
 
+This project targets desktop only (user confirmed 2026-10-05). Do not design, adapt, preview, screenshot, review, or test mobile layouts. Do not spend effort maintaining mobile compatibility or run mixed desktop/mobile suites unchanged; select desktop coverage or restrict the suite to desktop. Existing mobile styles need not be removed unless requested. Resume mobile work only if the user explicitly changes this scope.
+
 For non-trivial coding: explore intent/design, plan complex changes, write logic tests first, verify before claiming completion, then simplify. Debug systematically; review relevant evidence. Use named workflow skills when available. Preserve unrelated modifications and private files.
 
 # Commit and deployment
