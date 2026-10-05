@@ -31,7 +31,7 @@ function localTripsPage() {
     <div id="recall-summary">${recallSummary()}</div>${recallYearPanel()}
     <div class="local-trip-layout"><section class="card local-trip-list-card"><div class="card-head"><h2>当天时间线</h2><span class="subtle">北京时间</span></div><div id="local-trip-list"></div></section>
     <section class="card local-trip-detail" id="local-trip-detail"></section></div>
-    <p class="section-note local-trip-note">本地采样仅覆盖后台记录期间。时间线显示跨日记录；里程按结束日期归档。单趟详情保留全程采样。路线为采样折线，坐标对齐仍待核验。</p>
+    <p class="section-note local-trip-note">本地采样仅覆盖后台记录期间。时间线显示跨日记录；里程按结束日期归档。单趟详情保留全程采样。道路线为算法推断；未匹配处保留采样点连线，实际走法仍需核对。</p>
   </div>`;
 }
 
@@ -232,7 +232,9 @@ function localRouteQuality(result, density) {
   const trusted=result.observations.filter(point=>point.trusted&&point.plottable).length;
   const unknown=quality.untrusted_count ?? result.observations.filter(point=>!point.trusted).length;
   return `<div class="local-route-summary"><span><b>${result.count}</b> 条采样</span><span><b>${trusted}</b> 个可信可绘点</span><span><b>${gaps.length}</b> 处间断</span>${unknown?`<span>${unknown} 个位置未确认</span>`:''}</div>
-    ${RouteQuality.summary(density)}
+    ${RouteQuality.summary(density,!!result.road_matching?.lines?.length)}
+    ${RouteQuality.matchSummary(result.road_matching)}
+    ${['busy','timeout','error'].includes(result.road_matching?.status)?action('重试路网','local-route-retry','quiet'):''}
     ${result.truncated?'<p class="unknown">仅展示前 5000 条采样，后续记录未展示；末个采样点不代表行程终点。</p>':''}
     <p class="subtle">${!result.count?'本次范围没有采样，无法判断路线情况。':gaps.length?'存在采样缺口，地图分段展示。':'当前记录未发现超过阈值的间断；不能据此确认实际路线完整。'}首末标记仅代表可绘采样点。</p>
     ${gaps.length?`<details class="local-gap-details" data-detail="recall-gaps"><summary>查看 ${gaps.length} 处采样间断</summary><ul>${gaps.map(gap=>`<li><span>${esc(tripTime(gap.start_time))} → ${esc(tripTime(gap.end_time))}</span><strong>${esc(tripDuration(gap.duration_seconds))}</strong><span class="subtle">${esc(gap.reason || '间断原因未确认')}</span></li>`).join('')}</ul></details>`:''}`;
@@ -289,9 +291,14 @@ function renderLocalRouteContent() {
   if (!map) createMap([playback[0].latitude,playback[0].longitude],13);
   if (h.layers) h.layers.remove();
   h.layers=L.layerGroup().addTo(map);
-  density.parts.forEach(part=>{
+  const routeDisplay=RouteQuality.display(result,density);
+  routeDisplay.roads.forEach(line=>{
+    L.polyline(line.map(point=>[point[1],point[0]]),{color:'#20776e',weight:4,smoothFactor:0,className:'route-matched-road'})
+      .addTo(h.layers).bindTooltip('路网路线 · 算法推断，未经实走确认');
+  });
+  routeDisplay.fallback.forEach(part=>{
     L.polyline(part.points.map(point=>[point.latitude,point.longitude]),RouteQuality.lineOptions(part)).addTo(h.layers)
-      .bindTooltip(part.sparse?'稀疏示意线 · 不代表实际道路':'采样点连线 · 不保证实际道路形状');
+      .bindTooltip(part.unmatched?'未匹配道路 · 采样点连线':part.sparse?'稀疏示意线 · 不代表实际道路':'采样点连线 · 不保证实际道路形状');
   });
   playback.forEach(point=>L.circleMarker([point.latitude,point.longitude],{radius:4,color:point.trusted?'#20776e':'#7c8588',fillOpacity:.7,weight:1}).addTo(h.layers));
   for (const [point,label] of [[playback[0],'首个采样点'],[playback.at(-1),'末个采样点']]) {
@@ -316,7 +323,10 @@ function renderLocalRouteContent() {
 function fitLocalRoute() {
   if (!map || !playback.length) return;
   map.stop();map.invalidateSize({pan:false});
-  map.fitBounds(playback.map(point=>[point.latitude,point.longitude]),{padding:[55,55],maxZoom:16,animate:false});
+  const inferred=localTrips?.route?.road_matching?.lines||[];
+  const bounds=playback.map(point=>[point.latitude,point.longitude]);
+  inferred.forEach(line=>line.forEach(point=>bounds.push([point[1],point[0]])));
+  map.fitBounds(bounds,{padding:[55,55],maxZoom:16,animate:false});
 }
 
 function displayLocalPoint(index,pan=true) {

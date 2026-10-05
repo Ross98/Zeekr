@@ -20,6 +20,7 @@ from .cli import find_vins
 from .storage import DEFAULT_PATH, load, save
 from .summary import updated_at
 from .tracks import TrackStore, day_bounds, empty_route
+from .road_matching import RoadMatcher
 from .trips import TripStore
 from .trip_management import TripRecordManager
 from .charge_management import ChargeRecordManager
@@ -76,6 +77,7 @@ class App:
         self.location_map_renderer = AmapStaticMap(self.session_path.parent / "amap-geocoding.json")
         self.location_geocoder = AmapGeocoder(self.session_path.parent / "amap-geocoding.json")
         self.trip_store = TripStore(self.database_path)
+        self.road_matcher = RoadMatcher(self.session_path.parent / "road-networks")
         self.trip_manager = TripRecordManager(self.database_path)
         self.charge_manager = ChargeRecordManager(self.database_path)
         self.storage_manager = StorageManager(self.session_path.parent)
@@ -698,10 +700,13 @@ class App:
             selected = self._local_vehicle(archive)
             if trip is not None:
                 start, end = self.trip_store.bounds(selected, trip, date)
-                return self.trip_store.tracks.between(selected, start, end, date)
-            if not self.database_path.exists():
-                return empty_route(date)
-            return self.trip_store.tracks.day(selected, date)
+                route = self.trip_store.tracks.between(selected, start, end, date)
+            elif not self.database_path.exists():
+                route = empty_route(date)
+            else:
+                route = self.trip_store.tracks.day(selected, date)
+        # Do not hold the application lock during bounded road inference.
+        return self.road_matcher.enrich(route)
 
     def trips(self, date, cursor=None):
         with self.lock:
