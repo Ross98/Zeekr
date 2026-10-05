@@ -16,7 +16,7 @@ from .cli import find_vins
 from .errors import ApiError, RateLimited
 from .monitor import Monitor
 from .geocoding import AmapGeocoder
-from .trip_map import AmapStaticMap
+from .focused_trip_image import FocusedTripImage
 from .profiles import vehicle_profile
 from .notifications import BarkSender, DeliveryError, FallbackSender, WeComSender, compact_bark_times
 from .storage import DEFAULT_PATH, load, save
@@ -220,7 +220,7 @@ class Runner:
                                if client_factory is Client else client_factory)
         self.monitor = Monitor(self.root / 'tracks.sqlite3', active_codes, stopped_codes,
                                address_resolver=AmapGeocoder(self.root / 'amap-geocoding.json'),
-                               map_renderer=AmapStaticMap(self.root / 'amap-geocoding.json'))
+                               map_renderer=FocusedTripImage(self.root / 'road-networks'))
         self.sender = sender if sender is not None else WeComSender(self.root / 'wecom-webhook.json')
         self.alert_sender = (alert_sender if alert_sender is not None else
                              BarkSender(self.root / 'bark.json') if sender is None else None)

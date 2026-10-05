@@ -39,14 +39,14 @@ class RuntimeTests(unittest.TestCase):
         from zeekr_control.monitor_runtime import Runner
         return Runner(self.root / 'session.json', client_factory=client, sender=lambda message: None)
 
-    def test_runner_uses_same_private_amap_config_for_static_trip_maps(self):
+    def test_runner_uses_private_offline_networks_for_focused_trip_images(self):
         from zeekr_control.monitor_runtime import Runner
-        from zeekr_control.trip_map import AmapStaticMap
+        from zeekr_control.focused_trip_image import FocusedTripImage
         runner = Runner(self.root / 'session.json', client_factory=lambda session: None,
                         sender=lambda message: None)
         self.addCleanup(lambda: runner.insight_worker.close())
-        self.assertIsInstance(runner.monitor.map_renderer, AmapStaticMap)
-        self.assertEqual(runner.monitor.map_renderer.config_path, self.root / 'amap-geocoding.json')
+        self.assertIsInstance(runner.monitor.map_renderer, FocusedTripImage)
+        self.assertEqual(runner.monitor.map_renderer.network_dir, self.root / 'road-networks')
 
     def test_binding_follows_vehicle_identity_not_list_order(self):
         class Client:

@@ -553,7 +553,16 @@ class Monitor:
                 route=self.tracks.between(vehicle,start,end,date)
                 if self.map_renderer is None:
                     raise ValueError('未配置真实地图渲染器')
-                content=render_trip_png(report,route,self.map_renderer(route))
+                if hasattr(self.map_renderer, 'render_trip'):
+                    name=data.get('start_address') if not data.get('start_location_reference') else None
+                    if not name and self.address_resolver and route.get('segments'):
+                        try:
+                            name=self.address_resolver(dict(route['segments'][0][0],valid=True))
+                        except Exception:
+                            pass
+                    content=self.map_renderer.render_trip(report,route,name)
+                else:
+                    content=render_trip_png(report,route,self.map_renderer(route))
                 called=True; sender.send_image(content)
             except DeliveryError as exc:
                 delivery='uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts>=5 else 'pending'

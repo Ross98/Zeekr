@@ -225,6 +225,24 @@ class RichDeliveryTests(unittest.TestCase):
         for seconds in range(180,721,60):
             self.monitor.observe('test-vehicle',parked,self.BASE+seconds*1000)
 
+    def test_focused_renderer_receives_raw_route_and_resolved_start_name(self):
+        self._trip()
+        calls=[]
+        class Renderer:
+            def render_trip(self,report,route,name):
+                calls.append((report,route,name));return TripImageTests._solid_png((220,225,230))
+        class Sender:
+            def send_markdown(self,value): pass
+            def send_image(self,value): pass
+        self.monitor.map_renderer=Renderer()
+        self.monitor.address_resolver=lambda location:'合成起点'
+        self.monitor.deliver(Sender(),self.BASE+720000)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(calls[0][2],'合成起点')
+        self.assertGreaterEqual(len(calls[0][1]['segments'][0]),2)
+        self.monitor.deliver(Sender(),self.BASE+900000)
+        self.assertEqual(len(calls),1)
+
     def test_trip_sends_markdown_then_png_once(self):
         self._trip()
         class Sender:
