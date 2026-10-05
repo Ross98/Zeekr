@@ -12,6 +12,9 @@
     const valid=(token,identity)=>serial===token&&owner===identity&&context()===identity;
     const button=(label,action,disabled=false)=>`<button class="button secondary" data-quality="${action}" ${disabled?'disabled':''}>${label}</button>`;
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;

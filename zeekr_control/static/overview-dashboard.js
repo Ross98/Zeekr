@@ -20,7 +20,7 @@
   function create({getState,request,escape:esc,active,openRecord,openTool,attention,time}){
     let owner='',key='',serial=0,report=null,ledger=null,errors=[],loading=false,loadedAt=0,left=false;
     let span=7,filter='all',returnPoint=null;
-    let pending=null,summaryCache=null;
+    let pending=null,summaryCache=null,heights=new Map();
     const markup=new WeakMap();
     const date=()=>dateFormat.format(new Date());
     const scope=()=>getState()?.insights_context||'';
@@ -37,7 +37,13 @@
     function text(id,value){const target=node(id);if(target.textContent!==value)target.textContent=value;}
     function html(id,value){const target=node(id);if(markup.get(target)!==value){target.innerHTML=value;markup.set(target,value);}}
     function paint(){
+      const container=document.getElementById('main');
+      return root.RefreshView?root.RefreshView.preserve(container,paintContent):paintContent();
+    }
+    function paintContent(){
       if(!active()||!node('overview-records'))return;
+      const stable=['overview-records','overview-today-note','overview-cost-note'];
+      for(const id of stable)node(id).style.minHeight=!report&&heights.get(id)?heights.get(id)+'px':'';
       const data=summary(),today=data.today;
       text('overview-today-value',number(today.distance_km));
       text('overview-today-note',today.trip_count===null?'尚无有效观测':`${today.trip_count} 次行程${today.partial_trip_count?' · 含 '+today.partial_trip_count+' 条片段':''}`);
@@ -46,6 +52,7 @@
       const rows=data.events.filter(e=>filter==='all'||e.kind===filter).slice(0,6);
       const loadLabel=loading?'正在读取已保存记录…':!owner?'连接当前车辆后可读取记录。':errors.length?errors.join('；'):'';
       html('overview-records',(loadLabel?`<p class="subtle" role="status">${esc(loadLabel)}</p>`:'')+(rows.map(e=>`<button class="overview-record-row" data-overview-record="${esc(e.id)}"><span><strong>${e.kind==='trip_end'?'行程':'充电'} · ${esc(time(e.end_time))}</strong><small>${e.partial?'片段记录':'未标记为片段'} · SOC ${number(e.start_soc)}% → ${number(e.end_soc)}%</small></span><span>${e.kind==='trip_end'?number(e.distance_km)+' km':'观测 '+number(Number.isFinite(e.duration_seconds)?e.duration_seconds/60:null)+' 分钟'}<small>查看详情 →</small></span></button>`).join('')||(!loading?'<p class="subtle">暂无符合筛选的结束记录。没有记录不表示没有用车。</p>':'')));
+      if(report&&!loading)for(const id of stable)heights.set(id,node(id).getBoundingClientRect().height);
       node('overview-record-filter').value=filter;
       const items=attention();
       html('overview-tasks',`<div class="overview-task"><h3>车况与采集</h3><p class="subtle">${items.length?'需要留意 '+items.length+' 项':'暂无待处理提示；缓存不代表实时状态。'}</p><button class="button secondary" data-overview-tool="quality">查看采集与数据质量</button></div><div class="overview-task"><h3>费用待补${data.pending===null?'':` · ${data.pending} 项`}</h3><p class="subtle">未关联充电与已录账单的未知实际金额均需核对。</p><button class="button secondary" data-overview-tool="ledger">去补账</button></div><div class="overview-task"><h3>地点确认</h3><p class="subtle">按行程参考地点核对名称与分组范围。</p><button class="button secondary" data-overview-tool="places">查看地点与名称</button></div>`);
@@ -75,7 +82,7 @@
     }
     function mount(){
       const context=scope(),stamp=identity();
-      if(stamp!==key){serial++;key=stamp;owner=context;report=ledger=null;pending=summaryCache=null;errors=[];loading=false;loadedAt=0;}
+      if(stamp!==key){if(owner!==context)heights.clear();serial++;key=stamp;owner=context;report=ledger=null;pending=summaryCache=null;errors=[];loading=false;loadedAt=0;}
       paint();
       if(!loading&&(left||Date.now()-loadedAt>30000)){left=false;load();}
     }

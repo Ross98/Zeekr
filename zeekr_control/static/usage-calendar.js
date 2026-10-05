@@ -16,6 +16,9 @@
     const button=(label,action,disabled=false)=>`<button type="button" class="button secondary" data-calendar="${action}" ${disabled||saving?'disabled':''}>${label}</button>`;
     const eventsForDay=()=>(data?.events.filter(e=>e.first_date<=selected&&selected<=e.last_date)||[]).sort((a,b)=>(a.start_time??a.end_time)-(b.start_time??b.end_time));
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
@@ -79,6 +82,9 @@
       return `<p class="calendar-event-value">用电成本估算 <strong>${money(cost.estimated_cents)} 元</strong>${cost.status==='partial'?' · 仅已知价格部分':''}<br>有价格 ${number(cost.known_kwh)} / ${number(cost.energy_kwh)} kWh${cost.reference_cents_per_kwh!==null?` · 电池参考成本 ${number(cost.reference_cents_per_kwh/100)} 元/kWh`:''}${cost.overlap?' · 时间重叠，不能估价':''}${cost.loss_unknown?'<br>含片段充电的账单单价参考，充电损耗未计全。':''}${cost.energy_kwh===0?'<br>未观测到有效 SOC 下降，不代表实际没有耗电。':''}</p>`;
     }
     function paintDay(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintDayContent):paintDayContent();
+    }
+    function paintDayContent(){
       const el=node?.querySelector('#calendar-day-detail'),day=data?.days.find(d=>d.date===selected);if(!el||!day)return;
       const rows=eventsForDay(),pages=Math.max(1,Math.ceil(rows.length/10));eventPage=Math.min(eventPage,pages-1);
       el.innerHTML=`<section class="card insight-panel calendar-day-panel"><div class="calendar-detail-heading"><h3>${day.date}</h3><span class="insight-badge">${coverage[day.coverage]}</span></div><p class="calendar-day-summary">行程 ${day.trip_count} 趟 · 充电 ${day.charge_count} 次${day.partial_count?` · 部分记录 ${day.partial_count} 条`:''}</p><p class="calendar-day-reading">${day.ended_trip_count?`结束行程里程 <strong>${number(day.distance_km)} km</strong>`:day.trip_count?'跨日行程里程归结束日':'本日没有结束行程'}<br>${day.actual_count?`当日账单已填 <strong>${money(day.actual_cents)} 元</strong>`:day.unpriced_count?`${day.unpriced_count} 笔账单金额未填`:'当天没有已填金额的充电账单'}${day.pending_count?` · <strong>${day.pending_count} 次待补</strong>`:''}</p><p class="calendar-day-reading">当日用电成本估算 <strong>${money(day.energy_cost.estimated_cents)} 元</strong><br>${costCoverage(day.energy_cost)}<br><small>仅已记录耗电；停车片段 ${day.energy_cost.parking_samples} 段。支付金额另列。</small></p><div class="insight-actions">${button('查看当日快照','snapshots',day.coverage==='future')}${button('打开充电账本','ledger')}</div>
@@ -111,27 +117,32 @@
       finally{if(token===writeSerial&&owner===identity&&context()===identity){saving=false;paint();}}
     }
     function paintEvent(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintEventContent):paintEventContent();
+    }
+    function paintEventContent(){
       const el=node?.querySelector('#calendar-event-detail'),event=eventsForDay().find(e=>e.id===eventId);if(!el)return;
       if(!event){el.innerHTML='';return;}
       const trip=event.kind==='trip_end';
       el.innerHTML=`<section class="card insight-panel"><div class="insight-heading"><h3>${trip?'行程':'充电'}详情${event.cross_midnight?' · 跨午夜':''}</h3><span class="insight-badge">${event.partial?'部分记录':'完整记录'}</span></div><p>起点 ${esc(time(event.start_time))}<br>终点 ${esc(time(event.end_time))}</p><div class="insight-metrics"><div><span>${trip?'整趟里程':'充电类型'}</span><strong>${trip?number(event.distance_km)+' km':({ac:'交流',dc:'直流'}[event.charge_mode]||'未知')}</strong></div><div><span>整段观测时长</span><strong>${number(event.duration_seconds===null?null:event.duration_seconds/60)} 分钟</strong></div><div><span>起止 SOC</span><strong>${number(event.start_soc)}% → ${number(event.end_soc)}%</strong></div><div><span>SOC 电量估算</span><strong>${number(event.estimated_kwh)} kWh</strong></div></div><p class="insight-note">${event.partial?'起止或过程存在缺失，不能按完整记录理解。':'记录未标记为部分，不表示位置轨迹完整。'} 以上为整条事件摘要，不按本日时长分摊里程或电量。SOC 电量仅为容量与 SOC 变化换算，不是电表计量；无有效证据时显示未知。</p></section>`;
     }
     function invalidate(){serial++;data=null;attempted=loading=false;billEvent=billError=billStatus='';error=selected=eventId='';eventPage=0;paint();}
-    async function load(){
+    async function load(preserveSelection=false){
       if(!owner||!month)return;const identity=owner,token=++serial,target=month;loading=attempted=true;error='';paint();
       try{const result=await request('/api/insights/calendar?date='+encodeURIComponent(target+'-01'));
         if(!valid(token,identity))return;if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         data=result;
         if(!data.days.some(d=>d.date===selected))selected=data.days.find(d=>d.date===dateAt(data.as_of))?.date||data.days.find(d=>d.trip_count||d.charge_count||d.reads)?.date||data.days[0].date;
-        eventId='';eventPage=0;
+        if(!preserveSelection){eventId='';eventPage=0;}
+        else if(!eventsForDay().some(event=>event.id===eventId))eventId='';
       }catch(failure){if(valid(token,identity))error=failure.message;}
       finally{if(valid(token,identity)){loading=false;paint();}}
     }
     let tripRevision,chargeRevision,personalRevision;
     function mount(container){
-      const changed=owner!==context()||personalRevision!==root.recallPersonalRevision||tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision,remount=node!==container;node=container;
-      personalRevision=root.recallPersonalRevision;tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;
+      const changed=owner!==context(),recordsChanged=!saving&&(personalRevision!==root.recallPersonalRevision||tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision),remount=node!==container;node=container;
+      if(changed||recordsChanged){personalRevision=root.recallPersonalRevision;tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;}
       if(changed){writeSerial++;saving=false;billEvent=billAmount=billError=billStatus='';owner=context();data=null;selected=eventId='';eventPage=0;attempted=loading=false;error='';serial++;}
+      else if(recordsChanged&&attempted){load(true);}
       if(changed||remount)paint();
     }
     function handle(event){

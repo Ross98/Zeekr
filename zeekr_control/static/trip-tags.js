@@ -113,6 +113,9 @@
       return `<div id="tag-route" class="tag-route"><div class="insight-actions">${routeShown?button('隐藏路线小地图','hide-route'):button('查看路线小地图','show-route')}</div>${routeShown?`${routeBusy?'<p role="status">正在读取本趟路线…</p>':''}${routeError?`<p role="alert" class="notice error">${esc(routeError)}</p>`:''}${routeData?'<div id="tag-route-map" aria-label="本趟采样路线小地图"></div><p class="insight-note">仅连接可信采样点；首末点不一定是真实出发地和目的地。稀疏连线不代表实际道路。</p>':''}`:'<p class="insight-note">位置默认隐藏。点击后才读取本趟采样并加载地图底图。</p>'}</div>`;
     }
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
@@ -166,13 +169,13 @@
       const trashPages=Math.max(1,Math.ceil(data.trash.length/10));trashPage=Math.min(trashPage,trashPages-1);
       node.querySelector('#tag-trash').innerHTML=data.trash.length?`<section class="card insight-panel"><h3>已删除的行程标签</h3><div class="ledger-trash-list">${data.trash.slice(trashPage*10,trashPage*10+10).map(r=>`<div><span>${esc(time(r.end_time))} · ${esc(r.tags.join('、')||'无标签')}</span>${button('恢复行程标签','restore',false,`data-id="${esc(r.id)}"`)}</div>`).join('')}</div><div class="insight-pagination">${button('上一页删除标签','trash-previous',trashPage===0)}<span>${trashPage+1} / ${trashPages}</span>${button('下一页删除标签','trash-next',trashPage+1===trashPages)}</div></section>`:'';
     }
-    async function load(){
+    async function load(preservePages=false){
       if(!owner||!month)return false;
       const token=++serial,identity=owner;attempted=true;loading=true;error='';paint();
       try{const result=await request('/api/insights/trip-tags?date='+encodeURIComponent(month+'-01'));
         if(!valid(token,serial,identity))return false;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        data=result;page=trashPage=0;syncCommuteRule();
+        data=result;if(!preservePages)page=trashPage=0;syncCommuteRule();
         if(selected){selected=data.events.find(row=>row.id===selected.id)||null;if(!selected)closeRoute();}
         if(!data.groups.some(g=>g.tag===groupA))groupA=data.groups[0]?.tag||'';
         if(!data.groups.some(g=>g.tag===groupB))groupB=data.groups[1]?.tag||data.groups[0]?.tag||'';
@@ -232,10 +235,14 @@
     }
     let tripRevision;
     function mount(container){
-      const contextChanged=owner!==context(),changed=contextChanged||tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
-      tripRevision=getState()?.trip_records_revision;
-      if(changed){owner=context();data=null;selected=null;tags=note='';attempted=false;loading=busy=false;serial++;writeSerial++;error=status='';filter=groupA=groupB='';closeRoute();closePlacesMap();if(contextChanged){closeCommuteMap();commuteDraft={home:null,work:null,homeRadius:300,workRadius:300};commuteDirty=false;}}
-      if(changed||remount)paint();
+      const contextChanged=owner!==context(),recordsChanged=!busy&&tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
+      if(contextChanged||recordsChanged)tripRevision=getState()?.trip_records_revision;
+      if(contextChanged){owner=context();data=null;selected=null;tags=note='';attempted=false;loading=busy=false;serial++;writeSerial++;error=status='';filter=groupA=groupB='';closeRoute();closePlacesMap();closeCommuteMap();commuteDraft={home:null,work:null,homeRadius:300,workRadius:300};commuteDirty=false;}
+      else if(recordsChanged&&attempted){
+        if(selected||namePlace||commuteDirty){serial++;loading=false;status='行程记录已变化；填写内容保留，请重新读取核对后再保存。';}
+        else load(true);
+      }
+      if(contextChanged||remount||recordsChanged)paint();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;const el=event.target;

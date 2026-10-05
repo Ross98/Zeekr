@@ -48,6 +48,9 @@
         }).join('')}</div></div><p class="insight-note report-chart-legend">— 无有效里程 · 0 已记录零里程 · 未到 未来日期<br>● 有归档读取 · ○ 无归档读取。归档与行程事件来源不同；无归档日期仍可能有里程。缺记录不代表未用车。</p></section>`;
     }
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
@@ -70,7 +73,7 @@
       el.innerHTML=`<p class="insight-note">匹配 ${rows.length} 条</p><div class="report-event-list">${rows.slice(page*12,page*12+12).map(row=>`<article data-report-event="${esc(row.id)}"><div class="insight-heading"><h4>${row.kind==='trip_end'?'行程':'充电'}</h4><span class="insight-badge ${row.partial?'insight-warning':''}">${row.partial?'片段记录':'完整记录'}</span></div><p>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</p><div class="parking-row-values"><span>${row.kind==='trip_end'?'里程':'观测时长'}<strong>${row.kind==='trip_end'?num(row.distance_km)+' km':num(row.duration_seconds===null?null:row.duration_seconds/60)+' 分钟'}</strong></span><span>SOC 端点<strong>${num(row.start_soc)}% → ${num(row.end_soc)}%</strong></span><span>电量估算<strong>${num(row.estimated_kwh)} kWh</strong></span><span>事件记录容量<strong>${num(row.battery_capacity_kwh)} kWh</strong></span></div></article>`).join('')||'<p class="insight-empty">没有符合筛选的结束事件。没有记录不表示车辆未使用。</p>'}</div><div class="insight-pagination">${button('上一页事件','events-previous',page===0)}<span>${page+1} / ${pages}</span>${button('下一页事件','events-next',page+1===pages)}</div>`;
     }
     function invalidate(){serial++;data=null;attempted=loading=false;error=dayFilter='';page=0;paint();}
-    async function load(){
+    async function load(preserveSelection=false){
       if(!owner||!date)return;
       const token=++serial,identity=owner;
       attempted=true;loading=true;error='';paint();
@@ -78,15 +81,16 @@
         const result=await request(`/api/insights/report?period=${period}&date=${encodeURIComponent(date)}`);
         if(!valid(token,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        data=result;dayFilter='';page=0;
+        data=result;if(!preserveSelection){dayFilter='';page=0;}
       }catch(failure){if(valid(token,identity))error=failure.message;}
       finally{if(valid(token,identity)){loading=false;paint();}}
     }
-    let tripRevision;
+    let tripRevision,chargeRevision;
     function mount(container){
-      const changed=owner!==context()||tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
-      tripRevision=getState()?.trip_records_revision;
+      const changed=owner!==context(),recordsChanged=tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision,remount=node!==container;node=container;
+      tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;
       if(changed){owner=context();data=null;error='';loading=false;attempted=false;serial++;dayFilter='';page=0;}
+      else if(recordsChanged&&attempted){load(true);}
       if(changed||remount)paint();
     }
     function handle(event){

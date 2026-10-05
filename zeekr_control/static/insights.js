@@ -117,7 +117,10 @@
       node.querySelector('#insight-tool-count').textContent=term?`${count} / ${toolCount} 项`:`${toolCount} 项`;
       node.querySelector('.insight-nav-empty').hidden=count>0;
     }
-    function paint() {
+    function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected || !active())return;
       const focus=saveFocus();
@@ -155,7 +158,10 @@
       node.querySelector('#insight-previous').disabled=index===0;
       node.querySelector('#insight-next').disabled=index===records.length-1;
     }
-    function paintDetails() {
+    function paintDetails(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintDetailsContent):paintDetailsContent();
+    }
+    function paintDetailsContent(){
       const container=node?.querySelector('#insight-snapshot');
       if(!container)return;
       const record=records[index];
@@ -181,7 +187,10 @@
         <div class="insight-fields">${fields.slice(fieldPage*24,fieldPage*24+24).map(field=>`<article data-field="${esc(field.path)}"><span>${esc(field.name)}</span><strong>${esc(field.value)}</strong><small>原值 ${esc(field.raw)} · ${esc(field.evidence)}</small><small>${esc(field.time_source)} ${esc(time(field.updated_time))}</small></article>`).join('') || '<p>没有匹配参数。</p>'}</div><div class="insight-pagination">${button('上一页参数','fields-prev',fieldPage===0)}<span>${fieldPage+1} / ${pages}</span>${button('下一页参数','fields-next',fieldPage+1===pages)}</div></section>`;
       restoreFocus(focus);
     }
-    function paintComparison() {
+    function paintComparison(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintComparisonContent):paintComparisonContent();
+    }
+    function paintComparisonContent(){
       const el=node?.querySelector('#insight-comparison');if(!el)return;
       if(!comparison && !compareError && !compareLoading){el.innerHTML='';return;}
       el.innerHTML=`<section class="card insight-panel"><h3>前后变化</h3>${compareError?`<p role="alert">${esc(compareError)}</p>`:compareLoading?'<p>正在比较两条观测…</p>':`<p class="insight-note">起点采集 ${esc(time(comparison.before.observed_at))} → 终点采集 ${esc(time(comparison.after.observed_at))}<br>车辆时间 ${esc(time(comparison.before.state_time))} → ${esc(time(comparison.after.state_time))}。${comparison.changes.length} 项变化；不据此推断因果。</p>

@@ -7,7 +7,7 @@
   const num=value=>Number.isFinite(value)?new Intl.NumberFormat('zh-CN',{maximumFractionDigits:3}).format(value):'—';
   function create({getState,request,escape:esc,active,time,experiment,review,diagnose}){
     let node=null,owner='',data=null,loading=false,serial=0,error='',attempted=false;
-    let loadingTimer=null,loadingStarted=0,queuedPath=null,pendingFieldFocus=null;
+    let loadingTimer=null,loadingStarted=0,queuedPath=null,pendingFieldFocus=null,pendingReveal=null;
     let start=date(Date.now()-6*86400000),end=date(Date.now()),path='',section='overview';
     let search='',group='',usage='',sort='activity',detailView='history',samplesOpen=false,rangeExpanded=true,page=0,pointPage=0,scene='cabin',showMissing=false,selected={before:null,after:null};
     const context=()=>getState()?.insights_context||'';
@@ -22,6 +22,9 @@
         return Number(b.samples>0)-Number(a.samples>0)||b.changes-a.changes;
       });
     function preservingFocus(render){
+      return root.RefreshView?root.RefreshView.preserve(node,()=>preservingFocusContent(render)):preservingFocusContent(render);
+    }
+    function preservingFocusContent(render){
       const focused=document.activeElement;
       const saved=node?.contains(focused)?{id:focused.id,data:{...focused.dataset}}:null;
       render();
@@ -135,7 +138,9 @@
             pendingFieldFocus=null;
             if(section==='field'&&active()&&node?.isConnected){
               const entry=node.querySelector('[data-research=back]');
-              entry?.focus({preventScroll:true});entry?.scrollIntoView({block:'start'});
+              const reveal=()=>{entry?.focus({preventScroll:true});entry?.scrollIntoView({block:'start'});};
+              if(pendingReveal)pendingReveal(reveal);else reveal();
+              pendingReveal=null;
             }
           }
         }
@@ -143,11 +148,11 @@
     }
     function mount(container){
       const changed=owner!==context(),remount=node!==container;node=container;
-      if(changed){owner=context();data=null;serial++;loading=attempted=false;queuedPath=pendingFieldFocus=null;error='';path='';section='overview';search=group=usage='';sort='activity';detailView='history';samplesOpen=false;rangeExpanded=true;page=pointPage=0;selected={before:null,after:null};}
+      if(changed){owner=context();data=null;serial++;loading=attempted=false;queuedPath=pendingFieldFocus=pendingReveal=null;error='';path='';section='overview';search=group=usage='';sort='activity';detailView='history';samplesOpen=false;rangeExpanded=true;page=pointPage=0;selected={before:null,after:null};}
       if(changed||remount)paint();
     }
-    function resetRange(){serial++;data=null;loading=attempted=false;queuedPath=pendingFieldFocus=null;path='';section='overview';page=pointPage=0;selected={before:null,after:null};error='';clearInterval(loadingTimer);loadingTimer=null;paint();}
-    function openField(target){section='field';pendingFieldFocus=target;load(target);}
+    function resetRange(){serial++;data=null;loading=attempted=false;queuedPath=pendingFieldFocus=pendingReveal=null;path='';section='overview';page=pointPage=0;selected={before:null,after:null};error='';clearInterval(loadingTimer);loadingTimer=null;paint();}
+    function openField(target){section='field';pendingFieldFocus=target;pendingReveal=root.RefreshView?.guard?root.RefreshView.guard(callback=>callback()):null;load(target);}
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;
       const el=event.target;
@@ -171,7 +176,7 @@
       else if(action==='detail-view'){detailView=target.dataset.view;paintBody();}
       else if(action==='samples'){samplesOpen=!samplesOpen;paintBody();}
       else if(action==='field')openField(target.dataset.path);
-      else if(action==='section'){section=target.dataset.section;if(section!=='field')pendingFieldFocus=null;paint();}
+      else if(action==='section'){section=target.dataset.section;if(section!=='field')pendingFieldFocus=pendingReveal=null;paint();}
       else if(action==='scene'){scene=target.dataset.scene;paintBody();}
       else if(action==='missing'){showMissing=!showMissing;paintBody();}
       else if(action==='previous'||action==='next'){page+=action==='next'?1:-1;paintRows();}

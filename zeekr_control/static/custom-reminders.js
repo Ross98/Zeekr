@@ -14,6 +14,9 @@
     const field=(label,name,type='number',extra='')=>`<label>${label}<input id="rule-${name}" name="${name}" aria-label="${label}" type="${type}" value="${esc(draft[name])}" ${extra}></label>`;
     const check=(label,name)=>`<label class="rule-check"><input id="rule-${name}" name="${name}" type="checkbox" ${draft[name]?'checked':''}>${label}</label>`;
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(!node?.isConnected||!active())return;
       const focused=node.contains(document.activeElement)?document.activeElement:null;
       const focus=focused?{id:focused.id,start:focused.selectionStart,end:focused.selectionEnd}:null;

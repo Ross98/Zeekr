@@ -7,6 +7,9 @@
     const button=(text,action,disabled=false,extra='')=>`<button class="button secondary" data-travel="${action}" ${disabled?'disabled':''} ${extra}>${text}</button>`;
     const id=r=>r.start_place+'>'+r.end_place;
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint)||!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
       const route=kind==='routes';
@@ -22,18 +25,20 @@
       const c=data.costs;
       return `<section class="card insight-panel" id="usage-review"><h3>${data.window.start_date} 至 ${data.window.end_date}</h3><p>${data.trip_count} 条行程，含 ${data.partial_trip_count} 条片段 · 有效观测里程 ${num(data.distance_km)} km（${data.distance_samples} 条样本）</p><h4>记录里去了哪里</h4><div class="report-event-list">${data.places.map(p=>`<article><strong>${esc(p.label)}</strong><span>出发 ${p.departures} 次 · 到达 ${p.arrivals} 次</span></article>`).join('')||'<p>暂无可信地点记录。</p>'}</div><p class="insight-note">起点未知 ${data.unknown_departures} 次，终点未知 ${data.unknown_arrivals} 次。参考地点不保证真实目的地；没有记录不代表没去过。</p><h4>已记实际费用</h4><p class="review-cost">${num(c.actual_cents===null?null:c.actual_cents/100)} 元</p><p>充电 ${num(c.charge_cents===null?null:c.charge_cents/100)} 元 · 充电停车费 ${num(c.parking_cents===null?null:c.parking_cents/100)} 元 · 生活账本 ${num(c.life_cents===null?null:c.life_cents/100)} 元</p><p class="insight-note">按账单日期合计已填金额，估算不并入。${c.bill_count} 笔充电账单，${c.life_count} 笔生活费用；两本账若重复记了同一费用，请人工核对。</p><h4>还有什么待补</h4><p>${data.pending_count} 次充电未关联账单 · ${c.unknown_charge_count} 笔已录充电账单金额未知</p><div class="report-event-list">${data.pending.slice(0,20).map(r=>`<article><span>${esc(time(r.end_time))}${r.partial?' · 片段':''}</span>${button('去充电账本','ledger',false,`data-date="${new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(r.end_time))}"`)}</article>`).join('')}</div>${data.pending_count>20?'<p>仅列最近 20 次；更多记录在充电账本。</p>':''}</section>`;
     }
-    async function load(){
+    async function load(preserveSelection=false){
       if(!owner)return;const token=++serial,identity=owner;loading=true;error='';paint();
       try{const result=await request(`/api/insights/${kind}?date=${encodeURIComponent(kind==='routes'?month+'-01':date)}`);
         if(token!==serial||identity!==getState()?.insights_context)return;
-        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');data=result;index=0;
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');data=result;if(!preserveSelection)index=0;
       }catch(e){if(token===serial&&identity===getState()?.insights_context)error=e.message;}
       finally{if(token===serial&&identity===getState()?.insights_context){loading=false;paint();}}
     }
     function mount(container){
       const next=getState()?.insights_context||'',rev=JSON.stringify([getState()?.trip_records_revision,getState()?.charge_records_revision]);
-      const changed=next!==owner||revision!==rev,remount=node!==container;node=container;
-      if(changed){owner=next;revision=rev;serial++;data=null;loading=false;error='';selection='';index=0;}
+      const changed=next!==owner,recordsChanged=revision!==rev,remount=node!==container;node=container;
+      revision=rev;
+      if(changed){owner=next;serial++;data=null;loading=false;error='';selection='';index=0;}
+      else if(recordsChanged&&(data||loading))load(true);
       if(changed||remount)paint();
     }
     function handle(event){

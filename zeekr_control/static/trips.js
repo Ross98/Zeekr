@@ -47,7 +47,10 @@ function localTripRow(trip) {
   </button>`;
 }
 
-function renderLocalTripList() {
+function renderLocalTripList(){
+  return window.RefreshView?window.RefreshView.preserve($('#local-trips'),renderLocalTripListContent):renderLocalTripListContent();
+}
+function renderLocalTripListContent(){
   const h = localTrips, target = $('#local-trip-list');
   if (!target) return;
   const compact=false;
@@ -60,7 +63,10 @@ function renderLocalTripList() {
   if (focusId) [...target.querySelectorAll('[data-local-trip]')].find(button=>button.dataset.localTrip===focusId)?.focus({preventScroll:true});
 }
 
-function renderLocalTripActivity() {
+function renderLocalTripActivity(){
+  return window.RefreshView?window.RefreshView.preserve($('#local-trips'),renderLocalTripActivityContent):renderLocalTripActivityContent();
+}
+function renderLocalTripActivityContent(){
   const target = $('#local-trip-activity');
   if (!target) return;
   const active = localTrips.active;
@@ -82,7 +88,10 @@ function localTripFacts() {
     ${startEvidenceView(trip.start_evidence)}<p class="subtle local-record-note">${trip.partial?'行程记录：部分记录，起止或过程存在缺失。':'行程记录：未标记为部分记录。'}路线采样情况另列，不代表 GPS 路线完整。</p></div>`;
 }
 
-function renderLocalTripFacts() {
+function renderLocalTripFacts(){
+  return window.RefreshView?window.RefreshView.preserve($('#local-trips'),renderLocalTripFactsContent):renderLocalTripFactsContent();
+}
+function renderLocalTripFactsContent(){
   const target=$('#local-trip-facts');if(!target)return;
   const same=target.dataset.record===localTrips.selection;
   const editor=same&&recallCorrection?.context===recallContext()?$('#recall-correction'):null;
@@ -95,7 +104,10 @@ function renderLocalTripFacts() {
   if(focus?.isConnected)focus.focus({preventScroll:true});
 }
 
-function renderLocalTripDetail() {
+function renderLocalTripDetail(){
+  return window.RefreshView?window.RefreshView.preserve($('#local-trips'),renderLocalTripDetailContent):renderLocalTripDetailContent();
+}
+function renderLocalTripDetailContent(){
   const target = $('#local-trip-detail');
   if (!target) return;
   if(!$('#local-trip-route'))target.innerHTML='<div id="local-trip-route"></div><div id="local-trip-facts"></div>';
@@ -226,12 +238,18 @@ function localRouteQuality(result, density) {
     ${gaps.length?`<details class="local-gap-details" data-detail="recall-gaps"><summary>查看 ${gaps.length} 处采样间断</summary><ul>${gaps.map(gap=>`<li><span>${esc(tripTime(gap.start_time))} → ${esc(tripTime(gap.end_time))}</span><strong>${esc(tripDuration(gap.duration_seconds))}</strong><span class="subtle">${esc(gap.reason || '间断原因未确认')}</span></li>`).join('')}</ul></details>`:''}`;
 }
 
-function renderLocalRouteStatus() {
+function renderLocalRouteStatus(){
+  return window.RefreshView?window.RefreshView.preserve($('#local-trips'),renderLocalRouteStatusContent):renderLocalRouteStatusContent();
+}
+function renderLocalRouteStatusContent(){
   const h=localTrips,target=$('#local-route-message');
   if (target) target.innerHTML=h.routeError?`<span class="unknown" role="alert">${esc(h.routeError)}${h.route?' · 保留上次路线。':''}</span> ${action('重试路线','local-route-retry','quiet')}`:h.routeBusy?'正在读取采样…':'';
 }
 
 function renderLocalRoute() {
+  return window.RefreshView?window.RefreshView.preserve($('#main'),renderLocalRouteContent):renderLocalRouteContent();
+}
+function renderLocalRouteContent() {
   const h=localTrips,target=$('#local-trip-route');
   if (!target) return;
   if (!showPosition) {target.innerHTML=privacyGate(true);return;}

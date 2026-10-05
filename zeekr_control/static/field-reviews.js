@@ -97,7 +97,10 @@ function fieldsPage() {
     ${reviewData().error ? `<div class="notice error" role="alert">${esc(reviewData().error)}</div>` : ''}
     <div class="review-workspace"><section class="card review-list" id="field-results"></section><aside class="card review-panel" id="review-panel" aria-label="参数核实面板"></aside></div>`;
 }
-function renderFields() {
+function renderFields(){
+  return window.RefreshView?window.RefreshView.preserve($('.review-workspace'),renderFieldsContent):renderFieldsContent();
+}
+function renderFieldsContent(){
   if (!$('#field-results')) return;
   reviewSync();
   const focus = reviewFocusSnapshot();
@@ -132,7 +135,10 @@ function renderFieldReference(field) {
 function reviewInput(label, key, value, limit, multiline = false) {
   return `<div class="review-input"><label for="review-${key}">${label}</label>${multiline ? `<textarea rows="2"` : '<input type="text"'} id="review-${key}" data-review-input="${key}" maxlength="${limit}" ${multiline?'':`value="${esc(value)}"`}>${multiline?`${esc(value)}</textarea>`:''}</div>`;
 }
-function renderReviewPanel() {
+function renderReviewPanel(){
+  return window.RefreshView?window.RefreshView.preserve($('.review-workspace'),renderReviewPanelContent):renderReviewPanelContent();
+}
+function renderReviewPanelContent(){
   const panel = $('#review-panel');
   if (!panel) return;
   const field = reviewVisibleFields().find(f => f.path === reviewSelected);

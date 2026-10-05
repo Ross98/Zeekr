@@ -27,6 +27,9 @@
       paintDetail();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
     }
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected || !active())return;
       if(data?.events){paintEvents();return;}
@@ -45,6 +48,9 @@
       if(focus)document.getElementById(focus)?.focus({preventScroll:true});
     }
     function paintDetail(){
+  return root.RefreshView?root.RefreshView.preserve(node,()=>paintDetailContent()):paintDetailContent();
+}
+function paintDetailContent(){
       const el=node?.querySelector('#parking-detail');if(!el)return;
       if(data?.events){
         const row=data.events.find(item=>item.id===selected);
@@ -56,6 +62,9 @@
       el.innerHTML=`<section class="card insight-panel"><h3>区间详情</h3><p>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</p><div class="parking-row-values"><span>有效停车样本<strong>${row.sample_count} 条</strong></span><span>最大有效观测间隔<strong>${number(row.max_gap_seconds)} 秒</strong></span><span>里程端点<strong>${number(row.start_km)} → ${number(row.end_km)} km</strong></span><span>座舱温度端点<strong>${number(row.start_inside_temp)} → ${number(row.end_inside_temp)} °C</strong><small>独立更新时间 ${esc(time(row.start_inside_time))} → ${esc(time(row.end_inside_time))}</small></span><span>采集端点<strong>${esc(time(row.start.observed_at))}<br>${esc(time(row.end.observed_at))}</strong></span><span>按 24 小时折算 SOC 下降<strong>${row.soc_drop_per_24h===null?'不计算':number(row.soc_drop_per_24h)+' 个百分点'}</strong></span></div><p class="insight-note">${row.eligible?'已观测到前后非停车状态，区间内没有充电或已知数据缺口。':'不完整原因：'+row.reason_labels.map(esc).join('；')} 按日折算仅适用于至少 1 小时的可比较区间，不能预测未来耗电。</p>${button('比较停车端点参数','compare',comparing || row.start.key===row.end.key)}</section>`;
     }
     function paintComparison(){
+  return root.RefreshView?root.RefreshView.preserve(node,()=>paintComparisonContent()):paintComparisonContent();
+}
+function paintComparisonContent(){
       const el=node?.querySelector('#parking-compare');if(!el)return;
       el.innerHTML=compareError?`<p class="notice error" role="alert">${esc(compareError)}</p>`:comparing?'<p role="status">正在比较停车端点…</p>':comparison?`<section class="card insight-panel"><h3>停车端点参数变化</h3><p class="insight-note">${esc(time(comparison.before.state_time))} → ${esc(time(comparison.after.state_time))} · ${comparison.changes.length} 项变化</p><div class="insight-diff">${comparison.changes.map(row=>`<article data-parking-change="${esc(row.path)}"><strong>${esc(row.name)}</strong><div><span>停车起点</span><b>${esc(row.before.value)}</b><small>原值 ${esc(row.before.raw)}</small></div><div><span>停车终点</span><b>${esc(row.after.value)}</b><small>原值 ${esc(row.after.raw)}</small></div></article>`).join('') || '<p>安全目录参数值没有变化。</p>'}</div></section>`:'';
     }

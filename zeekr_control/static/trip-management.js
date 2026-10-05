@@ -11,6 +11,9 @@
     const summary=row=>`<strong>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</strong><span>${esc(number(row.distance_km))} km · ${row.partial?'片段记录':'完整记录'} · ${esc(number(row.duration_seconds===null?null:row.duration_seconds/60))} 分钟</span><small>SOC ${esc(number(row.start_soc))}% → ${esc(number(row.end_soc))}%${row.removed_at?` · 移入 ${esc(time(row.removed_at))}`:''}</small>${row.issue?`<small class="unknown">${esc(row.issue)} 记录时间 ${esc(time(row.recorded_at))}</small>`:''}`;
     function reset(){serial++;data=preview=null;selected.clear();cursor=null;previous=[];loading=busy=false;error=message='';}
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
@@ -46,12 +49,14 @@
     async function mutate(operation){
       if(busy||!data||operation==='preview'&&!selected.size||operation==='execute'&&!preview)return;
       const token=++serial;busy=true;error='';message='';paint();
+      const reveal=()=>{node.querySelector('#trip-manage-preview')?.focus({preventScroll:true});node.querySelector('#trip-manage-preview')?.scrollIntoView({block:'nearest'});};
+      const finish=root.RefreshView?.guard?root.RefreshView.guard(reveal):reveal;
       try{
         const body=operation==='preview'?{action:status==='trash'?'restore':'trash',ids:[...selected],revision:data.revision}:{token:preview.token};
         const result=await request('/api/trips/manage/'+operation,{...body,context:owner});
         if(!valid(token))return;
         if(result.context!==owner)throw Error('账号或车辆已切换，请重新读取。');
-        if(operation==='preview'){preview=result;busy=false;paint();node.querySelector('#trip-manage-preview')?.focus({preventScroll:true});node.querySelector('#trip-manage-preview')?.scrollIntoView({block:'nearest'});}
+        if(operation==='preview'){preview=result;busy=false;paint();finish();}
         else{
           selected.clear();preview=null;data=null;cursor=null;previous=[];busy=false;
           message=`已${result.action==='trash'?'移入回收区':'恢复'} ${result.count} 条行程。相关统计已更新。`;

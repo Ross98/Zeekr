@@ -18,7 +18,10 @@
         <p class="insight-note">至少 3 / 5 条才比较。纳入有效观测至少 10 公里且电量下降至少 3 个百分点的记录，含片段。按总估算电量 / 总里程计算；来自 SOC 与电池容量估算。</p>
         <p class="insight-note">行程构成、温度和路况可能不同。变化不代表车辆故障，也不能单凭此处确定原因。</p>`;
     }
-    function paint() {
+    function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(!active() || !node?.isConnected)return;
       const focused=node.contains(document.activeElement)?document.activeElement.id:null;
       const report=data?.report;

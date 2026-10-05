@@ -14,6 +14,9 @@
     const button=(label,action,disabled=false,extra='')=>`<button class="button secondary" data-lab="${action}" ${disabled||busy?'disabled':''} ${extra}>${label}</button>`;
     const actionAt=()=>Date.parse(draft.action_time+'+08:00');
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;

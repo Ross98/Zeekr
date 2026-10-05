@@ -16,6 +16,9 @@ window.StorageManagement = (() => {
     return items.map(item=>`<article class="storage-archive-row"><div><strong>${escape(item.partition)}</strong><p>${bytes(item.bytes)} · ${Number.isFinite(item.reads)?`${item.reads} 次读取`:'记录数未知'}${item.manageable?'':' · 受保护 / 暂不可操作'}</p></div><div class="storage-actions">${recycled?button('恢复','restore',item.id,!item.manageable||busy)+button('永久删除','purge',item.id,!item.manageable||busy,true):button('移入回收区','trash',item.id,!item.manageable||busy)}</div></article>`).join('');
   }
   function draw(){
+    return window.RefreshView?window.RefreshView.preserve(panel,drawContent):drawContent();
+  }
+  function drawContent(){
     if(!panel)return;
     const c=status?.current,m=status?.monitor;
     panel.innerHTML=`<div class="card-head"><div><h2>服务器存储与归档管理</h2><p class="card-meta">服务所在磁盘 · 本地巡检，不读取车辆云端</p></div>${button('刷新存储状态','reload','',busy)}</div><div class="card-body">
@@ -46,6 +49,8 @@ window.StorageManagement = (() => {
     if(action==='reload'){plan=null;draft='';return reload();}
     if(action==='cancel'){sequence++;plan=null;draft='';error='';draw();return;}
     busy=true;error='';message='';const version=++sequence;draw();
+    const reveal=()=>panel.querySelector('.storage-confirm')?.scrollIntoView({block:'nearest',behavior:'auto'});
+    const finish=window.RefreshView?.guard?window.RefreshView.guard(reveal):reveal;
     try{
       if(action==='execute'){
         if(!plan||draft!==plan.confirmation)throw Error('请按预览输入完整确认文字。');
@@ -60,7 +65,7 @@ window.StorageManagement = (() => {
         plan=result;
       }
     }catch(e){if(version===sequence){error=e.message;if(action==='execute'){plan=null;draft='';}}}
-    finally{if(version===sequence){busy=false;draw();if(plan)panel.querySelector('.storage-confirm')?.scrollIntoView({block:'nearest',behavior:'auto'});}}
+    finally{if(version===sequence){busy=false;draw();if(plan)finish();}}
   }
   return {mount(root,api){
     request=api;

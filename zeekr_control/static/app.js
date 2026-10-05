@@ -70,6 +70,7 @@ const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,re
 let sectionTask='';
 function openSectionTask(task){sectionTask=task;render();if(task&&task!=='records')insightsPage.openTool(task);window.scrollTo({top:0,left:0,behavior:'instant'});}
 const insightSections = ['car','energy','tracks','insights','settings','calendar','report'];
+window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,trackSource].join('|');
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false},
   navigate:(section,view,date)=>{page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
@@ -78,13 +79,12 @@ async function openOverviewRecord(record){
   const context=state?.insights_context,date=beijingDate(record.end_time);
   if(record.kind==='trip_end'){
     page='tracks';sectionTask='';trackSource='local';trackDate=date;render();
-    const h=syncLocalTrips();await loadLocalTrips(true);
+    const h=syncLocalTrips();const finish=window.RefreshView.guard(()=>window.scrollTo(0,0));await loadLocalTrips(true);
     if(page!=='tracks'||context!==state?.insights_context||localTrips!==h)return;
-    clearLocalRoute();h.selection=record.id;h.selected=h.events?.find(e=>e.id===record.id)||{...record,status:'ended'};renderLocalTripList();renderLocalTripDetail();if(showPosition)loadLocalRoute();
+    clearLocalRoute();h.selection=record.id;h.selected=h.events?.find(e=>e.id===record.id)||{...record,status:'ended'};renderLocalTripList();renderLocalTripDetail();if(showPosition)loadLocalRoute();finish();
   }else{
-    page='energy';sectionTask='records';render();chargeDate=date;chargeQueryMode='day';chargeQuery={start:date};chargeCursor=null;chargeCursorStack=[];chargeSelected=record;render();await loadChargeEvents();
+    page='energy';sectionTask='records';render();chargeDate=date;chargeQueryMode='day';chargeQuery={start:date};chargeCursor=null;chargeCursorStack=[];chargeSelected=record;render();const finish=window.RefreshView.guard(()=>window.scrollTo(0,0));await loadChargeEvents();finish();
   }
-  if(context===state?.insights_context)window.scrollTo(0,0);
 }
 const tripTagTime = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '未知';
 const tripTagsPage = window.TripTagsPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='tracks'&&!sectionTask&&trackSource==='tags',time:tripTagTime});
@@ -446,7 +446,10 @@ async function loadChargingAnalytics(selected='current',key=chargingAnalyticsKey
   finally { if(request===chargingAnalyticsRequest){chargingAnalyticsLoadingKey='';chargingAnalyticsBusy=false;renderChargingWorkspace();} }
 }
 
-function renderChargingWorkspace() {
+function renderChargingWorkspace(){
+  return window.RefreshView?window.RefreshView.preserve($('#main'),renderChargingWorkspaceContent):renderChargingWorkspaceContent();
+}
+function renderChargingWorkspaceContent(){
   const target=$('.charging-workspace');
   if(target&&page==='energy') {
     const open=[...target.querySelectorAll('details[open][data-detail]')].map(item=>item.dataset.detail);
@@ -500,7 +503,10 @@ function chargeHistoryBody() {
   return body;
 }
 
-function renderChargeHistory() {
+function renderChargeHistory(){
+  return window.RefreshView?window.RefreshView.preserve($('#main'),renderChargeHistoryContent):renderChargeHistoryContent();
+}
+function renderChargeHistoryContent(){
   const list=$('#charge-list');
   if (!list) return;
   const opened=[...list.querySelectorAll('details[open][data-detail]')].map(el=>el.dataset.detail);
@@ -811,6 +817,9 @@ function relatedTools() {
 
 function render() {
   if (deferDateRender(render)) return;
+  return window.RefreshView.preserve($('#main'),renderContent);
+}
+function renderContent() {
   const samplingFocused = page==='settings' && document.activeElement?.id==='interval';
   const managerNode=page==='tracks'&&!sectionTask&&trackSource==='local'&&tripManagementOpen?$('#trip-management'):null;
   const managerFocus=managerNode?.contains(document.activeElement)?document.activeElement:null;
@@ -1090,8 +1099,8 @@ function persistNavigation(){
     const snapshot=navigationSnapshot();delete snapshot.q;
     if(window.NavigationState.encode(snapshot)!==restoringQuery.signature)restoringQuery=null;
     else if(visibleNavigationField(navigationQueries[snapshot.t]?.[0]||'[data-no-navigation-result]')){
-      const position=restoringQuery.scroll;restoringQuery=null;
-      requestAnimationFrame(()=>window.scrollTo({top:position,behavior:'instant'}));
+      const restore=restoringQuery.restore;restoringQuery=null;
+      requestAnimationFrame(restore);
     }
   }
   if(query===location.search.slice(1))return;
@@ -1120,12 +1129,12 @@ function restoreNavigation(snapshot,position=0){
   }
   if(snapshot.q==='1'&&navigationQueries[snapshot.t]){
     const current=navigationSnapshot();delete current.q;
-    restoringQuery={signature:window.NavigationState.encode(current),scroll:position};
+    restoringQuery={signature:window.NavigationState.encode(current),restore:window.RefreshView.guard(()=>window.scrollTo({top:position,behavior:'instant'}))};
     visibleNavigationField(navigationQueries[snapshot.t][1])?.click();
   }
   navigationRestoring=false;navigationReady=true;
   history.replaceState({...history.state,scroll:position},'',location.pathname+(window.NavigationState.encode(navigationSnapshot())?'?'+window.NavigationState.encode(navigationSnapshot()):''));
-  requestAnimationFrame(()=>window.scrollTo({top:position,behavior:'instant'}));
+  requestAnimationFrame(window.RefreshView.guard(()=>window.scrollTo({top:position,behavior:'instant'})));
 }
 window.addEventListener('popstate',()=>restoreNavigation(window.NavigationState.read(location.search),history.state?.scroll||0));
 for(const type of ['click','input','change'])document.addEventListener(type,()=>queueMicrotask(persistNavigation));

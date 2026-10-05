@@ -31,6 +31,9 @@
       return `<section class="card insight-panel" id="ledger-pending"><div class="insight-heading"><h3 id="ledger-pending-count" tabindex="-1">${title}</h3>${rows.length?button(pendingOpen?'收起待补账':'去补账','pending-toggle',loading,`aria-expanded="${pendingOpen}" aria-controls="ledger-pending-list"`):''}</div>${rows.length?`<p class="insight-note">按充电结束日期列出未关联记录；未关联不代表免费。已关联账单的未知费用仍需另行核对。</p><div id="ledger-pending-list" class="report-event-list" ${pendingOpen?'':'hidden'}>${list}${pagination}</div>`:''}</section>`;
     }
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
@@ -63,7 +66,7 @@
         const mode=(selectedMode==='ac'?'交流 AC':selectedMode==='dc'?'直流 DC':'方式未知')+(row.charge_mode_override?' · 手动':'');
         const effective=row.actual_cents!==null&&Number.isFinite(row.metered_kwh)&&row.metered_kwh>0
           ?(row.actual_cents/100/row.metered_kwh).toFixed(4):null;
-        return `<article data-ledger-entry="${esc(row.id)}" class="ledger-entry-row"><details class="ledger-item"><summary class="ledger-preview"><span class="ledger-preview-time"><strong>${period}</strong><small>时长 ${elapsed}</small><small class="ledger-mode">${mode}</small></span><span>电量 <strong>${num(row.metered_kwh)} kWh</strong></span><span>${cost}</span></summary><div class="ledger-detail"><p>${sources[row.source]} · ${row.event?'关联充电记录':row.source_event_removed?'关联记录已移入回收区':'手工补录'}</p><div class="parking-row-values"><span>停车费<strong>${money(row.parking_fee_cents??0)} 元</strong></span>${effective!==null?`<span>等效充电单价<strong>${effective} 元/kWh</strong></span>`:''}${row.estimated_cents!==null?`<span>参考估算<strong>${money(row.estimated_cents)} 元</strong></span><span>估算依据<strong>${{metered_price:'计量电量 × 电价 + 附加费用',soc_price:'SOC 电量估算 × 电价 + 附加费用'}[row.estimate_basis]||'依据不足，不计算'}</strong></span>`:''}</div>${row.event?`<p class="insight-note">事件电量估算 ${num(row.event.estimated_kwh)} kWh · 事件记录容量 ${num(row.event.battery_capacity_kwh)} kWh</p>`:row.source_event_removed?'<p class="insight-note">关联充电记录已移入回收区；人工填写内容保留，SOC 自动估算已停用。</p>':''}${row.note?`<p class="ledger-note">${esc(row.note)}</p>`:''}<div class="insight-actions">${button('删除账单','delete',false,`data-id="${esc(row.id)}"`)}</div></div></details>${button('编辑账单','edit',false,`data-id="${esc(row.id)}"`)}</article>`;
+        return `<article data-ledger-entry="${esc(row.id)}" class="ledger-entry-row"><details class="ledger-item" data-detail="ledger-entry-${esc(row.id)}"><summary class="ledger-preview"><span class="ledger-preview-time"><strong>${period}</strong><small>时长 ${elapsed}</small><small class="ledger-mode">${mode}</small></span><span>电量 <strong>${num(row.metered_kwh)} kWh</strong></span><span>${cost}</span></summary><div class="ledger-detail"><p>${sources[row.source]} · ${row.event?'关联充电记录':row.source_event_removed?'关联记录已移入回收区':'手工补录'}</p><div class="parking-row-values"><span>停车费<strong>${money(row.parking_fee_cents??0)} 元</strong></span>${effective!==null?`<span>等效充电单价<strong>${effective} 元/kWh</strong></span>`:''}${row.estimated_cents!==null?`<span>参考估算<strong>${money(row.estimated_cents)} 元</strong></span><span>估算依据<strong>${{metered_price:'计量电量 × 电价 + 附加费用',soc_price:'SOC 电量估算 × 电价 + 附加费用'}[row.estimate_basis]||'依据不足，不计算'}</strong></span>`:''}</div>${row.event?`<p class="insight-note">事件电量估算 ${num(row.event.estimated_kwh)} kWh · 事件记录容量 ${num(row.event.battery_capacity_kwh)} kWh</p>`:row.source_event_removed?'<p class="insight-note">关联充电记录已移入回收区；人工填写内容保留，SOC 自动估算已停用。</p>':''}${row.note?`<p class="ledger-note">${esc(row.note)}</p>`:''}<div class="insight-actions">${button('删除账单','delete',false,`data-id="${esc(row.id)}"`)}</div></div></details>${button('编辑账单','edit',false,`data-id="${esc(row.id)}"`)}</article>`;
       }).join('')}</div><div class="insight-pagination">${button('上一页账单','previous',page===0)}<span>${page+1} / ${pages}</span>${button('下一页账单','next',page+1===pages)}</div>`:'<p class="insight-empty">本月还没有账单</p>';
       const trashPages=Math.max(1,Math.ceil(data.trash.length/10));trashPage=Math.min(trashPage,trashPages-1);
       node.querySelector('#ledger-trash').innerHTML=data.trash.length?`<section class="card insight-panel"><h3>已删除账单 · 可恢复</h3><div class="ledger-trash-list">${data.trash.slice(trashPage*10,trashPage*10+10).map(row=>`<div><span>${row.date} · ${sources[row.source]} · 实际 ${money(row.actual_cents)} 元</span>${button('恢复账单','restore',false,`data-id="${esc(row.id)}"`)}</div>`).join('')}</div><div class="insight-pagination">${button('上一页已删除','trash-previous',trashPage===0)}<span>${trashPage+1} / ${trashPages}</span>${button('下一页已删除','trash-next',trashPage+1===trashPages)}</div></section>`:'';
@@ -88,6 +91,8 @@
       const identity=owner,token=++writeSerial;
       const payload={...(action==='save'?draft:{}),action,id:action==='save'?draft.id:id,revision:data.revision,context:owner};
       let returnScroll=null;
+      const restore=()=>{if(returnScroll!==null&&active()){root.scrollTo({top:returnScroll,behavior:'instant'});node.querySelector('#ledger-pending-count')?.focus({preventScroll:true});}};
+      const finish=root.RefreshView?.guard?root.RefreshView.guard(restore):restore;
       busy=true;error='';status='';paint();
       try{
         const result=await request('/api/insights/ledger',payload);
@@ -104,7 +109,7 @@
         const refreshed=await load(sameMonth);
         if(!refreshed&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新读取账本核对。';
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 填写内容保留；请重新读取账本核对后再操作。';}
-      finally{if(valid(token,writeSerial,identity)){busy=false;paint();if(returnScroll!==null&&active()){root.scrollTo({top:returnScroll,behavior:'instant'});node.querySelector('#ledger-pending-count')?.focus({preventScroll:true});}}}
+      finally{if(valid(token,writeSerial,identity)){busy=false;paint();finish();}}
     }
     function edit(id){
       const row=data.entries.find(row=>row.id===id);if(!row)return;
@@ -123,7 +128,10 @@
       const changed=owner!==context(),recordsChanged=!busy&&(tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision),remount=node!==container;node=container;
       if(changed||recordsChanged){tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;}
       if(changed){owner=context();data=null;attempted=false;loading=false;busy=false;serial++;writeSerial++;error='';status='';draft=blank(defaultDate());editorOpen=false;pendingOpen=false;pendingPage=0;pendingReturn=null;}
-      else if(recordsChanged){data=null;attempted=loading=false;serial++;}
+      else if(recordsChanged&&attempted){
+        if(editorOpen){serial++;loading=false;status='行程或充电记录已变化；填写内容保留，请读取账本核对后再保存。';}
+        else load(true);
+      }
       if(changed||recordsChanged||remount)paint();
     }
     function handle(event){

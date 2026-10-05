@@ -59,6 +59,9 @@ function recallYearPanel(){
   return `<details class="card recall-year-panel" data-detail="recall-year"><summary>年度用车回顾</summary><div class="recall-year-controls"><label>回顾年份<input id="recall-year" class="input" type="number" min="2000" max="2099" value="${year}"></label><label>热力图显示<select id="recall-year-mode" class="select"><option value="distance">里程</option><option value="cost">已记账费用</option></select></label><button class="button secondary" data-recall-year-load>读取年度回顾</button></div><div id="recall-year-result"></div></details>`;
 }
 function recallPaintYear(){
+  return window.RefreshView?window.RefreshView.preserve($('#main'),recallPaintYearContent):recallPaintYearContent();
+}
+function recallPaintYearContent(){
   const el=$('#recall-year-result'),saved=recallYear;if(!el||!saved||saved.context!==state?.insights_context)return;
   const d=saved.data,mode=saved.mode;$('#recall-year-mode').value=mode;
   const value=day=>mode==='cost'?day.actual_cents:day.distance_km;

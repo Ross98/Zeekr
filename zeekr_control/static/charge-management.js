@@ -11,6 +11,9 @@
     const summary=row=>`<strong>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</strong><span>SOC ${esc(number(row.start_soc))}% → ${esc(number(row.end_soc))}% · ${row.partial?'片段记录':'完整记录'} · ${esc(number(row.estimated_kwh))} kWh（估算）</span><small>${row.charge_mode==='ac'?'AC':row.charge_mode==='dc'?'DC':'模式未知'} · ${esc(number(row.duration_seconds===null?null:row.duration_seconds/60))} 分钟${row.removed_at?` · 移入 ${esc(time(row.removed_at))}`:''}</small>${row.issue?`<small class="unknown">${esc(row.issue)} 记录时间 ${esc(time(row.recorded_at))}</small>`:''}`;
     function reset(){serial++;data=preview=null;selected.clear();cursor=null;previous=[];loading=busy=false;error=message='';}
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;

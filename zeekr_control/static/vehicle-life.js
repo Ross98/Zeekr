@@ -22,6 +22,9 @@
     }
     function note(label){return `<label class="ledger-wide">${label}<textarea id="life-note" aria-label="${label}" data-life-field="note" maxlength="1000" rows="3" ${busy?'disabled':''}>${esc(draft().note)}</textarea></label>`;}
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focused=node.contains(document.activeElement)?document.activeElement:null;

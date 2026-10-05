@@ -12,6 +12,9 @@
     const valid=(token,current,identity)=>token===current&&identity===owner&&context()===identity;
     const canCompare=()=>owner&&selected.a&&selected.b&&selected.a!==selected.b&&!loading.a&&!loading.b&&!comparing;
     function paint(){
+      return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
+    }
+    function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
