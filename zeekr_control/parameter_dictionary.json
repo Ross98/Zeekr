@@ -134,10 +134,10 @@
       "kind": "boolean"
     },
     "basicVehicleStatus.direction": {
-      "name": "车辆航向角（推测）",
-      "unit": "°（推测）",
+      "name": "车辆航向角（轨迹对照支持）",
+      "unit": "°",
       "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "note": "候选方向约定：0北、90东、180南、270西，顺时针。已做可信运动轨迹方位对照；静止、缓存或定位不可信时不保证实时朝向。",
       "sources": [],
       "private": false,
       "applicability": "通用平台字段；含义与可用性可能随车型、年款、动力形式、版本和选装配置变化，需核对本车。",
@@ -244,10 +244,10 @@
       "kind": "timestamp"
     },
     "additionalVehicleStatus.maintenanceStatus.daysToService": {
-      "name": "保养剩余天数指标",
-      "unit": "天（社区）",
+      "name": "保养剩余天数",
+      "unit": "天",
       "basis": "社区资料参考",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "note": "已做日历间隔与递减量对照；具体跨日更新时间可能存在延迟。",
       "sources": [
         {
           "title": "zeekr_ha 社区传感器定义",
@@ -397,10 +397,10 @@
       "kind": "number"
     },
     "additionalVehicleStatus.maintenanceStatus.distanceToService": {
-      "name": "保养剩余里程指标",
-      "unit": "km（社区）",
+      "name": "保养剩余里程",
+      "unit": "km",
       "basis": "社区资料参考",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "note": "已做与总里程的守恒对照：剩余里程与总里程之和稳定；不是保养倒计时天数。",
       "sources": [
         {
           "title": "zeekr_ha 社区传感器定义",
@@ -674,7 +674,7 @@
       "name": "高压系统温度等级（对象待核实）",
       "unit": "—",
       "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "note": "0为常规/默认等级候选，1为非常规等级。没有独立高压温度，不能确定1是升高或降低。",
       "sources": [],
       "private": false,
       "applicability": "通用平台字段；含义与可用性可能随车型、年款、动力形式、版本和选装配置变化，需核对本车。",
@@ -685,7 +685,7 @@
       "name": "DC/DC 连接状态",
       "unit": "—",
       "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "note": "候选：3充电连接态，1连接过渡态，0非充电连接态。行程中激活码可为1而连接码为0；0不能证明转换器未工作。",
       "sources": [],
       "private": false,
       "applicability": "通用平台字段；含义与可用性可能随车型、年款、动力形式、版本和选装配置变化，需核对本车。",
@@ -704,10 +704,10 @@
       "kind": "number"
     },
     "additionalVehicleStatus.electricVehicleStatus.dcChargeIAct": {
-      "name": "直流充电电流",
+      "name": "高压电池侧电流（实档推断）",
       "unit": "A",
       "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "快充样本曾为负值，可能采用流入为负的符号约定；不可直接当成对外放电。",
+      "note": "行程中正负变化，充电时以负值为主且与桩侧正电流幅值接近。候选符号：正放电，负充电/回收；不是只在快充时才有的桩电流。",
       "sources": [],
       "private": false,
       "applicability": "通用平台字段；含义与可用性可能随车型、年款、动力形式、版本和选装配置变化，需核对本车。",
@@ -906,10 +906,10 @@
       "kind": "enum"
     },
     "additionalVehicleStatus.runningStatus.tripMeter1": {
-      "name": "小计里程 1",
-      "unit": "km（推测）",
+      "name": "累计小计里程 A（推断）",
+      "unit": "km",
       "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "note": "与总里程增量接近，观察期未见归零。不是总里程。",
       "sources": [],
       "private": false,
       "applicability": "需核对本车年款、版本、选装配置和功能支持；同为 001 也可能不同，返回字段不证明已配备。",
@@ -928,10 +928,10 @@
       "kind": "enum"
     },
     "additionalVehicleStatus.runningStatus.tripMeter2": {
-      "name": "小计里程 2",
-      "unit": "km（推测）",
+      "name": "可复位小计里程 B（推断）",
+      "unit": "km",
       "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "note": "观察到多次归零，不固定按自然日重置。驾驶周期/清零触发机制还需实车动作核对。",
       "sources": [],
       "private": false,
       "applicability": "需核对本车年款、版本、选装配置和功能支持；同为 001 也可能不同，返回字段不证明已配备。",
@@ -2161,10 +2161,10 @@
       "kind": "enum"
     },
     "additionalVehicleStatus.pollutionStatus.relHumSts": {
-      "name": "相对湿度指标（推测）",
-      "unit": "%RH（推测）",
+      "name": "湿度原始指标（缩放未标定）",
+      "unit": "原始指标；%RH 缩放未核实",
       "basis": "字段名称与上下文解释；状态枚举需核实",
-      "note": "数值码不直接等于开／关；字段存在不代表本车装配该功能。",
+      "note": "原值存在超过100的连续取值，不能直接标成百分比。0.5缩放和其他字节量程只是待核实候选，需独立湿度读数。",
       "sources": [],
       "private": false,
       "applicability": "通用平台字段；含义与可用性可能随车型、年款、动力形式、版本和选装配置变化，需核对本车。",

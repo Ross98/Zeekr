@@ -55,7 +55,7 @@ class MeaningTests(unittest.TestCase):
     def test_direct_code_meanings_cover_window_vent_and_boolean(self):
         from zeekr_control.hypothesis_lab import value_meanings
         self.assertEqual([r['meaning'] for r in value_meanings(self.row('winStatusDriver',['1','2']))],['打开','关闭'])
-        self.assertEqual([r['meaning'] for r in value_meanings(self.row('drvVentSts',['1','2']))],['运行','关闭'])
+        self.assertEqual([r['meaning'] for r in value_meanings(self.row('drvVentSts',['1','2']))],['通风已激活／运行允许（不保证设定档位非零）','关闭'])
         self.assertEqual([r['meaning'] for r in value_meanings(self.row('seatBeltStatusDriver',['true','false']))],['已系','未系'])
     def test_user_gear_mapping_takes_priority_even_for_one_value(self):
         from zeekr_control.hypothesis_lab import value_meanings
@@ -69,3 +69,16 @@ class MeaningTests(unittest.TestCase):
         from zeekr_control.hypothesis_lab import value_meanings
         row=self.row('unknownField',['99'])
         self.assertEqual(value_meanings(row)[0]['meaning'],'未解释编码 99')
+
+class PresenceTests(unittest.TestCase):
+    def test_zero_null_missing_and_invalid_are_separate(self):
+        path='additionalVehicleStatus.electricVehicleStatus.chargeLevel'
+        samples=[]
+        for i,value in enumerate([0,None,'bad']):
+            samples.append(({'state_time':60000*(i+1),'flags':[]}, {'additionalVehicleStatus':{'electricVehicleStatus':{'chargeLevel':value}}}))
+        samples.append(({'state_time':240000,'flags':[]},{}))
+        prepared=prepare(iter(samples),[],[])
+        field=next(f for f in prepared['fields'] if f['path']==path)
+        self.assertEqual(field['presence'],dict(valid=1,empty=1,missing=1,invalid=1))
+        row=next(f for f in investigate(prepared,'trip')['candidates'] if f['path']==path)
+        self.assertEqual(row['count'],1)

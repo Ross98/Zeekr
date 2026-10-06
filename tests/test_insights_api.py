@@ -34,11 +34,23 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(code,200)
         self.assertGreater(len(result['candidates']),100)
         self.assertNotIn('samples',result)
+        self.assertEqual(sum(result['study_counts'].values()),len(result['candidates']))
+        self.assertTrue(all('study' in r for r in result['candidates']))
         self.assertNotIn('PRIVATE-VIN',json.dumps(result))
         self.assertEqual(result['context'],self.get('/api/state')[1]['insights_context'])
         self.assertTrue(all(r['proposal']['source']=='自动假设，未确认' for r in result['candidates']))
         self.assertEqual(self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=anchor&anchor=configuration.vin&value=x')[0],400)
         self.assertEqual(self.get('/hypothesis-lab.js')[0],200)
+
+    def test_current_metadata_is_not_fabricated_as_historical_samples(self):
+        current={'fields':[{'path':'vehicleMetadata.colorName','status':'known','value':'绿色','raw':'绿色','evidence':'当前车型资料'}]}
+        with patch('zeekr_control.web.parameters',return_value=current):
+            code,result=self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=trip')
+        self.assertEqual(code,200)
+        row=next(r for r in result['candidates'] if r['path']=='vehicleMetadata.colorName')
+        self.assertEqual(row['count'],0)
+        self.assertEqual(row['current_reference']['value'],'绿色')
+        self.assertIn('不计入',row['current_reference']['scope'])
 
     def test_confirmed_value_meaning_overrides_research_mapping(self):
         _,result=self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=trip')

@@ -438,6 +438,7 @@ class App:
                 raise ValueError('请先连接车辆账号。')
             self._restore_snapshot(session)
             scope,vehicle,context=session_scope(session),self.vehicle_key,self._insights_context()
+            current_metadata={f['path']:f for f in parameters(self.raw,self.model)['fields'] if f['path'].startswith('vehicleMetadata.') and f['path'] in PUBLIC and f['status'] not in ('missing','empty','invalid')}
             if not context or not vehicle:
                 raise ValueError('等待当前账号的车辆缓存后再研究。')
         result=HypothesisLab(self.archive_reader,self.database_path).query(scope,vehicle,start,end,state,anchor,value)
@@ -447,6 +448,10 @@ class App:
             result['context']=context
             result['reviews']=self.field_review_store.read(vehicle)
             for row in result['candidates']:
+                if row['path'] in current_metadata:
+                    field=current_metadata[row['path']]
+                    row['current_reference']={k:field[k] for k in ('value','raw','evidence')}
+                    row['current_reference']['scope']='当前车型资料，不计入所选历史样本；资料更新时间未提供'
                 for mapping in row['proposal'].get('value_meanings',[]):
                     raw_value=json.loads(mapping['raw'])
                     verified=next((record for record in result['reviews']['records']
@@ -1060,6 +1065,7 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/overview-dashboard.js':('overview-dashboard.js','text/javascript; charset=utf-8'),
                           '/charge-comparison.js': ('charge-comparison.js', 'text/javascript; charset=utf-8'),
                           '/parameter-experiments.js': ('parameter-experiments.js', 'text/javascript; charset=utf-8'),
+                          '/parameter-studies.js': ('parameter-studies.js', 'text/javascript; charset=utf-8'),
                           '/hypothesis-lab.js': ('hypothesis-lab.js', 'text/javascript; charset=utf-8'),
                           '/hypothesis-lab.css': ('hypothesis-lab.css', 'text/css; charset=utf-8'),
                           '/vehicle-research.js': ('vehicle-research.js', 'text/javascript; charset=utf-8'),
