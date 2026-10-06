@@ -24,7 +24,7 @@ from .road_matching import RoadMatcher
 from .trips import TripStore
 from .trip_management import TripRecordManager
 from .charge_management import ChargeRecordManager
-from .web_model import build_model, parse_location
+from .web_model import scalar, build_model, parse_location
 from .geocoding import AmapGeocoder
 from .trip_map import AmapStaticMap
 from .trip_place_names import current_location_name, cached_names
@@ -446,6 +446,18 @@ class App:
                 raise ValueError('账号或车辆已切换，请重新分析。')
             result['context']=context
             result['reviews']=self.field_review_store.read(vehicle)
+            for row in result['candidates']:
+                for mapping in row['proposal'].get('value_meanings',[]):
+                    raw_value=json.loads(mapping['raw'])
+                    verified=next((record for record in result['reviews']['records']
+                        if record['path']==row['path'] and record['scope']=='value'
+                        and record['status']=='confirmed' and record['raw']==scalar(raw_value)),None)
+                    if verified:
+                        mapping.update(meaning=verified['meaning'],source='人工已确认')
+                row['proposal']['meaning']='；'.join(str(json.loads(m['raw']))+'='+m['meaning']
+                    for m in row['proposal'].get('value_meanings',[])) or row['proposal']['meaning']
+                if len(row['proposal']['meaning'])>200:
+                    row['proposal']['meaning']=row['proposal']['meaning'][:180]+'…；完整逐值解释见码表。'
         return result
 
     def vehicle_parameters(self):

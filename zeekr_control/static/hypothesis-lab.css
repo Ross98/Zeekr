@@ -2,3 +2,4 @@
 
 .hypothesis-layout,.hypothesis-notebook,.hypothesis-catalog{min-width:0}.hypothesis-notebook textarea{max-width:100%}
 .hypothesis-catalog>label{display:flex;align-items:center;gap:8px}.hypothesis-catalog input[type=checkbox]{width:16px;height:16px;min-height:0;padding:0;margin:0;accent-color:var(--accent);flex-shrink:0}
+.hypothesis-meaning-source{display:block;color:var(--muted);font-size:11px;margin-top:4px}.hypothesis-evidence th:nth-child(2),.hypothesis-evidence td:nth-child(2){text-align:left;width:32%;overflow-wrap:anywhere}

@@ -40,6 +40,19 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=anchor&anchor=configuration.vin&value=x')[0],400)
         self.assertEqual(self.get('/hypothesis-lab.js')[0],200)
 
+    def test_confirmed_value_meaning_overrides_research_mapping(self):
+        _,result=self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=trip')
+        path='additionalVehicleStatus.electricVehicleStatus.chargeLevel'
+        payload=dict(action='save',vehicle=result['reviews']['vehicle'],revision=0,path=path,
+                     scope='value',raw='70',status='confirmed',meaning='人工确认的电量解释')
+        self.assertEqual(self.post_ledger(payload,route='/api/field-reviews')[0],200)
+        code,result=self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=trip')
+        self.assertEqual(code,200)
+        row=next(r for r in result['candidates'] if r['path']==path)
+        meaning=next(v for v in row['proposal']['value_meanings'] if v['raw']=='70')
+        self.assertEqual(meaning['meaning'],'人工确认的电量解释')
+        self.assertEqual(meaning['source'],'人工已确认')
+
     def test_hypothesis_save_is_context_guarded_and_does_not_confirm_or_decode(self):
         code,result=self.get('/api/insights/hypotheses?start=2026-09-20&end=2026-09-20&state=trip')
         record=next(r for r in result['candidates'] if r['status']=='missing')

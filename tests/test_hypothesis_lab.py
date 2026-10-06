@@ -1,4 +1,5 @@
 import unittest
+import json
 from zeekr_control.hypothesis_lab import prepare, investigate
 P='additionalVehicleStatus.drivingBehaviourStatus.gearAutoStatus'
 Q='additionalVehicleStatus.drivingSafetyStatus.electricParkBrakeStatus'
@@ -47,3 +48,24 @@ class ProposalTests(unittest.TestCase):
         from zeekr_control.hypothesis_lab import propose
         row={'path':'x','name':'某开关','kind':'enum','distinct':1,'status':'single_value','inside':{'"0"':10},'outside':{},'unknown':{},'transitions':{}}
         self.assertIn('缺省',propose(row)['meaning'])
+
+class MeaningTests(unittest.TestCase):
+    def row(self,key,values,kind='enum'):
+        return dict(path='additionalVehicleStatus.climateStatus.'+key,name=key,kind=kind,status='varied',distinct=len(values),inside={json.dumps(v):1 for v in values},outside={},unknown={},transitions={})
+    def test_direct_code_meanings_cover_window_vent_and_boolean(self):
+        from zeekr_control.hypothesis_lab import value_meanings
+        self.assertEqual([r['meaning'] for r in value_meanings(self.row('winStatusDriver',['1','2']))],['打开','关闭'])
+        self.assertEqual([r['meaning'] for r in value_meanings(self.row('drvVentSts',['1','2']))],['运行','关闭'])
+        self.assertEqual([r['meaning'] for r in value_meanings(self.row('seatBeltStatusDriver',['true','false']))],['已系','未系'])
+    def test_user_gear_mapping_takes_priority_even_for_one_value(self):
+        from zeekr_control.hypothesis_lab import value_meanings
+        row=self.row('gearAutoStatus',['0']);row['status']='single_value'
+        self.assertEqual(value_meanings(row)[0]['meaning'],'P 挡（驻车）')
+    def test_timestamp_is_not_interpreted_as_state_code(self):
+        from zeekr_control.hypothesis_lab import value_meanings
+        row=self.row('updateTime',['1791168211149'],'timestamp')
+        self.assertIn('2026',value_meanings(row)[0]['meaning'])
+    def test_unknown_nonbinary_code_stays_unresolved(self):
+        from zeekr_control.hypothesis_lab import value_meanings
+        row=self.row('unknownField',['99'])
+        self.assertEqual(value_meanings(row)[0]['meaning'],'未解释编码 99')
