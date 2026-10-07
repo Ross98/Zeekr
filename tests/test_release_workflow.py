@@ -20,6 +20,23 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_repository_release_instructions_allowed(self):
         self.assertEqual(w.allowed('AGENTS.md'), 'AGENTS.md')
 
+    def test_public_report_assets_and_unit_are_exactly_allowed(self):
+        for name in ('deploy/zeekr-reports.service','zeekr_control/assets/periodic-report/manifest.json'):
+            self.assertEqual(w.allowed(name),name)
+        for name in ('deploy/private.service','zeekr_control/assets/periodic-report/secrets.json'):
+            with self.assertRaises(ValueError):w.allowed(name)
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);unit=root/'deploy/zeekr-reports.service';unit.parent.mkdir();unit.write_text('unit')
+            self.assertIn('deploy/zeekr-reports.service',w.inputs(root))
+
+    def test_optional_report_service_starts_only_on_supported_release(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            self.assertEqual(w.runtime_services(root,True),['zeekr-monitor','zeekr-control'])
+            source=root/'zeekr_control/periodic_schedule.py';source.parent.mkdir();source.write_text('module')
+            self.assertIn('zeekr-reports',w.runtime_services(root,True))
+            self.assertNotIn('zeekr-reports',w.runtime_services(root,False))
+
     def test_private_and_traversal_paths_rejected(self):
         for name in ['Key.md', 'Adam.pem', '../zeekr_control/web.py', '/etc/passwd', 'zeekr_control/vehicle_profiles.json', 'docs/private.json']:
             with self.assertRaises(ValueError):

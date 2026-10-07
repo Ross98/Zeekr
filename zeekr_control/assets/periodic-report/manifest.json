@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "width": 1068,
+  "height": 540,
+  "font_sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+  "font_index": 0,
+  "roles": {
+    "date": [
+      33,
+      "muted"
+    ],
+    "small": [
+      30,
+      "muted"
+    ],
+    "warning": [
+      27,
+      "warning"
+    ],
+    "distance": [
+      120,
+      "accent"
+    ],
+    "distance_small": [
+      90,
+      "accent"
+    ],
+    "distance_tiny": [
+      66,
+      "accent"
+    ],
+    "unit": [
+      36,
+      "muted"
+    ],
+    "value": [
+      42,
+      "ink"
+    ],
+    "value_small": [
+      30,
+      "ink"
+    ]
+  },
+  "files": {
+    "glyphs-light.zlib": "2c6cd68668306b6a0677fd907374182271cba79acd04b00479a2e8fbd6811544",
+    "day-light.rgb.zlib": "847efde5610b54f49f8671241e6d2223a26d8656114a517831cb642c481b1bc3",
+    "week-light.rgb.zlib": "a75597f88abc5066fd79b7fb761c54138d52326e4ec3a771b9d777f9115ac526",
+    "month-light.rgb.zlib": "70197a0c5016b327bea8e168a68f87607fb8afaba6ee1c35a853b985ce6c5074",
+    "glyphs-dark.zlib": "d046f92ea744225a52cfbb89d47680ad2263eaad42c6ea5be2316a2aa25e96fc",
+    "day-dark.rgb.zlib": "ad2b9d62ba2a690425dcc333c9525bee0a16ddbee4cf63f9cd9e29cacfe3ab28",
+    "week-dark.rgb.zlib": "74d8d6b368d5b78e98b02ab4e5567847aa83db99580632e8045dff45a0c5d382",
+    "month-dark.rgb.zlib": "11efa0815908129640d22145e358d01f4b291e2ba3a794c33c7212d7c64931a9"
+  }
+}

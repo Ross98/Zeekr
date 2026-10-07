@@ -7,7 +7,9 @@ for name,value in record['candidate_hashes'].items():assert hashlib.sha256((acti
 for name,value in baseline['manifest'].items():
  if name not in changes and name!='release-manifest.json':assert hashlib.sha256((active/name).read_bytes()).hexdigest()==value,'Unrelated deployed file changed'
 print('DEPLOYED_HASHES_PASS',len(changes))
-for service in ('zeekr-control','zeekr-monitor','nginx'):
+import importlib.util
+spec=importlib.util.spec_from_file_location('release_workflow',base/'.release-workflow.py');workflow=importlib.util.module_from_spec(spec);spec.loader.exec_module(workflow)
+for service in [*workflow.runtime_services(active),'nginx']:
  values={line.split('=',1)[0]:line.split('=',1)[1] for line in subprocess.check_output(['systemctl','show',service,'-p','ActiveState','-p','SubState','-p','NRestarts','-p','MainPID'],text=True).splitlines()}
  assert values['ActiveState']=='active' and values['SubState']=='running' and values['NRestarts']=='0'
  if service!='nginx':assert Path('/proc/'+values['MainPID']+'/cwd').resolve()==active,'Wrong process release'

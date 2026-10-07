@@ -9,13 +9,15 @@ with (base/'.deploy.lock').open('a') as lock:
     for name,value in baseline['manifest'].items():assert hashlib.sha256((previous/name).read_bytes()).hexdigest()==value,'Baseline drift'
     import importlib.util
     spec=importlib.util.spec_from_file_location('release_workflow',base/'.release-workflow.py');workflow=importlib.util.module_from_spec(spec);spec.loader.exec_module(workflow)
+    reports_installed=Path('/etc/systemd/system/zeekr-reports.service').is_file()
+    stop_services=['zeekr-control','zeekr-monitor']+(['zeekr-reports'] if reports_installed else [])
     assert set(workflow.inputs(candidate)+list(changes)+['release-manifest.json'])==set(record['candidate_hashes']), 'Candidate input set changed'
     for name,value in record['candidate_hashes'].items():assert hashlib.sha256((candidate/name).read_bytes()).hexdigest()==value,'Candidate drift'
     size=int(subprocess.check_output(['du','-sb','/var/lib/zeekr-control'],text=True).split()[0])
     assert shutil.disk_usage(base).free>size+256*1024*1024,'Insufficient backup space'
     backup=Path(record['backup']);assert not backup.exists(),'Backup already exists'
     try:
-     subprocess.run(['systemctl','stop','zeekr-control','zeekr-monitor'],check=True)
+     subprocess.run(['systemctl','stop',*stop_services],check=True)
      backup.mkdir()
      subprocess.run(['cp','-a','/var/lib/zeekr-control/.',str(backup)],check=True)
      for path in Path('/var/lib/zeekr-control').rglob('*'):
@@ -29,10 +31,11 @@ with (base/'.deploy.lock').open('a') as lock:
      print('STOPPED_STATE_BACKUP_VERIFIED',flush=True)
      temp=base/'.current-release';assert not temp.exists() and not temp.is_symlink()
      temp.symlink_to(candidate);os.replace(temp,base/'current')
-     subprocess.run(['systemctl','start','zeekr-monitor','zeekr-control'],check=True)
-     for service in ('zeekr-control','zeekr-monitor','nginx'):
+     services=workflow.runtime_services(candidate,reports_installed)
+     subprocess.run(['systemctl','start',*services],check=True)
+     for service in [*services,'nginx']:
       subprocess.run(['systemctl','is-active','--quiet',service],check=True)
-     for service in ('zeekr-control','zeekr-monitor'):
+     for service in services:
       for attempt in range(100):
        pid=subprocess.check_output(['systemctl','show',service,'-p','MainPID','--value'],text=True).strip()
        if pid!='0' and Path('/proc/'+pid+'/cwd').resolve()==candidate:break
@@ -40,10 +43,10 @@ with (base/'.deploy.lock').open('a') as lock:
       else:raise AssertionError(service+' process has wrong release')
      print('CUTOVER_SUCCESS',str(candidate),flush=True)
     except BaseException:
-     subprocess.run(['systemctl','stop','zeekr-control','zeekr-monitor'])
+     subprocess.run(['systemctl','stop',*stop_services])
      temp=base/'.current-release-rollback'
      if temp.exists() or temp.is_symlink():temp.unlink()
      temp.symlink_to(previous);os.replace(temp,base/'current')
-     subprocess.run(['systemctl','start','zeekr-monitor','zeekr-control'])
+     subprocess.run(['systemctl','start',*workflow.runtime_services(previous,reports_installed)])
      print('ROLLBACK_APPLIED',flush=True)
      raise
