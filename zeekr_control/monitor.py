@@ -14,6 +14,7 @@ from .report_metrics import trip_metrics, charge_metrics
 from .report_render import render
 from .report_markdown import markdown_for
 from .trip_notification_image import render_trip_png
+from .focused_trip_image import ImagePreparationError
 from .report_history import compare
 from .report_attention import build as build_attention
 from .start_evidence import build as start_evidence, project as project_start
@@ -567,8 +568,15 @@ class Monitor:
             except DeliveryError as exc:
                 delivery='uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts>=5 else 'pending'
                 error=str(exc)[:100]; next_attempt=now+min(3600,60*2**attempts)*1000
-            except Exception:
-                delivery,error=('uncertain','图片发送结果未确认') if called else ('failed','行程图片准备失败，未调用发送器')
+            except Exception as exc:
+                if called:
+                    delivery,error='uncertain','图片发送结果未确认'
+                else:
+                    retryable=not isinstance(exc,ImagePreparationError) or exc.retryable
+                    delivery='pending' if retryable and attempts<2 else 'failed'
+                    reason=str(exc) if isinstance(exc,ImagePreparationError) else '行程图片准备失败'
+                    error=reason+'，未调用发送器'
+                    next_attempt=now+60*2**attempts*1000 if delivery=='pending' else 0
             with self.tracks.connect() as db:
                 db.execute('UPDATE monitor_event_media SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE event_id=?',
                            (delivery,error,next_attempt,sent_at if delivery=='sent' else None,event_id))

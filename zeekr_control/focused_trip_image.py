@@ -1,5 +1,5 @@
 """Route-first WeCom artwork, standard library only; offline unlabeled road context."""
-import functools,json,math,struct,zlib,sqlite3,subprocess,sys
+import functools,json,math,struct,zlib,sqlite3,subprocess,sys,signal
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -7,6 +7,16 @@ from .road_matching_core import EARTH
 
 WIDTH,HEIGHT=1068,886
 BG=(16,26,29);INK=(239,245,243);MUTED=(178,194,191);PAPER=(245,247,245)
+# The monitor shares a 15% CPU quota: 6 CPU seconds may need 40 wall seconds.
+WORKER_TIMEOUT_SECONDS=45
+WORKER_ERRORS={'memory':'行程图片内存不足','route':'行程图片轨迹或输入无效',
+               'worker':'行程图片准备失败'}
+
+
+class ImagePreparationError(ValueError):
+    def __init__(self,message,retryable=True):
+        super().__init__(message)
+        self.retryable=retryable
 
 
 def build_geometry(route,network_dir=None):
@@ -203,23 +213,41 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
 class FocusedTripImage:
     def __init__(self,network_dir):self.network_dir=Path(network_dir)
     def render_trip(self,report,route,start_name=None):
-        payload=json.dumps({'report':report,'route':route,'start_name':start_name},allow_nan=False).encode()
-        if len(payload)>1500000:raise ValueError('轨迹输入超过上限')
         try:
-            result=subprocess.run([sys.executable,'-m','zeekr_control.focused_trip_image','--worker',str(self.network_dir)],input=payload,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=8)
-        except subprocess.TimeoutExpired:raise ValueError('行程图片超时') from None
-        if result.returncode or len(result.stdout)>2*1024*1024 or not result.stdout.startswith(b'\x89PNG\r\n\x1a\n'):raise ValueError('行程图片准备失败')
+            payload=json.dumps({'report':report,'route':route,'start_name':start_name},allow_nan=False).encode()
+        except (ValueError,TypeError):
+            raise ImagePreparationError(WORKER_ERRORS['route'],retryable=False) from None
+        if len(payload)>1500000:raise ImagePreparationError('轨迹输入超过上限',retryable=False)
+        try:
+            result=subprocess.run([sys.executable,'-m','zeekr_control.focused_trip_image','--worker',str(self.network_dir)],input=payload,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=WORKER_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:raise ImagePreparationError('行程图片超时') from None
+        if result.returncode:
+            if result.returncode==-signal.SIGXCPU:raise ImagePreparationError('行程图片CPU时间超限')
+            if result.returncode<0:raise ImagePreparationError('行程图片工作进程中断')
+            # Only fixed worker codes cross the process boundary; never expose stderr.
+            code=result.stderr.decode('ascii',errors='replace').strip()
+            raise ImagePreparationError(WORKER_ERRORS.get(code,WORKER_ERRORS['worker']),retryable=code!='route')
+        if len(result.stdout)>2*1024*1024 or not result.stdout.startswith(b'\x89PNG\r\n\x1a\n'):raise ImagePreparationError('行程图片输出无效')
         return result.stdout
 
 
 def _worker():
     import os,resource
+    phase='worker'
     try:
         os.nice(10);resource.setrlimit(resource.RLIMIT_CPU,(6,6))
         if sys.platform=='linux':resource.setrlimit(resource.RLIMIT_AS,(256*1024*1024,256*1024*1024))
+        phase='route'
         raw=sys.stdin.buffer.read(1500001)
         if len(raw)>1500000:raise ValueError('input limit')
-        data=json.loads(raw);geometry=build_geometry(data['route'],sys.argv[2]);image=render_focused_trip_png(data['report'],data['route'],geometry,data.get('start_name'));sys.stdout.buffer.write(image)
-    except Exception:sys.exit(1)
+        data=json.loads(raw);geometry=build_geometry(data['route'],sys.argv[2])
+        phase='worker'
+        image=render_focused_trip_png(data['report'],data['route'],geometry,data.get('start_name'));sys.stdout.buffer.write(image)
+    except MemoryError:
+        sys.stderr.write('memory');sys.exit(1)
+    except (ValueError,TypeError,KeyError):
+        sys.stderr.write(phase);sys.exit(1)
+    except Exception:
+        sys.stderr.write('worker');sys.exit(1)
 
 if __name__=='__main__' and len(sys.argv)==3 and sys.argv[1]=='--worker':_worker()

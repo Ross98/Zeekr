@@ -286,8 +286,64 @@ class RichDeliveryTests(unittest.TestCase):
         sender=Sender();self.monitor.deliver(sender,self.BASE+720000)
         self.assertEqual(sender.calls,['markdown'])
         event=self.monitor.events()[0]
-        self.assertEqual(event['image_delivery'],'failed')
+        self.assertEqual(event['image_delivery'],'pending')
         self.assertEqual(event['image_error'],'行程图片准备失败，未调用发送器')
+
+    def test_preparation_retries_with_backoff_then_stops_after_three_attempts(self):
+        self._trip()
+        from zeekr_control.focused_trip_image import ImagePreparationError
+        calls=[]
+        class Renderer:
+            def render_trip(self,*args):
+                calls.append('render');raise ImagePreparationError('行程图片超时')
+        class Sender:
+            def send_markdown(self,value): calls.append('markdown')
+            def send_image(self,value): calls.append('image')
+        self.monitor.map_renderer=Renderer();sender=Sender();now=self.BASE+720000
+        self.monitor.deliver(sender,now)
+        self.monitor.deliver(sender,now+59999)
+        self.assertEqual(calls,['markdown','render'])
+        from zeekr_control.monitor import Monitor
+        self.monitor=Monitor(self.monitor.tracks.path,map_renderer=Renderer())
+        self.monitor.deliver(sender,now+60000)
+        self.monitor.deliver(sender,now+179999)
+        self.assertEqual(calls,['markdown','render','render'])
+        self.monitor.deliver(sender,now+180000)
+        self.monitor.deliver(sender,now+900000)
+        self.assertEqual(calls,['markdown','render','render','render'])
+        event=self.monitor.events()[0]
+        self.assertEqual(event['image_delivery'],'failed');self.assertEqual(event['image_error'],'行程图片超时，未调用发送器')
+
+    def test_preparation_retry_succeeds_without_resending_text(self):
+        self._trip();calls=[]
+        class Renderer:
+            def render_trip(self,*args):
+                calls.append('render')
+                if calls.count('render')==1:raise RuntimeError('private-secret')
+                return b'png'
+        class Sender:
+            def send_markdown(self,value):calls.append('markdown')
+            def send_image(self,value):calls.append('image')
+        self.monitor.map_renderer=Renderer();sender=Sender();now=self.BASE+720000
+        self.monitor.deliver(sender,now);self.monitor.deliver(sender,now+60000);self.monitor.deliver(sender,now+900000)
+        self.assertEqual(calls,['markdown','render','render','image'])
+        self.assertEqual(self.monitor.events()[0]['image_delivery'],'sent')
+
+    def test_invalid_route_is_terminal_and_ambiguous_send_is_never_retried(self):
+        from zeekr_control.focused_trip_image import ImagePreparationError
+        self._trip();calls=[]
+        class Renderer:
+            def render_trip(self,*args):raise ImagePreparationError('行程图片轨迹或输入无效',retryable=False)
+        class Sender:
+            def send_markdown(self,value):calls.append('markdown')
+            def send_image(self,value):calls.append('image');raise RuntimeError('private-secret')
+        sender=Sender();self.monitor.map_renderer=Renderer();now=self.BASE+720000
+        self.monitor.deliver(sender,now);self.monitor.deliver(sender,now+900000)
+        self.assertEqual(calls,['markdown']);self.assertEqual(self.monitor.events()[0]['image_delivery'],'failed')
+        with self.monitor.tracks.connect() as db:db.execute("UPDATE monitor_event_media SET delivery='pending',next_attempt=0")
+        self.monitor.map_renderer=lambda route:TripImageTests._solid_png((220,225,230))
+        self.monitor.deliver(sender,now+1000000);self.monitor.deliver(sender,now+2000000)
+        self.assertEqual(calls,['markdown','image']);self.assertEqual(self.monitor.events()[0]['image_delivery'],'uncertain')
 
 
 if __name__ == '__main__':

@@ -1,8 +1,27 @@
-import copy,json,math,struct,tempfile,unittest
+import copy,json,math,struct,tempfile,unittest,subprocess,signal
+from unittest.mock import patch
 from pathlib import Path
 from zeekr_control.focused_trip_image import build_geometry,fit_geometry,render_focused_trip_png,FocusedTripImage
 
 class FocusedTripTests(unittest.TestCase):
+ def test_worker_wall_budget_handles_monitor_cpu_throttling(self):
+  with patch('zeekr_control.focused_trip_image.subprocess.run') as run:
+   run.return_value=subprocess.CompletedProcess([],0,b'\x89PNG\r\n\x1a\n',b'')
+   FocusedTripImage('/tmp/synthetic-roads').render_trip({},self.route())
+   self.assertEqual(run.call_args.kwargs['timeout'],45)
+ def test_worker_failure_reasons_are_safe_and_retryable_when_transient(self):
+  from zeekr_control.focused_trip_image import ImagePreparationError
+  cases=[(subprocess.TimeoutExpired('worker',45),'行程图片超时',True),
+         (subprocess.CompletedProcess([],1,b'',b'memory'),'行程图片内存不足',True),
+         (subprocess.CompletedProcess([],1,b'',b'route'),'行程图片轨迹或输入无效',False),
+         (subprocess.CompletedProcess([],-signal.SIGXCPU,b'',b''),'行程图片CPU时间超限',True),
+         (subprocess.CompletedProcess([],-9,b'',b'private-secret'),'行程图片工作进程中断',True)]
+  for result,message,retryable in cases:
+   with self.subTest(message=message),patch('zeekr_control.focused_trip_image.subprocess.run') as run:
+    if isinstance(result,Exception):run.side_effect=result
+    else:run.return_value=result
+    with self.assertRaises(ImagePreparationError) as caught:FocusedTripImage('/tmp/synthetic-roads').render_trip({},self.route())
+    self.assertEqual(str(caught.exception),message);self.assertEqual(caught.exception.retryable,retryable)
  def route(self):
   return {'count':5,'gaps':[{}],'segments':[[{'longitude':118+i*.001,'latitude':32+i*.004,'trusted':True,'coordinate_system':'WGS84（社区解释）'} for i in range(3)], [{'longitude':118.005,'latitude':32.025,'trusted':True,'coordinate_system':'WGS84（社区解释）'},{'longitude':118.008,'latitude':32.029,'trusted':True,'coordinate_system':'WGS84（社区解释）'}]]}
  def test_rotation_fits_all_points_and_preserves_spans(self):
