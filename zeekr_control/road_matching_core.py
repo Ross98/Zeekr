@@ -139,18 +139,43 @@ class RoadGraph:
         return out
 
 def match(graph, points):
-    """Nearest road candidate, then a directed shortest path between projections."""
+    """Nearest road, with continuity checks before accepting directed detours."""
     candidates = {i: cs for i, p in enumerate(points) if (cs := graph.candidates(p, i))}
     groups = split_on_gaps(list(candidates), points)
     lines, chosen, spans, issues = ([], [], [], 0)
+    def direct(a,b):
+        return math.dist(graph.xy(points[a['obs']][1:]),graph.xy(points[b['obs']][1:]))
+    def plausible(distance,straight):
+        # Not a speed estimate: reject large geometric detours unsupported by
+        # these samples. Nearby parallel lanes may be closer than GPS drift.
+        return math.isfinite(distance) and distance<=straight*2+200
+    def score(a,b):
+        return abs(graph.transition(a,b)[0]-direct(a,b))+3*(a['error']+b['error'])
     for group in groups:
-        picks = [candidates[group[0]][0]]
-        for i in group[1:]:
+        first=candidates[group[0]]
+        if len(group)>1:
+            second=candidates[group[1]]
+            near_first=[c for c in first if c['error']<=first[0]['error']+1e-06]
+            near_second=[c for c in second if c['error']<=second[0]['error']+1e-06]
+            a,b=min(((a,b) for a in near_first for b in near_second),key=lambda pair:score(*pair))
+            if not plausible(graph.transition(a,b)[0],direct(a,b)):
+                a,b=min(((a,b) for a in first for b in second),key=lambda pair:score(*pair))
+            picks=[a,b]
+        else:
+            picks=[first[0]]
+        for i in group[len(picks):]:
             cs = candidates[i]
             nearest = cs[0]['error']
-            picks.append(min((c for c in cs if c['error'] <= nearest + 1e-06), key=lambda c: graph.transition(picks[-1], c)[0]))
+            a=picks[-1]
+            best=min((c for c in cs if c['error']<=nearest+1e-06),key=lambda c:score(a,c))
+            if not plausible(graph.transition(a,best)[0],direct(a,best)):
+                best=min(cs,key=lambda c:score(a,c))
+            picks.append(best)
         chosen.extend(picks)
         for a, b in zip(picks, picks[1:]):
+            if not plausible(graph.transition(a,b)[0],direct(a,b)):
+                issues+=1
+                continue
             pieces = [line for line in graph.pieces(a, b) if len(line) >= 2 and math.dist(line[0], line[-1]) > 1e-08]
             if pieces:
                 spans.append([a['obs'], b['obs']])

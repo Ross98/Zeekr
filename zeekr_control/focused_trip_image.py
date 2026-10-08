@@ -4,6 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from .road_matching_core import EARTH
+from .road_matching import fragments
+from .road_match_worker import process as match_roads
 
 WIDTH,HEIGHT=1068,886
 BG=(16,26,29);INK=(239,245,243);MUTED=(178,194,191);PAPER=(245,247,245)
@@ -68,7 +70,40 @@ def build_geometry(route,network_dir=None):
                         roads.append([pixel(lon0+x/scale,lat0+y/yscale) for x,y in coords])
             except (sqlite3.Error,ValueError,KeyError,OSError,TypeError):continue
             if truncated:break
-    return {'segments':lines,'roads':roads,'network_available':bool(roads),'background_limited':truncated}
+    # Run inside the existing bounded image worker. A nested matcher would have
+    # an 8-second wall budget despite the monitor's 15% CPU quota.
+    matched=[];covered=set();status='unavailable'
+    observations=route.get('observations', [p for segment in source for p in segment])
+    pieces=fragments(dict(observations=observations,segments=source))
+    if network_dir is not None and systems=={'WGS84（社区解释）'}:
+        directory=Path(network_dir)
+        networks=sorted(p for p in directory.glob('*.sqlite3')
+                        if not p.is_symlink() and p.is_file() and p.stat().st_size<=64*1024*1024)
+        if not directory.is_symlink() and 0<len(networks)<=8:
+            try:
+                result=match_roads(dict(networks=[str(p.absolute()) for p in networks],fragments=pieces))
+                status=result['status']
+                matched=[[pixel(*p) for p in line] for line in result['lines']]
+                for start,end in result['spans']:
+                    covered.update((i,i+1) for i in range(start,end))
+            except (sqlite3.Error,ValueError,KeyError,OSError,TypeError):
+                status='error'
+    indices={}
+    for i,p in enumerate(observations):
+        indices.setdefault(json.dumps(p,sort_keys=True),i)
+    fallback=[]
+    for segment,line in zip(source,lines):
+        current=None
+        for i in range(1,len(segment)):
+            pair=tuple(indices.get(json.dumps(p,sort_keys=True)) for p in segment[i-1:i+1])
+            if pair in covered:
+                current=None
+            elif current is None:
+                current=[line[i-1],line[i]];fallback.append(current)
+            else:
+                current.append(line[i])
+    return {'segments':lines,'roads':roads,'network_available':bool(roads),'background_limited':truncated,
+            'matched':matched,'fallback':fallback,'matching_status':status}
 
 
 def fit_geometry(segments,rotate=True):
@@ -151,7 +186,8 @@ def _number(value):return '—' if type(value) not in (float,int) or not math.is
 
 
 def render_focused_trip_png(report,route,geometry,start_name=None):
-    fitted=fit_geometry(geometry['segments']);surface=Surface(WIDTH,HEIGHT,BG)
+    fitted=fit_geometry(geometry['segments']+geometry.get('matched',[]));surface=Surface(WIDTH,HEIGHT,BG)
+    original=[[fitted['transform'](p) for p in line] for line in geometry['segments']]
     surface.text(56,35,'行程结束',40,INK)
     try:
         start=datetime.fromtimestamp(report['start_time']/1000,ZoneInfo('Asia/Shanghai'));end=datetime.fromtimestamp(report['end_time']/1000,ZoneInfo('Asia/Shanghai'))
@@ -174,15 +210,26 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
                 top=context.data[(y0*478+x0)*3+j]*(1-fx)+context.data[(y0*478+x1)*3+j]*fx
                 bottom=context.data[(y1*478+x0)*3+j]*(1-fx)+context.data[(y1*478+x1)*3+j]*fx
                 map_surface.data[target+j]=round(top*(1-fy)+bottom*fy)
+    road_lines=[[fitted['transform'](p) for p in line] for line in geometry.get('matched',[])]
     for color,width in (((255,255,255),9),((0,102,80),5)):
-        for segment in fitted['segments']:
+        for segment in road_lines:
             if len(segment)==1:map_surface.circle(*segment[0],width/2,color)
             for a,b in zip(segment,segment[1:]):map_surface.line(a,b,color,width)
-    for letter,point,color in (('A',fitted['segments'][0][0],(0,102,80)),('B',fitted['segments'][-1][-1],(175,91,17))):
+    for segment in geometry.get('fallback',geometry['segments']):
+        for a,b in zip(segment,segment[1:]):
+            a,b=fitted['transform'](a),fitted['transform'](b)
+            length=math.dist(a,b)
+            for offset in range(0,math.ceil(length),13):
+                lo=offset/max(length,1);hi=min(offset+7,length)/max(length,1)
+                map_surface.line(tuple(x+(y-x)*lo for x,y in zip(a,b)),
+                                 tuple(x+(y-x)*hi for x,y in zip(a,b)),(153,98,29),3)
+    for segment in original:
+        for p in segment:map_surface.circle(*p,2,(0,102,80))
+    for letter,point,color in (('A',original[0][0],(0,102,80)),('B',original[-1][-1],(175,91,17))):
         x,y=point;map_surface.circle(x,y,14,(255,255,255));map_surface.circle(x,y,11,color);map_surface.text(x-4.5,y-6,letter,13,(255,255,255))
     name=' '.join(str(start_name or '起点名称未记录').split())[:100]
     while map_surface.text_width(name,18)>500:name=name[:-2]+'…' if len(name)>2 else name[:1]
-    x,y=fitted['segments'][0][0];labelx=min(920-map_surface.text_width(name,18),max(20,x+20));labely=max(20,y-34)
+    x,y=original[0][0];labelx=min(920-map_surface.text_width(name,18),max(20,x+20));labely=max(20,y-34)
     map_surface.rect(labelx-4,labely-3,map_surface.text_width(name,18)+8,25,PAPER);map_surface.text(labelx,labely,name,18,(23,62,50))
     a=math.radians(fitted['angle']);dx,dy=math.sin(a),-math.cos(a);x,y=890,63
     map_surface.line((x-dx*15,y-dy*15),(x+dx*16,y+dy*16),(51,76,67),2)
@@ -204,7 +251,9 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
         else:surface.text(x,806,unit,17,MUTED)
         if i:surface.rect(x-18,724,1,85,(51,67,72))
     count=route.get('count');count=count if type(count) is int and 0<=count<=20000 else 0
-    gaps=len(route.get('gaps',[]));footer='云端缓存采样 · %s 个位置点'%count+(' · %s 处采样间断'%gaps if gaps else '')+' · 连线不代表实走道路'
+    gaps=len(route.get('gaps',[]));footer='云端缓存采样 · %s 个位置点'%count+(' · %s 处采样间断'%gaps if gaps else '')
+    footer+=' · 路网推断' if road_lines else ' · 连线不代表实走道路'
+    if geometry.get('fallback'):footer+=' · 虚线为采样连线'
     surface.text(56,842,footer,17,MUTED,956);content=surface.png()
     if len(content)>2*1024*1024:raise ValueError('图片超过2MB')
     return content

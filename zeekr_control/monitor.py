@@ -1,6 +1,7 @@
 """Persistent, conservative trip/charging transitions and notification outbox."""
 import hashlib
 import json
+import math
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,19 @@ from .notification_location import select_location, reference_suffix
 MAX_AGE = MAX_GAP
 STOP_WAIT = 600000
 MAX_SESSION_SAMPLES = 1000
+
+
+def short_trip(data):
+    """Only a known report distance below 5 km suppresses the route image."""
+    if not isinstance(data,dict):
+        return False
+    report=data.get('report_v2')
+    if isinstance(report,dict):
+        metrics=report.get('metrics',{})
+    else:
+        metrics=data if report is None else {}
+    distance=metrics.get('distance_km') if isinstance(metrics,dict) else None
+    return type(distance) in (int,float) and math.isfinite(distance) and 0<=distance<5
 
 
 def _append_sample(activity, telemetry):
@@ -186,8 +200,8 @@ class Monitor:
                    (event_id, vehicle, kind, json.dumps(data, ensure_ascii=False), message, now))
         db.execute('INSERT OR IGNORE INTO monitor_event_alerts (event_id) VALUES (?)', (event_id,))
         if kind == 'trip_end':
-            db.execute('INSERT OR IGNORE INTO monitor_event_media (event_id,kind) VALUES (?,?)',
-                       (event_id, 'trip_image'))
+            db.execute('INSERT OR IGNORE INTO monitor_event_media (event_id,kind,delivery) VALUES (?,?,?)',
+                       (event_id, 'trip_image','skipped' if short_trip(data) else 'pending'))
         report = data.get('report_v2')
         if report:
             approved = {key:value for key,value in report.get('metrics',{}).items()
@@ -540,6 +554,16 @@ class Monitor:
                 WHERE m.delivery='pending' AND m.next_attempt<=? AND e.delivery='sent'
                 ORDER BY e.created,e.rowid LIMIT 10''', (now,)).fetchall()
         for event_id, attempts, vehicle, encoded in rows:
+            # Apply the policy to images queued before this rule, too. Never
+            # touch already-sent or ambiguous deliveries, nor count a send attempt.
+            try:
+                short=short_trip(json.loads(encoded))
+            except (ValueError,TypeError):
+                short=False
+            if short:
+                with self.tracks.connect() as db:
+                    db.execute("UPDATE monitor_event_media SET delivery='skipped',error=NULL,next_attempt=0 WHERE event_id=? AND delivery='pending'",(event_id,))
+                continue
             with self.tracks.connect() as db:
                 claimed=db.execute("UPDATE monitor_event_media SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='pending'",(event_id,)).rowcount
             if not claimed: continue

@@ -41,6 +41,30 @@ class RoadMatchTests(unittest.TestCase):
         m=result['road_matching'];self.assertEqual(m['status'],'matched');self.assertEqual(m['matched_indices'],[0,1])
         self.assertEqual(m['spans'],[[0,1]])
         self.assertTrue(any(abs(x-121.001)<1e-8 and abs(y-31)<1e-8 for line in m['lines'] for x,y in line))
+    def test_nearby_forward_lane_wins_over_nearest_reverse_lane_detour(self):
+        data={'elements':[dict(type='node',id=i+1,lon=lon,lat=lat)
+            for i,(lon,lat) in enumerate([(121,31),(121.01,31),(121,31.0001),(121.01,31.0001)])]}
+        data['elements'] += [dict(type='way',id=1,nodes=[1,2],tags={'highway':'primary','oneway':'yes'}),
+                             dict(type='way',id=2,nodes=[4,3],tags={'highway':'primary','oneway':'yes'}),
+                             dict(type='way',id=3,nodes=[2,4],tags={'highway':'primary'}),
+                             dict(type='way',id=4,nodes=[3,1],tags={'highway':'primary'})]
+        build_network(data,self.db)
+        m=self.matcher.enrich(route([point(0,121.004,31),point(1,121.003,31)]))['road_matching']
+        self.assertEqual(m['spans'],[[0,1]])
+        # The correct lane is 11m farther away; the other lane needs a 1.8km loop.
+        self.assertTrue(all(abs(lat-31.0001)<1e-8 for line in m['lines'] for lon,lat in line))
+    def test_unsupported_large_detour_remains_unmatched_instead_of_drawing_loop(self):
+        data={'elements':[dict(type='node',id=i+1,lon=lon,lat=lat)
+            for i,(lon,lat) in enumerate([(121,31),(121,31.02),(121.001,31.02),(121.001,31)])]}
+        data['elements'].append(dict(type='way',id=1,nodes=[1,2,3,4],
+                                     tags={'highway':'primary','oneway':'yes'}))
+        build_network(data,self.db)
+        original=route([point(0,121,31),point(1,121.001,31)])
+        before=copy.deepcopy(original);result=self.matcher.enrich(original)
+        self.assertEqual(original,before)
+        self.assertEqual(result['road_matching']['lines'],[])
+        self.assertEqual(result['road_matching']['spans'],[])
+        self.assertEqual(result['road_matching']['issues'],1)
     def test_existing_fragments_never_join_across_a_small_time_gap(self):
         pts=[point(0,121.0001),point(1,121.0004),point(2,121.001,31.0002),point(3,121.001,31.0008)]
         m=self.matcher.enrich(route(pts,[pts[:2],pts[2:]]))['road_matching']

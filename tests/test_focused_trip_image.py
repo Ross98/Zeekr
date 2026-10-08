@@ -4,6 +4,59 @@ from pathlib import Path
 from zeekr_control.focused_trip_image import build_geometry,fit_geometry,render_focused_trip_png,FocusedTripImage
 
 class FocusedTripTests(unittest.TestCase):
+ def corner_route(self):
+  points=[dict(state_time=1704067200000+i*60000,observed_time=1704067200000+i*60000,
+               longitude=lon,latitude=lat,trusted=True,plottable=True,
+               coordinate_system='WGS84（社区解释）')
+          for i,(lon,lat) in enumerate([(121.0002,31),(121.001,31.0008)])]
+  return dict(observations=points,segments=[points],count=2,gaps=[])
+ def corner_network(self,folder):
+  from zeekr_control.road_network import build_network
+  build_network({'elements':[{'type':'node','id':1,'lon':121,'lat':31},
+    {'type':'node','id':2,'lon':121.001,'lat':31},
+    {'type':'node','id':3,'lon':121.001,'lat':31.001},
+    {'type':'way','id':1,'nodes':[1,2,3],'tags':{'highway':'residential','oneway':'yes'}}]},Path(folder)/'region.sqlite3')
+ def test_image_uses_road_corner_instead_of_cutting_across_it(self):
+  with tempfile.TemporaryDirectory() as folder:
+   self.corner_network(folder);route=self.corner_route();before=copy.deepcopy(route)
+   geometry=build_geometry(route,folder)
+   self.assertEqual(route,before);self.assertEqual(geometry['matching_status'],'matched')
+   self.assertEqual(geometry['fallback'],[])
+   self.assertTrue(any(len(line)>=3 for line in geometry['matched']))
+   for a,b in zip(geometry['segments'][0][0],geometry['matched'][0][0]):self.assertAlmostEqual(a,b)
+   for a,b in zip(geometry['segments'][0][-1],geometry['matched'][-1][-1]):self.assertAlmostEqual(a,b)
+ def test_image_matching_never_bridges_source_segments(self):
+  with tempfile.TemporaryDirectory() as folder:
+   self.corner_network(folder);route=self.corner_route()
+   first,last=route['observations'];middle=dict(first,longitude=121.0004,state_time=first['state_time']+10000)
+   other=dict(last,latitude=31.0006,state_time=last['state_time']-10000)
+   route['observations']=[first,middle,other,last];route['segments']=[[first,middle],[other,last]]
+   geometry=build_geometry(route,folder)
+   self.assertEqual(geometry['fallback'],[])
+   self.assertEqual(len(geometry['matched']),2)
+   self.assertTrue(all(len(s)==2 for s in geometry['matched']))
+ def test_image_unconnected_oneway_retains_raw_fallback(self):
+  with tempfile.TemporaryDirectory() as folder:
+   self.corner_network(folder);route=self.corner_route();route['observations'].reverse()
+   for i,p in enumerate(route['observations']):p['state_time']=1704067200000+i*60000
+   geometry=build_geometry(route,folder)
+   self.assertEqual(geometry['matched'],[])
+   self.assertEqual(geometry['fallback'],geometry['segments'])
+ def test_image_partial_matching_keeps_unmatched_endpoints_and_gap(self):
+  with tempfile.TemporaryDirectory() as folder:
+   self.corner_network(folder);route=self.corner_route()
+   first,last=route['observations'];outside=dict(first,longitude=121.01,latitude=31.01,state_time=first['state_time']-60000)
+   isolated=dict(last,state_time=last['state_time']+60000)
+   route['observations']=[outside,first,last,isolated];route['segments']=[[outside,first,last],[isolated]]
+   before=copy.deepcopy(route);geometry=build_geometry(route,folder)
+   self.assertEqual(route,before);self.assertEqual(geometry['matching_status'],'partial')
+   self.assertEqual(geometry['fallback'],[geometry['segments'][0][:2]])
+   self.assertEqual([len(s) for s in geometry['segments']],[3,1])
+ def test_image_missing_network_keeps_every_raw_edge(self):
+  with tempfile.TemporaryDirectory() as folder:
+   geometry=build_geometry(self.corner_route(),folder)
+   self.assertEqual(geometry['matched'],[]);self.assertEqual(geometry['fallback'],geometry['segments'])
+   self.assertEqual(geometry['matching_status'],'unavailable')
  def test_worker_wall_budget_handles_monitor_cpu_throttling(self):
   with patch('zeekr_control.focused_trip_image.subprocess.run') as run:
    run.return_value=subprocess.CompletedProcess([],0,b'\x89PNG\r\n\x1a\n',b'')
@@ -52,7 +105,7 @@ class FocusedTripTests(unittest.TestCase):
  def test_fixed_copy_glyphs_exist(self):
   from zeekr_control.focused_trip_image import _atlas
   index,_=_atlas()
-  for size,text in [(21,'行程里程观测时长电量估算能耗月日:'),(42,'0123456789.→—'),(18,'测试起点…'),(17,'kWh/100km')]:
+  for size,text in [(21,'行程里程观测时长电量估算能耗月日:'),(42,'0123456789.→—'),(18,'测试起点…'),(17,'kWh/100km路网推断虚线为采样连线')]:
    for char in text:self.assertIn(str(size)+':'+char,index)
  def test_background_reads_real_roads_without_label_data(self):
   from zeekr_control.road_network import build_network

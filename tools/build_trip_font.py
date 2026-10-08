@@ -7,7 +7,7 @@ parser.add_argument('--font',required=True)
 parser.add_argument('--license',required=True)
 args=parser.parse_args()
 root=Path(__file__).resolve().parent.parent/'zeekr_control/assets/trip-font';root.mkdir(parents=True,exist_ok=True);fontpath=Path(args.font)
-labels='里.:,?…时间区域无©行程结束记录片段月日观测时长分钟电量估算能耗云端缓存采样个位置点处间断连线不代表实走道路首末起名称未北地图已旋转背景无本区域版权贡献者名称待确认·→—：，。%/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ()'
+labels='里.:,?…时间区域无©行程结束记录片段月日观测时长分钟电量估算能耗云端缓存采样个位置点处间断连线不代表实走道路首末起名称未北地图已旋转背景无本区域版权贡献者名称待确认路网推断虚线为采样连线·→—：，。%/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ()'
 index={};raw=bytearray()
 for size in [12,13,15,17,18,21,35,40,42]:
  f=ImageFont.truetype(str(fontpath),size);f.set_variation_by_axes([650 if size==40 else 550 if size in (35,42) else 400]);chars=set(labels)

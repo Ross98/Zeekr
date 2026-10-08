@@ -214,16 +214,58 @@ class RichDeliveryTests(unittest.TestCase):
         self.monitor = Monitor(Path(self.temp.name) / 'private' / 'tracks.sqlite3',
                                map_renderer=lambda route:(self.maps.append(route) or TripImageTests._solid_png((220,225,230))))
 
-    def _trip(self):
-        for seconds, kwargs in ((0,{}),(60,{'speed':30,'engine':'engine_on','ready':1,'km':101}),
-                                (120,{'km':110,'soc':76})):
+    def _trip(self,distance=10):
+        for seconds, kwargs in ((0,{}),(60,{'speed':30,'engine':'engine_on','ready':1,'km':100+min(1,distance)}),
+                                (120,{'km':100+distance,'soc':76})):
             raw=self.sample(seconds,**kwargs)
             raw['position']['longitude'] += seconds*1000
             self.monitor.tracks.record('test-vehicle',raw,self.BASE+seconds*1000,180)
             self.monitor.observe('test-vehicle',raw,self.BASE+seconds*1000)
-        parked=self.sample(120,km=110,soc=76)
+        parked=self.sample(120,km=100+distance,soc=76)
         for seconds in range(180,721,60):
             self.monitor.observe('test-vehicle',parked,self.BASE+seconds*1000)
+
+    def test_short_trip_only_sends_text_and_never_renders_or_retries_image(self):
+        self._trip(4.9);calls=[]
+        class Sender:
+            def send_markdown(self,value):calls.append('markdown')
+            def send_image(self,value):calls.append('image')
+        self.monitor.deliver(Sender(),self.BASE+720000)
+        self.monitor.deliver(Sender(),self.BASE+900000)
+        self.assertEqual(calls,['markdown']);self.assertEqual(self.maps,[])
+        event=self.monitor.events()[0]
+        self.assertEqual((event['delivery'],event['image_delivery']),('sent','skipped'))
+        with self.monitor.tracks.connect() as db:
+            self.assertEqual(db.execute('SELECT attempts,sent_at FROM monitor_event_media').fetchone(),(0,None))
+
+    def test_exactly_five_km_still_sends_image(self):
+        self._trip(5);calls=[]
+        class Sender:
+            def send_markdown(self,value):calls.append('markdown')
+            def send_image(self,value):calls.append('image')
+        self.monitor.deliver(Sender(),self.BASE+720000)
+        self.assertEqual(calls,['markdown','image'])
+
+    def test_existing_pending_short_trip_image_is_skipped_before_rendering(self):
+        self._trip(1)
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_event_media SET delivery='pending'")
+        calls=[]
+        class Sender:
+            def send_markdown(self,value):calls.append('markdown')
+            def send_image(self,value):calls.append('image')
+        self.monitor.deliver(Sender(),self.BASE+720000)
+        self.assertEqual(calls,['markdown']);self.assertEqual(self.maps,[])
+        self.assertEqual(self.monitor.events()[0]['image_delivery'],'skipped')
+
+    def test_only_known_nonnegative_distances_below_five_suppress_image(self):
+        from zeekr_control.monitor import short_trip
+        for distance,expected in [(0,True),(4.999,True),(5,False),(5.001,False),
+                                  (None,False),(-1,False),(True,False),('1',False),(float('nan'),False)]:
+            with self.subTest(distance=distance):
+                self.assertEqual(short_trip({'report_v2':{'metrics':{'distance_km':distance}}}),expected)
+        self.assertTrue(short_trip({'distance_km':1}))
+        self.assertFalse(short_trip({'report_v2':{'metrics':{'distance_km':None}},'distance_km':1}))
 
     def test_focused_renderer_receives_raw_route_and_resolved_start_name(self):
         self._trip()
