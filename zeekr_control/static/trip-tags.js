@@ -91,14 +91,17 @@
     function placesView(){
       const stats=data?.place_statistics;if(!stats)return '';
       const places=[...stats.places].sort((a,b)=>(b.departures+b.arrivals)-(a.departures+a.arrivals)||a.id.localeCompare(b.id));
-      const regions=stats.name_regions||[],pages=Math.max(1,Math.ceil(places.length/20));placePage=Math.min(placePage,pages-1);
+      const regions=stats.name_regions||[],ids=new Set(regions.map(r=>r.id));
+      const labels=regions.filter(r=>!ids.has(r.inherited_region_id)),children=new Map();
+      for(const r of regions)if(ids.has(r.inherited_region_id))children.set(r.inherited_region_id,(children.get(r.inherited_region_id)||0)+1);
+      const pages=Math.max(1,Math.ceil(places.length/20));placePage=Math.min(placePage,pages-1);
       return `<section class="card insight-panel" id="tag-place-statistics"><div class="insight-heading"><h3>本月出发与到达地点</h3><span class="insight-note">${places.length} 个参考地点</span></div>
         <p class="insight-note">已命名区域内的起止点共用地点标签，历史与后续月份自动匹配；按点位圆心判断区域归属，圆心在多边形边界上也算范围内；圆心在外仅圆边重叠不归入。未命名点仍按固定中心 ${stats.radius_m} 米分组，不沿相邻点串联合并。使用起止三分钟内的可信采样，原始坐标保留。</p>
         <p class="insight-note">名称优先使用手动命名，其次按当前设置匹配家／公司，再采用已有可信地址。地址带“附近”，无法确认时保留编号；读取统计不会额外查询地址。</p>
         <p class="insight-note">出发地点未知 ${stats.unknown_departures} 次 · 到达地点未知 ${stats.unknown_arrivals} 次。完整与片段均按有效端点计入；次数表示行程端点，不表示停车时长。</p>
         ${places.length?`<table class="tag-place-table"><thead><tr><th scope="col">地点</th><th scope="col">出发</th><th scope="col">到达</th><th scope="col">名称</th></tr></thead><tbody>${places.slice(placePage*20,placePage*20+20).map(p=>`<tr><th scope="row">${placeLink(p.id)}<small class="tag-place-source">${({manual:'手动名称',commute:'按当前设置',address:'已有地址',reference:'参考编号'})[p.name_source]||'参考编号'}</small></th><td>${p.departures}</td><td>${p.arrivals}</td><td>${button('改名','place-name-edit',!p.name_key,`data-id="${esc(p.id)}" aria-label="修改地点名称 ${esc(p.label)}"`)}</td></tr>`).join('')}</tbody></table>${pages>1?`<div class="insight-pagination">${button('上一页地点','places-previous',placePage===0)}<span>${placePage+1} / ${pages}</span>${button('下一页地点','places-next',placePage+1===pages)}</div>`:''}`:'<p>本月暂无可信起止定位，仍可创建或管理地点区域。</p>'}
-        <h4>已保存地点区域</h4><p class="insight-note">区域跨月保留，本月没有行程也可修改。不同区域即使同名也分别保存。</p>
-        <div class="tag-region-list">${regions.map(r=>`<div><button type="button" class="tag-place-link" data-tag="region-focus" data-id="${esc(r.id)}" aria-label="在地图定位 ${esc(regionName(r))}">${esc(regionName(r))}</button><span>${r.inherited_region_id?'归属自定义区域 · ':''}${r.shape==='polygon'?`多边形 · ${r.vertices.length} 个顶点`:`圆形 · ${r.radius_m||150} 米`}</span>${button(r.inherited_region_id?'编辑归属区域':'编辑区域','region-edit',false,`data-id="${esc(r.id)}" aria-label="编辑区域 ${esc(regionName(r))}"`)}</div>`).join('')||'<p class="insight-note">暂无已保存区域。</p>'}</div>
+        <h4>已保存地点区域</h4><p class="insight-note">区域跨月保留，本月没有行程也可修改。已归入的点位合并显示在所属区域下；区域外的同名点位分别保留。</p>
+        <div class="tag-region-list">${labels.map(r=>`<div><button type="button" class="tag-place-link" data-tag="region-focus" data-id="${esc(r.id)}" aria-label="在地图定位 ${esc(regionName(r))}">${esc(regionName(r))}</button><span>${r.inherited_region_id?'归属自定义区域 · ':''}${r.shape==='polygon'?`多边形 · ${r.vertices.length} 个顶点`:`圆形 · ${r.radius_m||150} 米`}${children.has(r.id)?` · 已归入 ${children.get(r.id)} 个点位`:''}</span>${button(r.inherited_region_id?'编辑归属区域':'编辑区域','region-edit',false,`data-id="${esc(r.id)}" aria-label="编辑区域 ${esc(regionName(r))}"`)}</div>`).join('')||'<p class="insight-note">暂无已保存区域。</p>'}</div>
         <div class="insight-actions">${button('新建多边形地点','region-new')}${button('撤销地点操作','place-name-undo',!stats.name_can_undo)}</div>
         ${namePlace?nameEditor():''}
         <div class="insight-actions">${button(placesShown?'隐藏地点地图':'查看地点地图','places-map',!places.length&&!regions.length)}${placesShown?button('查看全部地点','places-all'):''}</div>${placesShown?'<p class="insight-note">点地点名称可放大定位；点编号查看详情和地图网站跳转。小点为本月实际起止观测。</p><div id="tag-places-map" role="region" tabindex="0" aria-label="本月地点地图"></div>':''}

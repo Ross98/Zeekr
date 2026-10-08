@@ -13,7 +13,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     places:empty?[]:[{id:'place_1',label:'地点甲',latitude:31.2,longitude:121.4,departures:1,arrivals:2,name_source:'manual',name_key:'key_1',manual_name_id:'region-0'},
                        {id:'place_2',label:'地点乙',latitude:31.21,longitude:121.41,departures:2,arrivals:1,name_source:'manual',name_key:'key_2',manual_name_id:'region-1'}],
     name_regions:[{id:'region-alone',name:'本月无行程区域',latitude:31.24,longitude:121.44,shape:'polygon',vertices:[[31.24,121.44],[31.24,121.445],[31.245,121.445],[31.245,121.44]]},
-      ...Array.from({length:24},(_,i)=>({id:'region-'+i,name:'保存地点 '+i,latitude:31.2+i*.001,longitude:121.4,radius_m:50,...(i===23?{display_name:'本月无行程区域',inherited_region_id:'region-alone',latitude:31.242,longitude:121.442}:{})}))],
+      ...Array.from({length:24},(_,i)=>({id:'region-'+i,name:'保存地点 '+i,latitude:31.2+i*.001,longitude:121.4,radius_m:50,...(i===22?{name:'本月无行程区域'}:{}),...(i===23?{display_name:'本月无行程区域',inherited_region_id:'region-alone',latitude:31.242,longitude:121.442}:{})}))],
     observed_points:[],routes:empty?[]:[{start_place:'place_1',end_place:'place_2',count:1}]};
    data.events.forEach(e=>{e.start_place=empty?null:'place_1';e.end_place=empty?null:'place_2';});
    await route.fulfill({json:data});
@@ -69,10 +69,14 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.getByLabel('标签月份',{exact:true}).fill('2026-08');await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
   assert.equal(await page.locator('#tag-places-map').count(),0);
   await page.locator('.tag-region-list [data-tag="region-focus"][data-id="region-alone"]').click();await assertJump('本月无行程区域');
-  const inherited=page.locator('.tag-region-list [data-tag="region-focus"][data-id="region-23"]');
-  assert.equal(await inherited.innerText(),'本月无行程区域','saved point uses area label without trips');
-  await inherited.click();await assertJump('本月无行程区域');await assertCenter(31.242,121.442);
-  await page.locator('.tag-region-list [data-tag="region-edit"][data-id="region-23"]').click();
+  assert.equal(await page.locator('.tag-region-list [data-id="region-23"]').count(),0,'owned circle must not duplicate area label');
+  assert.equal(await page.locator('.tag-region-list [data-tag="region-focus"][data-id="region-22"]').count(),1,'same name outside area remains independent');
+  const area=page.locator('.tag-region-list [data-tag="region-focus"][data-id="region-alone"]');
+  assert.match(await area.locator('..').innerText(),/已归入 1 个点位/);
+  await area.click();await assertJump('本月无行程区域');
+  const circlePixel=await page.locator('#tag-places-map').evaluate(el=>{const r=el.getBoundingClientRect(),p=testPlacesMap.latLngToContainerPoint([31.242,121.442]);return {x:r.x+p.x,y:r.y+p.y};});
+  await page.mouse.click(circlePixel.x,circlePixel.y);await assertJump('本月无行程区域');await assertCenter(31.242,121.442);
+  await page.locator('.tag-region-list [data-tag="region-edit"][data-id="region-alone"]').click();
   assert.equal(await page.getByLabel('地点名称',{exact:true}).inputValue(),'本月无行程区域','edit inherited name through owning area');
   assert.equal(await page.getByLabel('区域形状',{exact:true}).inputValue(),'polygon');
   assert.equal(await page.locator('#tag-name-map').count(),1);
