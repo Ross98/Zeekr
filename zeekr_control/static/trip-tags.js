@@ -32,7 +32,7 @@
     let routeShown=false,routeBusy=false,routeData=null,routeError='',routeSerial=0,routeMap=null;
     let namePlace=null,nameDraft='',nameRadius=150,namePreview=null;
     let nameShape='circle',nameVertices=[],nameDrawing=false,nameMap=null,nameViewport=null,nameVertex=null,nameFreehand=true;
-    let placesShown=false,placesMap=null,placePage=0,focusedPlace=null,placesViewport=null;
+    let placesShown=false,placesMap=null,placePage=0,focusedPlace=null,focusedRegion=null,placesViewport=null;
     let commuteDraft={home:null,work:null,homeRadius:300,workRadius:300},commuteDirty=false;
     let commuteMap=null,commuteShown=false,placeMode=null,commuteBusy=false;
     const context=()=>getState()?.insights_context||'';
@@ -62,10 +62,11 @@
     const placeLabel=id=>data?.place_statistics?.places.find(p=>p.id===id)?.label||'未知';
     const placeLink=id=>data?.place_statistics?.places.some(p=>p.id===id)?`<button type="button" class="tag-place-link" data-tag="place-focus" data-id="${esc(id)}" aria-label="在地图定位 ${esc(placeLabel(id))}" ${busy?'disabled':''}>${esc(placeLabel(id))}</button>`:esc(placeLabel(id));
     function closeNameEditor(){nameMap?.remove();nameMap=null;namePlace=null;nameDraft='';namePreview=null;nameVertices=[];nameDrawing=false;nameVertex=null;nameViewport=null;}
-    function closePlacesMap(){closeNameEditor();placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=placesViewport=null;namePlace=null;nameDraft='';namePreview=null;}
-    function focusPlace(id){
-      if(!data?.place_statistics?.places.some(p=>p.id===id))return;
-      focusedPlace=id;placesViewport=null;placesShown=true;placesMap?.remove();placesMap=null;paint();
+    function closePlacesMap(){closeNameEditor();placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=focusedRegion=placesViewport=null;namePlace=null;nameDraft='';namePreview=null;}
+    function focusPlace(id,region=false){
+      const items=region?data?.place_statistics?.name_regions:data?.place_statistics?.places;
+      if(!items?.some(p=>p.id===id))return;
+      focusedPlace=region?null:id;focusedRegion=region?id:null;placesViewport=null;placesShown=true;placesMap?.remove();placesMap=null;paint();
       const map=node.querySelector('#tag-places-map');map?.focus({preventScroll:true});map?.scrollIntoView({block:'center'});
     }
     function regionLayer(map,region,color='#20776e'){
@@ -90,7 +91,7 @@
         <p class="insight-note">出发地点未知 ${stats.unknown_departures} 次 · 到达地点未知 ${stats.unknown_arrivals} 次。完整与片段均按有效端点计入；次数表示行程端点，不表示停车时长。</p>
         ${places.length?`<table class="tag-place-table"><thead><tr><th scope="col">地点</th><th scope="col">出发</th><th scope="col">到达</th><th scope="col">名称</th></tr></thead><tbody>${places.slice(placePage*20,placePage*20+20).map(p=>`<tr><th scope="row">${placeLink(p.id)}<small class="tag-place-source">${({manual:'手动名称',commute:'按当前设置',address:'已有地址',reference:'参考编号'})[p.name_source]||'参考编号'}</small></th><td>${p.departures}</td><td>${p.arrivals}</td><td>${button('改名','place-name-edit',!p.name_key,`data-id="${esc(p.id)}" aria-label="修改地点名称 ${esc(p.label)}"`)}</td></tr>`).join('')}</tbody></table>${pages>1?`<div class="insight-pagination">${button('上一页地点','places-previous',placePage===0)}<span>${placePage+1} / ${pages}</span>${button('下一页地点','places-next',placePage+1===pages)}</div>`:''}`:'<p>本月暂无可信起止定位，仍可创建或管理地点区域。</p>'}
         <h4>已保存地点区域</h4><p class="insight-note">区域跨月保留，本月没有行程也可修改。不同区域即使同名也分别保存。</p>
-        <div class="tag-region-list">${regions.map(r=>`<div><strong>${esc(r.name)}</strong><span>${r.shape==='polygon'?`多边形 · ${r.vertices.length} 个顶点`:`圆形 · ${r.radius_m||150} 米`}</span>${button('编辑区域','region-edit',false,`data-id="${esc(r.id)}" aria-label="编辑区域 ${esc(r.name)}"`)}</div>`).join('')||'<p class="insight-note">暂无已保存区域。</p>'}</div>
+        <div class="tag-region-list">${regions.map(r=>`<div><button type="button" class="tag-place-link" data-tag="region-focus" data-id="${esc(r.id)}" aria-label="在地图定位 ${esc(r.name)}">${esc(r.name)}</button><span>${r.shape==='polygon'?`多边形 · ${r.vertices.length} 个顶点`:`圆形 · ${r.radius_m||150} 米`}</span>${button('编辑区域','region-edit',false,`data-id="${esc(r.id)}" aria-label="编辑区域 ${esc(r.name)}"`)}</div>`).join('')||'<p class="insight-note">暂无已保存区域。</p>'}</div>
         <div class="insight-actions">${button('新建多边形地点','region-new')}${button('撤销地点操作','place-name-undo',!stats.name_can_undo)}</div>
         ${namePlace?nameEditor():''}
         <div class="insight-actions">${button(placesShown?'隐藏地点地图':'查看地点地图','places-map',!places.length&&!regions.length)}${placesShown?button('查看全部地点','places-all'):''}</div>${placesShown?'<p class="insight-note">点地点名称可放大定位；点编号查看详情和地图网站跳转。小点为本月实际起止观测。</p><div id="tag-places-map" role="region" tabindex="0" aria-label="本月地点地图"></div>':''}
@@ -167,8 +168,13 @@
       const el=node?.querySelector('#tag-places-map'),places=data?.place_statistics?.places||[],regions=data?.place_statistics?.name_regions||[];if(!el||(!places.length&&!regions.length)||placesMap)return;
       placesMap=AmapMaps.createMap(el,{scrollWheelZoom:false});
       AmapMaps.addTiles(placesMap);
-      const bounds=[],markers=new Map();
-      for(const region of regions){regionLayer(placesMap,region).bindTooltip(esc(region.name));bounds.push(...(region.shape==='polygon'?region.vertices:[[region.latitude,region.longitude]]));}
+      const bounds=[],markers=new Map(),regionLayers=new Map();
+      for(const region of regions){
+        const layer=regionLayer(placesMap,region).bindTooltip(esc(region.name))
+          .bindPopup(`<strong>${esc(region.name)}</strong><p>已保存地点区域 · ${region.shape==='polygon'?'自定义多边形':(region.radius_m||150)+' 米圆形范围'}</p>`);
+        layer.on('click',()=>{focusedRegion=region.id;focusedPlace=null;});regionLayers.set(region.id,layer);
+        bounds.push(...(region.shape==='polygon'?region.vertices:[[region.latitude,region.longitude]]));
+      }
       for(const p of data.place_statistics.observed_points||[])L.circleMarker([p.latitude,p.longitude],{radius:3,color:'#16594f',fillOpacity:.6}).addTo(placesMap);
       for(const [index,p] of places.entries()){
         const center=[p.latitude,p.longitude];bounds.push(center);
@@ -178,13 +184,16 @@
         const marker=L.marker(center,{icon,title:p.label}).addTo(placesMap)
           .bindTooltip(esc(p.label))
           .bindPopup(`<strong>${esc(p.label)}</strong><p>出发 ${p.departures} 次 · 到达 ${p.arrivals} 次<br>归并范围 ${p.name_shape==='polygon'?'自定义多边形':(p.name_radius_m||data.place_statistics.radius_m)+' 米'}</p><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">打开地图网站</a>`);
-        marker.on('click',()=>{focusedPlace=p.id;});markers.set(p.id,marker);
+        marker.on('click',()=>{focusedPlace=p.id;focusedRegion=null;});markers.set(p.id,marker);
       }
-      const selectedPlace=places.find(p=>p.id===focusedPlace);
+      const selectedPlace=places.find(p=>p.id===focusedPlace),selectedRegion=regions.find(r=>r.id===focusedRegion);
       if(placesViewport)placesMap.setView(placesViewport.center,placesViewport.zoom,{animate:false});
+      else if(selectedRegion?.shape==='polygon')placesMap.fitBounds(selectedRegion.vertices,{padding:[35,35],maxZoom:18,animate:false});
+      else if(selectedRegion)placesMap.setView([selectedRegion.latitude,selectedRegion.longitude],17,{animate:false});
       else if(selectedPlace)placesMap.setView([selectedPlace.latitude,selectedPlace.longitude],17,{animate:false});
       else if(bounds.length===1)placesMap.setView(bounds[0],16);else placesMap.fitBounds(bounds,{padding:[35,35],maxZoom:16});
       if(selectedPlace)markers.get(selectedPlace.id)?.openPopup();
+      if(selectedRegion)regionLayers.get(selectedRegion.id)?.openPopup();
     }
 
     function commuteView(){
@@ -392,8 +401,9 @@
       if(action==='place-name-cancel'){closeNameEditor();paint();return true;}
       if(['place-name-save','place-name-clear','place-name-preview','place-name-undo'].includes(action)){mutatePlaceName(action);return true;}
       if(action==='place-focus'){focusPlace(id);return true;}
-      if(action==='places-all'){focusedPlace=placesViewport=null;placesMap?.remove();placesMap=null;paint();return true;}
-      if(action==='places-map'){placesShown=!placesShown;if(!placesShown){focusedPlace=placesViewport=null;placesMap?.remove();placesMap=null;}paint();return true;}
+      if(action==='region-focus'){focusPlace(id,true);return true;}
+      if(action==='places-all'){focusedPlace=focusedRegion=placesViewport=null;placesMap?.remove();placesMap=null;paint();return true;}
+      if(action==='places-map'){placesShown=!placesShown;if(!placesShown){focusedPlace=focusedRegion=placesViewport=null;placesMap?.remove();placesMap=null;}paint();return true;}
       if(action==='places-previous'||action==='places-next'){placePage+=action==='places-next'?1:-1;paint();return true;}
       if(action==='commute-map'){commuteShown=!commuteShown;placeMode=commuteShown&&!commuteDraft.home?'home':null;paint();return true;}
       if(action==='commute-place-home'||action==='commute-place-work'){const key=action.endsWith('home')?'home':'work';placeMode=placeMode===key?null:key;paint();return true;}
