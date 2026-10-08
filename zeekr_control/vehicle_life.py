@@ -97,6 +97,8 @@ class VehicleLife:
         now=self.clock();current=odometer(raw,fetched_at,now)
         costs=self.store.read(owner,vehicle,'expenses');saved=self.store.read(owner,vehicle,'reminders')
         rows=[dict(r['body'],id=r['id'],deleted=r['deleted'],updated_at=r['updated_at']) for r in costs['records']]
+        expense_range=dict(start_date=min((r['date'] for r in rows),default=None),
+                           end_date=max((r['date'] for r in rows),default=None))
         categories=sorted(set(DEFAULT_CATEGORIES)|{r['category'] for r in rows})
         rows=[r for r in rows if window['start_date']<=r['date']<=window['end_date']]
         entries=sorted((r for r in rows if not r['deleted']),key=lambda r:(r['date'],r['updated_at'],r['id']),reverse=True)
@@ -107,7 +109,7 @@ class VehicleLife:
         reminders=[dict(r['body'],id=r['id'],deleted=r['deleted'],updated_at=r['updated_at'],
                         **reminder_status(r['body'],current,date_label(now))) for r in saved['records']]
         counts={key:sum(r['status']==key and not r['deleted'] for r in reminders) for key in ('due','upcoming','unknown','completed')}
-        return dict(window=window,as_of=now,odometer=current,category_choices=categories,
+        return dict(window=window,as_of=now,odometer=current,category_choices=categories,expense_range=expense_range,
                     expenses=dict(revision=costs['revision'],can_undo=costs['can_undo'],entries=entries,
                                   trash=[r for r in rows if r['deleted']],total_cents=sum(r['amount_cents'] for r in entries),categories=by_category),
                     reminders=dict(revision=saved['revision'],can_undo=saved['can_undo'],records=reminders,counts=counts))

@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict');
+const {selectExpenses,groupExpenses}=require('../zeekr_control/static/vehicle-life.js');
+const book={entries:[{id:'a',date:'2026-08-01',category:'保险',title:'年险',amount_cents:100,updated_at:9,note:'续费'},{id:'b',date:'2026-09-01',category:'洗车',title:'清洗',amount_cents:0,updated_at:1,note:'免费'},{id:'c',date:'2026-09-20',category:'停车',title:'地库',amount_cents:200,updated_at:2,note:'票据ABC'}],trash:[{id:'d',date:'2026-10-01',category:'洗车',title:'已删',amount_cents:300}]};
+assert.deepEqual(selectExpenses(book,{}).map(r=>r.id),['c','b','a']);
+assert.deepEqual(selectExpenses(book,{query:'abc'}).map(r=>r.id),['c']);
+assert.deepEqual(selectExpenses(book,{category:'洗车',query:'免费'}).map(r=>r.id),['b']);
+assert.deepEqual(selectExpenses(book,{state:'deleted'}).map(r=>r.id),['d']);
+const groups=groupExpenses(selectExpenses(book,{}));assert.deepEqual(groups.map(g=>[g.month,g.count,g.cents]),[['2026-09',2,200],['2026-08',1,100]]);
+assert.equal(book.entries[0].id,'a');assert.deepEqual(groupExpenses([]),[]);
+console.log('LIFE_HISTORY_SELECTION_PASS');

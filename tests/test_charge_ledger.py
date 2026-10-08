@@ -34,6 +34,32 @@ class ChargeLedgerTests(unittest.TestCase):
     def query(self,date='2026-09-20'):
         return self.ledger.query('owner','car',date)
 
+    def test_manual_bill_can_link_later_without_duplicate_and_can_undo(self):
+        manual=self.save(event_id='',amount='20')
+        result=self.save(revision=1,id=manual['id'],amount='20')
+        data=self.query()
+        self.assertEqual(len(data['entries']),1)
+        self.assertEqual(data['entries'][0]['source_event_id'],'charge')
+        self.assertTrue(data['events'][0]['recorded'])
+        self.ledger.update('owner','car',{'action':'undo','revision':result['revision']})
+        self.assertIsNone(self.query()['entries'][0]['source_event_id'])
+
+    def test_manual_link_rejects_already_associated_event(self):
+        self.save(amount='30')
+        manual=self.save(revision=1,event_id='',amount='20')
+        with self.assertRaisesRegex(ValueError,'已关联'):
+            self.save(revision=2,id=manual['id'],amount='20')
+        self.assertEqual(len(self.query()['entries']),2)
+
+    def test_restore_does_not_duplicate_a_manual_association(self):
+        manual=self.save(event_id='',amount='20')
+        self.save(revision=1,id=manual['id'],amount='20')
+        self.ledger.update('owner','car',{'action':'delete','id':manual['id'],'revision':2})
+        self.save(revision=3,amount='30')
+        with self.assertRaisesRegex(ValueError,'已关联'):
+            self.ledger.update('owner','car',{'action':'restore','id':manual['id'],'revision':4})
+        self.assertEqual(len(self.query()['entries']),1)
+
     def test_actual_bill_overrides_estimate_without_double_counting(self):
         self.save(amount='30.10',metered_kwh='40',unit_price='0.75',service_fee='1')
         data=self.query();row=data['entries'][0]

@@ -8,4 +8,5 @@ assert.equal(nav.encode(nav.read('?p=insights&t=parameters')),'p=insights&t=para
 assert.equal(nav.read('?p=insights&t=hypotheses').t,'hypotheses');
 assert.equal(nav.encode(nav.read('?p=energy&range=range&date=2026-09-01&end=2026-09-30')),'p=energy&range=range&date=2026-09-01&end=2026-09-30');
 assert.equal(nav.encode(nav.read('?p=books&t=life&start=2026-09-01&end=2026-09-30')),'p=books&t=life&start=2026-09-01&end=2026-09-30');
+assert.equal(nav.read('?p=books&t=life&lifeMode=reminders').lifeMode,'reminders');
 console.log('NAVIGATION_STATE_PASS');

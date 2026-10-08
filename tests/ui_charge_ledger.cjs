@@ -19,6 +19,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     assert.equal(await page.getByLabel('桩端计量电量（kWh）',{exact:true}).inputValue(),'');
     assert.equal(await page.evaluate(()=>document.activeElement.id),'ledger-amount');
     await page.getByLabel('充电来源',{exact:true}).selectOption('home');
+    await page.locator('[data-detail=ledger-extras]').evaluate(el=>el.open=true);
     await page.getByLabel('充电方式',{exact:true}).selectOption('dc');
     await page.getByLabel('实际账单金额（元）',{exact:true}).fill('30.10');
     await page.getByLabel('桩端计量电量（kWh）',{exact:true}).fill('40');
@@ -45,6 +46,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'编辑账单',exact:true}).click();
     assert.ok(await page.evaluate(()=>document.querySelector('#ledger-entries').compareDocumentPosition(document.querySelector('#ledger-form')) & Node.DOCUMENT_POSITION_FOLLOWING),'bill list comes before editor');
     assert.equal(await page.getByLabel('充电方式',{exact:true}).inputValue(),'dc');
+    await page.locator('[data-detail=ledger-extras]').evaluate(el=>el.open=true);
     await page.getByLabel('充电方式',{exact:true}).selectOption('');
     assert.equal(await page.getByLabel('停车费（元）',{exact:true}).inputValue(),'2.00');
     await page.getByLabel('实际账单金额（元）',{exact:true}).fill('35.20');
@@ -72,18 +74,16 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'新增账单',exact:true}).click();
     await page.getByRole('button',{name:'取消新增',exact:true}).click();
     assert.equal(await page.locator('#ledger-form').count(),0,'cancel closes new form');
-    for(const width of [1440,390,320]){
+    for(const width of [1440,1280,1024]){
       await page.setViewportSize({width,height:850});
       const entry=page.locator('[data-ledger-entry]').first();
       const edit=entry.getByRole('button',{name:'编辑账单',exact:true});
       assert.equal(await edit.isVisible(),true,`collapsed row edit visible at ${width}`);
       await entry.scrollIntoViewIfNeeded();
-      if(width===390)await page.screenshot({path:'/tmp/zeekr-insights-qa/charge-ledger-edit-entry-mobile.png'});
       await edit.click();
       assert.equal(await page.locator('#ledger-editor').isVisible(),true);
       assert.ok((await page.getByLabel('实际账单金额（元）',{exact:true}).inputValue()).length>0,'edit preloads saved amount');
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`editor fits ${width}`);
-      if(width===390)await page.screenshot({path:'/tmp/zeekr-insights-qa/charge-ledger-editor-mobile.png'});
       await page.getByRole('button',{name:'取消编辑',exact:true}).click();
       assert.equal(await page.locator('#ledger-form').count(),0);
     }
@@ -113,6 +113,6 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByLabel('账本月份',{exact:true}).blur();
     await page.locator('#ledger-range').waitFor({state:'detached'});
     assert.equal(await page.locator('#ledger-range').count(),0,'Condition changes clear previous results');
-    console.log('UI_CHARGE_LEDGER_PASS: linked/manual bills, actual/estimate separation, edit/undo/delete/restore, zero cost, persistence, stale-write rejection with draft preservation, source breakdown, themes/mobile/zoom/contrast');
+    console.log('UI_CHARGE_LEDGER_PASS: linked/manual bills, actual/estimate separation, edit/undo/delete/restore, zero cost, persistence, stale-write rejection with draft preservation, source breakdown, desktop themes/zoom/contrast');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

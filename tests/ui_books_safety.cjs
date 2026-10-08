@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict');
+const {fixture}=require('./ui_insight_helpers.cjs');
+(async()=>{const f=await fixture(),{page}=f;try{
+await page.getByRole('button',{name:'用车账本',exact:true}).click();await page.locator('#ledger-month').fill('2026-09');await page.getByRole('button',{name:'读取账本',exact:true}).click();await page.locator('#ledger-range').waitFor();
+await page.getByRole('button',{name:'新增账单',exact:true}).click();await page.locator('#ledger-date').fill('2026-09-20');await page.locator('#ledger-amount').fill('20');await page.locator('#ledger-note').fill('冲突测试原账单');await page.getByRole('button',{name:'保存账单',exact:true}).click();await page.getByText('账单已保存。',{exact:true}).waitFor();
+await page.locator('[data-ledger-entry]').filter({hasText:'冲突测试原账单'}).locator('[data-ledger=edit]').click();await page.locator('#ledger-note').fill('旧草稿');
+const other=await page.evaluate(async()=>{const book=await fetch('/api/insights/ledger?date=2026-09-01').then(r=>r.json());const row=book.entries.find(r=>r.note==='冲突测试原账单');const response=await fetch('/api/insights/ledger',{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':state.request_key},body:JSON.stringify({action:'save',context:book.context,revision:book.revision,id:row.id,event_id:'',date:row.date,source:row.source,amount:'40',note:'另一页面的新金额'})});return {status:response.status,body:await response.json()}});
+await page.getByRole('button',{name:'读取账本',exact:true}).click();await page.locator('[data-ledger-entry]').filter({hasText:'另一页面的新金额'}).waitFor();const retained=await page.locator('#ledger-amount').inputValue();
+await page.getByRole('button',{name:'保存账单',exact:true}).click();await page.getByRole('alert').filter({hasText:'记录已有更新'}).waitFor();
+const saved=await page.evaluate(()=>fetch('/api/insights/ledger?date=2026-09-01').then(r=>r.json()).then(d=>d.entries.find(r=>r.note==='另一页面的新金额')));
+assert.equal(other.status,200);assert.equal(retained,'20.00');assert.equal(saved.actual_cents,4000);
+await page.getByRole('button',{name:'新增账单',exact:true}).click();
+assert.equal(await page.locator('#ledger-note').inputValue(),'旧草稿');
+await page.getByRole('button',{name:'继续编辑草稿',exact:true}).click();
+await page.reload();await page.locator('#ledger-note').waitFor();assert.equal(await page.locator('#ledger-note').inputValue(),'旧草稿');
+await page.getByRole('button',{name:'生活账本',exact:true}).click();await page.getByRole('button',{name:'查询生活账本',exact:true}).click();await page.locator('#life-total').waitFor();
+await page.getByRole('button',{name:'保养与到期待办',exact:true}).click();await page.getByRole('button',{name:'新增待办',exact:true}).click();await page.getByLabel('待办名称',{exact:true}).fill('刷新保留草稿');
+await page.reload();await page.getByLabel('待办名称',{exact:true}).waitFor();assert.equal(await page.getByLabel('待办名称',{exact:true}).inputValue(),'刷新保留草稿');
+let reads=0;page.on('request',r=>{if(r.url().includes('/api/insights/life?'))reads++});await page.evaluate(async()=>{const real=Date.now;Date.now=()=>real()+61000;try{await pollState(true)}finally{Date.now=real}});await page.waitForFunction(()=>document.querySelector('#life-form'));
+assert.ok(reads>0,'reminders update during polling');assert.deepEqual(f.errors,[]);console.log('BOOKS_SAFETY_PASS');
+}finally{await f.close()}})().catch(e=>{console.error(e);process.exitCode=1});

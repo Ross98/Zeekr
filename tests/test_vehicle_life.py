@@ -31,6 +31,15 @@ class VehicleLifeTests(unittest.TestCase):
         return {'updateTime':self.now if stamp is None else stamp,'vin':'PRIVATE-VIN',
                 'additionalVehicleStatus':{'maintenanceStatus':{'odometer':km}}}
 
+    def test_expense_history_range_includes_archived_dates_and_deleted_records(self):
+        saved=self.save(date='2025-02-01')
+        self.save(revision=1,date='2026-09-20')
+        self.change('expenses','delete',saved['id'],2)
+        data=self.query()
+        self.assertEqual(data['expense_range'],{'start_date':'2025-02-01','end_date':'2026-09-20'})
+        self.assertEqual(len(data['expenses']['entries']),1)
+        self.assertNotIn('owner',data['expense_range'])
+
     def test_readonly_empty_and_scope(self):
         self.assertEqual(self.query()['expenses']['entries'],[])
         self.assertFalse(self.store.path.exists())

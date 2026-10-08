@@ -67,10 +67,19 @@ class ChargeLedger:
             if event is not None and event['kind']!='charge_end':
                 raise ValueError('只能关联已结束充电记录。')
             if event is not None:
-                expected='charge_'+hashlib.sha256(event_id.encode()).hexdigest()
-                if identity and identity!=expected:
+                saved=self.store.read(owner,vehicle,'charges')
+                existing=next((r for r in saved['records'] if r['id']==identity and not r['deleted']),None)
+                if any(not r['deleted'] and r['id']!=(identity or 'charge_'+hashlib.sha256(event_id.encode()).hexdigest()) and isinstance(r['body'].get('event'),dict)
+                       and r['body']['event'].get('id')==event_id for r in saved['records']):
+                    raise ValueError('此充电记录已关联其他账单，请编辑原账单。')
+                manual=bool(existing and identity.startswith('manual_'))
+                prior_event=existing['body'].get('event') if existing else None
+                if manual and isinstance(prior_event,dict) and prior_event.get('id')!=event_id:
                     raise ValueError('修改关联记录时，请另建账单。')
-                identity=expected
+                expected='charge_'+hashlib.sha256(event_id.encode()).hexdigest()
+                if identity and identity!=expected and not manual:
+                    raise ValueError('修改关联记录时，请另建账单。')
+                if not manual:identity=expected
             elif not identity:
                 identity='manual_'+uuid.uuid4().hex
             elif not isinstance(identity,str) or not identity.startswith('manual_'):
@@ -88,6 +97,14 @@ class ChargeLedger:
                   'unit_price':str(price) if price is not None else None,'service_fee_cents':cents(fee),
                   'parking_fee_cents':cents(parking_fee) if parking_fee is not None else 0,
                   'charge_mode_override':charge_mode_override or None,'event':event}
+        if action=='restore':
+            saved=self.store.read(owner,vehicle,'charges')
+            target=next((r for r in saved['records'] if r['id']==identity),None)
+            linked=target['body'].get('event') if target else None
+            if isinstance(linked,dict) and any(not r['deleted'] and r['id']!=identity
+                    and isinstance(r['body'].get('event'),dict) and r['body']['event'].get('id')==linked.get('id')
+                    for r in saved['records']):
+                raise ValueError('此充电记录已关联其他账单，不能重复恢复。')
         result=self.store.change(owner,vehicle,'charges',action,identity,body,data.get('revision'),guard=guard)
         return {'revision':result['revision'],'can_undo':result['can_undo'],'id':identity,
                 'saved_date':body['date'] if body else None,'action':action}

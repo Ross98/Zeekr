@@ -69,13 +69,13 @@ const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unc
 const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,redraw:render,escape:esc,age,active:()=>page==='car'});
 
 let sectionTask='';
-function openSectionTask(task){sectionTask=task;render();if(task&&task!=='records')insightsPage.openTool(task);window.scrollTo({top:0,left:0,behavior:'instant'});}
+function openSectionTask(task){if(page==='books')window.BookSession.write(state?.insights_context,'navigation',{task});sectionTask=task;render();if(task&&task!=='records')insightsPage.openTool(task);window.scrollTo({top:0,left:0,behavior:'instant'});}
 const insightSections = ['car','energy','books','tracks','insights','settings','calendar','report'];
 window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,trackSource].join('|');
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields,editing:()=>reviewEditing,edit:editReviewStep,canEdit:canEditReview,propose:proposeReview},
-  navigate:(section,view,date)=>{page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
+  navigate:(section,view,date,eventId)=>{if(['ledger','life','costs'].includes(view)){enterBooks(view,date,eventId);return;}page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
-  openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{page=tool==='ledger'?'books':'settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
+  openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{if(tool==='ledger'){enterBooks(tool,date);return;}page='settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
 async function openOverviewRecord(record){
   const context=state?.insights_context,date=beijingDate(record.end_time);
   if(record.kind==='trip_end'){
@@ -861,7 +861,7 @@ function renderContent() {
   updateConnection();
   $('.breadcrumb').textContent = `我的车库 / ${state?.profile?.name || '我的车辆'}`;
   const error = transientError || state?.error;
-  if(page==='books'&&!sectionTask)sectionTask='ledger';
+  if(page==='books'&&!sectionTask){const last=window.BookSession.read(state?.insights_context,'navigation')?.task;sectionTask=['ledger','life','costs'].includes(last)?last:'ledger';}
   const taskPage=['car','energy','books','settings','tracks'].includes(page)&&sectionTask;
   const body = taskPage?(sectionTask==='records'?chargingWorkspace(state?.model?.charging_details)+'<div id="charge-management"></div><div id="insights-workspace" hidden></div>':'<div id="insights-workspace"></div>'):{overview,car,energy,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',calendar:()=>'<div id="insights-workspace"></div>',report:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
   const retainedImages = [...$('#main').querySelectorAll('img')].filter(image=>!image.closest('#map'));
@@ -1017,6 +1017,7 @@ async function updateRecording(saveInterval = false) {
   if (handleReviewAction(target)) return;
   if (handleCloudAction(target)) return;
   if (handleLocalTripAction(target)) return;
+  if (target.dataset.page==='books') {enterBooks(window.BookSession.read(state?.insights_context,'navigation')?.task||'ledger');return;}
   if (target.dataset.page) { sectionTask='';page=target.dataset.page==='map'?'overview':target.dataset.page==='fields'?'insights':target.dataset.page; render(); if(target.dataset.page==='fields')insightsPage.openTool('fields');window.scrollTo(0,0); return; }
   if (target.dataset.source) { sectionTask='';trackSource=target.dataset.source; render();window.scrollTo(0,0); return; }
   switch(target.dataset.action) {
@@ -1090,12 +1091,24 @@ document.addEventListener('change', event => {
   if(event.target.id==='vehicle-select') {chargeRequest++;chargeQuery=null;chargeBusy=false;chargeError='';chargeNextCursor=null;chargeDateInitialized=false;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];chargingSelection='current';chargingSession=null;chargingSeries=null;chargingStats=null;chargingAnalyticsLoadedKey='';chargingAnalyticsLoadingKey='';refresh();}
 });
 
+function enterBooks(view='ledger',date,eventId){
+  if(!eventId&&typeof recallLedgerReturn!=='undefined')recallLedgerReturn=null;
+  if(page!=='books')window.BookSession.write(state?.insights_context,'return',{snapshot:navigationSnapshot(),position:scrollY});
+  page='books';sectionTask=view;window.BookSession.write(state?.insights_context,'navigation',{task:view});render();
+  if(eventId)insightsPage.openLedgerEvent(eventId,date);
+  else if(date)insightsPage.openDate(view,date);
+  else insightsPage.openTool(view);
+  window.scrollTo(0,0);
+}
+window.enterBooks=enterBooks;
+window.booksCanReturn=()=>!!window.BookSession.read(state?.insights_context,'return')?.snapshot;
+document.addEventListener('click',event=>{if(event.target.closest('[data-books-return]')){const saved=window.BookSession.read(state?.insights_context,'return');if(saved?.snapshot)restoreNavigation(saved.snapshot,saved.position||0);}});
 let navigationReady=false,navigationRestoring=false,restoringQuery=null;
 const navigationQueries={
   calendar:['#calendar-result-month','[data-calendar=load]'],
   ledger:['#ledger-range','#ledger-load'],routes:['#routes-results','[data-travel="load"]'],
   review:['#usage-review','[data-travel="load"]'],report:['#report-observations','[data-report="load"]'],
-  quality:['#quality-totals','[data-quality="load"]']
+  life:['#life-rows','[data-life="load"]'],quality:['#quality-totals','[data-quality="load"]']
 };
 const navigationFields={
   range:'#charge-query-mode',
@@ -1112,6 +1125,7 @@ function navigationSnapshot(){
   if(sectionTask)snapshot.t=sectionTask;
   else if(['insights','calendar','report'].includes(page))snapshot.t=insightsPage.currentTool();
   if(page==='tracks'&&!sectionTask)snapshot.s=trackSource;
+  if(snapshot.t==='life')snapshot.lifeMode=document.querySelector('[data-life-mode][aria-pressed=true]')?.dataset.lifeMode;
   if(snapshot.t==='parameters')snapshot.step=insightsPage.parameterStage();
   for(const [key,selector] of Object.entries(navigationFields)){
     const el=visibleNavigationField(selector);if(el)snapshot[key]=el.value;
@@ -1162,6 +1176,7 @@ function restoreNavigation(snapshot,position=0){
     const el=visibleNavigationField(selector);
     if(el&&snapshot[key]&&el.value!==snapshot[key]){el.value=snapshot[key];el.dispatchEvent(new Event(el.tagName==='SELECT'||['charge-date','charge-end-date','track-date'].includes(el.id)?'change':'input',{bubbles:true}));}
   }
+  if(snapshot.lifeMode)document.querySelector(`[data-life-mode="${snapshot.lifeMode}"]`)?.click();
   if(snapshot.q==='1'&&navigationQueries[snapshot.t]){
     const current=navigationSnapshot();delete current.q;
     restoringQuery={signature:window.NavigationState.encode(current),restore:window.RefreshView.guard(()=>window.scrollTo({top:position,behavior:'instant'}))};

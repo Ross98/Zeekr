@@ -1060,6 +1060,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/parking.js': ('parking.js', 'text/javascript; charset=utf-8'),
                           '/usage-reports.js': ('usage-reports.js', 'text/javascript; charset=utf-8'),
                           '/charge-ledger.js': ('charge-ledger.js', 'text/javascript; charset=utf-8'),
+                          '/books-overview.js': ('books-overview.js', 'text/javascript; charset=utf-8'),
+                          '/books.css': ('books.css', 'text/css; charset=utf-8'),
                           '/custom-reminders.js': ('custom-reminders.js', 'text/javascript; charset=utf-8'),
                           '/trip-tags.js': ('trip-tags.js', 'text/javascript; charset=utf-8'),
                           '/travel-insights.js':('travel-insights.js','text/javascript; charset=utf-8'),

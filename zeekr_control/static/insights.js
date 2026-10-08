@@ -21,6 +21,7 @@
       {id:'parking',label:'停车观测',description:'停车区间、有效车辆观测与 SOC 变化'}
     ]},
     {name:'用车账本',page:'books',tools:[
+      {id:'costs',label:'费用总览',description:'充电、停车与日常支出，待补账与重复核对'},
       {id:'ledger',label:'充电账本',description:'充电费用、桩端电量与实际电价'},
       {id:'life',label:'生活账本',description:'保险、停车费用、洗车支出与保养待办'}
     ]},
@@ -135,7 +136,8 @@
     const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
     const routesPage=root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate});
     const reviewPage=root.TravelInsightsPage.create({kind:'review',getState,request,escape:esc,active:()=>active()&&tab==='review',time,navigate});
-    const views={parameters:parameterPage,parking:parkingPage,routes:routesPage,review:reviewPage,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
+    const costsPage=root.BooksOverview.create({getState,request,escape:esc,active:()=>active()&&tab==='costs',navigate:(view,date,filter)=>{navigate('books',view,date);if(view==='ledger')ledgerPage.setFilter(filter);}});
+    const views={costs:costsPage,parameters:parameterPage,parking:parkingPage,routes:routesPage,review:reviewPage,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
@@ -154,6 +156,8 @@
     function openDate(view,target){
       const destination=toolGroups.find(group=>group.tools.some(tool=>tool.id===view))?.page || 'insights';
       if(destination!==section){navigate(destination,view,target);return;}
+      if(view==='life'){tab=view;paint();lifePage.openDate(target);return;}
+      if(view==='ledger'){tab=view;paint();ledgerPage.openDate(target);return;}
       tab=view;toolQuery='';
       if(view==='time'){date=target;reset();paint();}
       else{

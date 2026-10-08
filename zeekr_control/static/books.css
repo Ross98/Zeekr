@@ -1,0 +1,30 @@
+/* Book actions share the existing desktop palette and spacing. */
+.books-extra-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding-top:16px}
+.ledger-form>details>summary{cursor:pointer;color:var(--accent);padding:12px 0}
+
+main[data-page=books] .notice.books-duplicate.info{color:var(--ink)}
+
+.life-history-filters{flex-wrap:wrap;gap:16px;align-items:end}
+.life-history-search{flex:1;min-width:240px}
+.life-history-search input{width:100%}
+.life-history-month{margin-top:24px}
+.life-history-month-heading{display:flex;align-items:baseline;justify-content:space-between;gap:20px;padding:0 0 14px}
+.life-history-month-heading h4{margin:0;font-size:17px}
+.life-history-month-heading>span,.life-history-column-head{font-size:13px;color:var(--night-secondary,#50656e)}
+.life-history-column-head,.life-history-row-main{display:grid;grid-template-columns:112px minmax(180px,1fr) 140px 204px;gap:20px;align-items:center}
+.life-history-column-head{padding:10px 0;border-bottom:1px solid var(--line)}
+.life-history-row{padding:16px 0;border-bottom:1px solid var(--line)}
+.life-history-row-main time{font-size:13px;font-variant-numeric:tabular-nums;color:var(--night-secondary,#50656e)}
+.life-history-item{display:flex;flex-direction:column;gap:5px;min-width:0;overflow-wrap:anywhere}
+.life-history-item>span{font-size:13px;color:var(--night-secondary,#50656e)}
+.life-history-amount{font-size:16px;font-variant-numeric:tabular-nums}
+.life-history-actions{display:flex;justify-content:flex-end;gap:8px}
+.life-history-details{margin:6px 0 0 132px;font-size:13px}
+.life-history-details summary{cursor:pointer;color:var(--accent);padding:8px 0;width:max-content}
+.life-history-details p{margin:6px 0;color:var(--night-secondary,#50656e)}
+.life-history-month{container-type:inline-size}
+@container(max-width:760px){
+  .life-history-column-head,.life-history-row-main{grid-template-columns:92px minmax(130px,1fr) 110px 172px;gap:12px}
+  .life-history-actions .button{padding:10px 12px}
+  .life-history-details{margin-left:104px}
+}

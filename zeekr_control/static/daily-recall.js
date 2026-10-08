@@ -83,7 +83,7 @@ async function recallAction(target){
   if(target.hasAttribute('data-recall-save')){recallWrite('save');return true;}
   if(target.hasAttribute('data-recall-cancel')){recallCorrection=null;$('#recall-correction').innerHTML='';return true;}
   if(target.hasAttribute('data-recall-map')){$('#local-trip-route').scrollIntoView({block:'start',behavior:'smooth'});return true;}
-  if(target.hasAttribute('data-recall-ledger')){const row=localTrips.selected;recallLedgerReturn={date:trackDate,id:row.id,context:state?.insights_context};page='books';sectionTask='ledger';render();insightsPage.openDate('ledger',row.bill?.date||row.date);insightsPage.openLedgerEvent(row.id,row.bill?.date||row.date);return true;}
+  if(target.hasAttribute('data-recall-ledger')){const row=localTrips.selected;recallLedgerReturn={date:trackDate,id:row.id,context:state?.insights_context};enterBooks('ledger',row.bill?.date||row.date,row.id);return true;}
   if(target.hasAttribute('data-recall-return')){if(recallLedgerReturn?.context===state?.insights_context)recallOpenDay(recallLedgerReturn.date,recallLedgerReturn.id);return true;}
   if(target.hasAttribute('data-recall-undo')){const h=localTrips;try{await api('/api/place-corrections',{operation:'undo',context:h.timeline.context,revision:h.timeline.correction_revision});if(h===localTrips){recallYear=null;await loadLocalTrips(true);}}catch(e){h.listError=e.message;renderLocalTripList();}return true;}
   return false;
