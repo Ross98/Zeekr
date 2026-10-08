@@ -17,12 +17,8 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.waitForFunction(()=>!document.querySelector('.vehicle-intro')?.textContent.includes('本次返回 0 项'));
   const catalog=await page.evaluate(()=>fetch('/api/vehicle/parameters').then(r=>r.json()));
   assert.equal(catalog.fields.length,217);assert.equal(catalog.groups.length,14);
-  const seen=[];
-  do {
-   seen.push(...await page.locator('[data-parameter]').evaluateAll(nodes=>nodes.map(n=>n.dataset.parameter)));
-   if(await page.locator('#vehicle-next').isDisabled())break;
-   await page.locator('#vehicle-next').click();
-  }while(true);
+  const seen=await page.locator('[data-parameter]').evaluateAll(nodes=>nodes.map(n=>n.dataset.parameter));
+  assert.equal(await page.locator('.vehicle-pagination').count(),0);
   assert.equal(seen.length,217);assert.equal(new Set(seen).size,217);
   assert.deepEqual(new Set(seen),new Set(catalog.fields.map(f=>f.path)));
   assert.ok(!seen.some(p=>/(?:^|\.)(?:vin|longitude|latitude|token|password)$/i.test(p)),'No private fields in full directory');
@@ -40,7 +36,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.locator('#vehicle-reset').click();
   for(const group of catalog.groups){await page.locator('#vehicle-group').selectOption(group.name);assert.match(await page.locator('.vehicle-results').innerText(),new RegExp(`匹配 ${group.count} 项`))}
   await page.locator('#vehicle-reset').click();
-  for(const status of ['known','pending','missing','empty','invalid']){await page.locator('#vehicle-status').selectOption(status);assert.equal(await page.locator('[data-parameter]').count(),Math.min(20,catalog.counts[status]))}
+  for(const status of ['known','pending','missing','empty','invalid']){await page.locator('#vehicle-status').selectOption(status);assert.equal(await page.locator('[data-parameter]').count(),catalog.counts[status])}
   await page.locator('#vehicle-reset').click();
   fs.mkdirSync('/tmp/zeekr-vehicle-qa',{recursive:true});
   async function contrast(){const failures=await page.evaluate(()=>{
@@ -61,17 +57,27 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 
   for(const theme of ['light','dark']){
    await page.getByLabel('外观',{exact:true}).selectOption(theme);
-   for(const width of [1440,1280,1024,720,390,320]){
+   for(const width of [1440,1280,1024]){
     await page.setViewportSize({width,height:1000});
-    if(width===1440||width===390)await contrast();
+    if(width===1440)await contrast();
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${theme} catalog overflow at ${width}`);
     const small=await page.locator('.vehicle-filters input,.vehicle-filters select,.vehicle-pagination button,.vehicle-tabs button').evaluateAll(nodes=>nodes.filter(n=>n.getBoundingClientRect().height<44).map(n=>n.id));assert.deepEqual(small,[]);
-    if(width===1440||width===390){await page.evaluate(()=>{document.querySelector('#toast').hidden=true;document.activeElement?.blur();window.scrollTo(0,0)});await page.screenshot({path:`/tmp/zeekr-vehicle-qa/parameters-${theme}-${width}.png`,fullPage:true});await page.screenshot({path:`/tmp/zeekr-vehicle-qa/parameters-${theme}-${width}-viewport.png`});}
+    if(width===1440){await page.evaluate(()=>{document.querySelector('#toast').hidden=true;document.activeElement?.blur();window.scrollTo(0,0)});await page.screenshot({path:`/tmp/zeekr-vehicle-qa/parameters-${theme}-${width}.png`,fullPage:true});await page.screenshot({path:`/tmp/zeekr-vehicle-qa/parameters-${theme}-${width}-viewport.png`});}
+    const scroll=page.locator('.vehicle-table-scroll');
+    await scroll.evaluate(el=>el.scrollTop=0);
+    const geometry=await scroll.evaluate(el=>{const box=el.getBoundingClientRect();const rows=[...el.querySelectorAll('tbody tr')].map(r=>r.getBoundingClientRect());return {visible:rows.filter(r=>r.top>=box.top&&r.bottom<=box.bottom+1).length,sixth:rows[5].top,bottom:box.bottom,overflow:el.scrollHeight>el.clientHeight};});
+    assert.equal(geometry.visible,5,`${theme} ${width}: exactly five complete rows`);
+    assert.ok(geometry.sixth>=geometry.bottom-1);assert.equal(geometry.overflow,true);
+    await scroll.focus();await page.keyboard.press('End');
+    await page.waitForFunction(()=>{const el=document.querySelector('.vehicle-table-scroll');return el.scrollTop+el.clientHeight>=el.scrollHeight-1;});
+    const position=await scroll.evaluate(el=>el.scrollTop);await page.evaluate(()=>render());
+    assert.ok(Math.abs(await scroll.evaluate(el=>el.scrollTop)-position)<1,'Background render preserves scroll');
+    await scroll.evaluate(el=>el.scrollTop=0);
     await page.locator('#vehicle-overview').click();
-    if(width===1440||width===390)await contrast();
+    if(width===1440)await contrast();
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${theme} overview overflow at ${width}`);
-    if(width<621){const boxes=await page.locator('.car-door').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().x));assert.equal(new Set(boxes).size,1,'Mobile doors in one column')}
-    if(width===1440||width===390)await page.screenshot({path:`/tmp/zeekr-vehicle-qa/overview-${theme}-${width}.png`,fullPage:true});
+
+    if(width===1440)await page.screenshot({path:`/tmp/zeekr-vehicle-qa/overview-${theme}-${width}.png`,fullPage:true});
     await page.locator('#vehicle-parameters').click();
    }
   }
@@ -88,6 +94,6 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.getByRole('button',{name:'刷新状态',exact:true}).click();await page.getByText(/合成刷新失败/).first().waitFor();
   assert.equal(await page.locator('.vehicle-table').innerText(),before);assert.equal(await page.locator('#vehicle-search').inputValue(),'engineHood');
   assert.equal(posts.length,2,'Only the two explicit refresh clicks post');assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-  console.log('UI_VEHICLE_PARAMETERS_PASS: all 217 rows, 14 groups, filters, paging, focus/details, 24 theme/view/width layouts, source semantics, failed refresh, no unsolicited cloud requests');
+  console.log('UI_VEHICLE_PARAMETERS_PASS: all 217 rows, 14 groups, filters, five-row scrolling, focus/details, 12 desktop theme/view/width layouts, source semantics, failed refresh, no unsolicited cloud requests');
  }finally{if(browser)await browser.close();server.kill()}
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -8,10 +8,9 @@ const data = {groups:[{name:'门窗'},{name:'轮胎'}],fields:[
 assert.deepEqual(selectFields(data,{}).fields.map(f=>f.path),['window.a','window.b','pressure','missing']);
 assert.deepEqual(selectFields(data,{query:'WINDOW',status:'pending'}).fields.map(f=>f.path),['window.b']);
 assert.equal(selectFields(data,{group:'轮胎',query:'左前'}).total,0);
-assert.equal(selectFields(data,{query:'no match',page:100}).page,0);
+assert.equal(selectFields(data,{query:'no match'}).total,0);
 const large={...data,fields:Array.from({length:43},(_,i)=>({...data.fields[1],path:'p'+i}))};
-const tail=selectFields(large,{page:999});
-assert.equal(tail.page,2);assert.equal(tail.fields.length,3);assert.equal(tail.start,40);
+assert.equal(selectFields(large).fields.length,43,'All filtered rows available for scrolling');
 assert.equal(data.fields[0].path,'missing','selection does not reorder source');
 const original={vehicle:1,request_key:'server',snapshot_revision:'one',read_time:10,field_reviews:{vehicle:'car-a'}};
 for(const changed of [{snapshot_revision:'two'},{vehicle:2},{request_key:'new server'},{field_reviews:{vehicle:'car-b'}}])assert.notEqual(stateKey(original),stateKey({...original,...changed}));
