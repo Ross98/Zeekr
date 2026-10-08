@@ -18,6 +18,27 @@ class UsageCalendarTests(unittest.TestCase):
         self.assertEqual(result['totals']['distance_samples'],1)
         self.assertEqual(result['totals']['trip_count'],2)
 
+    def test_duration_end_day_totals_preserve_missing_zero_and_partial_samples(self):
+        boundary=day_bounds('2026-09-16')[0]
+        self.add('cross',start_time=boundary-1800000,end_time=boundary+1800000,duration_seconds=3600)
+        self.add('partial',partial=True,duration_seconds=3600)
+        self.add('missing',duration_seconds=None)
+        self.add('zero',start_time=self.day,end_time=self.day,duration_seconds=0)
+        self.add('charge',kind='charge_end')
+        self.add('next-month',day='2026-10-01')
+        result=self.query()
+        day=result['days'][14]
+        self.assertEqual(day['duration_seconds'],3600)
+        self.assertEqual(day['duration_samples'],2)
+        self.assertEqual(day['partial_duration_samples'],2)
+        self.assertEqual(day['ended_trip_count'],3)
+        self.assertEqual(result['days'][15]['duration_seconds'],3600)
+        self.assertIsNone(result['days'][13]['duration_seconds'])
+        self.assertEqual(result['totals']['duration_seconds'],7200)
+        self.assertEqual(result['totals']['duration_samples'],3)
+        self.assertEqual(result['totals']['partial_duration_samples'],2)
+        self.assertEqual(result['totals']['trip_count'],4)
+
     def test_actual_bill_dates_zero_missing_amount_and_scoped_pending(self):
         from zeekr_control.personal_store import PersonalStore
         from zeekr_control.charge_ledger import ChargeLedger

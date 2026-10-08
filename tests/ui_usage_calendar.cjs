@@ -25,8 +25,10 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     assert.match(await page.locator('#calendar-day-detail').innerText(),/无归档观测/);
     await page.locator('[data-calendar-day="2026-09-19"]').click();
     await layouts(page,'usage-calendar');
-    await page.setViewportSize({width:390,height:1000});
-    await page.locator('.calendar-panel').screenshot({path:'/tmp/zeekr-insights-qa/usage-calendar-grid-dark-390.png'});
+    if(!process.env.DESKTOP_ONLY){
+      await page.setViewportSize({width:390,height:1000});
+      await page.locator('.calendar-panel').screenshot({path:'/tmp/zeekr-insights-qa/usage-calendar-grid-dark-390.png'});
+    }
     await page.getByText('可靠停车耗电 · 1 段',{exact:true}).click();
     assert.match(await page.locator('#calendar-day-detail').innerText(),/108 个样本/);
     assert.match(await page.locator('#calendar-day-detail').innerText(),/未覆盖部分不估价/);
@@ -45,6 +47,6 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('alert').filter({hasText:'合成读取失败'}).waitFor();
     assert.equal(await page.locator('#calendar-result-month').count(),0,'Changing query conditions clears previous results');
     assert.deepEqual(f.posts,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
-    console.log('UI_USAGE_CALENDAR_PASS: month grid, cross-midnight days, full event detail, inline parking evidence/time-machine link, future/missing dates, retained selection/error result, themes/mobile/zoom/contrast; read-only');
+    console.log('UI_USAGE_CALENDAR_PASS: month grid, cross-midnight days, full event detail, inline parking evidence/time-machine link, future/missing dates, retained selection/error result, themes/layout/zoom/contrast; read-only');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

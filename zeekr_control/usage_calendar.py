@@ -129,6 +129,9 @@ class UsageCalendar:
             bills=[r for r in entries if r['date']==day['date']]
             day.update(distance_km=total(e['distance_km'] for e in driving),
                        distance_samples=sum(e['distance_km'] is not None for e in driving),
+                       duration_seconds=total(e['duration_seconds'] for e in driving),
+                       duration_samples=sum(e['duration_seconds'] is not None for e in driving),
+                       partial_duration_samples=sum(e['duration_seconds'] is not None and e['partial'] for e in driving),
                        ended_trip_count=len(driving),
                        actual_cents=total(r['actual_cents'] for r in bills),
                        actual_count=sum(r['actual_cents'] is not None for r in bills),
@@ -138,6 +141,9 @@ class UsageCalendar:
         driving=[e for e in ended if e['kind']=='trip_end']
         return dict(parking_places=parking_places,distance_km=total(e['distance_km'] for e in driving),
                     distance_samples=sum(e['distance_km'] is not None for e in driving),
+                    duration_seconds=total(e['duration_seconds'] for e in driving),
+                    duration_samples=sum(e['duration_seconds'] is not None for e in driving),
+                    partial_duration_samples=sum(e['duration_seconds'] is not None and e['partial'] for e in driving),
                     trip_count=len(driving),charge_count=sum(e['kind']=='charge_end' for e in ended),
                     usage_days=sum(d['trip_count']>0 for d in days),
                     energy_cost=summarize([e for e in consumption if window['start']<=e['end_time']<window['end']]),
