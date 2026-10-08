@@ -14,8 +14,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
       }
       await route.fulfill({json:data});
     });
-    if(await page.getByRole('button',{name:'能源与充电',exact:true}).first().isVisible())
-      await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
+    if(await page.getByRole('button',{name:'用车账本',exact:true}).first().isVisible())
+      await page.getByRole('button',{name:'用车账本',exact:true}).first().click();
     await page.getByRole('button',{name:'充电账本',exact:true}).click();
     await page.getByLabel('账本月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取账本',exact:true}).click();

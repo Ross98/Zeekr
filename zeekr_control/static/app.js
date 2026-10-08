@@ -26,6 +26,7 @@ const icons = {
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2m4 0h2"/>',
   report: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5"/>',
   car: '<path d="m4 10 2-6h12l2 6M4 10h16v8H4zM2 10h20M7 18v2m10-2v2M7 13h1m8 0h1"/>',
+  books: '<path d="M6 3h14v18H6a3 3 0 0 1 0-6h14M6 3a3 3 0 0 0-3 3v12M9 7h7M9 11h5"/>',
   energy: '<path d="m13 2-8 12h6l-1 8 9-13h-7z"/>',
   map: '<path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 0 1 14 0Z"/><circle cx="12" cy="10" r="2.5"/>',
   tracks: '<circle cx="5" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M5 7v6a3 3 0 0 0 3 3h2a3 3 0 0 0 0-6h4a5 5 0 0 1 5 5v2"/>',
@@ -41,8 +42,8 @@ const icons = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
 };
-const pages = { overview: '总览', calendar: '用车日历', tracks: '行程与轨迹', energy: '能源与充电', report: '用车周报', car: '车辆', fields: '参数研究与核实', insights: '用车研究', settings: '设置', more: '更多' };
-const descriptions = { overview: '', calendar: '按日期回看行程、充电与费用，补齐待录记录。', report: '查看每周用车汇总，也可切换月报。', car: '完整参数与状态总览，保留原值、解释依据和来源时间。', energy: '查看当前观测状态、充电记录与计算依据。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', insights: '从历史观测，看懂每一次变化。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
+const pages = { overview: '总览', calendar: '用车日历', tracks: '行程与轨迹', energy: '能源与充电', books: '用车账本', report: '用车周报', car: '车辆', fields: '参数研究与核实', insights: '用车研究', settings: '设置', more: '更多' };
+const descriptions = { overview: '', calendar: '按日期回看行程、充电与费用，补齐待录记录。', report: '查看每周用车汇总，也可切换月报。', car: '完整参数与状态总览，保留原值、解释依据和来源时间。', energy: '查看当前观测状态、充电记录与计算依据。', books: '统一记录充电、保险、停车与保养支出，查看实际费用与待办。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', insights: '从历史观测，看懂每一次变化。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.info}</svg>`;
@@ -69,12 +70,12 @@ const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,re
 
 let sectionTask='';
 function openSectionTask(task){sectionTask=task;render();if(task&&task!=='records')insightsPage.openTool(task);window.scrollTo({top:0,left:0,behavior:'instant'});}
-const insightSections = ['car','energy','tracks','insights','settings','calendar','report'];
+const insightSections = ['car','energy','books','tracks','insights','settings','calendar','report'];
 window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,trackSource].join('|');
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields,editing:()=>reviewEditing,edit:editReviewStep,canEdit:canEditReview,propose:proposeReview},
   navigate:(section,view,date)=>{page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
-  openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{page=tool==='ledger'?'energy':'settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
+  openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{page=tool==='ledger'?'books':'settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
 async function openOverviewRecord(record){
   const context=state?.insights_context,date=beijingDate(record.end_time);
   if(record.kind==='trip_end'){
@@ -113,7 +114,7 @@ const chargeManager = window.ChargeManagement.create({getState:()=>state,getDate
   }});
 
 const navigationGroups = [
-  {label:'日常用车',pages:['overview','tracks','energy','car']},
+  {label:'日常用车',pages:['overview','tracks','energy','car','books']},
   {label:'回顾与研究',pages:['calendar','report','insights']},
   {label:'采集与设置',pages:['settings']}
 ];
@@ -821,11 +822,11 @@ function more() {
   }).join('');
 }
 function relatedTools() {
-  if(!['car','energy','tracks','settings'].includes(page))return '';
+  if(!['energy','books','tracks','settings'].includes(page))return '';
   if(page==='tracks')return `<nav class="related-tools task-navigation" aria-label="行程与轨迹子功能">${[['local','本地记录'],['cloud','云端历史'],['tags','行程标签']].map(([source,label])=>`<button class="button secondary" data-source="${source}" ${source==='tags'?'data-track-tags="true"':''} aria-pressed="${!sectionTask&&trackSource===source}">${label}</button>`).join('')}<button class="button secondary" data-section-task="routes" aria-pressed="${sectionTask==='routes'}">常走路线对比</button></nav>`;
   const base={car:'车辆状态',energy:'充电状态',settings:'采集与设置'}[page];
   const item=(id,label)=>`<button class="button secondary" data-section-task="${id}" aria-pressed="${sectionTask===id}">${label}</button>`;
-  return `<nav class="related-tools task-navigation" aria-label="${pages[page]}子功能">${item('',base)}${page==='energy'?item('records','充电记录'):''}${window.InsightsPage.toolsFor(page).slice().sort((a,b)=>page==='energy'?Number(a.id!=='ledger')-Number(b.id!=='ledger'):0).map(tool=>item(tool.id,tool.label)).join('')}</nav>`;
+  return `<nav class="related-tools task-navigation" aria-label="${pages[page]}子功能">${page==='books'?'':item('',base)}${page==='energy'?item('records','充电记录'):''}${window.InsightsPage.toolsFor(page).map(tool=>item(tool.id,tool.label)).join('')}</nav>`;
 }
 
 function render() {
@@ -860,7 +861,8 @@ function renderContent() {
   updateConnection();
   $('.breadcrumb').textContent = `我的车库 / ${state?.profile?.name || '我的车辆'}`;
   const error = transientError || state?.error;
-  const taskPage=['car','energy','settings','tracks'].includes(page)&&sectionTask;
+  if(page==='books'&&!sectionTask)sectionTask='ledger';
+  const taskPage=['car','energy','books','settings','tracks'].includes(page)&&sectionTask;
   const body = taskPage?(sectionTask==='records'?chargingWorkspace(state?.model?.charging_details)+'<div id="charge-management"></div><div id="insights-workspace" hidden></div>':'<div id="insights-workspace"></div>'):{overview,car,energy,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',calendar:()=>'<div id="insights-workspace"></div>',report:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
   const retainedImages = [...$('#main').querySelectorAll('img')].filter(image=>!image.closest('#map'));
   const retainedMap = $('#map')?.dataset.owner===mapOwner() ? $('#map').querySelector('img') : null;
@@ -1139,10 +1141,11 @@ function persistNavigation(){
 function restoreNavigation(snapshot,position=0){
   navigationRestoring=true;restoringQuery=null;
   if(snapshot.p==='fields')snapshot={...snapshot,p:'insights',t:'parameters'};
+  if(snapshot.p==='energy'&&snapshot.t==='ledger'||snapshot.p==='car'&&snapshot.t==='life')snapshot={...snapshot,p:'books'};
   page=snapshot.p==='map'?'overview':snapshot.p||'overview';sectionTask='';
   trackSource=snapshot.s||'local';
   if(page==='tracks'&&snapshot.date)trackDate=snapshot.date;
-  if(['car','energy','settings','tracks'].includes(page)&&snapshot.t&&
+  if(['car','energy','books','settings','tracks'].includes(page)&&snapshot.t&&
      (snapshot.t==='records'&&page==='energy'||window.InsightsPage.toolsFor(page).some(t=>t.id===snapshot.t)))sectionTask=snapshot.t;
   render();
   if(page==='tracks'&&!sectionTask&&trackSource==='local'&&(snapshot.record||snapshot.q==='1')){const h=syncLocalTrips();h.restoreSelection=snapshot.record||'day';loadLocalTrips(true).then(()=>{if(h===localTrips&&showPosition)loadLocalRoute();});}

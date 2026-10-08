@@ -18,10 +18,10 @@
     ]},
     {name:'能源与充电',page:'energy',tools:[
       {id:'charge-comparison',label:'充电曲线对比',description:'对照两次充电的功率、温度与耗时'},
-      {id:'ledger',label:'充电账本',description:'充电费用、桩端电量与实际电价'},
       {id:'parking',label:'停车观测',description:'停车区间、有效车辆观测与 SOC 变化'}
     ]},
-    {name:'车辆',page:'car',tools:[
+    {name:'用车账本',page:'books',tools:[
+      {id:'ledger',label:'充电账本',description:'充电费用、桩端电量与实际电价'},
       {id:'life',label:'生活账本',description:'保险、停车费用、洗车支出与保养待办'}
     ]},
     {name:'设置',page:'settings',tools:[
@@ -329,7 +329,7 @@
     }
     function mount(container, nextSection='insights') {
       const changed=context()!==owner, sectionChanged=section!==nextSection, remount=node!==container;
-      if(sectionChanged){researchReturn=null;section=nextSection;tab=section==='insights'?'research':['calendar','report'].includes(section)?section:'';toolQuery='';toolsExpanded=false;}
+      if(sectionChanged){researchReturn=null;section=nextSection;tab=section==='insights'?'research':section==='books'?'ledger':['calendar','report'].includes(section)?section:'';toolQuery='';toolsExpanded=false;}
       if(changed){researchReturn=null;owner=context();toolQuery='';toolsExpanded=false;reset();}
       node=container;
       node.classList.toggle('standalone-task',section!=='insights');

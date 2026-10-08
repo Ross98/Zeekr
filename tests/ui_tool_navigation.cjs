@@ -7,12 +7,13 @@ const {fixture} = require('./ui_insight_helpers.cjs');
   try {
     assert.equal(await page.locator('#navigation [data-page="fields"]').count(),0);
     assert.deepEqual(await page.locator('#navigation .navigation-group h2').allTextContents(),['日常用车','回顾与研究','采集与设置']);
-    assert.equal(await page.locator('#navigation [data-page]').count(),8);
+    assert.equal(await page.locator('#navigation [data-page]').count(),9);
     assert.deepEqual(await page.locator('.insight-tabs h2').allTextContents(),['数据分析','历史回看','参数核实']);
     const groups = [
-      ['能源与充电', ['充电账本', '充电曲线对比']],
+      ['能源与充电', ['充电曲线对比', '停车观测']],
+      ['用车账本', ['充电账本', '生活账本']],
       ['行程与轨迹', ['常走路线对比']],
-      ['车辆', ['生活账本']],
+      ['车辆', []],
       ['设置', ['自定义提醒', '数据质量雷达']],
       ['用车研究', ['数据利用', '自动洞察', '车辆时间机', '轻量用车回顾', '参数研究与核实']]
     ];
@@ -22,7 +23,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
       const tools=research?page.locator('#insights-workspace [data-insight-view]'):page.locator('.task-navigation [data-section-task]').filter({hasText:new RegExp(labels.join('|')||'^$')});
       assert.deepEqual(await tools.allTextContents(),labels,`${section} tools`);
       if(!research&&labels.length){
-        assert.equal(await page.locator('#insights-workspace').isVisible(),false);
+        assert.equal(await page.locator('#insights-workspace').isVisible(),section==='用车账本');
         await tools.first().click();
         assert.equal(await tools.first().getAttribute('aria-pressed'),'true');
         assert.equal(await page.locator('#insights-workspace').isVisible(),true);
@@ -30,6 +31,16 @@ const {fixture} = require('./ui_insight_helpers.cjs');
       } else if(research){await tools.first().click();}
       assert.equal(await page.getByRole('button',{name:'行程卡片',exact:true}).count(),0);
     }
+    for (const [oldPath,tab] of [['?p=energy&t=ledger&month=2026-09','充电账本'],['?p=car&t=life','生活账本']]) {
+      await page.goto(f.origin+oldPath);
+      await page.getByRole('heading',{name:'用车账本',exact:true}).waitFor();
+      assert.equal(await page.locator('#navigation [data-page="books"]').getAttribute('aria-current'),'page');
+      assert.equal(await page.getByRole('button',{name:tab,exact:true}).getAttribute('aria-pressed'),'true');
+      await page.reload();
+      await page.getByRole('heading',{name:'用车账本',exact:true}).waitFor();
+      assert.equal(await page.getByRole('button',{name:tab,exact:true}).getAttribute('aria-pressed'),'true');
+    }
+    await page.getByRole('button',{name:'用车研究',exact:true}).click();
     await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
     await page.locator('#field-results').waitFor();
     assert.equal(await page.locator('#navigation [data-page="insights"]').getAttribute('aria-current'),'page');

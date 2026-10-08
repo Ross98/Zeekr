@@ -1,6 +1,6 @@
 (function(root){
   'use strict';
-  const pages=['overview','calendar','report','car','energy','tracks','fields','insights','settings','more'];
+  const pages=['overview','calendar','report','car','energy','books','tracks','fields','insights','settings','more'];
   const tasks=['records','ledger','charge-comparison','life','rules','quality','parameters','hypotheses','fields','research','automatic','lab','time','report','calendar','routes','review'];
   const date=value=>/^20\d{2}-\d{2}-\d{2}$/.test(value)&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
   const rules={step:v=>['overview','evidence','experiment','conclusion'].includes(v),p:v=>pages.includes(v)&&v!=='overview',t:v=>tasks.includes(v),s:v=>['local','cloud','tags'].includes(v),
