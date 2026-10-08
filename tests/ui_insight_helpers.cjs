@@ -1,7 +1,7 @@
 const {chromium}=require('playwright');
 const {spawn}=require('node:child_process');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
-async function fixture({demo=false,partialCharge=false,automatic=false}={}){
+async function fixture({demo=false,partialCharge=false,automatic=false,initialResearch=true}={}){
   const server=spawn('python3',[path.join(__dirname,'insights_fixture.py'),...(demo?['--demo']:[]),...(partialCharge?['--partial-charge']:[]),...(automatic?['--automatic']:[])]);
   let browser;
   try{
@@ -19,7 +19,7 @@ async function fixture({demo=false,partialCharge=false,automatic=false}={}){
     page.on('request',r=>{if(r.method()==='POST')posts.push(r.url());if(!r.url().startsWith(origin)&&!r.url().startsWith('data:'))external.push(r.url());});
     page.on('requestfailed',r=>console.error('Browser request failed:',new URL(r.url()).pathname,r.failure()?.errorText));
     await page.goto(origin);
-    try{await page.getByRole('button',{name:'用车研究',exact:true}).click();}
+    try{if(initialResearch)await page.getByRole('button',{name:'用车研究',exact:true}).click();}
     catch(error){console.error('Fixture startup diagnostic:',await page.evaluate(()=>({ready:document.readyState,scripts:[...document.scripts].map(s=>s.src),text:document.body.innerText.slice(0,700),timing:performance.getEntriesByType('resource').map(r=>({name:new URL(r.name).pathname,duration:r.duration}))})));throw error;}
     return {page,browser,origin,errors,posts,external,close:async()=>{await browser.close();server.kill();}};
   }catch(error){if(browser)await browser.close();server.kill();throw error;}

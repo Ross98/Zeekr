@@ -20,7 +20,7 @@ Python 运行期无第三方包依赖，已兼容 Python 3.9.6。项目不提供
 | Web 登录保护 | 可配置密码登录、会话过期和失败限流；未配置时仅供本机使用 |
 
 界面与数据规则详见 [Web 使用说明](docs/web-usage.md)。合成测试通过不等于实车或所有车型验证通过。
-表中子功能归属仅描述桌面网页；手机端菜单未调整。
+当前只维护和验证桌面界面，产品规则见 [PRODUCT.md](PRODUCT.md)。
 
 ## 快速开始
 
@@ -45,7 +45,7 @@ python3 -m zeekr_control web
 
 Web 服务启动后默认开启统一后台采集，无需打开网页。后台成功读取车辆后写入私有最新快照，页面约每 5 秒读取本地状态，不因轮询新增车辆云端请求。服务重启后，相同会话和车辆可恢复最近快照及原车辆时间。
 
-地图仍需主动开启。后台默认每 30 秒检查；设置可改为 10–60 秒整数，停车、行驶和充电保持所选间隔。更快查询不保证车辆上传更快，重复云端状态不会增加轨迹点。设置中的开始／暂停控制同一后台，暂停同时停止自动车辆检查和通知处理。关闭浏览器不会停止采集；服务退出或 Mac 休眠期间无法采集，服务重启后默认恢复，保留已保存的间隔。
+地图仍需主动开启。后台默认每 30 秒检查；设置可改为 10–60 秒整数，停车、行驶和充电保持所选间隔。更快查询不保证车辆上传更快，重复云端状态不会增加轨迹点。设置中的开始／暂停控制同一后台，暂停停止新的自动车辆检查和常规通知领取；已开始的发送保留结果，存储巡检及存储异常／恢复通知继续。关闭浏览器不会停止采集；服务退出或 Mac 休眠期间无法采集，服务重启后默认恢复，保留已保存的间隔。
 
 ## Web v2 数据规则
 
@@ -146,7 +146,7 @@ python3 -m zeekr_control monitor
 python3 -m zeekr_control monitor-status
 ```
 
-`web` 默认启用统一后台；已有 `monitor` 进程时共用它，没有时由 Web 启动同一后台逻辑。进程锁保证只有一个采集执行者。网页“暂停采集”同时暂停自动车辆检查和通知处理，开始后恢复；服务重启默认开启。网页手动刷新只更新页面，不额外写轨迹。多车首次绑定使用 `monitor --vehicle 1`。`monitor --once` 会查询车辆并处理待发通知，不是无副作用的测试模式。
+`web` 默认启用统一后台；已有 `monitor` 进程时共用它，没有时由 Web 启动同一后台逻辑。进程锁保证只有一个采集执行者。采集进程把事件写入持久队列，受监督的独立投递进程发送通知。网页“暂停采集”停止新查询和常规通知领取，已开始的发送仍保存结果；存储巡检及其通知继续，周期报告使用独立开关。开始后恢复；服务重启默认开启。网页手动刷新只更新页面，不额外写轨迹。多车首次绑定使用 `monitor --vehicle 1`。`monitor --once` 会查询车辆一次，并在 30 秒领取预算内处理到期通知；已开始的任务有界结束，剩余任务保留。它不是无副作用的测试模式。
 
 普通停车的行程结束需明确下电后确认十分钟；若已冻结下电停车点，且随后连续可信状态确认原地开始充电，则立即结算到站行程，充电后再次行驶另记一段。首次下电端点冻结后，特定同一停车缓存可按连续本机观测完成普通停车确认，但不增加报告样本或刷新停车状态时间。充电状态按已核验活动/停止组合判断；停止不等于拔枪、达到目标或已知停止原因。云端延迟会影响通知时间，实车行驶及充电场景仍需分别验收。
 
@@ -200,32 +200,22 @@ Web 密码登录通过 `ZEEKR_AUTH_FILE` 指定密码哈希文件；已指定但
 
 ## 开发验证
 
-后端测试与 JavaScript 语法检查：
+详细安装和分组测试见 [开发验证](docs/development.md)。Python 运行期无第三方依赖，浏览器测试依赖由 npm 锁定：
 
 ```bash
-python3 -m unittest discover -s tests -v
-python3 -m zeekr_control --help
-node --check zeekr_control/static/app.js
-node --check zeekr_control/static/field-reviews.js
-node --check zeekr_control/static/history.js
-node tests/ui_field_review_rules.cjs
+npm ci
+npm run browser:install
+npm run test:unit
+npm test
 ```
 
-浏览器回归需要开发环境中的 Node.js、Playwright 与 Chromium；这些不是 Python 运行依赖。可通过 `NODE_PATH`、`CHROMIUM_EXECUTABLE` 指定已有安装位置：
-
-```bash
-node tests/ui_smoke.cjs
-node tests/ui_overview.cjs
-node tests/ui_car.cjs
-node tests/ui_energy.cjs
-node tests/ui_field_reviews.cjs
-node tests/ui_history.cjs
-```
-
-测试使用合成账号与车辆响应，不访问真实车辆。历史页面测试覆盖授权状态、显式查询、分页、隐私开关、路线分段、过期请求和多种屏幕宽度；测试截图也不代表实车记录。
+统一入口强制桌面覆盖，使用合成账号与临时数据；不访问真实车辆。按改动选择相关测试，发布时按 [发布流程](docs/release-workflow.md) 验证最终候选。
 
 ## 文档
 
+- [当前产品约定](PRODUCT.md)：桌面范围、数据与费用口径、通知和验收边界。
+- [当前实现入口](DESIGN.md)：采集与投递、只读分析、工具加载及缓存。
+- [开发验证](docs/development.md)：依赖安装、桌面分组与本地交接。
 - [Web 使用说明](docs/web-usage.md)：页面、定位、采集、历史与能源口径。
 - [Web v2 执行设计](docs/web-v2-design-2026-09-18.md)：桌面信息架构、快照、事件摘要和验收矩阵。
 - [车辆参数字典](docs/vehicle-parameter-dictionary-2026-09-18.md)：字段术语、单位、依据和适用性说明。

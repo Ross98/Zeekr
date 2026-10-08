@@ -43,7 +43,9 @@ with (base/'.deploy.lock').open('a') as lock:
       else:raise AssertionError(service+' process has wrong release')
      print('CUTOVER_SUCCESS',str(candidate),flush=True)
     except BaseException:
-     subprocess.run(['systemctl','stop',*stop_services])
+     subprocess.run(['systemctl','stop',*stop_services],check=True)
+     if (Path(str(candidate))/'zeekr_control/delivery_state.py').is_file():
+      subprocess.run(['sudo','-u','zeekr-control','env','HOME=/var/lib/zeekr-control','PYTHONDONTWRITEBYTECODE=1','/usr/bin/python3','-c',"import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from zeekr_control.delivery_state import normalize_preparation_for_rollback; print('DELIVERY_ROLLBACK_NORMALIZED',normalize_preparation_for_rollback(Path('/var/lib/zeekr-control/Library/Application Support/ZeekrControl')))",str(candidate)],check=True)
      temp=base/'.current-release-rollback'
      if temp.exists() or temp.is_symlink():temp.unlink()
      temp.symlink_to(previous);os.replace(temp,base/'current')

@@ -20,6 +20,7 @@ from .focused_trip_image import ImagePreparationError
 from .notifications import DeliveryError
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
+from .delivery_state import delivery_lock
 
 WIDTH, HEIGHT = 1068, 540
 ASSETS = Path(__file__).parent/'assets/periodic-report'
@@ -178,7 +179,12 @@ class PeriodicDelivery:
         db=sqlite3.connect(self.path,timeout=5)
         db.row_factory=sqlite3.Row
         try:
-            with db:db.execute('CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY,payload TEXT,theme TEXT,text TEXT,image TEXT,text_attempts INTEGER,image_attempts INTEGER,next_at INTEGER)')
+            with db:
+                db.execute('CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY,payload TEXT,theme TEXT,text TEXT,image TEXT,text_attempts INTEGER,image_attempts INTEGER,next_at INTEGER)')
+                # Keep the legacy eight-column reports table writable after rollback.
+                db.execute('CREATE TABLE IF NOT EXISTS report_delivery_metadata (id TEXT PRIMARY KEY,owner_key TEXT,vehicle_key TEXT,created_at INTEGER,updated_at INTEGER,text_sent_at INTEGER,image_sent_at INTEGER,text_error TEXT,image_error TEXT,image_prepare_attempts INTEGER NOT NULL DEFAULT 0)')
+                db.execute('CREATE INDEX IF NOT EXISTS report_owner_vehicle ON report_delivery_metadata(owner_key,vehicle_key,created_at DESC)')
+                db.execute('INSERT OR IGNORE INTO report_delivery_metadata (id,image_prepare_attempts) SELECT id,MIN(COALESCE(image_attempts,0),3) FROM reports')
             yield db
         finally:db.close()
 
@@ -186,59 +192,78 @@ class PeriodicDelivery:
         report_view(report)
         if report.get('demo'):raise ValueError('演示报告不可发送')
         if theme not in PALETTES:raise ValueError('报表主题无效')
+        with delivery_lock(self.path.parent/'periodic-delivery.lock'):
+            return self._deliver(scope,vehicle,report,sender,theme)
+
+    @staticmethod
+    def _recover(db):
+        for part in ('text','image'):
+            db.execute('UPDATE report_delivery_metadata SET '+part+"_error='send_interrupted' WHERE id IN (SELECT id FROM reports WHERE "+part+"='sending')")
+            db.execute('UPDATE reports SET '+part+"='unknown' WHERE "+part+"='sending'")
+        db.execute("UPDATE report_delivery_metadata SET image_error='preparation_interrupted' WHERE id IN (SELECT id FROM reports WHERE image='preparing')")
+        db.execute("UPDATE reports SET image=CASE WHEN COALESCE((SELECT image_prepare_attempts FROM report_delivery_metadata m WHERE m.id=reports.id),0)>=3 THEN 'failed' ELSE 'retry' END WHERE image='preparing'")
+
+    def _deliver(self,scope,vehicle,report,sender,theme):
         key=report_id(scope,vehicle,report['period'],report['start_date'],report['end_date'])
         now=self.clock()
-        with self.connect() as db:
-            with db:
-                db.execute('INSERT OR IGNORE INTO reports VALUES (?,?,?,?,?,?,?,?)',
-                    (key,json.dumps(report,allow_nan=False),theme,'pending','pending',0,0,0))
-            row=dict(db.execute('SELECT * FROM reports WHERE id=?',(key,)).fetchone())
+        with self.connect() as db,db:
+            # Recovery runs only while the shared scheduler/manual-send lock is held.
+            self._recover(db)
+            db.execute('INSERT OR IGNORE INTO reports (id,payload,theme,text,image,text_attempts,image_attempts,next_at) VALUES (?,?,?,?,?,?,?,?)',
+                (key,json.dumps(report,allow_nan=False),theme,'pending','pending',0,0,0))
+            db.execute('INSERT OR IGNORE INTO report_delivery_metadata (id,owner_key,vehicle_key,created_at,updated_at) VALUES(?,?,?,?,?)',(key,scope,vehicle,now,now))
+            # The digest matched this exact owner, vehicle and report window.
+            db.execute('UPDATE report_delivery_metadata SET owner_key=?,vehicle_key=?,created_at=COALESCE(created_at,?),updated_at=COALESCE(updated_at,?) WHERE id=?',
+                (scope,vehicle,now,now,key))
+            row=dict(db.execute('SELECT r.*,m.image_prepare_attempts FROM reports r JOIN report_delivery_metadata m USING(id) WHERE id=?',(key,)).fetchone())
         report=json.loads(row['payload']);theme=row['theme']
-        if now<row['next_at'] or row['text'] in ('sending','unknown','failed'):return self.status(key)
+        if now<row['next_at']:return self.status(key)
+        if row['text'] in ('sending','unknown','failed'):return self.status(key)
         content=None
-        # Preparation claims also serialize concurrent invocations, before any sends.
-        if row['image'] in ('pending','retry') and row['image_attempts']<3:
-            if self.claim(key,'image',row['image']):
+        if row['image'] in ('pending','retry','ready') and row['image_prepare_attempts']<3:
+            if self.claim(key,'image',row['image'],preparing=True):
                 try:content=self.renderer.render(report,theme)
                 except ImagePreparationError as error:
-                    self.finish(key,'image','failed' if not error.retryable or row['image_attempts']>=2 else 'retry',now+120000)
-                except Exception:
-                    self.finish(key,'image','failed',now+120000)
+                    self.finish(key,'image','failed' if not error.retryable or row['image_prepare_attempts']>=2 else 'retry',now+120000,'preparation_failed')
+                except Exception:self.finish(key,'image','failed',now+120000,'preparation_failed')
                 else:self.finish(key,'image','ready',0)
-            else:return self.status(key)
-        elif row['image'] in ('sending','unknown'):return self.status(key)
+        elif row['image'] in ('pending','retry','ready'):
+            self.finish(key,'image','failed',0,'preparation_limit')
+        # A locally failed or interrupted image must never suppress pending text.
         if row['text'] in ('pending','retry'):
-            if not self.claim(key,'text',row['text']):return self.status(key)
-            self.send(key,'text',lambda:sender.send_markdown(markdown(report)),now)
+            if self.claim(key,'text',row['text']):
+                self.send(key,'text',lambda:sender.send_markdown(markdown(report)),now)
         state=self.status(key)
-        if state['text']=='sent' and state['image']=='ready':
-            # Ready with no in-memory content means a prior process stopped before send:
-            # regenerate safely; sending itself is always claimed durably first.
-            if content is None:
-                try:content=self.renderer.render(report,theme)
-                except Exception:
-                    self.finish(key,'image','failed',0);return self.status(key)
-            if self.claim(key,'image','ready',increment=False):
+        if state['text']=='sent' and state['image']=='ready' and content is not None:
+            if self.claim(key,'image','ready'):
                 self.send(key,'image',lambda:sender.send_image(content),now)
         return self.status(key)
 
-    def claim(self,key,part,expected,increment=True):
+    def claim(self,key,part,expected,increment=True,preparing=False):
+        if part not in ('text','image'):raise ValueError('Invalid notification part')
+        state='preparing' if preparing else 'sending'
         with self.connect() as db,db:
-            result=db.execute('UPDATE reports SET '+part+'=\'sending\','+part+'_attempts='+part+'_attempts+? WHERE id=? AND '+part+'=?',
-                (int(increment),key,expected))
+            update='' if preparing else ','+part+'_attempts='+part+'_attempts+'+str(int(increment))
+            result=db.execute('UPDATE reports SET '+part+'=?'+update+' WHERE id=? AND '+part+'=?',(state,key,expected))
+            if result.rowcount:
+                update=',image_prepare_attempts=image_prepare_attempts+1' if preparing else ''
+                db.execute('UPDATE report_delivery_metadata SET updated_at=?'+update+' WHERE id=?',(self.clock(),key))
             return result.rowcount==1
 
-    def finish(self,key,part,state,next_at):
+    def finish(self,key,part,state,next_at,error=None):
+        if part not in ('text','image'):raise ValueError('Invalid notification part')
         with self.connect() as db,db:
             db.execute('UPDATE reports SET '+part+'=?,next_at=MAX(next_at,?) WHERE id=?',(state,next_at,key))
+            db.execute('UPDATE report_delivery_metadata SET '+part+'_error=?,updated_at=?,'+part+"_sent_at=CASE WHEN ?='sent' THEN ? ELSE "+part+'_sent_at END WHERE id=?',
+                (error,self.clock(),state,self.clock(),key))
 
     def send(self,key,part,action,now):
         try:action()
         except DeliveryError as error:
             attempts=self.status(key)[part+'_attempts']
             state='unknown' if error.ambiguous else 'failed' if error.permanent or attempts>=3 else 'retry'
-            self.finish(key,part,state,now+120000)
-        except Exception:self.finish(key,part,'unknown',0)
+            self.finish(key,part,state,now+120000,'result_unknown' if error.ambiguous else 'send_rejected')
+        except Exception:self.finish(key,part,'unknown',0,'result_unknown')
         else:self.finish(key,part,'sent',0)
 
     def status(self,key):
@@ -248,10 +273,12 @@ class PeriodicDelivery:
 
     def lookup(self,scope,vehicle,period,start_date,end_date):
         if not self.path.exists():return None
-        with self.connect() as db:
-            row=db.execute('SELECT text,image,next_at FROM reports WHERE id=?',
-                           (report_id(scope,vehicle,period,start_date,end_date),)).fetchone()
-            return dict(row) if row else None
+        with delivery_lock(self.path.parent/'periodic-delivery.lock'):
+            with self.connect() as db,db:
+                self._recover(db)
+                row=db.execute('SELECT text,image,next_at FROM reports WHERE id=?',
+                               (report_id(scope,vehicle,period,start_date,end_date),)).fetchone()
+                return dict(row) if row else None
 
 
 def demo_report(period='day'):

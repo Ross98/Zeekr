@@ -1,15 +1,9 @@
 (function(root){
   'use strict';
-  function summarize(charges,life){
-    const bills=charges.entries,expenses=life.expenses.entries;
-    const actual=bills.filter(row=>Number.isFinite(row.actual_cents));
-    const charge=actual.reduce((sum,row)=>sum+row.actual_cents,0);
-    const parking=bills.reduce((sum,row)=>sum+(row.parking_fee_cents||0),0);
-    const daily=expenses.reduce((sum,row)=>sum+row.amount_cents,0);
-    const duplicates=expenses.filter(row=>/停车/.test(row.category)&&bills.some(b=>b.date===row.date&&b.parking_fee_cents>0&&b.parking_fee_cents===row.amount_cents));
-    return {charge:actual.length?charge:null,parking:bills.length?parking:null,daily:expenses.length?daily:null,
-      total:actual.length||expenses.length||parking?charge+parking+daily:null,duplicates,
-      unknown:bills.filter(row=>row.actual_cents===null).length,unlinked:charges.events.filter(row=>!row.recorded).length};
+  function summarize(response){
+    const t=response.totals;
+    return {charge:t.charge_cents,parking:t.charge_parking_cents,daily:t.life_cents,total:t.actual_cents,
+      unknown:t.unknown_charge_count,unlinked:t.unlinked_charge_count,duplicates:response.duplicates||[]};
   }
   function create({getState,request,escape:esc,active,navigate}){
     let node,owner='',month=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit'}).format(new Date()).slice(0,7),data=null,loading=false,error='',serial=0;
@@ -24,18 +18,18 @@
     async function load(){
       if(!owner||!month||loading)return;
       const identity=owner,selected=month,token=++serial;loading=true;error='';paint();
-      const [year,m]=month.split('-').map(Number),end=month+'-'+new Date(Date.UTC(year,m,0)).getUTCDate();
+
       try{
-        const [charges,life]=await Promise.all([request('/api/insights/ledger?date='+month+'-01'),request('/api/insights/life?start='+month+'-01&end='+end)]);
+        const result=await request('/api/insights/costs?date='+month+'-01');
         if(token!==serial||identity!==context()||selected!==month)return;
-        if(charges.context!==identity||life.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        data=summarize(charges,life);
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
+        data=summarize(result);
       }catch(e){if(token===serial&&identity===context())error=e.message;}
       finally{if(token===serial){loading=false;paint();}}
     }
     function mount(container){const changed=owner!==context(),remount=node!==container;node=container;if(changed){owner=context();serial++;loading=false;data=null;error='';month=root.BookSession.read(owner,'costs')?.month||month;}if(changed||remount){paint();load();}}
     function handle(event){if(!active()||!node?.contains(event.target))return false;const el=event.target;if(event.type==='input'&&el.id==='books-month'){month=el.value;serial++;loading=false;data=null;root.BookSession.write(owner,'costs',{month});paint();return true;}if(event.type!=='click')return false;const button=el.closest('[data-costs]');if(!button||button.disabled)return false;if(button.dataset.costs==='load')load();else navigate(button.dataset.costs==='life'?'life':'ledger',month+'-01',button.dataset.costs==='unknown'?'unknown':'all');return true;}
-    return {mount,handle};
+    return {mount,handle,openDate:date=>{month=date.slice(0,7);serial++;loading=false;data=null;paint();load();}};
   }
   if(typeof module!=='undefined'&&module.exports)module.exports={summarize};else root.BooksOverview={create};
 })(typeof window==='undefined'?globalThis:window);

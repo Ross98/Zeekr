@@ -177,7 +177,7 @@ class ParkingEventTests(unittest.TestCase):
                     row['record']['state_time'] += lower
                     row['record']['observed_at'] += lower + delay
                 class Archive:
-                    def iter_records(self, *args):
+                    def iter_records(self, *args, **kwargs):
                         return iter((row['record'], row) for row in rows)
                 stamp = rows[-1]['record']['observed_at']
                 if kind == 'vehicle_endpoint':
@@ -343,7 +343,7 @@ class ParkingEventTests(unittest.TestCase):
                                (trip['id'], 'car', 'trip_end', json.dumps(summary), trip['end_time']))
             path.chmod(0o600)
             class Archive:
-                def iter_records(self, scope, vehicle, start, end):
+                def iter_records(self, scope, vehicle, start, end, **kwargs):
                     for minute, soc in ((0,70),(5,70),(10,69),(15,69)):
                         stamp=lower+minute*60000
                         if start <= stamp < end:
@@ -412,7 +412,7 @@ class ParkingEventTests(unittest.TestCase):
                                (trip['id'], 'car', 'trip_end', json.dumps(summary), trip['end_time']))
             path.chmod(0o600)
             class Archive:
-                def iter_records(self, scope, vehicle, start, end):
+                def iter_records(self, scope, vehicle, start, end, **kwargs):
                     if type(start) is not int or type(end) is not int:
                         raise ValueError('归档分析范围无效。')
                     if end-start > 33*86400000:

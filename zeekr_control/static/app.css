@@ -210,3 +210,6 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 .overview-health>.card>.card-body{padding-bottom:16px}
 @media(max-width:620px){.overview-health .car-tyre-diagram{height:320px}}
 .overview-activity{margin-bottom:20px}
+
+/* Notification tables use the readable shared secondary token in both themes. */
+#notification-health .fields th{color:var(--night-secondary,#50656e);font-weight:500}

@@ -35,8 +35,52 @@
   ];
   const toolsFor=section=>toolGroups.filter(group=>(group.page || 'insights')===section).flatMap(group=>group.tools);
 
+  const scriptJobs=new Map();
+  function loadToolScript(name,file){
+    if(root[name])return Promise.resolve();
+    if(scriptJobs.has(file))return scriptJobs.get(file);
+    const job=new Promise((resolve,reject)=>{
+      const script=document.createElement('script');
+      script.src=root.ZeekrAssets?.url('/'+file)||'/'+file;
+      const timer=setTimeout(()=>finish(false),15000);
+      function finish(ok){clearTimeout(timer);script.onload=script.onerror=null;if(ok&&root[name])resolve();else{script.remove();scriptJobs.delete(file);reject(Error('工具暂未加载，请重试。'));}}
+      script.onload=()=>finish(true);script.onerror=()=>finish(false);document.head.append(script);
+    });
+    scriptJobs.set(file,job);return job;
+  }
+  function lazyPage(dependencies,create,{getState,active}){
+    let instance=null,node=null,pending=null,error=false,commands=[];
+    const context=()=>getState()?.insights_context||'';
+    function placeholder(){if(node?.isConnected&&active())node.innerHTML=error?'<p class="notice error" role="alert">工具暂未加载。<button class="button secondary" data-lazy-retry>重新加载工具</button></p>':'<p class="insight-note" role="status">正在加载工具…</p>';}
+    function ready(){
+      if(instance)return Promise.resolve(instance);
+      if(pending)return pending;
+      error=false;placeholder();
+      pending=(async()=>{
+        for(const [name,file] of dependencies)await loadToolScript(name,file);
+        instance=create();
+        if(node?.isConnected&&active())instance.mount(node);
+        const waiting=commands;commands=[];
+        for(const item of waiting)if(item.context===context()&&active())instance[item.method]?.(...item.args);
+        return instance;
+      })().catch(()=>{instance=null;error=true;placeholder();return null;}).finally(()=>{pending=null;});
+      return pending;
+    }
+    const page={
+      ready,loaded:()=>!!instance,
+      mount(container){if(!container)return;node=container;if(instance)instance.mount(node);else if(!error)ready();else placeholder();},
+      handle(event){if(event.type==='click'&&event.target.closest('[data-lazy-retry]')){ready();return true;}return instance?.handle?.(event)||false;},
+      currentStage:()=>instance?.currentStage?.()||'overview'
+    };
+    for(const method of ['openField','openExperiment','openPart','openStage','returnTo','openDate','openEvent','setFilter'])page[method]=(...args)=>{
+      if(instance)return instance[method]?.(...args);
+      commands.push({method,args,context:context()});ready();
+    };
+    return page;
+  }
+
   function parameterWorkspace({getState,request,esc,active,dictionary,time,review,history}) {
-    let node=null,owner='',serial=0,attempted='',loading=false,error='',stage='overview';
+    let node=null,owner='',serial=0,attempted='',loading=false,error='',stage='overview',catalogReady=false;
     const steps=[['overview','1 看参数'],['evidence','2 分析证据'],['experiment','3 操作验证'],['conclusion','4 写结论']];
     const guidance={overview:'先选参数，再分析历史证据；已有实际观察也可直接写结论。',evidence:'先看支持与反例。需要实际操作核对时进入操作验证，或采用假设写结论。',experiment:'先看关联记录。记录实际动作、选择前后样本，保存后可带证据写结论。',conclusion:'填写解释与依据，再选择保留为有疑问或人工确认；确认不会修改运行解码。'};
     const flow=document.createElement('div'),hypotheses=document.createElement('section'),experiments=document.createElement('section');
@@ -73,7 +117,7 @@
     }
     function status() {
       const el=node?.querySelector('#parameter-catalog-status');
-      if(el)el.innerHTML=loading?'正在读取公开参数目录…':error?`${esc(error)} <button class="text-link" data-parameter-retry>重试目录</button>`:'';
+      if(el)el.innerHTML=loading&&!catalogReady?'正在读取公开参数目录…':error?`${esc(error)} <button class="text-link" data-parameter-retry>重试目录</button>`:'';
     }
     async function ensure(force=false) {
       const state=getState(),key=root.VehiclePage.stateKey(state);
@@ -83,13 +127,13 @@
         const result=await request('/api/vehicle/parameters');
         if(token!==serial||identity!==getState()?.insights_context)return;
         if(result.vehicle_key!==getState()?.field_reviews?.vehicle||result.vehicle!==getState()?.vehicle)throw Error('车辆缓存已切换，请重新读取目录。');
-        dictionary.catalog(result.fields);
+        catalogReady=true;dictionary.catalog(result.fields);
       }catch(e){if(token===serial&&identity===getState()?.insights_context)error=e.message;}
       finally{if(token===serial){loading=false;status();}}
     }
     function mount(container) {
       const changed=owner!==(getState()?.insights_context||'');node=container;
-      if(changed){owner=getState()?.insights_context||'';serial++;attempted='';loading=false;error='';stage='overview';}
+      if(changed){owner=getState()?.insights_context||'';serial++;attempted='';loading=false;error='';stage='overview';catalogReady=false;}
       dictionary.onPanel(attach);
       if(!node.querySelector('#field-results'))node.innerHTML='<header class="research-header"><div><h2>参数研究与核实</h2><p>选参数、分析证据、记录操作，再保存解释与核实结论。</p></div></header><p id="parameter-catalog-status" class="insight-note" role="status"></p><div id="parameter-dictionary"></div>';
       dictionary.mount(node.querySelector('#parameter-dictionary'));ensure();
@@ -123,20 +167,20 @@
   function create({getState,request,escape:esc,active,review,navigate,dictionary}) {
     let tab='research', section='insights', toolQuery='', toolsExpanded=false,researchReturn=null;
     const groups=()=>toolGroups.filter(group=>(group.page || 'insights')===section);
-    const automaticPage=root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time,navigate});
-    const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
-    const parkingPage=root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time});
-    const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
-    const rulesPage=root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time});
-    const chargeComparisonPage=root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time});
-    const parameterPage=parameterWorkspace({getState,request,esc,active:()=>active()&&tab==='parameters',dictionary,time,review,history:openParameterHistory});
-    const researchPage=root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review,diagnose:()=>navigate('settings','quality')});
-    const calendarPage=root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate});
-    const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
-    const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
-    const routesPage=root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate});
-    const reviewPage=root.TravelInsightsPage.create({kind:'review',getState,request,escape:esc,active:()=>active()&&tab==='review',time,navigate});
-    const costsPage=root.BooksOverview.create({getState,request,escape:esc,active:()=>active()&&tab==='costs',navigate:(view,date,filter)=>{navigate('books',view,date);if(view==='ledger')ledgerPage.setFilter(filter);}});
+    const automaticPage=lazyPage([['AutomaticInsightsPage','automatic-insights.js']],()=>root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time,navigate}),{getState,active:()=>active()&&tab==='automatic'});
+    const reportPage=lazyPage([['UsageReportPage','usage-reports.js']],()=>root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time}),{getState,active:()=>active()&&tab==='report'});
+    const parkingPage=lazyPage([['ParkingPage','parking.js']],()=>root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time}),{getState,active:()=>active()&&tab==='parking'});
+    const ledgerPage=lazyPage([['ChargeLedgerPage','charge-ledger.js']],()=>root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time}),{getState,active:()=>active()&&tab==='ledger'});
+    const rulesPage=lazyPage([['CustomRemindersPage','custom-reminders.js']],()=>root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time}),{getState,active:()=>active()&&tab==='rules'});
+    const chargeComparisonPage=lazyPage([['ChargeComparisonPage','charge-comparison.js']],()=>root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time}),{getState,active:()=>active()&&tab==='charge-comparison'});
+    const parameterPage=lazyPage([['ParameterStudies','parameter-studies.js'],['HypothesisLabPage','hypothesis-lab.js'],['ParameterExperimentsPage','parameter-experiments.js']],()=>parameterWorkspace({getState,request,esc,active:()=>active()&&tab==='parameters',dictionary,time,review,history:openParameterHistory}),{getState,active:()=>active()&&tab==='parameters'});
+    const researchPage=lazyPage([['VehicleResearchPage','vehicle-research.js']],()=>root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review,diagnose:()=>navigate('settings','quality')}),{getState,active:()=>active()&&tab==='research'});
+    const calendarPage=lazyPage([['UsageCalendarPage','usage-calendar.js']],()=>root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate}),{getState,active:()=>active()&&tab==='calendar'});
+    const lifePage=lazyPage([['VehicleLifePage','vehicle-life.js']],()=>root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time}),{getState,active:()=>active()&&tab==='life'});
+    const qualityPage=lazyPage([['DataQualityPage','data-quality.js']],()=>root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate}),{getState,active:()=>active()&&tab==='quality'});
+    const routesPage=lazyPage([['TravelInsightsPage','travel-insights.js']],()=>root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate}),{getState,active:()=>active()&&tab==='routes'});
+    const reviewPage=lazyPage([['TravelInsightsPage','travel-insights.js']],()=>root.TravelInsightsPage.create({kind:'review',getState,request,escape:esc,active:()=>active()&&tab==='review',time,navigate}),{getState,active:()=>active()&&tab==='review'});
+    const costsPage=lazyPage([['BooksOverview','books-overview.js']],()=>root.BooksOverview.create({getState,request,escape:esc,active:()=>active()&&tab==='costs',navigate:(view,date,filter)=>{navigate('books',view,date);if(view==='ledger')ledgerPage.setFilter(filter);}}),{getState,active:()=>active()&&tab==='costs'});
     const views={costs:costsPage,parameters:parameterPage,parking:parkingPage,routes:routesPage,review:reviewPage,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
@@ -156,14 +200,16 @@
     function openDate(view,target){
       const destination=toolGroups.find(group=>group.tools.some(tool=>tool.id===view))?.page || 'insights';
       if(destination!==section){navigate(destination,view,target);return;}
+      if(view==='costs'){tab=view;paint();costsPage.openDate(target);return;}
       if(view==='life'){tab=view;paint();lifePage.openDate(target);return;}
       if(view==='ledger'){tab=view;paint();ledgerPage.openDate(target);return;}
       tab=view;toolQuery='';
       if(view==='time'){date=target;reset();paint();}
       else{
         paint();
-        const field=node.querySelector({ledger:'#ledger-month',routes:'#routes-month',review:'#review-date',report:'#report-date',calendar:'#calendar-month'}[view]||'input[type="date"]');
-        if(field){field.value=field.type==='month'?target.slice(0,7):target;field.dispatchEvent(new Event('input',{bubbles:true}));}
+        const identity=context(),apply=()=>{if(!active()||tab!==view||identity!==context())return;const field=node.querySelector({ledger:'#ledger-month',routes:'#routes-month',review:'#review-date',report:'#report-date',calendar:'#calendar-month'}[view]||'input[type="date"]');
+        if(field){field.value=field.type==='month'?target.slice(0,7):target;field.dispatchEvent(new Event('input',{bubbles:true}));}};
+        if(views[view]?.loaded())apply();else views[view]?.ready().then(apply);
       }
     }
     function valid(serial, current, identity) {return serial===current && owner===identity && identity===context();}
@@ -379,7 +425,7 @@
       }
       return true;
     }
-    return {mount,handle,openField,openExperiment,openTool,openDate,openLedgerEvent:ledgerPage.openEvent,currentTool:()=>tab,parameterStage:parameterPage.currentStage,openParameterStage:parameterPage.openStage};
+    return {ready:()=>views[tab]?.ready?.()||Promise.resolve(),mount,handle,openField,openExperiment,openTool,openDate,openLedgerEvent:ledgerPage.openEvent,currentTool:()=>tab,parameterStage:parameterPage.currentStage,openParameterStage:parameterPage.openStage};
   }
   root.InsightsPage={create,toolsFor};
 })(window);

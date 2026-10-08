@@ -13,7 +13,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       data.charge_records_revision=(data.charge_records_revision||0)+recordsRevision;
       await route.fulfill({json:data});
     });
-    const sections=['overview','calendar','report','car','energy','tracks','insights','settings','more'];
+    const sections=['overview','calendar','report','car','energy','tracks','books','insights','settings'];
     const failures=[];
     async function loadResults(section,tool){
       const view=tool?.replace('source:','')||section;
@@ -31,7 +31,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       }else if(view==='ledger'){
         await page.locator('#ledger-month').fill('2026-09');
         await page.getByRole('button',{name:'读取账本',exact:true}).click();
-        await page.waitForSelector('#ledger-actual-total');
+        await page.waitForSelector('#ledger-range');
       }else if(view==='research'||view==='insights'){
         await page.getByLabel('研究开始日期',{exact:true}).fill('2026-09-20');
         await page.getByLabel('研究结束日期',{exact:true}).fill('2026-09-20');
@@ -45,7 +45,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         await page.getByRole('button',{name:'读取最新结论',exact:true}).click();
         await page.waitForSelector('#auto-energy');
       }else if(view==='parameters'){
-        await page.waitForSelector('.vehicle-table');
+        await page.waitForSelector(section==='car'?'.vehicle-table':'#field-results');
       }else if(view==='car'){
         await page.locator('[data-vehicle="overview"]').click();
       }else if(view==='energy'){
@@ -58,6 +58,8 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         await page.getByLabel('质量分析开始日期',{exact:true}).fill('2026-09-18');
         await page.getByLabel('质量分析结束日期',{exact:true}).fill('2026-09-20');
         await page.getByRole('button',{name:'分析数据质量',exact:true}).click();
+        await page.waitForSelector('#quality-range');
+        await page.waitForFunction(()=>![...document.querySelectorAll('#insights-workspace [role="status"]')].some(el=>el.checkVisibility()&&el.textContent.includes('正在读取时间元数据')));
       }else if(view==='rules'){
         await page.getByRole('button',{name:'读取规则与历史',exact:true}).click();
       }else if(view==='lab'){
@@ -86,7 +88,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       await page.waitForTimeout(100);
     }
     let checks=0;
-    for(const width of [1440,390]){
+    for(const width of [1440,1280]){
       await page.setViewportSize({width,height:600});
       for(const section of sections){
         // app.js uses lexical state; drive the existing navigation control directly.
@@ -96,7 +98,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         const variants=section==='car'?['parameters']:section==='energy'?['statistics']:section==='tracks'?['source:cloud','source:tags']:[];
         for(const tool of [null,...variants,...tools]){
           if(tool){
-            const selector=tool==='parameters'?'[data-vehicle="parameters"]':tool==='statistics'?'[data-action="charging-tab"][data-tab="statistics"]':
+            const selector=tool==='parameters'&&section==='car'?'[data-vehicle="parameters"]':tool==='statistics'?'[data-action="charging-tab"][data-tab="statistics"]':
               tool.startsWith('source:')?`[data-source="${tool.slice(7)}"]`:section==='insights'?`[data-insight-view="${tool}"]`:`[data-section-task="${tool}"]`;
             await page.locator(selector).first().evaluate(el=>{document.activeElement?.blur();el.click();});
           }
@@ -129,6 +131,6 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     }
     assert.deepEqual(f.errors,[]);
     assert.deepEqual(failures,[],failures.join('\n'));
-    console.log(`UI_REFRESH_SCROLL_PASS: ${checks} desktop/mobile page and tool refresh checks`);
+    console.log(`UI_REFRESH_SCROLL_PASS: ${checks} desktop page and tool refresh checks`);
   }finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

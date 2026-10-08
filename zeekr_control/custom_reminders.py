@@ -4,6 +4,7 @@ import json
 import uuid
 
 from .notifications import DeliveryError
+from .delivery_state import delivery_lock
 from .summary import updated_at
 from .vehicle_state import decode
 
@@ -112,6 +113,10 @@ class Reminders:
             return result
 
     def recover(self):
+        with delivery_lock(self.store.path.parent/'notifications.lock'):
+            self._recover()
+
+    def _recover(self):
         # Called only by the process-lock owner at startup, never by Web reads.
         if not self.store.path.exists():return
         with self.store.connect(write=True) as db,db:
@@ -194,6 +199,11 @@ class Reminders:
         if sender is not None:self.deliver(owner,vehicle,raw,now,sender,guard)
 
     def deliver(self,owner,vehicle,raw,now,sender,guard=None):
+        with delivery_lock(self.store.path.parent/'notifications.lock'):
+            self._recover()
+            self._deliver(owner,vehicle,raw,now,sender,guard)
+
+    def _deliver(self,owner,vehicle,raw,now,sender,guard=None):
         # Claim under a write transaction, send outside it; one attempt per event.
         with self.store.connect() as db:
             if not self._has_tables(db):return

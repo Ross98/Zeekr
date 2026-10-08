@@ -146,7 +146,7 @@ class SamplingTests(unittest.TestCase):
         from zeekr_control.monitor_runtime import collection_loop
         import threading
         save(self.root/'sampling.json', {'enabled':'false'})
-        with patch.object(self.runner.storage_health, 'tick') as health:
+        with patch('zeekr_control.delivery_runtime.StorageHealth.tick') as health:
             collection_loop(self.runner, threading.Event(), once=True)
         health.assert_called_once()
         self.assertEqual(self.client.calls, 0)

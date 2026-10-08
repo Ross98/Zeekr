@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 from .notifications import DeliveryError, bark_time
+from .delivery_state import delivery_lock
 from .report_telemetry import normalize
 
 COLLECTION='tyre_notifications'
@@ -122,9 +123,14 @@ class TyreNotifications:
                 if guard:guard()
                 if self.signature(self.config(owner,vehicle))!=signature:
                     raise ObservationCancelled()
-        self.deliver(owner,vehicle,now,bark,wecom,guard)
+        if bark is not None or wecom is not None:
+            self.deliver(owner,vehicle,now,bark,wecom,guard)
 
     def deliver(self,owner,vehicle,now,bark,wecom,guard=None):
+        with delivery_lock(self.store.path.parent/'notifications.lock'):
+            self._deliver(owner,vehicle,now,bark,wecom,guard)
+
+    def _deliver(self,owner,vehicle,now,bark,wecom,guard=None):
         signature=self.signature(self.config(owner,vehicle))
         with self.store.connect(write=True) as db:
             self._tables(db)

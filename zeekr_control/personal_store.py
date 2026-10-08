@@ -111,11 +111,29 @@ class PersonalStore:
                 'can_undo':bool(latest and latest[0]!='undo')}
 
     def read(self,owner,vehicle,collection):
-        key=self._key(owner,vehicle,collection)
+        return self.read_many(owner,vehicle,[collection])[collection]
+
+    def read_many(self,owner,vehicle,collections):
+        """One short read transaction, including each collection's revision."""
+        keys = [self._key(owner,vehicle,collection) for collection in collections]
         with self.connect() as db:
-            if db is None:return self._read(None,key)
+            if db is not None:db.execute('BEGIN')
+            return {key[2]:self._read(db,key) for key in keys}
+
+    def revisions(self,owner,vehicle,collections,include_commute=False):
+        keys = [self._key(owner,vehicle,collection) for collection in collections]
+        result = {key[2]:0 for key in keys}
+        if include_commute:result['commute_rule']=0
+        with self.connect() as db:
+            if db is None:return result
             db.execute('BEGIN')
-            return self._read(db,key)
+            for key in keys:
+                row = db.execute('SELECT revision FROM revisions WHERE owner=? AND vehicle=? AND collection=?',key).fetchone()
+                result[key[2]] = row[0] if row else 0
+            if include_commute and db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='commute_rule_versions'").fetchone():
+                result['commute_rule'] = db.execute('SELECT COALESCE(MAX(version),0) FROM commute_rule_versions WHERE owner=? AND vehicle=?',
+                                                    (owner,vehicle)).fetchone()[0]
+            return result
 
     def change(self,owner,vehicle,collection,action,identity,body,revision,guard=None):
         key=self._key(owner,vehicle,collection)

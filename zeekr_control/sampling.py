@@ -9,6 +9,11 @@ MIN_INTERVAL = 10
 MAX_INTERVAL = 60
 
 
+def public_policy():
+    return dict(version=1, default_interval=DEFAULT_INTERVAL, min_interval=MIN_INTERVAL,
+                max_interval=MAX_INTERVAL, parking_mode='same_as_normal', backoff_enabled=True)
+
+
 def validate_interval(interval):
     if type(interval) is not int or not MIN_INTERVAL <= interval <= MAX_INTERVAL:
         raise ValueError('采样间隔须为 10–60 秒的整数。')

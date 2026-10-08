@@ -1,0 +1,15 @@
+{
+  "name": "zeekr-desktop-checks",
+  "private": true,
+  "version": "1.0.0",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "browser:install": "playwright install chromium",
+    "test": "node scripts/test-desktop.cjs review",
+    "test:unit": "node scripts/test-desktop.cjs unit",
+    "test:smoke": "node scripts/test-desktop.cjs smoke",
+    "test:desktop": "node scripts/test-desktop.cjs desktop",
+    "check:js": "node scripts/test-desktop.cjs syntax"
+  },
+  "devDependencies": { "playwright": "1.62.1" }
+}

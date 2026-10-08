@@ -6,6 +6,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .notifications import DeliveryError, bark_time
+from .delivery_state import delivery_lock, add_columns, DeliveryCancelled
 from .summary import updated_at
 from .vehicle_state import decode, numeric
 from .tracks import TrackStore
@@ -148,6 +149,27 @@ class Monitor:
                        'ON monitor_events(vehicle,kind,created DESC,id DESC)')
             db.execute('CREATE INDEX IF NOT EXISTS monitor_vehicle_created '
                        'ON monitor_events(vehicle,created DESC)')
+            db.execute('CREATE TABLE IF NOT EXISTS analysis_event_revisions '
+                       '(vehicle TEXT PRIMARY KEY,revision INTEGER NOT NULL)')
+            db.execute('''CREATE TRIGGER IF NOT EXISTS monitor_events_analysis_insert
+                AFTER INSERT ON monitor_events BEGIN
+                    INSERT OR IGNORE INTO analysis_event_revisions VALUES(NEW.vehicle,0);
+                    UPDATE analysis_event_revisions SET revision=revision+1 WHERE vehicle=NEW.vehicle;
+                END''')
+            db.execute('''CREATE TRIGGER IF NOT EXISTS monitor_events_analysis_update
+                AFTER UPDATE OF summary,vehicle ON monitor_events
+                WHEN OLD.summary IS NOT NEW.summary OR OLD.vehicle IS NOT NEW.vehicle BEGIN
+                    INSERT OR IGNORE INTO analysis_event_revisions VALUES(NEW.vehicle,0);
+                    UPDATE analysis_event_revisions SET revision=revision+1 WHERE vehicle=NEW.vehicle;
+                    INSERT OR IGNORE INTO analysis_event_revisions VALUES(OLD.vehicle,0);
+                    UPDATE analysis_event_revisions SET revision=revision+1
+                        WHERE vehicle=OLD.vehicle AND OLD.vehicle IS NOT NEW.vehicle;
+                END''')
+            db.execute('''CREATE TRIGGER IF NOT EXISTS monitor_events_analysis_delete
+                AFTER DELETE ON monitor_events BEGIN
+                    INSERT OR IGNORE INTO analysis_event_revisions VALUES(OLD.vehicle,0);
+                    UPDATE analysis_event_revisions SET revision=revision+1 WHERE vehicle=OLD.vehicle;
+                END''')
             db.execute('''CREATE TABLE IF NOT EXISTS monitor_event_media (
                 event_id TEXT PRIMARY KEY, kind TEXT NOT NULL,
                 delivery TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
@@ -170,9 +192,15 @@ class Monitor:
                 normalized_payload TEXT NOT NULL, decoder_version TEXT NOT NULL,
                 PRIMARY KEY(vehicle,state_time))''')
             db.execute('CREATE INDEX IF NOT EXISTS report_observation_time ON report_observations(vehicle,state_time)')
-            db.execute("UPDATE monitor_events SET delivery='uncertain', error='发送期间进程中断，需人工确认' WHERE delivery='sending'")
-            db.execute("UPDATE monitor_event_media SET delivery='uncertain', error='图片发送期间进程中断，需人工确认' WHERE delivery='sending'")
-            db.execute("UPDATE monitor_event_alerts SET delivery='uncertain', error='Bark 发送期间进程中断，需人工确认' WHERE delivery='sending'")
+            for table in ('monitor_events','monitor_event_media','monitor_event_alerts'):
+                add_columns(db,table,{'prepare_attempts':'INTEGER NOT NULL DEFAULT 0'})
+
+    def _recover_delivery(self):
+        # Caller holds notifications.lock. Construction and read paths never recover.
+        with self.tracks.connect() as db:
+            for table in ('monitor_events','monitor_event_media','monitor_event_alerts'):
+                db.execute("UPDATE "+table+" SET delivery='uncertain',error='发送期间进程中断，结果未确认' WHERE delivery='sending'")
+                db.execute("UPDATE "+table+" SET delivery=CASE WHEN prepare_attempts>=3 THEN 'failed' ELSE 'pending' END,error='准备期间进程中断，尚未发送' WHERE delivery='preparing'")
 
     def status(self, vehicle):
         with self.tracks.connect() as db:
@@ -447,16 +475,25 @@ class Monitor:
                      attempts=r[5], error=r[6], image_delivery=r[7], image_error=r[8],
                      alert_delivery=r[9], alert_error=r[10]) for r in rows]
 
-    def deliver(self, sender, now, alert_sender=None):
+    def deliver(self, sender, now, alert_sender=None, guard=None, image_limit=10, vehicle=None):
+        with delivery_lock(self.tracks.path.parent/'notifications.lock'):
+            self._recover_delivery()
+            self._deliver(sender,now,alert_sender,guard,image_limit,vehicle)
+
+    def _deliver(self, sender, now, alert_sender=None, guard=None, image_limit=10, vehicle=None):
+        selected_vehicle=vehicle
         if alert_sender is not None:
-            self._deliver_alerts(alert_sender, now)
+            self._deliver_alerts(alert_sender, now, guard, vehicle)
         # One worker owns the process lock; compare-and-set also guards claims.
         with self.tracks.connect() as db:
             extra = " AND kind!='trip_start'" + (" AND kind!='charge_start'" if alert_sender is not None else '')
-            rows = db.execute("SELECT id,message,attempts,kind,summary,vehicle FROM monitor_events WHERE delivery='pending' AND next_attempt<=?" + extra + " ORDER BY created,rowid LIMIT 10", (now,)).fetchall()
+            if vehicle is not None:extra += ' AND vehicle=?'
+            args=(now,vehicle) if vehicle is not None else (now,)
+            rows = db.execute("SELECT id,message,attempts,kind,summary,vehicle FROM monitor_events WHERE delivery='pending' AND next_attempt<=?" + extra + " ORDER BY created,rowid LIMIT 10", args).fetchall()
         for event_id, message, attempts, kind, encoded, vehicle in rows:
+            if guard:guard()
             with self.tracks.connect() as db:
-                claimed = db.execute("UPDATE monitor_events SET delivery='sending', attempts=attempts+1 WHERE id=? AND delivery='pending'", (event_id,)).rowcount
+                claimed = db.execute("UPDATE monitor_events SET delivery='preparing', prepare_attempts=prepare_attempts+1 WHERE id=? AND delivery='pending'", (event_id,)).rowcount
             if not claimed:
                 continue
             error, next_attempt, sent_at = None, 0, None
@@ -498,12 +535,18 @@ class Monitor:
                     with self.tracks.connect() as db:
                         db.execute('UPDATE monitor_events SET summary=?,message=? WHERE id=?',
                                    (json.dumps(data, ensure_ascii=False), message, event_id))
+                if guard:guard()
+                with self.tracks.connect() as db:
+                    claimed=db.execute("UPDATE monitor_events SET delivery='sending',attempts=attempts+1 WHERE id=? AND delivery='preparing'",(event_id,)).rowcount
+                if not claimed:continue
                 sender_called = True
                 if hasattr(sender, 'send_markdown'):
                     sender.send_markdown(markdown_for(message))
                 else:
                     sender(message)
                 delivery, sent_at = 'sent', now
+            except DeliveryCancelled:
+                delivery,error='pending',None
             except DeliveryError as exc:
                 delivery = 'uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts >= 5 else 'pending'
                 error = str(exc)[:100]
@@ -517,15 +560,16 @@ class Monitor:
                 db.execute('UPDATE monitor_events SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE id=?',
                            (delivery, error, next_attempt, sent_at, event_id))
         if hasattr(sender, 'send_image'):
-            self._deliver_images(sender, now)
+            self._deliver_images(sender, now, guard, image_limit, selected_vehicle)
 
-    def _deliver_alerts(self, sender, now):
+    def _deliver_alerts(self, sender, now, guard=None, vehicle=None):
         with self.tracks.connect() as db:
             rows = db.execute('''SELECT a.event_id,a.attempts,e.kind,e.summary
                 FROM monitor_event_alerts a JOIN monitor_events e ON e.id=a.event_id
-                WHERE a.delivery='pending' AND a.next_attempt<=?
-                ORDER BY e.created,e.rowid LIMIT 10''', (now,)).fetchall()
+                WHERE a.delivery='pending' AND a.next_attempt<=? AND (? IS NULL OR e.vehicle=?)
+                ORDER BY e.created,e.rowid LIMIT 10''', (now,vehicle,vehicle)).fetchall()
         for event_id, attempts, kind, encoded in rows:
+            if guard:guard()
             with self.tracks.connect() as db:
                 claimed = db.execute("UPDATE monitor_event_alerts SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='pending'", (event_id,)).rowcount
             if not claimed:
@@ -547,13 +591,14 @@ class Monitor:
                     db.execute("UPDATE monitor_events SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE id=? AND delivery='pending'",
                                (delivery, error, next_attempt, sent_at if delivery == 'sent' else None, event_id))
 
-    def _deliver_images(self, sender, now):
+    def _deliver_images(self, sender, now, guard=None, image_limit=10, vehicle=None):
         with self.tracks.connect() as db:
-            rows = db.execute('''SELECT m.event_id,m.attempts,e.vehicle,e.summary
+            rows = db.execute('''SELECT m.event_id,m.attempts,e.vehicle,e.summary,m.prepare_attempts
                 FROM monitor_event_media m JOIN monitor_events e ON e.id=m.event_id
-                WHERE m.delivery='pending' AND m.next_attempt<=? AND e.delivery='sent'
-                ORDER BY e.created,e.rowid LIMIT 10''', (now,)).fetchall()
-        for event_id, attempts, vehicle, encoded in rows:
+                WHERE m.delivery='pending' AND m.next_attempt<=? AND e.delivery='sent' AND (? IS NULL OR e.vehicle=?)
+                ORDER BY e.created,e.rowid LIMIT ?''', (now,vehicle,vehicle,image_limit)).fetchall()
+        for event_id, attempts, vehicle, encoded, prepare_attempts in rows:
+            if guard:guard()
             # Apply the policy to images queued before this rule, too. Never
             # touch already-sent or ambiguous deliveries, nor count a send attempt.
             try:
@@ -565,7 +610,7 @@ class Monitor:
                     db.execute("UPDATE monitor_event_media SET delivery='skipped',error=NULL,next_attempt=0 WHERE event_id=? AND delivery='pending'",(event_id,))
                 continue
             with self.tracks.connect() as db:
-                claimed=db.execute("UPDATE monitor_event_media SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='pending'",(event_id,)).rowcount
+                claimed=db.execute("UPDATE monitor_event_media SET delivery='preparing',prepare_attempts=prepare_attempts+1 WHERE event_id=? AND delivery='pending'",(event_id,)).rowcount
             if not claimed: continue
             delivery,error,next_attempt,sent_at='sent',None,0,now
             called=False
@@ -588,7 +633,13 @@ class Monitor:
                     content=self.map_renderer.render_trip(report,route,name)
                 else:
                     content=render_trip_png(report,route,self.map_renderer(route))
+                if guard:guard()
+                with self.tracks.connect() as db:
+                    claimed=db.execute("UPDATE monitor_event_media SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='preparing'",(event_id,)).rowcount
+                if not claimed:continue
                 called=True; sender.send_image(content)
+            except DeliveryCancelled:
+                delivery,error='pending',None
             except DeliveryError as exc:
                 delivery='uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts>=5 else 'pending'
                 error=str(exc)[:100]; next_attempt=now+min(3600,60*2**attempts)*1000
@@ -597,10 +648,10 @@ class Monitor:
                     delivery,error='uncertain','图片发送结果未确认'
                 else:
                     retryable=not isinstance(exc,ImagePreparationError) or exc.retryable
-                    delivery='pending' if retryable and attempts<2 else 'failed'
+                    delivery='pending' if retryable and prepare_attempts<2 else 'failed'
                     reason=str(exc) if isinstance(exc,ImagePreparationError) else '行程图片准备失败'
                     error=reason+'，未调用发送器'
-                    next_attempt=now+60*2**attempts*1000 if delivery=='pending' else 0
+                    next_attempt=now+60*2**prepare_attempts*1000 if delivery=='pending' else 0
             with self.tracks.connect() as db:
                 db.execute('UPDATE monitor_event_media SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE event_id=?',
                            (delivery,error,next_attempt,sent_at if delivery=='sent' else None,event_id))

@@ -17,6 +17,7 @@ private/
 htmlcov/
 playwright-report/
 test-results/
+node_modules/
 *.log
 *.pem
 *.key
@@ -24,6 +25,7 @@ test-results/
 # Owner-specific notes, profiles, and operational reports (local only)
 /Myconfig.md
 /Key.md
+/handoff.md
 /BarkKey.md
 /docs/web-validation.md
 /docs/overview-validation.md

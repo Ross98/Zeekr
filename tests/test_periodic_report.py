@@ -135,7 +135,7 @@ class PeriodicReportTests(unittest.TestCase):
             path=Path(folder)/'reports.sqlite3'
             with self.assertRaises(KeyboardInterrupt):PeriodicDelivery(path,renderer).deliver('scope','car',delivery_report(),sender)
             result=PeriodicDelivery(path,renderer).deliver('scope','car',delivery_report(),sender)
-            self.assertEqual(result['text'],'sending')
+            self.assertEqual(result['text'],'unknown')
             self.assertEqual(sender.send_markdown.call_count,1)
             sender.send_image.assert_not_called()
 

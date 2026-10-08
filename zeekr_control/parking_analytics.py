@@ -12,6 +12,8 @@ from .web_model import parse_location
 from .commute_tags import CommuteTags, _distance
 from .trip_place_names import TripPlaceNames, cached_names
 from .geocoding import is_trusted_location
+from .analysis_work import ResultRows, SampleStore
+from .archive_reader import ArchiveReader
 
 
 MAX_GAP_MS = 600000
@@ -28,7 +30,7 @@ REASONS = {
 def analyze_parking(samples, lower, upper, capacity=None):
     capacity = numeric(capacity, 0.001, 1000)
     quality = {'read_count': 0, 'boundary_reads': 0, 'repeat_reads': 0, 'revisions': 0, 'excluded_reads': 0}
-    sessions, active, previous = [], None, None
+    sessions, active, previous = ResultRows(), None, None
     prior_kind, prior_reason = None, 'start_unobserved'
 
     def revised():
@@ -245,27 +247,25 @@ class ParkingAnalytics:
             read_lower = int(before[-1]['end_time']) if before else (bounds[0] if bounds else read_lower)
             read_upper = int(after[0]['start_time'])+1 if after else (bounds[1]+1 if bounds else read_upper)
             charges = [row for row in events if row['kind'] == 'charge_end']
+        archive = (self.archive.frozen(scope, vehicle, int(read_upper))
+                   if isinstance(self.archive, ArchiveReader) else self.archive)
         def samples():
             cursor = int(read_lower)
             while cursor < read_upper:
                 chunk_end = min(int(read_upper), cursor+33*86400000)
-                for record, raw in self.archive.iter_records(scope, vehicle, cursor, chunk_end):
+                for record, raw in archive.iter_records(scope, vehicle, cursor, chunk_end, limit=None):
                     climate = raw.get('additionalVehicleStatus', {})
                     climate = climate.get('climateStatus', {}) if isinstance(climate, dict) else {}
                     inside = numeric(climate.get('interiorTemp'), -80, 100) if isinstance(climate, dict) else None
                     inside_time = numeric(climate.get('temperatureUpdateTime'), 1, 9999999999999) if isinstance(climate, dict) else None
                     yield {'record': record, 'state': decode(raw), 'location': parse_location(raw), 'inside_temp': inside, 'inside_time': inside_time}
                 cursor = chunk_end
-        base_samples = []
-        for sample in samples():
-            base_samples.append(sample)
-            if len(base_samples) > 50000:
-                raise ValueError('完整停车观测超过 50000 条，请缩小范围或核对行程边界。')
-        result = analyze_parking([row for row in base_samples
-                                  if max(0, lower-padding) <= row['record']['observed_at'] < upper+padding],
-                                 lower, upper, capacity)
+        with SampleStore(samples()) as base_samples:
+            result = analyze_parking(base_samples.raw('r.observed>=? AND r.observed<?',
+                                      (max(0, lower-padding), upper+padding)), lower, upper, capacity)
+            if self.database is not None:
+                result.update(build_events(triples, charges, base_samples, lower, upper, capacity))
         if self.database is not None:
-            result.update(build_events(triples, charges, base_samples, lower, upper, capacity))
             result['orphan_sessions'] = [row for row in result['sessions'] if not any(
                 # Events use collection time; legacy sessions use vehicle time.
                 # Inclusive comparison also assigns single-point observations.

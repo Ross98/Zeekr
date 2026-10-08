@@ -15,7 +15,7 @@ const page=window.ParkingPage.create({
   active:()=>true,
   time:value=>String(value)
 });
-const container={isConnected:true,innerHTML:'',contains:()=>true,querySelector:()=>({disabled:false})};
+const container={isConnected:true,innerHTML:'',contains:()=>true,querySelector:()=>({disabled:false}),querySelectorAll:()=>[]};
 
 page.mount(container);
 assert.equal(requests.length,0,'opening parking analysis must not start a request');

@@ -5,6 +5,7 @@ import time
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
 from .usage_events import UsageEvents, total
+from .analysis_work import TimeMap
 
 DAY = 86400000
 
@@ -88,21 +89,22 @@ class UsageReports:
         window = result['window']
         counts = {'reads':0,'new_states':0,'revisions':0,'repeats':0,'invalid_or_stale':0,
                   'days_with_reads':0,'first_read':None,'last_read':None}
-        dates, seen = set(), set()
+        dates = set()
         upper = min(window['end'],as_of+1)
-        if upper > window['start']:
-            for record in self.archive.iter_metadata(scope,vehicle,window['start'],upper):
-                counts['reads'] += 1
-                stamp = record['observed_at']
-                dates.add(date_label(stamp))
-                if counts['first_read'] is None:counts['first_read'] = stamp
-                counts['last_read'] = stamp
-                counts['repeats'] += int(record['change']=='repeat')
-                counts['revisions'] += int(record['change']=='revision')
-                if record['flags'] or record['change']=='regression':
-                    counts['invalid_or_stale'] += 1
-                elif record['change'] in ('first','new') and record['state_time'] not in seen:
-                    seen.add(record['state_time']);counts['new_states'] += 1
+        with TimeMap() as seen:
+            if upper > window['start']:
+                for record in self.archive.iter_metadata(scope,vehicle,window['start'],upper,limit=None):
+                    counts['reads'] += 1
+                    stamp = record['observed_at']
+                    dates.add(date_label(stamp))
+                    if counts['first_read'] is None:counts['first_read'] = stamp
+                    counts['last_read'] = stamp
+                    counts['repeats'] += int(record['change']=='repeat')
+                    counts['revisions'] += int(record['change']=='revision')
+                    if record['flags'] or record['change']=='regression':
+                        counts['invalid_or_stale'] += 1
+                    elif record['change'] in ('first','new') and seen.add(record['state_time']):
+                        counts['new_states'] += 1
         counts['days_with_reads'] = len(dates)
         for day in result['days']:
             if day['date'] in dates:day['coverage'] = 'observed'

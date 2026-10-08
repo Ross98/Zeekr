@@ -35,7 +35,7 @@ class ParkingPlaceTests(unittest.TestCase):
                             maintenanceStatus=dict(odometer=100)))
         outer = self
         class Archive:
-            def iter_records(self, scope, vehicle, lower, upper):
+            def iter_records(self, scope, vehicle, lower, upper, **kwargs):
                 for minute in (5, 10, 15, 20):
                     stamp = outer.lower + minute*60000
                     raw = dict(outer.raw, updateTime=stamp)
@@ -61,7 +61,7 @@ class ParkingPlaceTests(unittest.TestCase):
         class Archive:
             def time_bounds(self, scope, vehicle):
                 return a, b
-            def iter_records(self, scope, vehicle, lower, upper):
+            def iter_records(self, scope, vehicle, lower, upper, **kwargs):
                 for stamp in range(a, b+1, 300000):
                     if lower <= stamp < upper:
                         yield dict(key=str(stamp), state_time=stamp, observed_at=stamp,
@@ -92,7 +92,7 @@ class ParkingPlaceTests(unittest.TestCase):
                        (json.dumps(body), first))
         outer = self
         class Archive:
-            def iter_records(self, scope, vehicle, lower, upper):
+            def iter_records(self, scope, vehicle, lower, upper, **kwargs):
                 self_ranges.append((lower, upper))
                 for stamp in (first, outer.lower, outer.lower+1200000):
                     if lower <= stamp < upper:

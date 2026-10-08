@@ -18,7 +18,7 @@ from .monitor import Monitor
 from .geocoding import AmapGeocoder
 from .focused_trip_image import FocusedTripImage
 from .profiles import vehicle_profile
-from .notifications import BarkSender, DeliveryError, FallbackSender, WeComSender, compact_bark_times
+from .notifications import BarkSender, FallbackSender, WeComSender, compact_bark_times
 from .storage import DEFAULT_PATH, load, save
 from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
@@ -29,6 +29,7 @@ from .sampling import read_settings, save_settings
 from .query_policy import QueryPolicy
 from .archive_reader import ArchiveReader
 from .automatic_insights import Analyzer, InsightCache, InsightWorker
+from .system_notifications import AuthFailureAlert
 
 
 def enable_sampling(root):
@@ -46,15 +47,10 @@ def collection_loop(runner, stop, once=False):
     previous_interval = None
     finished_at, delay = 0, None
     normal_wait = False
+    runner.stop=stop
     while not stop.is_set():
-        storage_health = getattr(runner, 'storage_health', None)
-        if storage_health is not None:
-            try:
-                storage_health.tick()
-            except Exception:
-                # Health failure is visible in journal + stale Web timestamp,
-                # but does not silently disable unrelated vehicle collection.
-                print('存储健康巡检或预警状态持久化失败，请检查存储。', flush=True)
+        delivery=getattr(runner,'delivery_process',None)
+        if delivery is not None:delivery.ensure_running()
         enabled, interval = read_settings(runner.root)
         if interval != previous_interval and normal_wait:
             # Reschedule normal collection only; a setting change cannot shorten
@@ -63,12 +59,13 @@ def collection_loop(runner, stop, once=False):
         previous_interval = interval
         if enabled != previous or time.monotonic() >= deadline:
             delay = runner.tick()
-            runner.start_analysis()
+            if not stop.is_set():runner.start_analysis()
             normal_wait = delay == interval and runner.health().get('status') not in ('cooldown', 'retrying', 'blocked')
             finished_at = time.monotonic()
             deadline = finished_at + delay
             previous = enabled
             if once:
+                if not stop.is_set():runner.deliver_once()
                 break
         stop.wait(1)
 
@@ -80,9 +77,13 @@ def background(session_path, stop):
         try:
             with process_lock(root / 'monitor.lock'):
                 runner = Runner(session_path)
+                from .delivery_runtime import DeliveryProcess
+                delivery = DeliveryProcess(session_path)
                 try:
+                    runner.delivery_process=delivery
                     collection_loop(runner, stop)
                 finally:
+                    delivery.close()
                     runner.insight_worker.close()
                     health = runner.health()
                     health.update(status='stopped', heartbeat=str(int(time.time() * 1000)))
@@ -157,6 +158,9 @@ def read_status(root, vehicle=None, public=False):
             has_alerts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_event_alerts'").fetchone())
             alert_columns = ',a.delivery,a.error' if has_alerts else ',NULL,NULL'
             alert_join = ' LEFT JOIN monitor_event_alerts a ON a.event_id=e.id' if has_alerts else ''
+            has_media = bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_event_media'").fetchone())
+            alert_columns += ',m.delivery,m.error' if has_media else ',NULL,NULL'
+            if has_media:alert_join += ' LEFT JOIN monitor_event_media m ON m.event_id=e.id'
             if public and not vehicle:
                 rows = []
             elif public:
@@ -169,41 +173,14 @@ def read_status(root, vehicle=None, public=False):
                     ' ORDER BY e.created DESC,e.rowid DESC LIMIT 10').fetchall()
             if public:
                 result['events'] = [dict(kind=r[0], delivery=r[1], error=_safe_error(r[2]), created=r[3],
-                                         alert_delivery=r[4], alert_error=_safe_error(r[5])) for r in rows]
+                                         alert_delivery=r[4], alert_error=_safe_error(r[5]),
+                                         image_delivery=r[6], image_error='图片投递需要检查。' if r[7] else '') for r in rows]
             else:
                 result['events'] = [dict(kind=r[0], summary=json.loads(r[1]), delivery=r[2], error=r[3], created=r[4],
-                                         alert_delivery=r[5], alert_error=r[6]) for r in rows]
+                                         alert_delivery=r[5], alert_error=r[6],image_delivery=r[7],image_error=r[8]) for r in rows]
         finally:
             db.close()
     return result
-
-
-class AuthFailureAlert:
-    """One Bark attempt per observed 1509 outage, durable across restarts."""
-
-    def __init__(self, root, sender):
-        self.path = Path(root) / 'auth-failure-alert.json'
-        self.sender = sender
-
-    def blocked(self, error):
-        if self.sender is None or '网关代码 1509' not in error:
-            return
-        if load(self.path).get('state') in ('sending', 'sent', 'failed', 'uncertain'):
-            return
-        save(self.path, {'state': 'sending'})
-        try:
-            self.sender('⚠️ 极氪采集已中断',
-                        '车辆接口返回 1509，无法采集新数据或生成新通知。请在服务器重新登录极氪副账号。')
-        except DeliveryError as exc:
-            save(self.path, {'state': 'uncertain' if exc.ambiguous else 'failed'})
-        except Exception:
-            save(self.path, {'state': 'uncertain'})
-        else:
-            save(self.path, {'state': 'sent'})
-
-    def recovered(self):
-        if load(self.path).get('state') not in (None, 'ready'):
-            save(self.path, {'state': 'ready'})
 
 
 class Runner:
@@ -230,13 +207,17 @@ class Runner:
         self.storage_health = StorageHealth(self.root, self.sender, self.alert_sender)
         self.reminders = Reminders(PersonalStore(self.root / 'personal.sqlite3'))
         self.tyre_notifications = TyreNotifications(self.reminders.store)
-        self.reminders.recover()
         self.blocked_fingerprint = None
         self.failures = 0
         self.analysis_input = None
         self.insight_worker = InsightWorker(
             Analyzer(self.root / 'tracks.sqlite3', ArchiveReader(self.root / 'snapshot-archive')),
             InsightCache(self.root / 'automatic-insights.json'))
+
+    def deliver_once(self,now=None):
+        from .delivery_runtime import DeliveryWorker
+        worker=DeliveryWorker(self.session_path,sender=self.sender,alert_sender=self.alert_sender)
+        worker.tick(now=now,image_limit=10,budget_seconds=30)
 
     def start_analysis(self):
         if self.analysis_input is None:
@@ -275,6 +256,7 @@ class Runner:
                     raise ApiError('尚未登录，请更新车辆会话后恢复监控')
                 client = self.client_factory(session)
                 vehicles = client.vehicles()
+                if getattr(self,'stop',None) is not None and self.stop.is_set():return interval
                 binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
                 choices = []
                 for entry in vehicles:
@@ -323,18 +305,15 @@ class Runner:
                     current_binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
                     if session_scope(load(self.session_path)) != session_scope(session) or current_binding != binding:
                         raise ApiError('账号会话或绑定车辆已变化，本次自定义提醒已取消')
-                reminder_sender = (FallbackSender(self.alert_sender, self.sender, compact_bark_times)
-                                   if self.alert_sender is not None else self.sender)
-                self.reminder_sender = reminder_sender
                 self.reminders.observe(account_scope(session), binding, raw, observed,
-                                       sender=reminder_sender, guard=reminder_guard)
+                                       sender=None, guard=reminder_guard)
                 def tyre_guard():
                     reminder_guard()
                     if not sampling_enabled(self.root):
                         raise ObservationCancelled()
                 try:
                     self.tyre_notifications.observe(account_scope(session), binding, raw, observed,
-                                                    bark=self.alert_sender, wecom=self.sender, guard=tyre_guard)
+                                                    bark=None, wecom=None, guard=tyre_guard)
                 except ObservationCancelled:
                     pass
                 self.analysis_input = (session_scope(session), binding, observed)
@@ -353,9 +332,8 @@ class Runner:
             else:
                 self.blocked_fingerprint = fingerprint
                 health.update(status='blocked', error=error[:150])
-                self.auth_failure_alert.blocked(error)
+                self.auth_failure_alert.blocked(error,now)
         # Storage errors escape and stop the worker, never inventing transitions.
-        self.monitor.deliver(self.sender, now, self.alert_sender)
         health['interval'] = str(delay)
         health['next_check'] = str((int(time.time() * 1000) if live_clock else now) + delay * 1000)
         save(self.root / 'monitor-health.json', health)
@@ -374,10 +352,14 @@ def run(session_path=DEFAULT_PATH, vehicle=None, once=False, active_codes=(), st
             try:
                 with process_lock(root / 'monitor.lock'):
                     runner = Runner(session_path, vehicle, active_codes=active_codes, stopped_codes=stopped_codes)
+                    from .delivery_runtime import DeliveryProcess
+                    delivery=None if once else DeliveryProcess(session_path)
+                    runner.delivery_process=delivery
                     try:
                         print('统一采集已启动：正常采集每 %d 秒（含停车）；充电起止通知。' % read_settings(root)[1], flush=True)
                         collection_loop(runner, stop, once)
                     finally:
+                        if delivery is not None:delivery.close()
                         runner.insight_worker.close()
                         health = runner.health()
                         health.update(status='stopped', heartbeat=str(int(time.time() * 1000)))

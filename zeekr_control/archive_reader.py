@@ -20,6 +20,11 @@ from .web_model import build_model
 MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
 READ_COLUMNS = 'id,state_time,fetched_at,observed_at,source,digest'
 STALE_MS = 10 * 60 * 1000
+READ_PAGE_SIZE = 512
+
+
+class ArchiveChanged(ValueError):
+    """A shard was removed or replaced during a bounded analysis."""
 
 
 def _private(path, directory=False):
@@ -82,6 +87,15 @@ def metadata(month, row, previous=None):
 class ArchiveReader:
     def __init__(self, root):
         self.root = Path(root)
+        self._frozen = None
+
+    def frozen(self, scope, vehicle, upper):
+        """A request-local reader shares watermarks across multiple date chunks."""
+        _context(scope, vehicle)
+        end_month = datetime.fromtimestamp((upper-1)/1000, BEIJING).strftime('%Y%m')
+        reader = ArchiveReader(self.root)
+        reader._frozen = (scope, vehicle, self._freeze(scope, vehicle, end_month))
+        return reader
 
     @contextmanager
     def connect(self, month):
@@ -222,35 +236,88 @@ class ArchiveReader:
             raise ValueError('归档正文不是车辆快照。')
         return raw
 
+    def _identity(self, month):
+        try:
+            info = (self.root / month[:4] / (month[4:] + '.sqlite3')).lstat()
+            return info.st_dev, info.st_ino
+        except FileNotFoundError:
+            raise ArchiveChanged('归档在读取期间发生变化，请重新读取。') from None
+
+    def _freeze(self, scope, vehicle, end_month):
+        if self._frozen is not None:
+            owner, car, frozen = self._frozen
+            if (scope, vehicle) != (owner, car):
+                raise ValueError('归档读取作用域已变化。')
+            return {month: value for month, value in frozen.items() if month <= end_month}
+        frozen = {}
+        for month in self._months():
+            if month > end_month:
+                continue
+            identity = self._identity(month)
+            with self.connect(month) as db:
+                if db is None:
+                    raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+                high = db.execute('SELECT MAX(id) FROM reads WHERE scope_key=? AND vehicle_key=?',
+                                  (scope, vehicle)).fetchone()[0] or 0
+            if self._identity(month) != identity:
+                raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+            frozen[month] = identity, high
+        return frozen
+
     def _iter_rows(self, scope, vehicle, lower, upper, limit):
         """Private metadata batches, with each query cursor exhausted before yielding."""
         _context(scope, vehicle)
         if (type(lower) is not int or type(upper) is not int or lower < 0 or
-                not 0 < upper-lower <= 33*86400000 or type(limit) is not int or not 1 <= limit <= 50000):
+                not 0 < upper-lower <= 33*86400000 or
+                limit is not None and (type(limit) is not int or not 1 <= limit <= 50000)):
             raise ValueError('归档分析范围无效。')
         start_month = datetime.fromtimestamp(lower/1000, BEIJING).strftime('%Y%m')
         end_month = datetime.fromtimestamp((upper-1)/1000, BEIJING).strftime('%Y%m')
+        frozen = self._freeze(scope, vehicle, end_month)
         previous, count = None, 0
-        for month in self._months():
+        # A frozen predecessor also preserves repeat/revision semantics at the
+        # first page, without accepting late inserts into an earlier shard.
+        for month in reversed(list(frozen)):
+            if month > start_month:
+                continue
+            with self.connect(month) as db:
+                if db is None or self._identity(month) != frozen[month][0]:
+                    raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+                previous = db.execute('SELECT '+READ_COLUMNS+' FROM reads WHERE scope_key=? AND vehicle_key=? '
+                    'AND observed_at<? AND id<=? ORDER BY observed_at DESC,id DESC LIMIT 1',
+                    (scope, vehicle, lower, frozen[month][1])).fetchone()
+                if previous:
+                    break
+        for month, (identity, high) in frozen.items():
             if not start_month <= month <= end_month:
                 continue
             with self.connect(month) as db:
                 if db is None:
-                    continue
-                if previous is None:
-                    previous = self._previous(month, scope, vehicle, lower, 0, db)
+                    raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
                 # Materialize bounded metadata only, releasing the range cursor's
                 # SQLite read lock before decoding. Each payload lookup is short;
                 # long analytics must not hold up the monitor's archive commits.
-                rows = db.execute('SELECT ' + READ_COLUMNS + ' FROM reads WHERE scope_key=? AND vehicle_key=? '
-                                  'AND observed_at>=? AND observed_at<? ORDER BY observed_at,id LIMIT ?',
-                                  (scope, vehicle, lower, upper, limit-count+1)).fetchall()
-                for row in rows:
-                    count += 1
-                    if count > limit:
-                        raise ValueError('归档观测超过 50000 条，请缩小日期范围。')
-                    yield db, row, metadata(month, row, previous)
-                    previous = row
+                after_time, after_id = lower, 0
+                while True:
+                    if self._identity(month) != identity:
+                        raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+                    rows = db.execute('SELECT ' + READ_COLUMNS + ' FROM reads WHERE scope_key=? AND vehicle_key=? '
+                        'AND observed_at>=? AND observed_at<? AND id<=? '
+                        'AND (observed_at>? OR (observed_at=? AND id>?)) ORDER BY observed_at,id LIMIT ?',
+                        (scope, vehicle, lower, upper, high, after_time, after_time, after_id,
+                         READ_PAGE_SIZE if limit is None else min(READ_PAGE_SIZE, limit-count+1))).fetchall()
+                    if not rows:
+                        break
+                    for row in rows:
+                        count += 1
+                        if limit is not None and count > limit:
+                            raise ValueError('归档观测超过 %d 条，请缩小日期范围。' % limit)
+                        yield db, row, metadata(month, row, previous)
+                        previous = row
+                    after_time, after_id = rows[-1]['observed_at'], rows[-1]['id']
+        for month, (identity, _) in frozen.items():
+            if self._identity(month) != identity:
+                raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
 
     def iter_metadata(self, scope, vehicle, lower, upper, limit=50000):
         for _, _, record in self._iter_rows(scope, vehicle, lower, upper, limit):

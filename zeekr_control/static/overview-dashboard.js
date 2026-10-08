@@ -13,7 +13,7 @@
       return {date,distance_km:null,...lookup.get(date)};
     });
     const actual=ledger?.totals?.actual_cents;
-    const pending=ledger?(ledger.events||[]).filter(e=>!e.recorded).length+(ledger.entries||[]).filter(e=>e.actual_cents===null).length:null;
+    const pending=ledger?ledger.totals.unlinked_charge_count+ledger.totals.unknown_charge_count:null;
     const events=[...(report?.current?.events||[]),...(report?.previous?.events||[])].sort((a,b)=>b.end_time-a.end_time);
     return {today:lookup.get(today)||{distance_km:null,trip_count:null,partial_trip_count:null},days,actual:Number.isFinite(actual)?actual:null,pending,events};
   }
@@ -48,7 +48,7 @@
       text('overview-today-value',number(today.distance_km));
       text('overview-today-note',today.trip_count===null?'尚无有效观测':`${today.trip_count} 次行程${today.partial_trip_count?' · 含 '+today.partial_trip_count+' 条片段':''}`);
       text('overview-cost-value',data.actual===null?'未知':number(data.actual/100));
-      text('overview-cost-note',data.pending===null?'账本尚未读取':`${ledger.totals.actual_count} 笔已填实际金额 · ${data.pending} 项待补`);
+      text('overview-cost-note',data.pending===null?'账本尚未读取':`含充电、充电停车费与日常支出 · ${data.pending} 项充电待补`);
       const rows=data.events.filter(e=>filter==='all'||e.kind===filter).slice(0,6);
       const loadLabel=loading?'正在读取已保存记录…':!owner?'连接当前车辆后可读取记录。':errors.length?errors.join('；'):'';
       html('overview-records',(loadLabel?`<p class="subtle" role="status">${esc(loadLabel)}</p>`:'')+(rows.map(e=>`<button class="overview-record-row" data-overview-record="${esc(e.id)}"><span><strong>${e.kind==='trip_end'?'行程':'充电'} · ${esc(time(e.end_time))}</strong><small>${e.partial?'片段记录':'未标记为片段'} · SOC ${number(e.start_soc)}% → ${number(e.end_soc)}%</small></span><span>${e.kind==='trip_end'?number(e.distance_km)+' km':'观测 '+number(Number.isFinite(e.duration_seconds)?e.duration_seconds/60:null)+' 分钟'}<small>查看详情 →</small></span></button>`).join('')||(!loading?'<p class="subtle">暂无符合筛选的结束记录。没有记录不表示没有用车。</p>':'')));
@@ -69,7 +69,7 @@
       if(pending?.context===context&&pending.stamp===stamp)return pending.promise;
       const token=++serial;loading=true;errors=[];paint();
       const queryDate=date();
-      const job={context,stamp,promise:Promise.allSettled([request('/api/insights/report?period=month&date='+queryDate),request('/api/insights/ledger?date='+queryDate)])};
+      const job={context,stamp,promise:Promise.allSettled([request('/api/insights/report?period=month&date='+queryDate),request('/api/insights/costs?date='+queryDate)])};
       pending=job;
       const results=await job.promise;
       if(pending===job)pending=null;

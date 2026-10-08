@@ -104,7 +104,7 @@ class StorageHealth:
         parts.append('恢复详情由企业微信发送' if healthy else '具体异常由企业微信发送')
         return title, '\n'.join(parts)
 
-    def tick(self, now=None):
+    def tick(self, now=None, can_send=None):
         now = time.time() if now is None else now
         if now < self.next_check: return
         self.next_check = now+INTERVAL
@@ -136,8 +136,8 @@ class StorageHealth:
         changed = level != prior
         reminder_due = level != 'healthy' and now-state.get('attempt_at', 0) >= REMINDER
         retry_due = now >= state.get('retry_at', now+3600)
-        detail_failed = state.get('notification_state') == 'failed' and level == prior and retry_due
-        alert_failed = state.get('alert_notification_state') == 'failed' and level == prior and retry_due
+        detail_failed = state.get('notification_state') in ('failed', 'pending') and level == prior and retry_due
+        alert_failed = state.get('alert_notification_state') in ('failed', 'pending') and level == prior and retry_due
         due = changed or reminder_due or detail_failed or alert_failed
         if not due or self.sender is None and self.alert_sender is None:
             self._save(state)
@@ -149,6 +149,12 @@ class StorageHealth:
         if send_alert: state['alert_notification_state'] = 'sending'
         self._save(state)  # Durable intent before network; errors never silently hide disk trouble.
         if send_alert:
+            if can_send is not None and not can_send():
+                state['alert_notification_state'] = 'pending'
+                if send_detail: state['notification_state'] = 'pending'
+                state['retry_at'] = now
+                self._save(state)
+                return
             try:
                 self.alert_sender(*self._alert(sample))
                 state['alert_notification_state'] = 'sent'
@@ -158,6 +164,11 @@ class StorageHealth:
             except Exception:
                 state['alert_notification_state'] = 'uncertain'
         if send_detail:
+            if can_send is not None and not can_send():
+                state['notification_state'] = 'pending'
+                state['retry_at'] = now
+                self._save(state)
+                return
             try:
                 self.sender(self._message(sample))
                 state['notification_state'] = 'sent'

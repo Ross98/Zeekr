@@ -1,5 +1,7 @@
 # Zeekr Web V2 执行设计
 
+> 历史设计，以下交付状态与机器路径仅记录当时情况。当前桌面范围见 [PRODUCT.md](../PRODUCT.md)，实现入口见 [DESIGN.md](../DESIGN.md)，发布状态应实时核对。
+
 版本：1.0，2026-09-18。交付状态：本地实现完成，尚未发布。
 
 工作区：`/Users/adam/Documents/Zeekr`。本文件供切换模型后继续实施；事实依据见 [Web 复审](web-review-design-direction-2026-09-18.md)，接手步骤见 [handoff.md](../handoff.md)。本文件确定本轮执行范围；旧版 `ui-design.md` 中与本文件冲突的初始采集、移动端和页面方案不再作为本轮要求。

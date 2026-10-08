@@ -25,6 +25,8 @@ class RuntimeTests(unittest.TestCase):
         runner.alert_sender=lambda *args:bark.append(args);runner.sender=wecom.append
         runner.tick(BASE);Client.seconds=20;runner.tick(BASE+20000)
         self.assertEqual(Client.calls,2)
+        self.assertEqual((len(bark),len(wecom)),(0,0))
+        self.deliver(runner,BASE+20000)
         self.assertEqual((len(bark),len(wecom)),(1,1))
         self.assertIn('胎压明显偏低',bark[0][0]);self.assertIn('软件参考提醒',wecom[0])
 
@@ -34,6 +36,10 @@ class RuntimeTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / 'private'
         save(self.root / 'session.json', {'accessToken': 'synthetic'})
+
+    def deliver(self,runner,now):
+        with patch('zeekr_control.delivery_runtime.StorageHealth.tick'):
+            runner.deliver_once(now)
 
     def runner(self, client):
         from zeekr_control.monitor_runtime import Runner
@@ -105,10 +111,12 @@ class RuntimeTests(unittest.TestCase):
                 confirm_seconds=60,cooldown_minutes=60,enabled=True,delivery='wecom',recovery=True))
         runner.tick(BASE);Client.tick=60;runner.tick(BASE+60000)
         self.assertEqual(Client.calls,2)
+        self.assertEqual(len(messages),0)
+        self.deliver(runner,BASE+60000)
         self.assertEqual(len(messages),1)
         self.assertEqual(runner.reminders.query(owner,car)['history'][0]['delivery'],'sent')
         restarted=self.runner(Client);restarted.sender=messages.append
-        Client.tick=120;restarted.tick(BASE+120000)
+        Client.tick=120;restarted.tick(BASE+120000);self.deliver(restarted,BASE+120000)
         self.assertEqual(len(messages),1)
 
     def test_multiple_vehicles_require_explicit_selection(self):
@@ -201,18 +209,20 @@ class RuntimeTests(unittest.TestCase):
         first = runner()
         first.tick(BASE)
         first.tick(BASE + 60000)
+        self.assertEqual(messages,[])
+        self.deliver(first,BASE+60000)
         self.assertEqual(len(messages), 1)
         self.assertIn('1509', messages[0][1])
         self.assertIn('重新登录', messages[0][1])
-        runner().tick(BASE + 120000)
+        restarted=runner();restarted.tick(BASE+120000);self.deliver(restarted,BASE+120000)
         self.assertEqual(len(messages), 1)
         Client.valid = True
         save(self.root/'session.json', {'accessToken': 'new-synthetic'})
-        runner().tick(BASE + 180000)
+        restarted=runner();restarted.tick(BASE+180000);self.deliver(restarted,BASE+180000)
         self.assertEqual(len(messages), 1)
         Client.valid = False
         save(self.root/'session.json', {'accessToken': 'another-synthetic'})
-        runner().tick(BASE + 240000)
+        restarted=runner();restarted.tick(BASE+240000);self.deliver(restarted,BASE+240000)
         self.assertEqual(len(messages), 2)
 
     def test_auth_alert_does_not_send_on_other_blocked_errors(self):
@@ -237,11 +247,12 @@ class RuntimeTests(unittest.TestCase):
             calls.append((title, body))
             raise DeliveryError('timeout', ambiguous=True)
         alert = AuthFailureAlert(self.root, uncertain)
-        alert.blocked('status 失败，网关代码 1509')
-        AuthFailureAlert(self.root, uncertain).blocked('status 失败，网关代码 1509')
+        alert.blocked('status 失败，网关代码 1509');alert.deliver()
+        restarted=AuthFailureAlert(self.root,uncertain)
+        restarted.blocked('status 失败，网关代码 1509');restarted.deliver()
         self.assertEqual(len(calls), 1)
-        self.assertEqual(__import__('zeekr_control.storage', fromlist=['load']).load(
-            self.root/'auth-failure-alert.json')['state'], 'uncertain')
+        with alert.connect() as db:
+            self.assertEqual(db.execute('SELECT state FROM auth_outbox').fetchone()[0],'uncertain')
 
     def test_process_lock_rejects_second_monitor(self):
         from zeekr_control.monitor_runtime import process_lock

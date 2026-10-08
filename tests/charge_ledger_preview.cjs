@@ -31,10 +31,10 @@ setImmediate(()=>{
   const preview=entries.innerHTML.match(/<summary class="ledger-preview">([\s\S]*?)<\/summary>/)?.[1];
   assert.ok(preview);
   assert.doesNotMatch(preview,/停车费|参考估算|停车2元|估算依据/);
-  const acArticle=entries.innerHTML.match(/<article data-ledger-entry="one">([\s\S]*?)<\/article>/)?.[1];
-  const dcArticle=entries.innerHTML.match(/<article data-ledger-entry="two">([\s\S]*?)<\/article>/)?.[1];
-  const unknownArticle=entries.innerHTML.match(/<article data-ledger-entry="three">([\s\S]*?)<\/article>/)?.[1];
-  const manualArticle=entries.innerHTML.match(/<article data-ledger-entry="four">([\s\S]*?)<\/article>/)?.[1];
+  const acArticle=entries.innerHTML.match(/<article data-ledger-entry="one"[^>]*>([\s\S]*?)<\/article>/)?.[1];
+  const dcArticle=entries.innerHTML.match(/<article data-ledger-entry="two"[^>]*>([\s\S]*?)<\/article>/)?.[1];
+  const unknownArticle=entries.innerHTML.match(/<article data-ledger-entry="three"[^>]*>([\s\S]*?)<\/article>/)?.[1];
+  const manualArticle=entries.innerHTML.match(/<article data-ledger-entry="four"[^>]*>([\s\S]*?)<\/article>/)?.[1];
   assert.match(acArticle,/直流 DC · 手动/);
   assert.match(acArticle,/等效充电单价[^<]*<strong>0\.8789 元\/kWh/);
   assert.doesNotMatch(acArticle,/参考估算/);

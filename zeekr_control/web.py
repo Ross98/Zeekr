@@ -12,6 +12,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
 from .client import ApiError, Client
@@ -39,11 +40,14 @@ from .storage_management import StorageManager
 from .storage_health import StorageHealth, severity
 from .charging_analytics import ChargingAnalytics
 from .vehicle_parameters import parameters
-from .archive_reader import ArchiveReader
+from .archive_reader import ArchiveReader, ArchiveChanged
+from .analysis_work import AnalysisCapacity
+from .analysis_jobs import AnalysisJobs, JobsBusy
 from .parking_analytics import ParkingAnalytics
 from .usage_reports import UsageReports
 from .personal_store import PersonalStore, account_scope
 from .charge_ledger import ChargeLedger
+from .cost_summary import CostsSummary
 from .custom_reminders import Reminders
 from .tyre_notifications import TyreNotifications
 from .trip_tags import TripTags
@@ -58,6 +62,7 @@ from .data_quality import DataQuality
 from .vehicle_research import VehicleResearch, ResearchInputError, PUBLIC
 from .hypothesis_lab import HypothesisLab
 from .automatic_insights import Analyzer, InsightCache
+from . import static_assets
 
 STATIC = Path(__file__).parent / 'static'
 VERSIONED_IMAGES = frozenset(('car-hero-530-b50b228bdd5b.webp', 'car-hero-1060-3d95179dfcc2.webp', 'car-photo-600-15846a50293e.webp', 'car-photo-1200-337464614403.webp', 'car-top-512-a02b0e693dee.webp', 'car-top-1024-32aab937fc29.webp'))
@@ -65,6 +70,27 @@ VERSIONED_IMAGES = frozenset(('car-hero-530-b50b228bdd5b.webp', 'car-hero-1060-3
 
 class RefreshBusy(ValueError):
     """Another refresh is already responsible for this sampling interval."""
+
+
+class AnalysisBusy(ValueError):
+    pass
+
+
+class AnalysisChanged(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class ReadContext:
+    scope: str
+    owner: str
+    vehicle: str
+    context: str
+    now: int
+
+
+READ_ANALYSES = frozenset(('calendar', 'report', 'day-timeline', 'place-history',
+                          'year-review', 'quality', 'timeline', 'snapshot', 'compare', 'costs'))
 
 
 class App:
@@ -90,6 +116,7 @@ class App:
         self.usage_reports = UsageReports(self.database_path, self.archive_reader)
         self.personal_store = PersonalStore(self.session_path.parent / 'personal.sqlite3')
         self.charge_ledger = ChargeLedger(self.personal_store, self.database_path)
+        self.cost_summary = CostsSummary(self.personal_store, self.database_path)
         self.reminders = Reminders(self.personal_store)
         self.tyre_notifications = TyreNotifications(self.personal_store)
         self.trip_tags = TripTags(self.personal_store, self.database_path)
@@ -108,6 +135,8 @@ class App:
         self.lock = threading.RLock()
         self.refresh_lock = threading.Lock()
         self.history_lock = threading.Lock()
+        self.analysis_slots = threading.BoundedSemaphore(2)
+        self.analysis_jobs = AnalysisJobs()
         self.history_selections = {}
         self.stop = threading.Event()
         self.model = None
@@ -178,7 +207,7 @@ class App:
                 storage_error = None
             except Exception:
                 archives, storage_error = [], '本地轨迹存储暂不可用。'
-            from .sampling import read_settings
+            from .sampling import read_settings, public_policy
             enabled, interval = read_settings(self.session_path.parent)
             status = ('paused' if not enabled else 'offline' if not monitoring.get('online') else
                       'failed' if monitoring.get('status') in ('blocked', 'unavailable') else 'active')
@@ -212,6 +241,7 @@ class App:
                     'next_query_at': self.next_query_at, 'profile': self.profile, 'archived_vehicles': archives,
                     'error': self.error or session_error or storage_error,
                     'recording': {'active': enabled, 'interval': interval,
+                                  'policy': public_policy(),
                                   'effective_interval': int(monitoring.get('interval', interval)),
                                   'status': status, 'error': monitoring.get('error'),
                                   'last_sample': updated_at(monitoring.get('last_success')),
@@ -495,7 +525,117 @@ class App:
         if session_scope(self._read_session()) != session_scope(session) or self._insights_context() != context:
             raise ValueError('账号或车辆已切换，本次修改已取消。')
 
+    def _read_context(self, allow_archive=False):
+        with self.lock:
+            session = self._read_session()
+            if not session.get('accessToken'):
+                raise ValueError('请先连接车辆账号。')
+            self._restore_snapshot(session)
+            vehicle = self._archive_vehicle() if allow_archive else self.vehicle_key
+            if not vehicle:
+                raise ValueError('等待当前账号的车辆缓存后再读取。')
+            return ReadContext(session_scope(session), account_scope(session), vehicle,
+                               self._insights_context(), int(time.time()*1000))
+
+    def _check_context(self, context):
+        with self.lock:
+            session = self._read_session()
+            self._restore_snapshot(session)
+            if (session_scope(session) != context.scope or self._archive_vehicle() != context.vehicle
+                    or self._insights_context() != context.context):
+                raise ValueError('账号或车辆已切换，请重新读取。')
+
+    def _analysis_revision(self, context):
+        personal = self.personal_store.revisions(context.owner, context.vehicle,
+            ('charges','expenses','place_names','place_corrections'),include_commute=True)
+        with self.cost_summary.events.connect() as db:
+            event_revision = None
+            if db is not None:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='analysis_event_revisions'").fetchone():
+                    row = db.execute('SELECT revision FROM analysis_event_revisions WHERE vehicle=?',
+                                     (context.vehicle,)).fetchone()
+                    event_revision = ('version', row[0] if row else 0)
+                else:
+                    # Legacy read-only databases have no revision triggers yet.
+                    # Stream exact summaries; row count/length misses address edits.
+                    digest = hashlib.sha256()
+                    for row in db.execute('SELECT id,summary FROM monitor_events WHERE vehicle=? ORDER BY id', (context.vehicle,)):
+                        for value in row:
+                            encoded = str(value).encode()
+                            digest.update(len(encoded).to_bytes(8,'big'));digest.update(encoded)
+                    event_revision = ('legacy', digest.digest())
+        return (personal, event_revision, self.trip_manager.revision(context.vehicle),
+                self.charge_manager.revision(context.vehicle))
+
+    def _readonly_analysis(self, operation, args):
+        context = self._read_context(operation in ('timeline','snapshot','compare'))
+        handlers = {
+            'timeline': self.archive_reader.timeline,
+            'snapshot': self.archive_reader.snapshot,
+            'compare': self.archive_reader.compare,
+            'report': lambda s,v,*a:self.usage_reports.query(s,v,*a,now=context.now),
+            'calendar': lambda s,v,*a:self.usage_calendar.query(s,v,*a,now=context.now,owner=context.owner),
+            'quality': self.data_quality.query,
+            'day-timeline': lambda s,v,date,positions=False:self.daily_timeline.query(s,v,date,owner=context.owner,positions=positions),
+            'place-history': lambda s,v,*a:self.daily_timeline.history(s,v,*a,owner=context.owner),
+            'year-review': lambda s,v,*a:self.daily_timeline.year(s,v,*a,owner=context.owner),
+            'costs': lambda s,v,*a:self.cost_summary.query(context.owner,v,*a,now=context.now),
+        }
+        return self._bounded_analysis(context, lambda: handlers[operation](context.scope, context.vehicle, *args))
+
+    def _bounded_analysis(self, context, read):
+        """Capture identity briefly; run bounded historical reads without App.lock."""
+        if not self.analysis_slots.acquire(blocking=False):
+            raise AnalysisBusy('历史分析正在处理其他查询，请稍后重试。')
+        try:
+            for attempt in range(2):
+                revision = self._analysis_revision(context)
+                result = read()
+                self._check_context(context)
+                if revision == self._analysis_revision(context):
+                    result['context'] = context.context
+                    return result
+            raise AnalysisChanged('记录在查询期间更新，请重新读取。')
+        finally:
+            self.analysis_slots.release()
+
+    def notifications_health(self):
+        from .notification_health import read_health
+        context = self._read_context()
+        result = read_health(self.session_path.parent, owner=context.owner, vehicle=context.vehicle,
+                             context=context.context, now_ms=context.now)
+        self._check_context(context)
+        return result
+
+    def start_analysis(self, read):
+        context = self._read_context(allow_archive=True)
+        identity = (context.scope, context.owner, context.vehicle, context.context)
+        def guarded():
+            try:
+                self._check_context(context)
+                result = read()
+                self._check_context(context)
+                return 200, result
+            except AnalysisBusy as exc:
+                return 429, {'error':str(exc),'code':'analysis_busy'}
+            except (AnalysisChanged, ArchiveChanged) as exc:
+                return 409, {'error':str(exc),'code':'data_changed'}
+            except AnalysisCapacity as exc:
+                return 503, {'error':str(exc),'code':'analysis_capacity'}
+            except ValueError:
+                return 400, {'error':'日期、参数或账号状态已变化，请重新读取。'}
+        return self.analysis_jobs.submit(identity, guarded)
+
+    def poll_analysis(self, ticket):
+        context = self._read_context(allow_archive=True)
+        identity = (context.scope, context.owner, context.vehicle, context.context)
+        result = self.analysis_jobs.poll(ticket, identity)
+        self._check_context(context)
+        return result
+
     def insights(self, operation, *args):
+        if operation in READ_ANALYSES:
+            return self._readonly_analysis(operation,args)
         if operation == 'hypotheses':
             return self.hypotheses(*args)
         if operation == 'research':
@@ -510,14 +650,10 @@ class App:
                 scope = session_scope(session)
                 capacity = (self.profile or {}).get('battery_capacity_kwh')
                 owner = account_scope(session)
-            result = ParkingAnalytics(self.archive_reader, self.database_path,
-                                      store=self.personal_store, owner=owner).query(
-                scope, vehicle, *args, capacity)
-            with self.lock:
-                if session_scope(self._read_session()) != scope or context != self._insights_context():
-                    raise ValueError('账号或车辆已切换，请重新读取。')
-                result['context'] = context
-            return result
+            identity = ReadContext(scope, owner, vehicle, context, int(time.time()*1000))
+            return self._bounded_analysis(identity, lambda: ParkingAnalytics(
+                self.archive_reader, self.database_path, store=self.personal_store,
+                owner=owner).query(scope, vehicle, *args, capacity))
         with self.lock:
             session = self._read_session()
             if not session.get('accessToken'):
@@ -526,18 +662,10 @@ class App:
             if operation not in ('timeline','snapshot','compare','parking') and not self.vehicle_key:
                 raise ValueError('等待当前账号的车辆缓存，旧账号绑定不能用于读取这些记录。')
             vehicle, context = self._archive_vehicle(), self._insights_context()
-            handlers = {'timeline': self.archive_reader.timeline, 'snapshot': self.archive_reader.snapshot,
-                        'automatic': lambda scope, car: self.automatic_cache.query(
+            handlers = {'automatic': lambda scope, car: self.automatic_cache.query(
                             scope, car, int(time.time()*1000), self.automatic_analyzer.revision(car)),
                         'trip-management': lambda scope, car, *query: self.trip_manager.query(car, *query),
                         'charge-management': lambda scope, car, *query: self.charge_manager.query(car, *query),
-                        'compare': self.archive_reader.compare,
-                        'report': self.usage_reports.query,
-                        'day-timeline': lambda scope, car, date, positions=False: self.daily_timeline.query(scope,car,date,owner=account_scope(session),positions=positions),
-                        'place-history': lambda scope,car,start,end,key,cursor=None:self.daily_timeline.history(scope,car,start,end,key,cursor,owner=account_scope(session)),
-                        'year-review': lambda scope,car,year:self.daily_timeline.year(scope,car,year,owner=account_scope(session)),
-                        'calendar': lambda scope, car, date: self.usage_calendar.query(scope,car,date,owner=account_scope(session)),
-                        'quality': self.data_quality.query,
                         'life': lambda scope, car, start, end=None: self.vehicle_life.query(account_scope(session),car,start,self.raw,self.read_at,end=end),
                         'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
                         'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
@@ -774,33 +902,29 @@ class App:
         return {'current': current, 'monitor': previous}
 
     def charging_session(self, selection):
-        with self.lock:
-            self._restore_snapshot(self._read_session())
-            return self.charging_analytics.session(self.vehicle_key, selection)
+        return self._charging_read('session', selection)
 
     def charging_series(self, selection, view):
-        with self.lock:
-            self._restore_snapshot(self._read_session())
-            return self.charging_analytics.series(self.vehicle_key, selection, view)
+        return self._charging_read('series', selection, view)
 
     def charging_process(self, selection, view):
-        with self.lock:
-            self._restore_snapshot(self._read_session())
-            return self.charging_analytics.process(self.vehicle_key, selection, view)
+        return self._charging_read('process', selection, view)
 
     def charging_statistics(self, days, mode):
-        with self.lock:
-            self._restore_snapshot(self._read_session())
-            try:
-                parsed = int(days)
-            except (TypeError, ValueError):
-                raise ValueError('充电统计范围无效。') from None
-            return self.charging_analytics.statistics(self.vehicle_key, parsed, mode)
+        try:
+            parsed = int(days)
+        except (TypeError, ValueError):
+            raise ValueError('充电统计范围无效。') from None
+        return self._charging_read('statistics', parsed, mode)
+
+    def _charging_read(self, operation, *args):
+        context = self._read_context()
+        return self._bounded_analysis(context, lambda: getattr(self.charging_analytics, operation)(context.vehicle, *args))
 
     def close(self):
         self.stop.set()
         if self.monitor_thread is not None:
-            self.monitor_thread.join(timeout=1.5)
+            self.monitor_thread.join(timeout=60)
 
 
 def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=False):
@@ -931,22 +1055,45 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
             return self.send(304 if unchanged else 200, b'' if unchanged else payload,
                              content_type, cache_control=cache, etag=etag)
 
+        def send_asset(self, name, content_type):
+            payload = static_assets.manifest(STATIC) if name == 'asset-manifest.js' else (STATIC/name).read_bytes()
+            digest = static_assets.digest(payload)
+            etag = '"'+digest+'"'
+            version = parse_qs(urlsplit(self.path).query).get('v',[''])[0]
+            cache = 'private, max-age=31536000, immutable' if version == digest[:16] else 'private, no-cache'
+            matches = self.headers.get('If-None-Match','').split(',')
+            unchanged = any(value.strip().removeprefix('W/') in (etag,'*') for value in matches)
+            return self.send(304 if unchanged else 200,b'' if unchanged else payload,
+                             content_type,cache_control=cache,etag=etag)
+
+        def send_analysis(self, read):
+            if 'respond-async' not in self.headers.get('Prefer',''):
+                return self.send(200, read())
+            ticket = app.start_analysis(read)
+            return self.send(202, {'analysis_job_url':'/api/analysis/'+ticket,'retry_after_ms':750})
+
         def do_GET(self):
             if not self.permitted():
                 return self.send(403, {'error': '仅允许本机同源访问。'})
-            if self.path in ('/login.js', '/login.css', '/theme.js', '/theme.css', '/zeekr-logo.png'):
-                name = self.path[1:]
+            url = urlsplit(self.path)
+            if url.path in ('/login.js', '/login.css', '/theme.js', '/theme.css', '/zeekr-logo.png'):
+                name = url.path[1:]
                 content_type = ('text/javascript' if name.endswith('.js') else
                                 'image/png' if name.endswith('.png') else 'text/css')
-                return self.send(200, (STATIC / name).read_bytes(), content_type)
+                return self.send_asset(name,content_type)
             if not self.signed_in():
                 if self.path == '/':
-                    return self.send(200, (STATIC / 'login.html').read_bytes(), 'text/html; charset=utf-8')
+                    return self.send(200, static_assets.html(STATIC,'login.html'), 'text/html; charset=utf-8')
                 return self.send(401, {'error': '请先登录。'})
-            url = urlsplit(self.path)
             try:
+                if url.path == '/asset-manifest.js':
+                    return self.send_asset('asset-manifest.js','text/javascript')
                 if url.path == '/api/state':
                     return self.send(200, app.state())
+                if url.path.startswith('/api/analysis/'):
+                    return self.send(*app.poll_analysis(url.path.rsplit('/',1)[1]))
+                if url.path == '/api/notifications/health':
+                    return self.send(200, app.notifications_health())
                 if url.path == '/api/vehicle/parameters':
                     return self.send(200, app.vehicle_parameters())
                 if url.path.startswith('/api/insights/'):
@@ -965,19 +1112,21 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     if url.path == '/api/insights/compare':
                         return self.send(200, app.insights('compare', value('before'), value('after')))
                     if url.path == '/api/insights/parking':
-                        return self.send(200, app.insights('parking', value('start'), value('end')))
+                        return self.send_analysis(lambda: app.insights('parking', value('start'), value('end')))
                     if url.path == '/api/insights/report':
-                        return self.send(200, app.insights('report', value('period'), value('date')))
+                        return self.send_analysis(lambda: app.insights('report', value('period'), value('date')))
                     if url.path == '/api/insights/calendar':
-                        return self.send(200, app.insights('calendar',value('date')))
+                        return self.send_analysis(lambda: app.insights('calendar',value('date')))
                     if url.path == '/api/insights/life':
                         if 'start' in query or 'end' in query:
                             return self.send(200, app.insights('life',value('start'),value('end')))
                         return self.send(200, app.insights('life',value('date')))
                     if url.path == '/api/insights/quality':
-                        return self.send(200, app.insights('quality',value('start'),value('end')))
+                        return self.send_analysis(lambda: app.insights('quality',value('start'),value('end')))
                     if url.path == '/api/insights/ledger':
                         return self.send(200, app.insights('ledger', value('date')))
+                    if url.path == '/api/insights/costs':
+                        return self.send(200, app.insights('costs', value('date')))
                     if url.path == '/api/insights/tyres':
                         return self.send(200, app.insights('tyres'))
                     if url.path == '/api/insights/rules':
@@ -1016,9 +1165,9 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                 if url.path in ('/api/timeline','/api/place-history','/api/year-review','/api/place-corrections'):
                     query=parse_qs(url.query,keep_blank_values=True)
                     get=lambda key,default='':query.get(key,[default])[0]
-                    if url.path=='/api/place-history':return self.send(200,app.insights('place-history',get('start'),get('end'),get('key'),get('cursor') or None))
-                    if url.path=='/api/year-review':return self.send(200,app.insights('year-review',get('year')))
-                    return self.send(200,app.insights('day-timeline',get('date'),get('positions')=='1' and url.path=='/api/timeline'))
+                    if url.path=='/api/place-history':return self.send_analysis(lambda:app.insights('place-history',get('start'),get('end'),get('key'),get('cursor') or None))
+                    if url.path=='/api/year-review':return self.send_analysis(lambda:app.insights('year-review',get('year')))
+                    return self.send_analysis(lambda:app.insights('day-timeline',get('date'),get('positions')=='1' and url.path=='/api/timeline'))
                 if url.path == '/api/trips':
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.trips(query.get('date', [''])[0], query.get('cursor', [None])[0]))
@@ -1043,15 +1192,15 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     return self.send(200, app.charging_session(query.get('id', [''])[0]))
                 if url.path == '/api/charging/series':
                     query = parse_qs(url.query, keep_blank_values=True)
-                    return self.send(200, app.charging_series(query.get('id', [''])[0],
+                    return self.send_analysis(lambda: app.charging_series(query.get('id', [''])[0],
                                                                query.get('view', [''])[0]))
                 if url.path == '/api/charging/process':
                     query = parse_qs(url.query, keep_blank_values=True)
-                    return self.send(200, app.charging_process(query.get('id', [''])[0],
+                    return self.send_analysis(lambda: app.charging_process(query.get('id', [''])[0],
                                                                 query.get('view', [''])[0]))
                 if url.path == '/api/charging/statistics':
                     query = parse_qs(url.query, keep_blank_values=True)
-                    return self.send(200, app.charging_statistics(query.get('days', [''])[0],
+                    return self.send_analysis(lambda: app.charging_statistics(query.get('days', [''])[0],
                                                                    query.get('mode', [''])[0]))
                 assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                           '/insights.js': ('insights.js', 'text/javascript; charset=utf-8'),
@@ -1103,10 +1252,18 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     name, content_type = assets[url.path]
                     if content_type.startswith('image/'):
                         return self.send_image(name, content_type)
-                    return self.send(200, (STATIC / name).read_bytes(), content_type)
+                    if name.endswith('.html'):
+                        return self.send(200,static_assets.html(STATIC,name),content_type)
+                    return self.send_asset(name,content_type)
                 return self.send(404, {'error': '页面不存在。'})
             except ResearchInputError as exc:
                 self.send(400, {'error': str(exc)})
+            except (AnalysisBusy, JobsBusy) as exc:
+                self.send(429, {'error': str(exc), 'code': 'analysis_busy'})
+            except (AnalysisChanged, ArchiveChanged) as exc:
+                self.send(409, {'error': str(exc), 'code': 'data_changed'})
+            except AnalysisCapacity as exc:
+                self.send(503, {'error': str(exc), 'code': 'analysis_capacity'})
             except ValueError:
                 self.send(400, {'error': '日期或参数无效。'})
             except Exception:

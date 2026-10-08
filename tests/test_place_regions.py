@@ -129,7 +129,7 @@ class RegionNamingTests(unittest.TestCase):
         self.save_polygon()
         self.trip('far',self.start+3600000,(31.204,121.403),(31.21,121.41))
         class Archive:
-            def iter_records(self,*args):return iter(())
+            def iter_records(self,*args,**kwargs):return iter(())
         timeline=DailyTimeline(self.db,Archive(),self.tags.store)
         records=timeline.query('scope','car','2026-09-28',owner='owner')['records']
         far=next(r for r in records if r['id']=='far')

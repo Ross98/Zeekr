@@ -5,6 +5,8 @@ from .snapshot_archive import BEIJING
 from .tracks import day_bounds
 from .usage_events import UsageEvents, number, total
 from .usage_reports import aggregate, date_label, period_window
+from .archive_reader import ArchiveChanged
+from .analysis_work import AnalysisCapacity
 
 
 def report_window(period,date):
@@ -30,8 +32,10 @@ class PeriodicSummary:
         charges = [e for e in row['events'] if e['kind']=='charge_end']
         observed, limited = set(), False
         try:
-            for record in self.archive.iter_metadata(scope,vehicle,window['start'],window['end']):
+            for record in self.archive.iter_metadata(scope,vehicle,window['start'],window['end'],limit=None):
                 observed.add(date_label(record['observed_at']))
+        except (ArchiveChanged, AnalysisCapacity):
+            raise
         except ValueError:
             limited = True
         saved = self.store.read(owner,vehicle,'charges')

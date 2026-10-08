@@ -8,6 +8,7 @@ from .usage_reports import DAY, date_label, period_window
 from .vehicle_state import decode
 from .parking_analytics import analyze_parking
 from .energy_costs import attach, summarize
+from .analysis_work import TimeMap
 
 
 class UsageCalendar:
@@ -41,10 +42,9 @@ class UsageCalendar:
                     day['trip_count' if event['kind']=='trip_end' else 'charge_count']+=1
                     day['partial_count']+=int(event['partial'])
         upper=min(window['end'],now+1)
-        observations={}
         def samples():
             if upper<=window['start']:return
-            for record,raw in self.archive.iter_records(scope,vehicle,max(0,window['start']-DAY),min(window['end']+DAY,now+1)):
+            for record,raw in self.archive.iter_records(scope,vehicle,max(0,window['start']-DAY),min(window['end']+DAY,now+1),limit=None):
                 day=by_date.get(date_label(record['observed_at']))
                 if day is not None:
                     day['reads']+=1
@@ -54,17 +54,15 @@ class UsageCalendar:
                 stamp=record['state_time']
                 if day is not None and not record['flags'] and stamp is not None and stamp<=now and record['change'] not in ('repeat','regression'):
                     parked=state['off'] is True and state['speed']==0 and state['charging'] is False
-                    observations[stamp]=(day['date'],parked)
+                    observations.set(stamp,day['date'],parked)
                 if stamp is not None and stamp>now:
                     record=dict(record,flags=record['flags']+['future_time'])
                 yield dict(record=record,state=state)
-        parking=analyze_parking(samples(),window['start'],upper)['sessions']
-        for stamp,(observed_date,parked) in observations.items():
-            day=by_date[observed_date];day['effective_states']+=1
-            if parked:
-                day['parked_samples']+=1
-                day['parking_first']=stamp if day['parking_first'] is None else min(day['parking_first'],stamp)
-                day['parking_last']=stamp if day['parking_last'] is None else max(day['parking_last'],stamp)
+        with TimeMap() as observations:
+            parking=analyze_parking(samples(),window['start'],upper)['sessions']
+            for observed_date,count,parked,first,last in observations.daily():
+                day=by_date[observed_date]
+                day.update(effective_states=count,parked_samples=parked,parking_first=first,parking_last=last)
         for day in days:
             if day['reads']:day['coverage']='observed' if day['effective_states'] else 'limited'
         totals,revision=self.enrich(owner or scope,vehicle,window,days,events,now,parking)

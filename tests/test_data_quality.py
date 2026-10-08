@@ -44,6 +44,16 @@ class DataQualityTests(unittest.TestCase):
         self.assertEqual(delay['p50_seconds'],300)
         self.assertEqual(delay['p95_seconds'],601)
         self.assertEqual(delay['max_seconds'],601)
+        self.assertEqual(delay['mean_seconds'],round((0+60+61+300+301+600+601)/7,3))
+
+    def test_percentiles_keep_nearest_rank_for_even_fractional_samples(self):
+        for index,delay in enumerate((3.25,.125,9.875,3.25)):
+            offset=index*1000000
+            self.append(offset,state_offset=offset-int(delay*1000))
+        delay=self.query()['delay']
+        self.assertEqual(delay['p50_seconds'],3.25)
+        self.assertEqual(delay['p95_seconds'],9.875)
+        self.assertEqual(delay['mean_seconds'],4.125)
 
     def test_gap_intervals_include_bounded_edges_without_claiming_outages(self):
         self.append(30*60000);self.append(35*60000);self.append(60*60000)
