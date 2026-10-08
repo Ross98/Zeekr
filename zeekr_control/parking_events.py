@@ -238,6 +238,8 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
                        'reasons': sorted(reasons), 'reason_labels': [LABELS[key] for key in sorted(reasons)],
                        'sample_count': len(within), 'gap_count': sum(b-a > MAX_GAP_MS for a, b in zip(timed, timed[1:])),
                        # Query resolves this private evidence to a name, then removes coordinates.
+                       '_position': next((row['location'] for row in positions
+                                          if row['location'].get('coordinate_system') == 'WGS84（社区解释）'), None),
                        '_location': next((row['location'] for row in parked
                                           if is_trusted_location(row.get('location')) and
                                           row['location']['coordinate_system'] == 'WGS84（社区解释）'), None)})
