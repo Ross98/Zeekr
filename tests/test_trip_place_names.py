@@ -46,6 +46,16 @@ class TripPlaceNameTests(unittest.TestCase):
         self.address(trusted=False)
         self.assertEqual(self.places()['places'][0]['name_source'],'reference')
 
+    def test_cached_road_names_are_filtered_without_rewriting_history(self):
+        for name in ('浦东新区·测试路', '测试路南0.2km附近', '浦东新区'):
+            with self.subTest(name=name):
+                self.address(name)
+                before=self.db.read_bytes()
+                self.assertEqual(self.places()['places'][0]['name_source'],'reference')
+                self.assertEqual(self.db.read_bytes(),before)
+        self.address('人民路站')
+        self.assertEqual(self.places()['places'][0]['label'],'人民路站附近')
+
     def test_manual_priority_isolation_persistence_and_clear(self):
         self.save_rule();self.address();self.rename()
         p=self.places()['places'][0]

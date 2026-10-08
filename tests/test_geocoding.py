@@ -26,10 +26,12 @@ class GeocodingTests(unittest.TestCase):
             if path.endswith('/convert'):
                 return {'status': '1', 'locations': '121.004,30.998'}
             self.assertEqual(params['location'], '121.004,30.998')
-            return {'status': '1', 'regeocode': {'formatted_address': '上海市浦东新区测试路1号'}}
+            self.assertEqual(params['extensions'], 'all')
+            self.assertEqual(params['radius'], 300)
+            return {'status': '1', 'regeocode': {'formatted_address': '上海市浦东新区测试路1号', 'pois': [{'name': '测试商场', 'distance': '80', 'type': '购物服务;商场'}]}}
         resolver = self.resolver()
         with patch.object(resolver, '_request', side_effect=request):
-            self.assertEqual(resolver(self.location), '浦东新区·测试路')
+            self.assertEqual(resolver(self.location), '测试商场')
         self.assertEqual(requests[0][1]['coordsys'], 'gps')
         self.assertEqual(requests[0][1]['locations'], '121.000000,31.000000')
 
@@ -46,7 +48,7 @@ class GeocodingTests(unittest.TestCase):
         resolver = self.resolver()
         loc = dict(self.location, coordinate_system='GCJ-02（社区解释）')
         with patch.object(resolver, '_request', return_value={'status': '1', 'regeocode': {'formatted_address': '江苏省南京市测试路'}}) as request:
-            self.assertEqual(resolver(loc), '测试路')
+            self.assertIsNone(resolver(loc))
             self.assertEqual(request.call_count, 1)
         for result in ({'status': '0'}, {'status': '1', 'regeocode': []},
                        {'status': '1', 'regeocode': {'formatted_address': []}}, []):
@@ -57,12 +59,12 @@ class GeocodingTests(unittest.TestCase):
 
     def test_address_is_single_line_and_bounded(self):
         resolver = self.resolver()
-        with patch.object(resolver, '_request', return_value={'status': '1', 'regeocode': {'formatted_address': '江苏省\n南京市' + '路' * 200}}):
+        with patch.object(resolver, '_request', return_value={'status': '1', 'regeocode': {'addressComponent': {'building': {'name': '测试\n' + '大' * 200 + '厦'}}}}):
             result = resolver(dict(self.location, coordinate_system='GCJ-02（社区解释）'))
         self.assertNotIn('\n', result)
         self.assertLessEqual(len(result), 100)
 
-    def test_structured_address_prefers_district_and_neighborhood_without_unit_details(self):
+    def test_structured_address_prefers_neighborhood_without_unit_details(self):
         resolver = self.resolver()
         result = {'status': '1', 'regeocode': {
             'formatted_address': '上海市浦东新区测试路123号测试园区2号楼301室',
@@ -72,16 +74,16 @@ class GeocodingTests(unittest.TestCase):
                 'streetNumber': {'street': '测试路', 'number': '123号'}}}}
         with patch.object(resolver, '_request', return_value=result):
             self.assertEqual(resolver(dict(self.location, coordinate_system='GCJ-02（社区解释）')),
-                             '浦东新区·测试园区')
+                             '测试园区')
 
-    def test_structured_address_falls_back_to_building_road_and_district(self):
+    def test_structured_address_uses_building_but_rejects_road_and_district(self):
         resolver = self.resolver()
         for component, expected in (
-            ({'district': '浦东新区', 'building': {'name': '测试大厦3栋'}}, '浦东新区·测试大厦'),
+            ({'district': '浦东新区', 'building': {'name': '测试大厦3栋'}}, '测试大厦'),
             ({'district': '浦东新区', 'neighborhood': {'name': []}, 'building': [],
-              'streetNumber': {'street': '测试路', 'number': '123号'}}, '浦东新区·测试路'),
-            ({'district': '浦东新区'}, '浦东新区'),
-            ({'district': [], 'streetNumber': {'street': '测试路'}}, '测试路')):
+              'streetNumber': {'street': '测试路', 'number': '123号'}}, None),
+            ({'district': '浦东新区'}, None),
+            ({'district': [], 'streetNumber': {'street': '测试路'}}, None)):
             with self.subTest(component=component), patch.object(resolver, '_request', return_value={
                     'status': '1', 'regeocode': {'addressComponent': component}}):
                 self.assertEqual(resolver(dict(self.location, coordinate_system='GCJ-02（社区解释）')), expected)
@@ -89,9 +91,9 @@ class GeocodingTests(unittest.TestCase):
     def test_formatted_only_address_removes_province_city_house_number_and_unit(self):
         resolver = self.resolver()
         for address, expected in (
-            ('上海市浦东新区测试路123号2号楼301室', '浦东新区·测试路'),
-            ('江苏省南京市江宁区测试小区2栋1单元', '江宁区·测试小区'),
-            ('北京市海淀区中关村北二条3号', '海淀区·中关村北二条')):
+            ('上海市浦东新区测试路123号2号楼301室', None),
+            ('江苏省南京市江宁区测试小区2栋1单元', '测试小区'),
+            ('北京市海淀区中关村北二条3号', None)):
             with self.subTest(address=address), patch.object(resolver, '_request', return_value={
                     'status': '1', 'regeocode': {'formatted_address': address}}):
                 self.assertEqual(resolver(dict(self.location, coordinate_system='GCJ-02（社区解释）')), expected)
@@ -100,8 +102,8 @@ class GeocodingTests(unittest.TestCase):
         resolver = self.resolver()
         for regeocode, expected in (
             ({'addressComponent': {'district': '浦东新区', 'neighborhood': {'name': '一号公馆2栋'}}},
-             '浦东新区·一号公馆'),
-            ({'formatted_address': '江苏省南京市江宁区三号桥路123号'}, '江宁区·三号桥路')):
+             '一号公馆'),
+            ({'formatted_address': '江苏省南京市江宁区三号桥路123号'}, None)):
             with self.subTest(expected=expected), patch.object(resolver, '_request', return_value={
                     'status': '1', 'regeocode': regeocode}):
                 self.assertEqual(resolver(dict(self.location, coordinate_system='GCJ-02（社区解释）')), expected)

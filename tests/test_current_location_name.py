@@ -5,14 +5,21 @@ class CurrentLocationNameTests(unittest.TestCase):
     def setUp(self):
         self.location=dict(valid=True,trusted=True,latitude=31.2,longitude=121.4,coordinate_system='WGS84（社区解释）')
     def test_manual_name_wins_and_distant_names_are_not_used(self):
-        regions=[dict(body=dict(name='公园',latitude=31.2,longitude=121.4,radius_m=150))]
+        regions=[dict(id='manual',body=dict(name='公园',latitude=31.2,longitude=121.4,radius_m=150))]
         self.assertEqual(current_location_name(self.location,regions,{},{}),'公园附近')
         self.assertIsNone(current_location_name(dict(self.location,latitude=32),regions,{},{}))
     def test_untrusted_or_other_coordinate_system_has_no_name(self):
         cached={('a','end'):dict(label='道路附近',point=(31.2,121.4))}
         for update in [dict(trusted=False),dict(valid=False),dict(coordinate_system='GCJ-02（社区解释）')]:
             self.assertIsNone(current_location_name(dict(self.location,**update),[],{},cached))
-        self.assertEqual(current_location_name(self.location,[],{},cached),'道路附近')
+        self.assertIsNone(current_location_name(self.location,[],{},cached))
+    def test_manual_road_name_is_preserved_but_automatic_road_is_rejected(self):
+        regions=[dict(id='manual',body=dict(name='测试路',latitude=31.2,longitude=121.4,radius_m=150))]
+        cached={('a','end'):dict(label='测试路南0.2km附近',point=(31.2,121.4)),
+                ('b','end'):dict(label='测试商场附近',point=(31.2001,121.4))}
+        self.assertEqual(current_location_name(self.location,regions,{},cached),'测试路附近')
+        self.assertEqual(current_location_name(self.location,[],{},cached),'测试商场附近')
+
     def test_commute_overlap_is_ambiguous_and_deleted_rule_ignored(self):
         point=dict(latitude=31.2,longitude=121.4,radius_m=300)
         self.assertEqual(current_location_name(self.location,[],dict(home=point),{}),'家附近')

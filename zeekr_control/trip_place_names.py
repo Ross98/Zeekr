@@ -4,7 +4,7 @@ import json
 import math
 
 from .commute_tags import _distance
-from .geocoding import is_trusted_location, _without_units
+from .geocoding import is_trusted_location, named_place_name
 from .usage_events import MAX_SUMMARY_BYTES
 from .place_regions import RegionIndex, contains, overlaps, validate_polygon
 
@@ -38,7 +38,7 @@ def cached_names(db, vehicle, events):
                     if type(age) not in (int,float) or not math.isfinite(age) or not 0<=age<=300:continue
                     location=reference.get('location')
                 if not is_trusted_location(location) or location['coordinate_system']!='WGS84（社区解释）':continue
-                label=_without_units(label,house_numbers=True).strip('· ')[:50]
+                label=named_place_name(label)
                 if not label or label in ('未知','位置未知'):continue
                 result[(identity,side)]=dict(label=label if label.endswith('附近') else label+'附近',
                                           point=(location['latitude'],location['longitude']))
@@ -164,6 +164,6 @@ def current_location_name(location, regions, rule, addresses):
             label = matches[0]
     if not label:
         nearby = sorted((_distance(point, value['point']), value['label']) for value in addresses.values()
-                        if _distance(point, value['point']) <= 150)
+                        if named_place_name(value['label']) and _distance(point, value['point']) <= 150)
         label = nearby[0][1] if nearby else None
     return label if not label or label.endswith('附近') else label + '附近'
