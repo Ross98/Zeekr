@@ -10,8 +10,11 @@ def digest(payload):
 
 
 def versions(root):
+    root = Path(root)
     return {'/'+path.relative_to(root).as_posix():digest(path.read_bytes())[:16]
-            for path in sorted(Path(root).rglob('*')) if path.suffix in ('.js','.css')}
+            for path in sorted(root.rglob('*'))
+            if path.suffix in ('.js','.css') and not path.is_symlink() and path.is_file()
+            and not any(part.startswith('.') for part in path.relative_to(root).parts)}
 
 
 def manifest(root):

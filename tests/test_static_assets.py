@@ -12,6 +12,17 @@ from zeekr_control.web import App, STATIC, make_server
 
 
 class StaticAssetsTests(unittest.TestCase):
+    def test_manifest_excludes_hidden_metadata_and_symlinks(self):
+        from zeekr_control.static_assets import versions
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            (root/'app.js').write_text('public')
+            (root/'._app.js').write_text('AppleDouble metadata')
+            (root/'.private').mkdir()
+            (root/'.private'/'secret.js').write_text('not an asset')
+            (root/'alias.js').symlink_to(root/'app.js')
+            self.assertEqual(set(versions(root)),{'/app.js'})
+
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)

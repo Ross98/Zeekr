@@ -35,7 +35,8 @@ class ImageDeliveryTests(unittest.TestCase):
                 self.assertEqual(body, b'')
                 self.assertEqual(get('/car.svg', {'If-None-Match': etag})[0], 401)
                 self.assertEqual(get('/api/state', {'Cookie': cookie})[1]['Cache-Control'], 'no-store')
-                self.assertEqual(get('/app.js', {'Cookie': cookie})[1]['Cache-Control'], 'no-store')
+                self.assertEqual(get('/app.js', {'Cookie': cookie})[1]['Cache-Control'], 'private, no-cache')
+                self.assertEqual(get('/app.js')[0], 401)
                 for name in VERSIONED_IMAGES:
                     payload = (STATIC / name).read_bytes()
                     self.assertIn(hashlib.sha256(payload).hexdigest()[:12], name)
