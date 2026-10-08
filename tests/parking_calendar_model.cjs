@@ -1,0 +1,16 @@
+const assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');const window={};vm.runInNewContext(fs.readFileSync('zeekr_control/static/parking.js','utf8'),{window,Intl,Date});
+const {placeTitle,recordState,dayRecords,dayDuration}=window.ParkingPage;
+assert.equal(placeTitle({place_label:'位置未知',start_time:Date.parse('2026-10-08T09:00:00+08:00'),end_time:Date.parse('2026-10-08T17:00:00+08:00')}),'09:00 — 17:00');
+assert.equal(placeTitle({place_label:'公司',place_source:'manual'}),'公司');
+assert.equal(recordState({parking_status:'parked',status:'uncertain'}),'已确认停车');
+assert.equal(recordState({parking_status:'candidate'}),'停车待确认');
+assert.equal(recordState({parking_status:'parked',open:true}),'后续未观测');
+const rows=[{event:{id:'tiny',parking_status:'candidate',duration_seconds:20},full:true},{event:{id:'long',parking_status:'parked',duration_seconds:30000},full:true},{event:{id:'short',parking_status:'parked',duration_seconds:1200},full:true}];
+assert.equal(dayRecords(rows)[0].event.id,'long');assert.equal(dayRecords(rows)[2].event.id,'tiny');const stamp=s=>Date.parse(s+'+08:00');
+const span=(start,end,extra={})=>({event:{parking_status:'parked',start_time:stamp(start),end_time:stamp(end),...extra}});
+const daily=[span('2026-10-07T23:00:00','2026-10-08T01:00:00'),span('2026-10-08T08:00:00','2026-10-08T10:30:00'),span('2026-10-08T11:00:00','2026-10-08T12:00:00',{open:true}),span('2026-10-08T13:00:00','2026-10-08T15:00:00',{parking_status:'candidate'})];
+assert.equal(dayDuration(daily,'2026-10-07').closed,3600);
+assert.equal(dayDuration(daily,'2026-10-08').closed,12600);
+assert.equal(dayDuration(daily,'2026-10-08').open,3600);
+assert.equal(dayDuration(daily,'2026-10-09').closed,0);
+console.log('PARKING_CALENDAR_MODEL_PASS');

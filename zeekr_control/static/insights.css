@@ -27,6 +27,23 @@
 .parking-observation-gaps table{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px;font-variant-numeric:tabular-nums;color:var(--ink)}
 .parking-observation-gaps th,.parking-observation-gaps td{padding:10px 12px 10px 0;text-align:left;border-bottom:1px solid var(--line)}
 .parking-observation-gaps th{font-weight:500;color:var(--night-secondary,#50656e)}
+.parking-calendar-day.selected{border-color:var(--accent);background:var(--soft)}
+#insights-workspace .parking-day-select{display:flex;flex-direction:column;align-items:flex-start;gap:5px;width:100%;height:112px;margin:0;padding:8px 4px;border:0;background:none;color:var(--ink);text-align:left;font:inherit;cursor:pointer;min-width:0}
+#insights-workspace .parking-day-select:disabled{cursor:default;color:var(--night-secondary,#50656e);opacity:.5}
+#insights-workspace .parking-day-select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.parking-day-count,.parking-day-place,.parking-day-candidate{font-size:12px;line-height:1.4}
+.parking-day-place{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:var(--night-secondary,#50656e)}
+.parking-day-candidate{color:var(--ink)}
+.parking-day-panel{margin-top:20px}
+.parking-day-records{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:18px}
+#insights-workspace .parking-day-records .parking-calendar-entry{grid-template-columns:minmax(0,1fr) auto;gap:7px 16px;padding:16px;border:1px solid var(--line);border-inline-start-width:1px;border-radius:8px;background:var(--paper);margin:0}
+#insights-workspace .parking-day-records .parking-calendar-entry.confirmed{border-inline-start-color:var(--line);background:var(--paper)}
+#insights-workspace .parking-day-records .parking-calendar-entry.open-record{border-inline-start-color:var(--line);background:var(--soft)}
+#insights-workspace .parking-day-records .parking-calendar-entry.uncertain{border-inline-start-color:var(--line);background:var(--paper)}
+.parking-day-records .parking-calendar-place{font-size:16px;font-weight:600}
+.parking-day-records .parking-calendar-status{font-size:12px;color:var(--night-secondary,#50656e)}
+.parking-day-records .parking-calendar-values,.parking-day-records .parking-calendar-time,.parking-day-records .parking-place-note{grid-column:1/-1}
+.parking-place-note{font-size:12px;color:var(--night-secondary,#50656e)}
 .insight-layout{display:grid;grid-template-columns:184px minmax(0,1fr);align-items:start;gap:24px}
 .insight-content{min-width:0}
 .related-tools{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 20px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
@@ -263,3 +280,13 @@
 /* Recorded trip duration occupies its own bottom row, clear of status labels. */
 .calendar-day-duration{align-self:flex-end;margin-top:auto;text-align:right;white-space:nowrap;font-size:11px;line-height:1.35;font-variant-numeric:tabular-nums;color:inherit}
 .calendar-duration-total strong{font-size:23px}
+
+.parking-day-duration{font-size:14px;line-height:1.4;font-variant-numeric:tabular-nums;color:var(--ink)}
+.parking-day-observed{font-size:12px;line-height:1.4;color:var(--muted);font-variant-numeric:tabular-nums}
+
+#insights-workspace .parking-day-select{height:auto;min-height:152px}
+
+.parking-detail-dialog{width:min(860px,calc(100vw - 64px));max-height:calc(100vh - 64px);overflow:auto;padding:24px;border:1px solid var(--line);border-radius:12px;background:var(--paper);color:var(--ink)}
+.parking-detail-dialog::backdrop{background:rgb(0 0 0 / .55)}
+.parking-detail-dialog .insight-panel{margin:0;padding:0}
+.parking-detail-dialog .insight-heading{align-items:flex-start;gap:20px}

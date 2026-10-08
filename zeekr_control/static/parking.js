@@ -33,11 +33,34 @@
     });
     return {months,month,offset:(first.getUTCDay()+6)%7,days};
   }
+  const knownPlace=row=>row.place_label&&!['位置未知','未命名地点','停车位置待确认'].includes(row.place_label);
+  const clock=value=>Number.isFinite(value)?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(value)):'时间未知';
+  function timeTitle(row){
+    const cross=Number.isFinite(row.start_time)&&Number.isFinite(row.end_time)&&dateAt(row.start_time)!==dateAt(row.end_time);
+    return cross?`${dateAt(row.start_time).slice(5).replace('-','/')} ${clock(row.start_time)} — ${dateAt(row.end_time).slice(5).replace('-','/')} ${clock(row.end_time)}`:`${clock(row.start_time)} — ${clock(row.end_time)}`;
+  }
+  function placeTitle(row){return knownPlace(row)?row.place_label:timeTitle(row);}
+  function recordState(row){return row.open?'后续未观测':row.parking_status==='parked'||row.status==='comparable'?'已确认停车':'停车待确认';}
+  function dayRecords(rows){
+    const rank=row=>row.parking_status==='parked'||row.status==='comparable'?(row.open?1:0):2;
+    return [...rows].sort((a,b)=>rank(a.event)-rank(b.event)||(b.event.duration_seconds||0)-(a.event.duration_seconds||0)||b.event.start_time-a.event.start_time);
+  }
+  function dayDuration(rows,date){
+    const start=Date.parse(`${date}T00:00:00+08:00`),end=start+86400000,result={closed:0,open:0};
+    for(const {event} of rows){
+      if(event.parking_status!=='parked'&&event.status!=='comparable')continue;
+      if(!Number.isFinite(event.start_time)||!Number.isFinite(event.end_time))continue;
+      const seconds=Math.max(0,(Math.min(end,event.end_time)-Math.max(start,event.start_time))/1000);
+      result[event.open?'open':'closed']+=seconds;
+    }
+    return result;
+  }
   function create({getState,request,escape:esc,active,time}) {
     let node=null,owner='',start=dateAt(Date.now()-6*86400000),end=dateAt(Date.now());
     let data=null,error='',loading=false,serial=0,category='all',quality='all',order='latest',page=0;
+    let detailTrigger=null;
     let selected=null,comparison=null,compareError='',comparing=false,compareSerial=0;
-    let calendarMonth='',expandedDays=new Set();
+    let calendarMonth='',selectedDate='';
     function identity(){return getState()?.insights_context || '';}
     function valid(token,current,context){return token===current && owner===context && context===identity();}
     function button(label,action,disabled=false,extra=''){return `<button class="button secondary" data-parking="${action}" ${disabled?'disabled':''} ${extra}>${label}</button>`;}
@@ -52,27 +75,32 @@
     function paintCalendar(){
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
       const list=rows(),model=data?calendarModel(list,data.start_date,data.end_date,calendarMonth):null;
-      if(model)calendarMonth=model.month;
+      if(model){calendarMonth=model.month;if(!model.days.some(day=>day.date===selectedDate&&day.inRange))selectedDate=[...model.days].reverse().find(day=>day.inRange&&day.rows.length)?.date||model.days.find(day=>day.inRange)?.date||'';}
       node.innerHTML=`<section class="parking-calendar-heading"><div><h2>停车观测</h2><p>停在哪里 · 停了多久 · 消耗多少电量</p></div><span class="insight-source">SOC 观测 · 非电表计量</span></section>
         <section class="card insight-panel parking-calendar-controls"><div class="insight-toolbar"><label>开始日期<input id="parking-start" type="date" value="${esc(start)}"></label><label>结束日期<input id="parking-end" type="date" value="${esc(end)}"></label>${button(loading?'正在分析…':'分析停车观测','load',loading||!owner||!start||!end,'id="parking-load"')}</div>
         ${!data?'<p class="insight-note">选择日期后点击分析，最多查看 31 天。</p>':''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可分析停车观测。</p>':''}${loading?'<p role="status">正在分析本机归档…</p>':''}${error?`<div class="notice error" role="alert">${esc(error)}${data?' · 保留上次结果与原日期范围。':''}</div>`:''}</section>
         ${data?`<section class="card insight-panel parking-calendar-panel"><div class="parking-calendar-month"><h3>${esc(calendarMonth?.replace('-',' 年 '))} 月</h3><div class="insight-actions">${model.months.length>1?`${button('上一月','month-previous',model.months.indexOf(calendarMonth)===0)}${button('下一月','month-next',model.months.indexOf(calendarMonth)===model.months.length-1)}`:''}<details class="parking-calendar-filters"><summary>筛选</summary><div class="insight-toolbar"><label>停车时段<select id="parking-category" aria-label="停车时段"><option value="all">全部时段</option>${Object.entries(categories).map(([key,label])=>`<option value="${key}" ${category===key?'selected':''}>${label}</option>`).join('')}</select></label><label>耗电可信度<select id="parking-quality" aria-label="耗电可信度"><option value="all">全部停车事件</option><option value="eligible" ${quality==='eligible'?'selected':''}>只看可计算</option></select></label></div></details></div></div>
           <div class="parking-calendar-week" aria-hidden="true">${['一','二','三','四','五','六','日'].map(day=>`<span>周${day}</span>`).join('')}</div><div class="parking-calendar-grid" aria-label="停车日历">${'<span class="parking-calendar-blank" aria-hidden="true"></span>'.repeat(model.offset)}${model.days.map(day=>{
-            const visible=expandedDays.has(day.date)?day.rows:day.rows.slice(0,3);
-            return `<article class="parking-calendar-day ${day.inRange?'':'outside'}" data-parking-date="${day.date}" aria-label="${day.date}" ${day.date===dateAt(Date.now())?'aria-current="date"':''}><div class="parking-calendar-date"><strong>${Number(day.date.slice(-2))}</strong><small>${day.rows.length?`${day.rows.length} 条`:''}</small></div>${visible.map(entry=>calendarEntry(entry,day.date)).join('')}${day.rows.length>visible.length?button(`还有 ${day.rows.length-visible.length} 次 · 展开`,'expand-day',false,`data-date="${day.date}"`):''}${!day.rows.length?`<p class="parking-calendar-empty">${day.inRange?'没有符合筛选的记录':'范围外'}</p>`:''}</article>`;
+            const parked=day.rows.filter(({event})=>event.parking_status==='parked'||event.status==='comparable').length;
+            const duration=dayDuration(day.rows,day.date);
+            const candidates=day.rows.length-parked;
+            return `<article class="parking-calendar-day ${day.inRange?'':'outside'} ${day.date===selectedDate?'selected':''}" data-parking-date="${day.date}"><button class="parking-day-select" id="parking-day-${day.date}" data-parking="day" data-date="${day.date}" ${day.inRange?'':'disabled'} aria-label="${day.date}${day.inRange?`，${day.rows.length} 条记录${duration.closed>0?`，停车 ${durationLabel(duration.closed)}`:''}${duration.open>0?`，已观测 ${durationLabel(duration.open)}`:''}`:'，未载入'}" aria-pressed="${day.date===selectedDate}"><span class="parking-calendar-date"><strong>${Number(day.date.slice(-2))}</strong></span>${day.inRange?`<span class="parking-day-count">${day.rows.length?`停车 ${parked} 条`:'无符合筛选的记录'}</span>${duration.closed>0?`<strong class="parking-day-duration">停车 ${durationLabel(duration.closed)}</strong>`:''}${duration.open>0?`<span class="parking-day-observed">已观测 ${durationLabel(duration.open)}</span>`:''}${candidates?`<span class="parking-day-candidate">待确认 ${candidates} 条</span>`:''}`:''}</button></article>`;
           }).join('')}${'<span class="parking-calendar-blank" aria-hidden="true"></span>'.repeat((7-(model.offset+model.days.length)%7)%7)}</div>${!list.length?'<p class="insight-empty">没有符合筛选的停车事件</p>':''}
-          <details class="parking-calendar-notes"><summary>数据说明 · ${data.parking_count??list.filter(r=>r.parking_status==='parked'||r.status==='comparable').length} 条停车记录 · ${data.uncertain_count??0} 条耗电未知</summary><p id="parking-range" class="insight-note">结果范围：${esc(data.start_date)} 至 ${esc(data.end_date)} · 计算规则 v${data.calculation_version}</p><p>跨日停车在涉及日期标记，完整时长与耗电只归结束日，不拆分或重复累计。结束日在查询范围外时，日格仅显示跨日标记。</p><p>没有记录不代表没有停车。充电包含在停车时长内。充电端点完整时，分别计算非充电阶段的 SOC 下降和充电阶段的 SOC 净增加；超过 10 分钟的观测缺口、充电边界不明、位置变化或不完整边界等会阻止耗电计算；未知不算零。同一车辆时间的重复缓存不补足缺口。最后一条开放记录截止最后有效车辆观测，不代表车辆当前仍在停车。</p><p>电量估算 = 档案电池容量 × 非充电阶段 SOC 下降百分点 ÷ 100。未见 SOC 下降不证明实际耗电为零。地点匹配已保存区域或本地地址。停车可信定位缺失时，仅采用到达前 5 分钟内、距停车坐标不超过 150 米的可信定位，并标注参考位置；有移动或位置冲突证据时不推断。位置补全不改变耗电可信度。</p>${data.orphan_count?`<details><summary>无行程边界的旧观测（${data.orphan_count}）</summary><p>以下仅供核对，不计入停车统计。</p>${(data.orphan_sessions||[]).map(row=>`<p>${esc(time(row.start_time))} 至 ${esc(time(row.end_time))} · ${(row.reason_labels||[]).map(esc).join('；')}</p>`).join('')}</details>`:''}</details></section>`:''}<div id="parking-detail"></div>`;
+          <p class="insight-note">已载入 ${esc(data.start_date)} 至 ${esc(data.end_date)} · ${list.length} 条记录；已确认停车 ${list.filter(r=>r.parking_status==='parked'||r.status==='comparable').length} 条，待确认 ${list.filter(r=>r.parking_status!=='parked'&&r.status!=='comparable').length} 条。</p><details class="parking-calendar-notes"><summary>数据说明</summary><p id="parking-range" class="insight-note">结果范围：${esc(data.start_date)} 至 ${esc(data.end_date)} · 计算规则 v${data.calculation_version}</p><p>月历停车时长按北京时间分摊到每天，仅合计已确认停车区间；未结束记录单列已观测时长，截止最后车辆观测，待确认记录不计入。时长为区间跨度，有观测缺口时不证明全程连续停车。跨日记录的完整时长与耗电仍只在结束日明细展示，耗电不按日拆分。</p><p>没有记录不代表没有停车。充电包含在停车时长内。充电端点完整时，分别计算非充电阶段的 SOC 下降和充电阶段的 SOC 净增加；超过 10 分钟的观测缺口、充电边界不明、位置变化或不完整边界等会阻止耗电计算；未知不算零。同一车辆时间的重复缓存不补足缺口。最后一条开放记录截止最后有效车辆观测，不代表车辆当前仍在停车。</p><p>电量估算 = 档案电池容量 × 非充电阶段 SOC 下降百分点 ÷ 100。未见 SOC 下降不证明实际耗电为零。地点匹配已保存区域或本地地址。停车可信定位缺失时，仅采用到达前 5 分钟内、距停车坐标不超过 150 米的可信定位，并标注参考位置；有移动或位置冲突证据时不推断。位置补全不改变耗电可信度。</p>${data.orphan_count?`<details><summary>无行程边界的旧观测（${data.orphan_count}）</summary><p>以下仅供核对，不计入停车统计。</p>${(data.orphan_sessions||[]).map(row=>`<p>${esc(time(row.start_time))} 至 ${esc(time(row.end_time))} · ${(row.reason_labels||[]).map(esc).join('；')}</p>`).join('')}</details>`:''}</details></section>`:''}${data?dayList(model):''}<div id="parking-detail"></div>`;
       paintDetail();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
     }
+    function dayList(model){
+      const day=model.days.find(day=>day.date===selectedDate);if(!day)return '';
+      return `<section class="card insight-panel parking-day-panel" id="parking-day-list"><div class="insight-heading"><h3>${esc(selectedDate)} · 停车记录</h3><span>${day.rows.length} 条</span></div><p class="insight-note">点记录查看地点与观测详情。已确认停车优先，较长记录靠前；跨日完整时长与耗电归结束日。</p><div class="parking-day-records">${dayRecords(day.rows).map(entry=>calendarEntry(entry,selectedDate)).join('')||'<p class="insight-note">当天没有符合筛选的记录；不代表没有停车。</p>'}</div></section>`;
+    }
     function calendarEntry({event:row,full},date){
-      const place=(row.place_label||'位置未知')+(row.place_confidence==='reference'?' · 参考位置':'');
-      const duration=durationLabel(row.duration_seconds),parked=row.parking_status==='parked'||row.status==='comparable';
+            const duration=durationLabel(row.duration_seconds),parked=row.parking_status==='parked'||row.status==='comparable';
       const comparable=row.status==='comparable'&&Number.isFinite(row.soc_drop);
       const energy=comparable?(row.soc_drop===0?'未见 SOC 下降':`下降 ${number(row.soc_drop)} 个百分点`):'耗电未知';
       const endDate=dateAt(row.end_time),clock=value=>new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(value));
       const span=`${dateAt(row.start_time)===date?'':`${Number(dateAt(row.start_time).slice(5,7))}月${Number(dateAt(row.start_time).slice(-2))}日 `}${clock(row.start_time)} — ${clock(row.end_time)}`;
       const continuation=`${Number(endDate.slice(5,7))}月${Number(endDate.slice(-2))}日查看完整记录`;
-      return `<button class="parking-calendar-entry ${!parked||full&&!comparable?'uncertain':''} ${full?'':'continued'}" data-parking="select" data-session="${esc(row.id)}" data-parking-entry="${esc(row.id)}" ${full?`data-parking-session="${esc(row.id)}"`:''} aria-label="查看停车详情：${esc(place)}，${full?esc(duration+'，'+energy):'跨日停车'}"><strong class="parking-calendar-place">${esc(place)}</strong>${!parked?'<span class="parking-calendar-status">停车待确认</span>':''}<span class="parking-calendar-values"><span>${full?`${row.open?'已观测 ':!parked?'候选 ':''}${duration}`:'跨日停放'}</span><strong>${full?energy:esc(continuation)}</strong></span>${full?`<span class="parking-calendar-energy">${comparable&&Number.isFinite(row.estimated_kwh)?`约 ${number(row.estimated_kwh)} kWh`:comparable?'容量未配置':''}</span>`:''}<span class="parking-calendar-time">${full?esc(span):`${dateAt(row.start_time)===date?clock(row.start_time)+' 开始':'承接前日'}`}${full&&row.open?' · 后续行程未记录':''}</span></button>`;
+      return `<button class="parking-calendar-entry ${!parked?'uncertain':row.open?'open-record':'confirmed'} ${full?'':'continued'}" data-parking="select" data-session="${esc(row.id)}" data-parking-entry="${esc(row.id)}" ${full?`data-parking-session="${esc(row.id)}"`:''} aria-label="查看停车详情：${esc(timeTitle(row))}，${full?esc(duration+'，'+energy):'跨日停车'}"><strong class="parking-calendar-place">${esc(timeTitle(row))}</strong><span class="parking-calendar-status">${recordState(row)}</span><span class="parking-calendar-values"><span>${full?`${row.open?'已观测 ':!parked?'候选 ':''}${duration}`:'跨日停放'}</span><strong>${full?energy:esc(continuation)}</strong></span>${full?`<span class="parking-calendar-energy">${comparable&&Number.isFinite(row.estimated_kwh)?`约 ${number(row.estimated_kwh)} kWh`:comparable?'容量未配置':''}</span>`:''}<span class="parking-calendar-time">${full?esc(span):`${dateAt(row.start_time)===date?clock(row.start_time)+' 开始':'承接前日'}`}${full&&row.open?' · 后续行程未记录':''}</span></button>`;
     }
     function paint(){
       return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
@@ -102,12 +130,20 @@ function paintDetailContent(){
       const el=node?.querySelector('#parking-detail');if(!el)return;
       if(data?.events){
         const row=data.events.find(item=>item.id===selected);
-        el.innerHTML=row?`<section class="card insight-panel"><div class="insight-heading"><h3>${esc(row.place_label||'位置未知')}${row.place_confidence==='reference'?' · 参考位置':''} · 停车详情</h3>${button('收起停车详情','close-detail')}</div><p>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</p>${row.place_confidence==='reference'?`<p class="insight-note">地点依据：到达前 ${number(row.place_reference_age_seconds)} 秒的可信定位，距停车坐标不超过 150 米。仅作参考，位置补全不改变耗电可信度。</p>`:row.place_reason?`<p class="insight-note">位置未知：${esc(row.place_reason)}</p>`:''}<div class="parking-row-values"><span>${row.open?'已观测停车时长':row.parking_status==='parked'||row.status==='comparable'?'停车时长':'候选时长'}<strong>${durationLabel(row.duration_seconds)}</strong></span><span>耗电<strong>${row.status==='comparable'&&Number.isFinite(row.soc_drop)?`${number(row.soc_drop)} 个百分点`:'耗电未知'}</strong><small>${row.status==='comparable'&&Number.isFinite(row.estimated_kwh)?`约 ${number(row.estimated_kwh)} kWh`:'电量暂不换算'}</small></span><span>起止边界<strong>${row.open?'缺少离开边界':!row.start_trip_id?'缺少到达边界':(row.reasons||[]).includes('boundary')?'边界待确认':'到达与离开均有记录'}</strong></span>${row.observation_quality?'':`<span>有效停车观测<strong>${number(row.sample_count)} 条</strong></span>`}<span>SOC 端点<strong>${number(row.start_soc)}% → ${number(row.end_soc)}%</strong></span>${row.observation_quality?'':`<span>P 档辅助证据<strong>${number(row.p_gear_samples??0)} 条有效观测</strong><small>用户指定映射：0=P、1=R、2=N、3=D</small></span>`}</div>${observationEvidence(row,time,esc)}${(row.charging_phases||[]).length?`<div class="insight-note"><p>停车内充电 · ${row.charging_phases.length} 个阶段 · SOC 净增加 ${Number.isFinite(row.charged_soc_gain)?number(row.charged_soc_gain)+' 个百分点':'未知'}。净增加不是充电输入电量；耗电只统计可确认的非充电阶段。</p>${row.charging_phases.map(phase=>`<p>${phase.start_time===null?'起点未知':esc(time(phase.start_time))} 至 ${phase.end_time===null?'终点未知':esc(time(phase.end_time))} · ${Number.isFinite(phase.duration_seconds)?durationLabel(phase.duration_seconds):'时长未知'}</p>`).join('')}</div>`:''}<p class="insight-note">${row.status==='comparable'?'起止边界和中间观测可比较；SOC 变化不是电表计量。':'不计算耗电：'+(row.reason_labels||[]).map(esc).join('；')} 历史原始数据未改写。</p></section>`:'';
+        el.innerHTML=row?`<dialog class="parking-detail-dialog" aria-labelledby="parking-detail-title"><section class="insight-panel"><div class="insight-heading"><h3 id="parking-detail-title">${esc(row.place_label||'位置未知')}${row.place_confidence==='reference'?' · 参考位置':''} · 停车详情</h3>${button('关闭停车详情','close-detail')}</div><p>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</p>${row.place_confidence==='reference'?`<p class="insight-note">地点依据：到达前 ${number(row.place_reference_age_seconds)} 秒的可信定位，距停车坐标不超过 150 米。仅作参考，位置补全不改变耗电可信度。</p>`:row.place_reason?`<p class="insight-note">位置未知：${esc(row.place_reason)}</p>`:''}<div class="parking-row-values"><span>${row.open?'已观测停车时长':row.parking_status==='parked'||row.status==='comparable'?'停车时长':'候选时长'}<strong>${durationLabel(row.duration_seconds)}</strong></span><span>耗电<strong>${row.status==='comparable'&&Number.isFinite(row.soc_drop)?`${number(row.soc_drop)} 个百分点`:'耗电未知'}</strong><small>${row.status==='comparable'&&Number.isFinite(row.estimated_kwh)?`约 ${number(row.estimated_kwh)} kWh`:'电量暂不换算'}</small></span><span>起止边界<strong>${row.open?'缺少离开边界':!row.start_trip_id?'缺少到达边界':(row.reasons||[]).includes('boundary')?'边界待确认':'到达与离开均有记录'}</strong></span>${row.observation_quality?'':`<span>有效停车观测<strong>${number(row.sample_count)} 条</strong></span>`}<span>SOC 端点<strong>${number(row.start_soc)}% → ${number(row.end_soc)}%</strong></span>${row.observation_quality?'':`<span>P 档辅助证据<strong>${number(row.p_gear_samples??0)} 条有效观测</strong><small>用户指定映射：0=P、1=R、2=N、3=D</small></span>`}</div>${observationEvidence(row,time,esc)}${(row.charging_phases||[]).length?`<div class="insight-note"><p>停车内充电 · ${row.charging_phases.length} 个阶段 · SOC 净增加 ${Number.isFinite(row.charged_soc_gain)?number(row.charged_soc_gain)+' 个百分点':'未知'}。净增加不是充电输入电量；耗电只统计可确认的非充电阶段。</p>${row.charging_phases.map(phase=>`<p>${phase.start_time===null?'起点未知':esc(time(phase.start_time))} 至 ${phase.end_time===null?'终点未知':esc(time(phase.end_time))} · ${Number.isFinite(phase.duration_seconds)?durationLabel(phase.duration_seconds):'时长未知'}</p>`).join('')}</div>`:''}<p class="insight-note">${row.status==='comparable'?'起止边界和中间观测可比较；SOC 变化不是电表计量。':'不计算耗电：'+(row.reason_labels||[]).map(esc).join('；')} 历史原始数据未改写。</p></section></dialog>`:'';
+        const dialog=el.querySelector('dialog');
+        if(dialog){dialog.addEventListener('cancel',event=>{event.preventDefault();closeDetail();});dialog.showModal();}
         return;
       }
       const row=data?.sessions.find(row=>row.id===selected);
       if(!row){el.innerHTML='';return;}
       el.innerHTML=`<section class="card insight-panel"><h3>区间详情</h3><p>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</p><div class="parking-row-values"><span>有效停车样本<strong>${row.sample_count} 条</strong></span><span>最大有效观测间隔<strong>${number(row.max_gap_seconds)} 秒</strong></span><span>里程端点<strong>${number(row.start_km)} → ${number(row.end_km)} km</strong></span><span>座舱温度端点<strong>${number(row.start_inside_temp)} → ${number(row.end_inside_temp)} °C</strong><small>独立更新时间 ${esc(time(row.start_inside_time))} → ${esc(time(row.end_inside_time))}</small></span><span>采集端点<strong>${esc(time(row.start.observed_at))}<br>${esc(time(row.end.observed_at))}</strong></span><span>按 24 小时折算 SOC 下降<strong>${row.soc_drop_per_24h===null?'不计算':number(row.soc_drop_per_24h)+' 个百分点'}</strong></span></div><p class="insight-note">${row.eligible?'已观测到前后非停车状态，区间内没有充电或已知数据缺口。':'不完整原因：'+row.reason_labels.map(esc).join('；')} 按日折算仅适用于至少 1 小时的可比较区间，不能预测未来耗电。</p>${button('比较停车端点参数','compare',comparing || row.start.key===row.end.key)}</section>`;
+    }
+    function closeDetail(){
+      node?.querySelector('.parking-detail-dialog')?.close();
+      selected=null;paintDetail();
+      if(detailTrigger?.isConnected)detailTrigger.focus({preventScroll:true});
+      detailTrigger=null;
     }
     function paintComparison(){
   return root.RefreshView?root.RefreshView.preserve(node,()=>paintComparisonContent()):paintComparisonContent();
@@ -124,7 +160,7 @@ function paintComparisonContent(){
         const result=await request(`/api/insights/parking?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, undefined, 180000);
         if(!valid(token,serial,context))return;
         if(result.context!==context)throw Error('账号或车辆已切换，请重新读取。');
-        data=result;page=0;calendarMonth='';expandedDays.clear();selected=null;comparison=null;compareError='';compareSerial++;comparing=false;
+        data=result;page=0;calendarMonth='';selected=null;comparison=null;compareError='';compareSerial++;comparing=false;
       }catch(failure){if(valid(token,serial,context))error=failure.message;}
       finally{if(valid(token,serial,context)){loading=false;paint();}}
     }
@@ -144,7 +180,7 @@ function paintComparisonContent(){
     function mount(container){
       const changed=owner!==identity(),remount=node!==container;
       node=container;
-      if(changed){owner=identity();data=null;loading=false;error='';calendarMonth='';expandedDays.clear();selected=null;comparison=null;compareError='';comparing=false;serial++;compareSerial++;}
+      if(changed){owner=identity();data=null;loading=false;error='';calendarMonth='';selected=null;comparison=null;compareError='';comparing=false;serial++;compareSerial++;}
       if(changed || remount)paint();
     }
     function handle(event){
@@ -152,14 +188,20 @@ function paintComparisonContent(){
       const el=event.target;
       if(event.type==='input' && ['parking-start','parking-end'].includes(el.id)){
         if(el.id==='parking-start')start=el.value;else end=el.value;
-        data=null;loading=false;error='';calendarMonth='';expandedDays.clear();selected=null;comparison=null;compareError='';comparing=false;page=0;serial++;compareSerial++;paint();return true;
+        data=null;loading=false;error='';calendarMonth='';selectedDate='';selected=null;comparison=null;compareError='';comparing=false;page=0;serial++;compareSerial++;
+        // Keep native date controls and their neighbouring button intact while
+        // editing. Repainting on blur can interrupt the first analysis click.
+        node.querySelectorAll('.parking-calendar-panel,.parking-day-panel,#parking-detail,#parking-compare,.notice.error,[role="status"]').forEach(result=>result.remove());
+        const loadButton=node.querySelector('#parking-load');
+        if(loadButton){loadButton.disabled=!owner||!start||!end;loadButton.textContent='分析停车观测';}
+        return true;
       }
       if(event.type==='change'){
         if(el.id==='parking-category')category=el.value;
         else if(el.id==='parking-quality')quality=el.value;
         else if(el.id==='parking-order')order=el.value;
         else return false;
-        page=0;expandedDays.clear();paint();return true;
+        page=0;paint();return true;
       }
       if(event.type!=='click')return false;
       const target=el.closest('[data-parking]');if(!target || target.disabled)return false;
@@ -172,19 +214,19 @@ function paintComparisonContent(){
         const index=model.months.indexOf(calendarMonth)+(target.dataset.parking==='month-next'?1:-1);
         if(model.months[index]){calendarMonth=model.months[index];paint();}
       }
-      if(target.dataset.parking==='expand-day'){expandedDays.add(target.dataset.date);paint();}
-      if(target.dataset.parking==='close-detail'){selected=null;paintDetail();}
+      if(target.dataset.parking==='day'){selectedDate=target.dataset.date;selected=null;paint();}
+      if(target.dataset.parking==='close-detail')closeDetail();
       if(target.dataset.parking==='select'){
-        selected=target.dataset.session;comparison=null;compareError='';compareSerial++;comparing=false;
-        paintDetail();paintComparison();node.querySelector('#parking-detail').scrollIntoView({block:'start',behavior:'auto'});
+        detailTrigger=target;selected=target.dataset.session;comparison=null;compareError='';compareSerial++;comparing=false;
+        paintDetail();paintComparison();if(!data?.events)node.querySelector('#parking-detail').scrollIntoView({block:'start',behavior:'auto'});
       }
       return true;
     }
     function openDate(date){
       start=end=date;data=null;loading=false;error='';selected=null;comparison=null;
-      category=quality='all';page=0;calendarMonth='';expandedDays.clear();serial++;compareSerial++;compareError='';comparing=false;
+      category=quality='all';page=0;calendarMonth='';serial++;compareSerial++;compareError='';comparing=false;
     }
     return {mount,handle,openDate};
   }
-  root.ParkingPage={create,calendarModel,durationLabel};
+  root.ParkingPage={create,calendarModel,durationLabel,placeTitle,recordState,dayRecords,dayDuration};
 })(window);
