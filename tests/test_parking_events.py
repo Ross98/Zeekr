@@ -88,8 +88,9 @@ class ParkingEventTests(unittest.TestCase):
         self.assertIsNone(result['events'][0]['estimated_kwh'])
         charge = {'start_time': 600000, 'end_time': 1800000}
         events = build_events(trips, [charge], samples, 0, 3600000, 86)['events']
-        self.assertEqual(len(events), 2)
-        self.assertTrue(all(row['end_time'] <= 600000 or row['start_time'] >= 1800000 for row in events))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['duration_seconds'], 2100)
+        self.assertIn('charging', events[0]['reasons'])
         self.assertTrue(all(row['estimated_kwh'] is None for row in events))
 
     def test_query_assigns_single_and_delayed_fragments(self):
@@ -174,23 +175,27 @@ class ParkingEventTests(unittest.TestCase):
         self.assertEqual(row['soc_drop'], 1)
         self.assertEqual(row['estimated_kwh'], .86)
 
-    def test_charge_time_is_removed_from_parking(self):
+    def test_charge_is_internal_phase_of_full_parking(self):
         trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 75, 74)]
         samples = [self.sample(minute, 70 if minute < 15 else 75)
                    for minute in (5, 6, 10, 15, 16, 20)]
         charge = {'kind': 'charge_end', 'start_time': 600000, 'end_time': 900000}
         rows = build_events(trips, [charge], samples, 0, 2400000, 86)['events']
-        self.assertEqual(len(rows), 2)
-        self.assertTrue(all(row['end_time'] <= 600000 or row['start_time'] >= 900000 for row in rows))
-        self.assertEqual(sum(row['duration_seconds'] for row in rows), 600)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['duration_seconds'], 900)
+        self.assertEqual(rows[0]['charging_phases'][0]['duration_seconds'], 300)
+        self.assertEqual(rows[0]['charged_soc_gain'], 5)
+        self.assertEqual(rows[0]['soc_drop'], 0)
 
-    def test_charge_history_with_unknown_start_excludes_through_charge_end(self):
+    def test_unknown_charge_start_keeps_parking_but_blocks_energy(self):
         trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 75, 74)]
         samples = [self.sample(minute, 75) for minute in (5, 10, 15, 20)]
         charge = {'kind': 'charge_end', 'start_time': None, 'end_time': 900000}
         rows = build_events(trips, [charge], samples, 0, 2400000, 86)['events']
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['start_time'], 900000)
+        self.assertEqual(rows[0]['start_time'], 300000)
+        self.assertIn('charging', rows[0]['reasons'])
+        self.assertIsNone(rows[0]['soc_drop'])
 
     def test_stationary_stop_inside_trip_is_never_parking(self):
         trips = [self.trip('a', 0, 1800000, 80, 78)]
@@ -206,7 +211,7 @@ class ParkingEventTests(unittest.TestCase):
         self.assertEqual(result['parking_count'], 1)
         self.assertEqual(result['events'][0]['parking_status'], 'parked')
 
-    def test_p_gear_supports_parking_but_never_overrides_trip_or_charge(self):
+    def test_p_gear_does_not_override_trips_and_charging_remains_internal(self):
         trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 69, 68)]
         samples = [self.sample(minute, 70) for minute in (1, 2, 5, 10, 15, 20)]
         for sample in samples:
@@ -215,7 +220,7 @@ class ParkingEventTests(unittest.TestCase):
         self.assertEqual(len(result['events']), 1)
         self.assertEqual(result['events'][0]['p_gear_samples'], 4)
         charge = {'start_time': 300000, 'end_time': 1200000}
-        self.assertEqual(build_events(trips, [charge], samples, 0, 1800000)['events'], [])
+        self.assertEqual(len(build_events(trips, [charge], samples, 0, 1800000)['events']), 1)
 
     def test_last_trip_creates_open_candidate_without_energy(self):
         trips = [self.trip('a', 0, 300000, 72, 70)]
@@ -281,6 +286,50 @@ class ParkingEventTests(unittest.TestCase):
             result = ParkingAnalytics(Archive(), path).query('scope','car','2026-09-20','2026-09-20',86)
             self.assertEqual(len(result['events']),1)
             self.assertEqual(result['events'][0]['start_trip_id'],'a')
+
+    def test_query_dates_only_filter_complete_parking(self):
+        trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 69, 68)]
+        samples = [self.sample(minute, 70 if minute < 15 else 69) for minute in (5, 10, 15, 20)]
+        full = build_events(trips, [], samples, 0, 2400000, 86)['events'][0]
+        cropped = build_events(trips, [], samples, 600000, 900000, 86)['events'][0]
+        self.assertEqual(cropped, full)
+        self.assertEqual(build_events(trips, [], samples, 1200000, 1500000)['events'], [])
+
+    def test_charge_gain_and_noncharging_consumption_are_separate(self):
+        trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 74, 73)]
+        samples = [self.sample(minute, soc) for minute, soc in ((5,70),(10,69),(15,75),(20,74))]
+        charge = {'start_time': 600000, 'end_time': 900000}
+        row = build_events(trips, [charge], samples, 0, 2400000, 86)['events'][0]
+        self.assertEqual(row['soc_drop'], 2)
+        self.assertEqual(row['charged_soc_gain'], 6)
+        self.assertEqual(row['estimated_kwh'], 1.72)
+        self.assertEqual(row['duration_seconds'], 900)
+
+    def test_unrecorded_charging_blocks_consumption_without_splitting(self):
+        trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 75, 74)]
+        samples = [self.sample(m, 70 if m < 15 else 75, charging=m == 10) for m in (5,10,15,20)]
+        rows = build_events(trips, [], samples, 0, 2400000, 86)['events']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['duration_seconds'], 900)
+        self.assertIn('charging', rows[0]['reasons'])
+        self.assertIsNone(rows[0]['soc_drop'])
+
+    def test_charge_with_missing_endpoints_never_infers_gain(self):
+        trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 75, 74)]
+        samples = [self.sample(m, 70 if m < 15 else 75) for m in (5,9,16,20)]
+        row = build_events(trips, [{'start_time':600000, 'end_time':900000}],
+                           samples, 0, 2400000, 86)['events'][0]
+        self.assertEqual(row['duration_seconds'], 900)
+        self.assertIsNone(row['charged_soc_gain'])
+        self.assertIsNone(row['soc_drop'])
+
+    def test_overlapping_charge_records_block_energy(self):
+        trips = [self.trip('a', 0, 300000, 72, 70), self.trip('b', 1200000, 1800000, 75, 74)]
+        samples = [self.sample(m, 70 if m < 15 else 75) for m in (5,10,15,20)]
+        charge = {'start_time':600000, 'end_time':900000}
+        row = build_events(trips, [charge, charge], samples, 0, 2400000, 86)['events'][0]
+        self.assertIsNone(row['charged_soc_gain'])
+        self.assertIn('charging', row['reasons'])
 
     def test_query_splits_long_archive_reads(self):
         lower, upper = day_bounds('2026-09-20')

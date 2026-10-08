@@ -180,21 +180,43 @@ class ParkingAnalytics:
         if not 0 < upper-lower <= 31*86400000:
             raise ValueError('请选择不超过 31 天的停车观察范围。')
         padding=context_days*86400000 if context_days else MAX_GAP_MS
-        def samples():
-            for record, raw in self.archive.iter_records(scope, vehicle, max(0,lower-padding), upper+padding):
-                climate = raw.get('additionalVehicleStatus', {})
-                climate = climate.get('climateStatus', {}) if isinstance(climate, dict) else {}
-                inside = numeric(climate.get('interiorTemp'), -80, 100) if isinstance(climate, dict) else None
-                inside_time = numeric(climate.get('temperatureUpdateTime'), 1, 9999999999999) if isinstance(climate, dict) else None
-                yield {'record': record, 'state': decode(raw), 'location': parse_location(raw), 'inside_temp': inside, 'inside_time': inside_time}
-        base_samples = list(samples())
-        result = analyze_parking(base_samples, lower, upper, capacity)
+        read_lower, read_upper = max(0, lower-padding), upper+padding
+        events, triples, charges = [], [], []
         if self.database is not None:
-            window = 31*86400000
-            history = UsageEvents(self.database).between(vehicle, max(0, lower-window), upper+window)
+            # History is already decoded with bounded batches and visibility rules.
+            # Select adjacent trips from all history, never a date-relative horizon.
+            history = UsageEvents(self.database).between(vehicle, 0, 32503680000001)
             events = history['events']
-            triples = [row for row in events if row['kind'] == 'trip_end']
+            all_trips = sorted((row for row in events if row['kind'] == 'trip_end'
+                                and row.get('start_time') is not None), key=lambda row: row['start_time'])
+            before = [row for row in all_trips if row['end_time'] <= lower]
+            after = [row for row in all_trips if row['start_time'] >= upper]
+            triples = ([before[-1]] if before else []) + [row for row in all_trips
+                       if row['end_time'] > lower and row['start_time'] < upper] + ([after[0]] if after else [])
+            bounds = self.archive.time_bounds(scope, vehicle) if hasattr(self.archive, 'time_bounds') else None
+            read_lower = int(before[-1]['end_time']) if before else (bounds[0] if bounds else read_lower)
+            read_upper = int(after[0]['start_time'])+1 if after else (bounds[1]+1 if bounds else read_upper)
             charges = [row for row in events if row['kind'] == 'charge_end']
+        def samples():
+            cursor = int(read_lower)
+            while cursor < read_upper:
+                chunk_end = min(int(read_upper), cursor+33*86400000)
+                for record, raw in self.archive.iter_records(scope, vehicle, cursor, chunk_end):
+                    climate = raw.get('additionalVehicleStatus', {})
+                    climate = climate.get('climateStatus', {}) if isinstance(climate, dict) else {}
+                    inside = numeric(climate.get('interiorTemp'), -80, 100) if isinstance(climate, dict) else None
+                    inside_time = numeric(climate.get('temperatureUpdateTime'), 1, 9999999999999) if isinstance(climate, dict) else None
+                    yield {'record': record, 'state': decode(raw), 'location': parse_location(raw), 'inside_temp': inside, 'inside_time': inside_time}
+                cursor = chunk_end
+        base_samples = []
+        for sample in samples():
+            base_samples.append(sample)
+            if len(base_samples) > 50000:
+                raise ValueError('完整停车观测超过 50000 条，请缩小范围或核对行程边界。')
+        result = analyze_parking([row for row in base_samples
+                                  if max(0, lower-padding) <= row['record']['observed_at'] < upper+padding],
+                                 lower, upper, capacity)
+        if self.database is not None:
             result.update(build_events(triples, charges, base_samples, lower, upper, capacity))
             result['orphan_sessions'] = [row for row in result['sessions'] if not any(
                 # Events use collection time; legacy sessions use vehicle time.

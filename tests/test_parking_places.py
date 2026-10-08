@@ -55,6 +55,58 @@ class ParkingPlaceTests(unittest.TestCase):
         return ParkingAnalytics(self.archive, self.database, **options).query(
             'archive-scope', 'car', '2026-09-20', '2026-09-20', 75)['events'][0]
 
+    def test_queries_on_either_day_share_complete_closed_and_open_stop(self):
+        a, b = self.lower+23*3600000, self.lower+25*3600000
+        outer = self
+        class Archive:
+            def time_bounds(self, scope, vehicle):
+                return a, b
+            def iter_records(self, scope, vehicle, lower, upper):
+                for stamp in range(a, b+1, 300000):
+                    if lower <= stamp < upper:
+                        yield dict(key=str(stamp), state_time=stamp, observed_at=stamp,
+                                   flags=[], change='new'), outer.raw
+        with sqlite3.connect(self.database) as db:
+            for identity, start, end in [('a',a-300000,a), ('b',b,b+300000)]:
+                body = dict(start_time=start,end_time=end,start_soc=70,end_soc=70,
+                            duration_seconds=300,partial=False)
+                db.execute('UPDATE monitor_events SET summary=?,created=? WHERE id=?',
+                           (json.dumps(body),end,identity))
+        analyzer = ParkingAnalytics(Archive(), self.database)
+        def query(day):
+            return analyzer.query('scope','car',day,day,75)['events'][0]
+        self.assertEqual(query('2026-09-20'), query('2026-09-21'))
+        self.assertEqual(query('2026-09-20')['status'], 'comparable')
+        with sqlite3.connect(self.database) as db:
+            db.execute('DELETE FROM monitor_events WHERE id="b"')
+        self.assertEqual(query('2026-09-20'), query('2026-09-21'))
+        self.assertTrue(query('2026-09-20')['open'])
+        self.assertEqual(query('2026-09-20')['end_time'], b)
+
+    def test_date_filter_reloads_full_stop_beyond_31_days(self):
+        first = self.lower-40*86400000
+        with sqlite3.connect(self.database) as db:
+            body = dict(start_time=first-300000, end_time=first, start_soc=70, end_soc=70,
+                        duration_seconds=300, partial=False)
+            db.execute('UPDATE monitor_events SET summary=?,created=? WHERE id="a"',
+                       (json.dumps(body), first))
+        outer = self
+        class Archive:
+            def iter_records(self, scope, vehicle, lower, upper):
+                self_ranges.append((lower, upper))
+                for stamp in (first, outer.lower, outer.lower+1200000):
+                    if lower <= stamp < upper:
+                        yield dict(key=str(stamp), state_time=stamp, observed_at=stamp,
+                                   flags=[], change='new'), outer.raw
+        self_ranges = []
+        result = ParkingAnalytics(Archive(), self.database).query(
+            'scope', 'car', '2026-09-20', '2026-09-20', 75)['events'][0]
+        self.assertEqual(result['start_time'], first)
+        self.assertEqual(result['start_trip_id'], 'a')
+        self.assertEqual(result['duration_seconds'], 40*86400+1200)
+        self.assertIn('gap', result['reasons'])
+        self.assertTrue(all(end-start <= 33*86400000 for start,end in self_ranges))
+
     def test_unnamed_trusted_position_is_not_missing_position(self):
         row = self.query(store=False)
         self.assertEqual(row.get('place_label'), '未命名地点')

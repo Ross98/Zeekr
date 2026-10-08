@@ -123,6 +123,24 @@ class ArchiveReader:
                     months.append(year.name + path.stem)
         return sorted(months)
 
+    def time_bounds(self, scope, vehicle):
+        """Read scoped observation limits without loading snapshot payloads."""
+        _context(scope, vehicle)
+        first, last = None, None
+        for month in self._months():
+            with self.connect(month) as db:
+                if db is None:
+                    continue
+                args = (scope, vehicle)
+                a = db.execute('SELECT observed_at FROM reads WHERE scope_key=? AND vehicle_key=? '
+                               'ORDER BY observed_at,id LIMIT 1', args).fetchone()
+                b = db.execute('SELECT observed_at FROM reads WHERE scope_key=? AND vehicle_key=? '
+                               'ORDER BY observed_at DESC,id DESC LIMIT 1', args).fetchone()
+                if a:
+                    first = a[0] if first is None else min(first, a[0])
+                    last = b[0] if last is None else max(last, b[0])
+        return (first, last) if first is not None else None
+
     def _previous(self, month, scope, vehicle, observed, row_id=0, db=None):
         query = ('SELECT ' + READ_COLUMNS + ' FROM reads WHERE scope_key=? AND vehicle_key=? '
                  'AND (observed_at<? OR (observed_at=? AND id<?)) ORDER BY observed_at DESC,id DESC LIMIT 1')

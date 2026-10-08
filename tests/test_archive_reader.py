@@ -32,6 +32,15 @@ class ArchiveReaderTests(unittest.TestCase):
         self.writer.append(scope, vehicle, json.dumps(raw), raw.get('updateTime'), now, now, 'monitor')
         return raw
 
+    def test_time_bounds_are_scoped_and_span_months(self):
+        self.append(-40*86400000)
+        self.append(40*86400000)
+        self.append(-60*86400000, scope='other')
+        self.append(60*86400000, vehicle='other')
+        self.assertEqual(self.reader.time_bounds('owner', 'car'),
+                         (self.start-40*86400000, self.start+40*86400000))
+        self.assertIsNone(self.reader.time_bounds('empty', 'car'))
+
     def test_new_times_with_unchanged_telemetry_remain_continuous_parking(self):
         from zeekr_control.parking_analytics import ParkingAnalytics
         def raw(parked):
