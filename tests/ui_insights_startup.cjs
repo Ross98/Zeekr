@@ -13,7 +13,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
           page.on('pageerror',e=>errors.push(e.message));
         }
         await Promise.all(pages.map(async page=>{
-          await page.goto(f.origin);await page.getByRole('button',{name:'能源与充电',exact:true}).click();
+          await page.goto(f.origin);await page.getByRole('button',{name:'用车研究',exact:true}).click();
           await page.getByRole('button',{name:'充电曲线对比',exact:true}).waitFor();
         }));
       }finally{await Promise.all(pages.map(page=>page.close()));}

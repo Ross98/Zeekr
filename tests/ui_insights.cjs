@@ -37,7 +37,7 @@ const path = require('node:path'), fs = require('node:fs');
     page.on('pageerror', e => {errors.push(e.message);console.error('Browser script error:',e.message);});
     page.on('request', r => {if(r.method()==='POST')posts.push(r.url());if(!r.url().startsWith(origin))external.push(r.url());});
     await page.goto(origin);
-    await page.getByRole('button', {name:'车辆',exact:true}).first().click();
+    await page.getByRole('button', {name:'用车研究',exact:true}).click();
     await page.getByRole('button', {name:'车辆时间机',exact:true}).click();
     await page.getByLabel('归档日期', {exact:true}).fill('2026-09-20');
     await page.getByRole('button', {name:'查看归档',exact:true}).click();
@@ -106,7 +106,6 @@ const path = require('node:path'), fs = require('node:fs');
         start_soc:70,end_soc:69,soc_drop:null,estimated_kwh:null,sample_count:4,gap_count:1,
         reason_labels:['停车期间有超过 10 分钟的数据缺口']}]
     }}));
-    await page.getByRole('button', {name:'能源与充电',exact:true}).first().click();
     await page.getByRole('button', {name:'停车耗电',exact:true}).click();
     await page.getByLabel('开始日期', {exact:true}).fill('2026-09-18');
     await page.getByLabel('结束日期', {exact:true}).fill('2026-09-19');

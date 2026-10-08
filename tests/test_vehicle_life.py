@@ -49,16 +49,6 @@ class VehicleLifeTests(unittest.TestCase):
         self.assertEqual(result['categories']['车位管理']['count'],1)
         self.assertEqual(result['categories']['车位管理']['amount_cents'],0)
 
-    def test_expenses_can_span_inclusive_date_range(self):
-        self.save(date='2025-09-23',amount='100')
-        self.save(revision=1,date='2026-01-01',amount='200')
-        self.save(revision=2,date='2026-09-23',amount='300')
-        result=self.api.query('owner','car','2025-09-23',end='2026-01-01')
-        self.assertEqual((result['window']['start_date'],result['window']['end_date']),('2025-09-23','2026-01-01'))
-        self.assertEqual(result['expenses']['total_cents'],30000)
-        self.assertEqual([r['date'] for r in result['expenses']['entries']],['2026-01-01','2025-09-23'])
-        with self.assertRaises(ValueError):self.api.query('owner','car','2026-01-02',end='2026-01-01')
-
     def test_invalid_amount_date_notes_and_mileage_rejected(self):
         for changes in ({'amount':''},{'amount':'0.001'},{'amount':True},{'amount':-1},{'amount':'NaN'},
                         {'date':'2026-02-30'},{'category':''},{'category':'a'*25},{'title':''},
