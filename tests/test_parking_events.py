@@ -2,6 +2,7 @@ import unittest
 import tempfile
 import sqlite3
 import json
+from unittest.mock import patch
 from pathlib import Path
 
 from zeekr_control.parking_events import build_events
@@ -20,6 +21,105 @@ class ParkingEventTests(unittest.TestCase):
                            'flags': [], 'change': 'new'},
                 'location': {'valid': True, 'latitude': 30, 'longitude': 120, 'coordinate_system': 'test'},
                 'state': {'soc': soc, 'charging': charging, 'km': km, 'off': off, 'speed': 0}}
+
+    def test_gps_drift_with_stationary_evidence_keeps_one_parking(self):
+        trips = [self.trip('a', 0, 300000, 72, 70),
+                 self.trip('b', 1200000, 1800000, 70, 69)]
+        samples = [self.sample(minute, 70) for minute in (5, 10, 15, 20)]
+        for row, offset in zip(samples, (0, .00008, -.00004, .00002)):
+            row['location']['latitude'] += offset
+            row['state']['gear'] = 'P'
+        result = build_events(trips, [], samples, 0, 2400000, 86)
+        self.assertEqual(len(result['events']), 1)
+        self.assertEqual(result['events'][0]['sample_count'], 4)
+        self.assertEqual(result['events'][0]['status'], 'comparable')
+
+    def test_drift_tolerance_does_not_follow_slow_movement(self):
+        trips = [self.trip('a', 0, 300000, 72, 70),
+                 self.trip('b', 1800000, 2100000, 70, 69)]
+        samples = [self.sample(minute, 70) for minute in (5, 10, 15, 20, 25, 30)]
+        for index, row in enumerate(samples):
+            row['location']['latitude'] += index * .00008
+        result = build_events(trips, [], samples, 0, 2400000)
+        self.assertGreater(len(result['events']), 1)
+        self.assertTrue(all(row['status'] == 'uncertain' for row in result['events']))
+
+    def test_small_gps_change_with_movement_evidence_never_merges(self):
+        for change in ({'km': 101}, {'speed': 1}, {'gear': 'D'}, {'off': False}):
+            with self.subTest(change=change):
+                samples = [self.sample(minute, 70) for minute in (5, 10, 15, 20)]
+                for row in samples[2:]:
+                    row['location']['latitude'] += .00002
+                    row['state'].update(change)
+                result = build_events([], [], samples, 0, 1500000)
+                self.assertGreater(len(result['events']), 1)
+                self.assertTrue(all(row['status'] == 'uncertain' for row in result['events']))
+
+    def test_same_gps_with_odometer_change_blocks_energy(self):
+        trips = [self.trip('a', 0, 300000, 72, 70),
+                 self.trip('b', 1200000, 1800000, 70, 69)]
+        samples = [self.sample(minute, 70) for minute in (5, 10, 15, 20)]
+        samples[-1]['state']['km'] = 101
+        result = build_events(trips, [], samples, 0, 2400000)
+        self.assertEqual(len(result['events']), 1)
+        self.assertTrue(all(row['soc_drop'] is None for row in result['events']))
+
+    def test_drift_without_stationary_support_is_not_merged(self):
+        samples = [self.sample(minute, 70, off=None, km=None) for minute in (5, 10, 15, 20)]
+        for row in samples[2:]:
+            row['location']['latitude'] += .00002
+        self.assertGreater(len(build_events([], [], samples, 0, 1500000)['events']), 1)
+
+    def test_coordinate_system_change_is_not_gps_drift(self):
+        samples = [self.sample(minute, 70) for minute in (5, 10, 15, 20)]
+        for row in samples[2:]:
+            row['location']['coordinate_system'] = 'other'
+        self.assertGreater(len(build_events([], [], samples, 0, 1500000)['events']), 1)
+
+    def test_gps_drift_keeps_gaps_and_charging_energy_gates(self):
+        trips = [self.trip('a', 0, 300000, 72, 70),
+                 self.trip('b', 2400000, 3000000, 70, 69)]
+        samples = [self.sample(minute, 70) for minute in (5, 6, 35, 40)]
+        for row in samples[2:]:
+            row['location']['latitude'] += .00002
+        result = build_events(trips, [], samples, 0, 3600000, 86)
+        self.assertEqual(len(result['events']), 1)
+        self.assertIn('gap', result['events'][0]['reasons'])
+        self.assertIsNone(result['events'][0]['estimated_kwh'])
+        charge = {'start_time': 600000, 'end_time': 1800000}
+        events = build_events(trips, [charge], samples, 0, 3600000, 86)['events']
+        self.assertEqual(len(events), 2)
+        self.assertTrue(all(row['end_time'] <= 600000 or row['start_time'] >= 1800000 for row in events))
+        self.assertTrue(all(row['estimated_kwh'] is None for row in events))
+
+    def test_query_assigns_single_and_delayed_fragments(self):
+        lower, _ = day_bounds('2026-10-03')
+        cases = (((5,), (2000,), 'observed', 0),
+                 ((5, 6), (9000, 9000), 'observed', 0),
+                 ((5,), (2000,), 'vehicle_endpoint', 0),
+                 ((5, 6), (2000, 2000), 'inside_trip', 1))
+        for minutes, delays, kind, orphan_count in cases:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'tracks.sqlite3'
+                with sqlite3.connect(path) as db:
+                    db.execute('CREATE TABLE monitor_events (id TEXT,vehicle TEXT,kind TEXT,summary TEXT,created INTEGER)')
+                path.chmod(0o600)
+                rows = [self.sample(minute, 70) for minute in minutes]
+                for row, delay in zip(rows, delays):
+                    row['record']['state_time'] += lower
+                    row['record']['observed_at'] += lower + delay
+                class Archive:
+                    def iter_records(self, *args):
+                        return iter((row['record'], row) for row in rows)
+                stamp = rows[-1]['record']['observed_at']
+                if kind == 'vehicle_endpoint':
+                    stamp = rows[-1]['record']['state_time'] - 60000
+                elif kind == 'inside_trip':
+                    stamp += 600000
+                events = {'events': [{'start_time': stamp, 'end_time': stamp + 60000}]}
+                with patch('zeekr_control.parking_analytics.decode', side_effect=lambda raw: raw['state']), patch('zeekr_control.parking_analytics.parse_location', side_effect=lambda raw: raw['location']), patch('zeekr_control.parking_analytics.build_events', return_value=events):
+                    result = ParkingAnalytics(Archive(), path).query('scope', 'car', '2026-10-03', '2026-10-03')
+                self.assertEqual(result['orphan_count'], orphan_count)
 
     def test_time_advances_even_when_values_and_repeat_label_are_unchanged(self):
         trips = [self.trip('a', 0, 300000, 72, 70),

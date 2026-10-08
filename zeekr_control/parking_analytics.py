@@ -168,7 +168,12 @@ class ParkingAnalytics:
             charges = [row for row in events if row['kind'] == 'charge_end']
             result.update(build_events(triples, charges, base_samples, lower, upper, capacity))
             result['orphan_sessions'] = [row for row in result['sessions'] if not any(
-                row['start_time'] < event['end_time'] and row['end_time'] > event['start_time']
+                # Events use collection time; legacy sessions use vehicle time.
+                # Inclusive comparison also assigns single-point observations.
+                (row['start']['observed_at'] <= event['end_time'] and
+                 row['end']['observed_at'] >= event['start_time']) or
+                (row['start_time'] == row['end_time'] and
+                 row['start_time'] in (event['start_time'], event['end_time']))
                 for event in result['events'])]
             result['orphan_count'] = len(result['orphan_sessions'])
         result.update(start_date=start, end_date=end)

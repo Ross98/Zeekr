@@ -1,11 +1,13 @@
 """Find stationary intervals outside saved trips and charges; preserve source records."""
 from datetime import datetime
+from math import asin, cos, radians, sin, sqrt
 
 from .snapshot_archive import BEIJING
 from .vehicle_state import numeric
 
 
 MAX_GAP_MS = 600000
+GPS_DRIFT_METERS = 15
 LABELS = {
     'gap': '停车期间有超过 10 分钟的数据缺口',
     'charging': '停车期间有充电记录或充电状态',
@@ -33,6 +35,32 @@ def location_key(sample):
     if location.get('valid') and location.get('latitude') is not None and location.get('longitude') is not None:
         return (location['latitude'], location['longitude'], location.get('coordinate_system'))
     return None
+
+
+def stationary_support(first, second):
+    """Small coordinate changes need corroboration from both vehicle observations."""
+    a, b = first['state'], second['state']
+    return (a.get('km') is not None and a.get('km') == b.get('km')
+            and all((state.get('off') is True or state.get('gear') == 'P')
+                    and state.get('off') is not False
+                    and state.get('gear') not in ('R', 'D')
+                    and not (state.get('speed') is not None and state['speed'] > 0)
+                    for state in (a, b)))
+
+
+def same_position(first, second):
+    """Compare against a fixed anchor, never a chain of nearby moving points."""
+    a, b = location_key(first), location_key(second)
+    if a is None or b is None or a[2] != b[2]:
+        return False
+    if a == b:
+        return True
+    if not stationary_support(first, second):
+        return False
+    lat1, lat2 = radians(a[0]), radians(b[0])
+    distance = 2 * 6371000 * asin(min(1, sqrt(
+        sin((lat2-lat1)/2)**2 + cos(lat1)*cos(lat2)*sin(radians(b[1]-a[1])/2)**2)))
+    return distance <= GPS_DRIFT_METERS
 
 
 def build_events(trips, charges, samples, lower, upper, capacity=None):
@@ -91,17 +119,19 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
                       and row['state'].get('charging') is not True]
             if not within:
                 continue
-            # A changed coordinate ends a stationary run; missing coordinates are
-            # retained as energy-quality evidence, never invented or interpolated.
+            # Tolerate bounded GPS drift only with stationary vehicle evidence.
+            # Missing coordinates remain quality evidence, never interpolated.
             runs, run, position = [], [], None
             for row in within:
                 current = location_key(row)
-                if current is not None and position is not None and current != position:
+                if current is not None and position is not None and (
+                        not same_position(position, row) or
+                        (location_key(position) != current and not stationary_support(run[-1], row))):
                     runs.append(run)
                     run = []
                 run.append(row)
-                if current is not None:
-                    position = current
+                if current is not None and (position is None or len(run) == 1):
+                    position = row
             if run:
                 runs.append(run)
             for index, run in enumerate(runs):
@@ -115,11 +145,18 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
                                       left != start or right != end or len(runs) > 1))
     events = []
     for start, end, before, after, within, open_end, clipped in intervals:
-        positions = [location_key(row) for row in within if location_key(row) is not None]
-        stationary = len(positions) >= 2 and len(set(positions)) == 1
+        positions = [row for row in within if location_key(row) is not None]
+        stationary = len(positions) >= 2 and all(same_position(positions[0], row) for row in positions[1:])
         parked = [row for row in within if not row['record'].get('flags')
                   and row['record'].get('state_time') is not None]
         reasons = set()
+        odometers = [row['state'].get('km') for row in within if row['state'].get('km') is not None]
+        if (len(set(odometers)) > 1 or any(
+                row['state'].get('gear') in ('R', 'D') or
+                (row['state'].get('speed') is not None and row['state']['speed'] > 0)
+                for row in within)):
+            reasons.add('movement')
+            stationary = False
         if clipped or before is None or after is None or before.get('partial') or after.get('partial'):
             reasons.add('boundary')
         if not parked or parked[0]['record']['observed_at'] - start > MAX_GAP_MS or end - parked[-1]['record']['observed_at'] > MAX_GAP_MS:
@@ -165,4 +202,4 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
     events.sort(key=lambda row: row['start_time'], reverse=True)
     return {'events': events, 'parking_count': sum(row['parking_status'] == 'parked' for row in events), 'comparable_count': sum(row['status'] == 'comparable' for row in events),
             'uncertain_count': sum(row['status'] == 'uncertain' for row in events),
-            'calculation_version': 3}
+            'calculation_version': 4}
