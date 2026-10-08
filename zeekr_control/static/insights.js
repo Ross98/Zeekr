@@ -34,24 +34,41 @@
   ];
   const toolsFor=section=>toolGroups.filter(group=>(group.page || 'insights')===section).flatMap(group=>group.tools);
 
-  function parameterWorkspace({getState,request,esc,active,dictionary,time,review}) {
-    let node=null,owner='',serial=0,attempted='',loading=false,error='';
-    const hypotheses=document.createElement('details'),experiments=document.createElement('details');
-    hypotheses.id='parameter-hypotheses';experiments.id='parameter-experiments';
-    hypotheses.innerHTML='<summary>历史假设、支持与反例 · 全目录分析</summary><div></div>';
-    experiments.innerHTML='<summary>关联实验 · 记录动作与前后样本</summary><div></div>';
+  function parameterWorkspace({getState,request,esc,active,dictionary,time,review,history}) {
+    let node=null,owner='',serial=0,attempted='',loading=false,error='',stage='overview';
+    const steps=[['overview','1 看参数'],['evidence','2 分析证据'],['experiment','3 操作验证'],['conclusion','4 写结论']];
+    const guidance={overview:'先选参数，再分析历史证据；已有实际观察也可直接写结论。',evidence:'先看支持与反例。需要实际操作核对时进入操作验证，或采用假设写结论。',experiment:'先看关联记录。记录实际动作、选择前后样本，保存后可带证据写结论。',conclusion:'填写解释与依据，再选择保留为有疑问或人工确认；确认不会修改运行解码。'};
+    const flow=document.createElement('div'),hypotheses=document.createElement('section'),experiments=document.createElement('section');
+    flow.id='parameter-flow';hypotheses.id='parameter-hypotheses';experiments.id='parameter-experiments';
+    hypotheses.innerHTML='<div></div><button class="button secondary" data-parameter-history>详细历史与场景</button>';
+    experiments.innerHTML='<div></div>';
     const hypothesisPage=root.HypothesisLabPage.create({getState,request,escape:esc,active,time,review,
-      integrated:{selected:dictionary.selected,refresh:dictionary.refresh}});
+      integrated:{selected:dictionary.selected,refresh:dictionary.refresh,
+        conclude:(proposal,study)=>{if(dictionary.propose(proposal,study))openStage('conclusion');},
+        experiment:()=>openStage('experiment')}});
     const labPage=root.ParameterExperimentsPage.create({getState,request,escape:esc,active,time,integrated:true});
     function attach(path) {
       if(!active()||!node?.isConnected)return;
-      const body=node.querySelector('.review-panel-body');
+      const panel=node.querySelector('#review-panel'),body=panel?.querySelector('.review-panel-body');
       if(!body)return;
-      body.append(hypotheses,experiments);
-      hypothesisPage.mount(hypotheses.querySelector(':scope > div'));
-      hypothesisPage.selectField(path);
-      labPage.mount(experiments.querySelector(':scope > div'));
-      labPage.selectField(path);
+      if(dictionary.editing())stage='conclusion';
+      else if(stage==='conclusion')stage='overview';
+      const base=document.createElement('div');base.className='parameter-base';base.append(...body.childNodes);
+      body.replaceChildren(base,hypotheses,experiments);
+      base.hidden=!['overview','conclusion'].includes(stage);
+      hypotheses.hidden=stage!=='evidence';experiments.hidden=stage!=='experiment';
+      panel.querySelector('.review-panel-footer').hidden=!['overview','conclusion'].includes(stage);
+      const index=steps.findIndex(([key])=>key===stage),next=steps[index+1];
+      flow.innerHTML=`<nav aria-label="参数核实步骤">${steps.map(([key,label])=>`<button data-parameter-step="${key}" aria-current="${key===stage?'step':'false'}" ${key==='conclusion'&&!dictionary.canEdit()?'disabled':''}>${label}</button>`).join('')}</nav><div class="parameter-step-guide"><p>${guidance[stage]}</p>${index?'<button class="text-link" data-parameter-previous>上一步</button>':''}${next?`<button class="button secondary" data-parameter-next="${next[0]}" ${next[0]==='conclusion'&&!dictionary.canEdit()?'disabled':''}>下一步：${next[1].slice(2)}</button>`:''}</div>`;
+      panel.querySelector('.card-head').after(flow);
+      hypothesisPage.mount(hypotheses.querySelector(':scope > div'));hypothesisPage.selectField(path);
+      labPage.mount(experiments.querySelector(':scope > div'));labPage.selectField(path);
+    }
+    function openStage(next,reveal=true) {
+      if(!steps.some(([key])=>key===next)||next==='conclusion'&&!dictionary.canEdit())return false;
+      stage=next;dictionary.edit(next==='conclusion');
+      if(reveal){flow.scrollIntoView({block:'start',behavior:'instant'});flow.querySelector(`[data-parameter-step="${stage}"]`)?.focus({preventScroll:true});}
+      return true;
     }
     function status() {
       const el=node?.querySelector('#parameter-catalog-status');
@@ -71,33 +88,39 @@
     }
     function mount(container) {
       const changed=owner!==(getState()?.insights_context||'');node=container;
-      if(changed){owner=getState()?.insights_context||'';serial++;attempted='';loading=false;error='';hypotheses.open=experiments.open=false;}
+      if(changed){owner=getState()?.insights_context||'';serial++;attempted='';loading=false;error='';stage='overview';}
       dictionary.onPanel(attach);
-      if(!node.querySelector('#field-results'))node.innerHTML='<header class="research-header"><div><h2>参数研究与核实</h2><p>选一个参数，查看解释、研究证据、关联实验与人工结论。</p></div></header><p id="parameter-catalog-status" class="insight-note" role="status"></p><div id="parameter-dictionary"></div>';
-      dictionary.mount(node.querySelector('#parameter-dictionary'));
-      ensure();
+      if(!node.querySelector('#field-results'))node.innerHTML='<header class="research-header"><div><h2>参数研究与核实</h2><p>选参数、分析证据、记录操作，再保存解释与核实结论。</p></div></header><p id="parameter-catalog-status" class="insight-note" role="status"></p><div id="parameter-dictionary"></div>';
+      dictionary.mount(node.querySelector('#parameter-dictionary'));ensure();
     }
     function handle(event) {
       if(!active()||!node?.contains(event.target))return false;
-      if(event.type==='click'&&event.target.closest('[data-parameter-retry]')){ensure(true);return true;}
+      if(event.type==='click'){
+        const step=event.target.closest('[data-parameter-step],[data-parameter-next]');
+        if(step){if(!step.disabled)openStage(step.dataset.parameterStep||step.dataset.parameterNext);return true;}
+        if(event.target.closest('[data-parameter-previous]')){openStage(steps[Math.max(0,steps.findIndex(([key])=>key===stage)-1)][0]);return true;}
+        const link=event.target.closest('[data-parameter-history],[data-open-research]');
+        if(link){history(link.dataset.openResearch||dictionary.selected(),stage,dictionary.selected());return true;}
+        if(event.target.closest('[data-parameter-retry]')){ensure(true);return true;}
+      }
       if(hypotheses.contains(event.target)){hypothesisPage.handle(event);return !!event.target.closest('[data-hypothesis]')||event.target.id.startsWith('hypothesis-');}
       if(experiments.contains(event.target))return labPage.handle(event);
       return false;
     }
     function openExperiment(selection) {
       if(selection.path)dictionary.select(selection.path);
-      experiments.open=true;labPage.openEvidence(selection);
-      experiments.scrollIntoView({block:'nearest'});
+      openStage('experiment');labPage.openEvidence(selection);
     }
     function openPart(part) {
-      if(part==='hypotheses')hypotheses.open=true;
-      if(part==='lab')experiments.open=true;
+      if(part==='hypotheses')openStage('evidence',false);
+      if(part==='lab')openStage('experiment',false);
     }
-    return {mount,handle,openExperiment,openPart};
+    function returnTo(path,next){dictionary.select(path);openStage(next);}
+    return {mount,handle,openExperiment,openPart,openStage,returnTo,currentStage:()=>stage};
   }
 
   function create({getState,request,escape:esc,active,review,navigate,dictionary}) {
-    let tab='research', section='insights', toolQuery='', toolsExpanded=false;
+    let tab='research', section='insights', toolQuery='', toolsExpanded=false,researchReturn=null;
     const groups=()=>toolGroups.filter(group=>(group.page || 'insights')===section);
     const automaticPage=root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time,navigate});
     const reportPage=root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time});
@@ -105,7 +128,7 @@
     const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
     const rulesPage=root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time});
     const chargeComparisonPage=root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time});
-    const parameterPage=parameterWorkspace({getState,request,esc,active:()=>active()&&tab==='parameters',dictionary,time,review});
+    const parameterPage=parameterWorkspace({getState,request,esc,active:()=>active()&&tab==='parameters',dictionary,time,review,history:openParameterHistory});
     const researchPage=root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review,diagnose:()=>navigate('settings','quality')});
     const calendarPage=root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate});
     const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
@@ -124,7 +147,8 @@
       listSerial++;detailSerial++;compareSerial++;clearTimeout(selectTimer);
     }
     function context() {return getState()?.insights_context || '';}
-    function openField(path){tab='research';toolQuery='';paint();researchPage.openField(path);}
+    function openField(path){researchReturn=null;tab='research';toolQuery='';paint();researchPage.openField(path);}
+    function openParameterHistory(path,stage,origin){researchReturn={path:origin||path,stage};tab='research';toolQuery='';paint();researchPage.openField(path);}
     function openExperiment(selection){tab='parameters';toolQuery='';paint();parameterPage.openExperiment(selection);}
     function openTool(id){const part=id;if(['fields','hypotheses','lab'].includes(id))id='parameters';if(['calendar','report'].includes(id)&&section!==id){navigate(id,id);return true;}if(!toolsFor(section).some(tool=>tool.id===id))return false;tab=id;toolQuery='';toolsExpanded=false;paint();if(id==='parameters')parameterPage.openPart(part);return true;}
     function openDate(view,target){
@@ -194,7 +218,7 @@
       const content=node.querySelector('.insight-content');
       if(!tab){content.innerHTML='<section class="card insight-panel"><h2>选择子功能</h2><p>从上方快捷入口或这里的工具列表打开。</p></section>';return;}
       if(views[tab]){
-        content.innerHTML=`<div id="${tab}-workspace"></div>`;
+        content.innerHTML=`${tab==='research'&&researchReturn?'<div class="parameter-return"><button class="button secondary" data-insight="return-parameter">返回参数研究</button><span>查看完历史后，返回原参数与操作步骤。</span></div>':''}<div id="${tab}-workspace"></div>`;
         views[tab].mount(node.querySelector(`#${tab}-workspace`));
         restoreFocus(focus);
         return;
@@ -305,8 +329,8 @@
     }
     function mount(container, nextSection='insights') {
       const changed=context()!==owner, sectionChanged=section!==nextSection, remount=node!==container;
-      if(sectionChanged){section=nextSection;tab=section==='insights'?'research':['calendar','report'].includes(section)?section:'';toolQuery='';toolsExpanded=false;}
-      if(changed){owner=context();toolQuery='';toolsExpanded=false;reset();}
+      if(sectionChanged){researchReturn=null;section=nextSection;tab=section==='insights'?'research':['calendar','report'].includes(section)?section:'';toolQuery='';toolsExpanded=false;}
+      if(changed){researchReturn=null;owner=context();toolQuery='';toolsExpanded=false;reset();}
       node=container;
       node.classList.toggle('standalone-task',section!=='insights');
       if(sectionChanged)node.innerHTML='';
@@ -319,6 +343,7 @@
       const view=event.type==='click' && el.closest('[data-insight-view]');
       if(view || (event.type==='change' && el.id==='insight-tool-select')){
         const next=view?view.dataset.insightView:el.value;
+        researchReturn=null;
         toolQuery='';toolsExpanded=false;
         if(tab!==next){tab=next;paint();}else updateNavigation();
         const selector=node.querySelector('#insight-tool-select');
@@ -336,6 +361,7 @@
       switch(target.dataset.insight){
         case 'toggle-tools':toolsExpanded=!toolsExpanded;updateNavigation();if(toolsExpanded)node.querySelector('#insight-tool-search').focus({preventScroll:true});break;
         case 'clear-tools':toolQuery='';updateNavigation();node.querySelector('#insight-tool-search').focus({preventScroll:true});break;
+        case 'return-parameter':{const target=researchReturn;researchReturn=null;if(target){tab='parameters';paint();parameterPage.returnTo(target.path,target.stage);}break;}
         case 'load':load();break;
         case 'more':load(true);break;
         case 'previous':select(index-1);break;
@@ -349,7 +375,7 @@
       }
       return true;
     }
-    return {mount,handle,openField,openExperiment,openTool,openDate,openLedgerEvent:ledgerPage.openEvent,currentTool:()=>tab};
+    return {mount,handle,openField,openExperiment,openTool,openDate,openLedgerEvent:ledgerPage.openEvent,currentTool:()=>tab,parameterStage:parameterPage.currentStage,openParameterStage:parameterPage.openStage};
   }
   root.InsightsPage={create,toolsFor};
 })(window);

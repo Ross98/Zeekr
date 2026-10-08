@@ -13,10 +13,33 @@ function setReviewCatalog(fields) {
 }
 function selectReviewField(path) {
   if (reviewSaving) return;
-  reviewSelected=path;search=groupFilter=reviewFilter='';unknownOnly=false;
+  const visible=reviewItems().some(f=>f.path===path);
+  reviewSelected=path;
+  if(!visible){search=path;groupFilter=reviewFilter='';unknownOnly=false;}
   reviewRequested=reviewVisibleFields().some(f=>f.path===path)?'':path;
   reviewEditing=!!reviewDraft()?.dirty;
   renderFields();
+}
+function canEditReview() {
+  const field=reviewVisibleFields().find(f=>f.path===reviewSelected),draft=reviewDraft();
+  return !!field&&(!field.research_only||!!draft?.evidence||!!draft?.hypothesis_context||reviewRecords(field.path).some(r=>r.scope==='field'&&r.status==='question'));
+}
+function editReviewStep(editing) {
+  if(reviewSaving)return;
+  reviewEditing=editing&&canEditReview();renderFields();
+}
+function proposeReview(proposal,study) {
+  if(reviewSaving)return false;
+  const field=reviewVisibleFields().find(f=>f.path===proposal.path);
+  if(!field)return false;
+  if(reviewDraft()?.dirty){toast('已有未保存结论，请先保存或放弃，再采用假设。');return false;}
+  const existing=reviewRecords(field.path).find(r=>r.scope==='field');
+  if(existing&&existing.status!=='question'){toast('已有人工字段结论，保留原记录；可在写结论步骤查看。');return false;}
+  reviewDrafts.set(reviewDraftKey(field.path),{...newReviewDraft(field,'field'),
+    status:'question',meaning:proposal.proposal.meaning,observation:proposal.proposal.basis,
+    note:`自动假设，未确认；范围 ${study.start_date} 至 ${study.end_date}；对照 ${study.state}；${proposal.proposal.next}`,
+    hypothesis_context:state.insights_context,dirty:true,saved:false});
+  reviewEditing=true;return true;
 }
 
 function reviewData() { return state?.field_reviews || {vehicle:null,revision:null,records:[]}; }
@@ -49,11 +72,13 @@ function reviewSync() {
 }
 function newReviewDraft(field, scope = null) {
   const record = reviewMatch(field, scope);
-  return {path:field.path, raw:field.raw, scope:scope || record?.scope || 'value',
+  const draft={path:field.path, raw:field.raw, scope:scope || record?.scope || 'value',
     status:'confirmed', meaning:'', unit:'', conversion:'', observation:'', scene:'', note:'',
     observed_at:state.model.updated_time ?? null, ...record,
     // Numeric rules retain their old observation until the user chooses a new snapshot.
     dirty:false, saved:false, revision:reviewData().revision};
+  if(field.research_only&&draft.scope==='field'&&draft.status==='question')draft.hypothesis_context=state.insights_context;
+  return draft;
 }
 function reviewVisibleFields() {
   const modelFields=state?.model?.fields || [];
@@ -105,17 +130,16 @@ function reviewItems() {
   return reviewVisibleFields().filter(f => (!groupFilter || f.group === groupFilter) &&
     (!unknownOnly || f.evidence === '待核实') && (!reviewFilter || reviewStatus(f) === reviewFilter) &&
     `${f.name} ${f.path} ${f.reference?.unit || ''} ${f.reference?.note || ''} ${f.reference?.applicability || ''}`.toLowerCase().includes(search.toLowerCase()))
-    .sort((a,b) => Number(reviewStatus(a) !== 'pending') - Number(reviewStatus(b) !== 'pending'));
+    .sort((a,b) => Number(!!a.research_only)-Number(!!b.research_only)||Number(reviewStatus(a) !== 'pending') - Number(reviewStatus(b) !== 'pending'));
 }
 function fieldsPage() {
   if (!state?.model) return modelRequired();
   reviewSync();
   const groups = [...new Set(reviewVisibleFields().map(f => f.group))];
-  return `<div class="review-intro"><p>浏览中文术语、当前值、单位与来源；需要时再编辑人工核实。</p><span class="pill">只读车辆 · 核实记录独立</span></div>
-    ${state.profile?.variant ? `<p class="section-note">本车资料：${esc(state.profile.name)} · ${esc(state.profile.variant)}</p>` : ''}
+  return `<details class="parameter-directory-options"><summary>核实进度与说明</summary>
     <div id="review-progress" class="review-progress" aria-label="人工核实进度"></div>
+    <p class="section-note">未返回参数也保留在清单，可研究历史证据；取得有效原值后再人工核实。自动假设、实验线索与人工结论分别保存。</p></details>
     <div class="filters"><input type="search" id="search" aria-label="搜索参数" placeholder="搜索中文名称或字段，如：胎压、chargeLevel" value="${esc(search)}"><select class="select" id="group" aria-label="参数分类"><option value="">全部分类</option>${groups.map(g => `<option ${groupFilter===g?'selected':''}>${esc(g)}</option>`).join('')}</select><label class="check"><input type="checkbox" id="unknown" ${unknownOnly?'checked':''}>仅系统待核实</label></div>
-    <p class="section-note">未返回参数也保留在清单，可研究历史证据；取得有效原值后再人工核实。枚举按具体原值确认。自动假设、实验线索与人工结论分别保存。</p>
     ${reviewData().error ? `<div class="notice error" role="alert">${esc(reviewData().error)}</div>` : ''}
     <div class="review-workspace parameter-workspace"><section class="card review-list" id="field-results"></section><aside class="card review-panel" id="review-panel" aria-label="参数核实面板"></aside></div>`;
 }
@@ -127,6 +151,7 @@ function renderFieldsContent(){
   reviewSync();
   const focus = reviewFocusSnapshot();
   const all = reviewVisibleFields(), items = reviewItems();
+  if($('#search')&&$('#search').value!==search)$('#search').value=search;
   const groupSelect=$('#group');
   if(groupSelect){
     const groups=[...new Set(all.map(f=>f.group))];
@@ -138,12 +163,14 @@ function renderFieldsContent(){
   $('#review-progress').innerHTML = [['','全部',all.length],...Object.entries(reviewLabels).map(([key,label])=>[key,label,counts[key]])].map(([key,label,count]) =>
     `<button class="review-count ${reviewFilter===key?'active':''}" data-review-filter="${key}" aria-pressed="${reviewFilter===key}"><span>${label}</span><strong>${count}</strong></button>`).join('');
   if (!reviewSelected && items.length) reviewSelected = items[0].path;
-  $('#field-results').innerHTML = `<div class="card-head"><h2>参数清单</h2><span class="subtle">${items.length} 项 · 待核实优先</span></div><div class="review-rows">${items.length ? items.map(f => {
+  $('#field-results').innerHTML = `<div class="card-head"><h2>参数清单</h2><span class="subtle">${items.length} 项 · 有有效值优先</span></div><div class="review-rows">${items.length ? items.map(f => {
     const status = reviewStatus(f), record = reviewMatch(f);
     return `<button class="review-row ${reviewSelected===f.path?'selected':''}" data-review-path="${esc(f.path)}" aria-pressed="${reviewSelected===f.path}"><span class="review-row-title"><strong>${esc(f.name)}</strong><span class="pill ${status==='confirmed'?'good':status==='pending'||status==='question'?'warn':''}">${reviewLabels[status]}</span></span><span class="field-path">${esc(f.group)} · ${esc(f.path)}</span><span class="review-values"><span>原值 <b>${esc(f.raw)}</b></span><span>${record?.status==='confirmed'?'人工解释':'系统解释'} <b>${esc(record?.status==='confirmed'?record.meaning:f.value)}</b></span></span></button>`;
   }).join('') : '<div class="empty"><h3>没有符合条件的参数</h3><p>调整搜索、分类或核实状态。</p></div>'}</div>`;
   renderReviewPanel();
   reviewRestoreFocus(focus);
+  const selected=$('#field-results [aria-pressed=true]'),rows=$('#field-results .review-rows');
+  if(selected&&rows){const r=selected.getBoundingClientRect(),list=rows.getBoundingClientRect();if(r.top<list.top||r.bottom>list.bottom)rows.scrollTop+=r.top-list.top;}
 }
 function reviewTime(value) { return Number.isFinite(value) ? new Date(value).toLocaleString('zh-CN',{hour12:false}) : '未提供'; }
 function renderFieldReference(field) {
@@ -173,14 +200,14 @@ function renderReviewPanelBody(){
   if (!panel) return;
   const field = reviewVisibleFields().find(f => f.path === reviewSelected);
   if (!field) { panel.innerHTML = empty('选择一项参数','从左侧清单开始逐项核实。'); return; }
-  if(field.research_only&&!reviewDraft()?.evidence)reviewEditing=false;
+  if(!canEditReview())reviewEditing=false;
   if (!reviewEditing) {
     panel.dataset.path=field.path;
     const records = reviewRecords(field.path), status = reviewStatus(field);
     panel.innerHTML = `<div class="card-head"><div><span class="eyebrow">参数详情</span><h2>${esc(field.name)}</h2></div><span class="pill ${status==='confirmed'?'good':status==='pending'||status==='question'?'warn':''}">${reviewLabels[status]}</span></div>
-      <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span><div class="review-snapshot"><div><span>当前原值</span><strong>${esc(field.raw)}</strong></div><div><span>系统解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div>${renderFieldReference(field)}<div class="review-actions"><button class="button secondary" data-open-research="${esc(field.path)}">查看字段历史与场景</button></div>
+      <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span><div class="review-snapshot"><div><span>当前原值</span><strong>${esc(field.raw)}</strong></div><div><span>系统解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div><details class="parameter-reference"><summary>术语、来源与适用性</summary>${renderFieldReference(field)}</details>
       <details class="review-history" ${records.length?'open':''}><summary>人工核实记录 · ${records.length} 条</summary>${records.length?records.map(record=>`<div class="review-history-row"><span>${record.scope==='field'?'整个字段':`原值 ${esc(record.raw)}`} · ${reviewLabels[record.status]}</span><strong>${esc(record.meaning || record.note || '未填写说明')}</strong><small>${esc(reviewTime(record.saved_at))}${record.evidence?' · 已关联实验：'+esc(record.evidence.title):''}</small></div>`).join(''):'<p class="subtle">暂无人工核实记录。</p>'}</details></div>
-      <div class="review-panel-footer"><div class="review-actions"><button type="button" class="button" data-review-action="edit" ${field.research_only?'disabled':''}>编辑核实</button></div></div>`;
+      <div class="review-panel-footer"><div class="review-actions"><button type="button" class="button" data-review-action="edit" ${canEditReview()?'':'disabled'}>编辑核实</button></div></div>`;
     return;
   }
   if (!reviewDraft()) reviewDrafts.set(reviewDraftKey(field.path),newReviewDraft(field));
@@ -193,27 +220,27 @@ function renderReviewPanelBody(){
   panel.innerHTML = `<div class="card-head"><div><span class="eyebrow">逐项核实</span><h2>${esc(field.name)}</h2></div><span id="review-save-status" class="subtle" role="status">${draft.dirty?'有未保存内容':draft.saved?'已保存':'待填写 / 可修改'}</span></div>
     <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span>
     <div class="review-snapshot"><div><span>本次核实原值</span><strong>${esc(draft.raw)}</strong></div><div><span>系统当前解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div>
-    ${renderFieldReference(field)}<div class="review-actions"><button class="button secondary" data-open-research="${esc(field.path)}">查看字段历史与场景</button></div>
+    ${field.research_only&&!draft.evidence?'<p class="insight-note">当前没有有效原值，只能保存待核实解释；数据返回后再核实具体值。</p>':''}${renderFieldReference(field)}<div class="review-actions"><button class="button secondary" data-open-research="${esc(field.path)}">查看字段历史与场景</button></div>
     ${draft.evidence?`<p class="notice info">已关联实验：${esc(draft.evidence.title)} · ${draft.experiment_side==='before'?'前':'后'}样本。核实结果仍需你填写；有疑问为默认状态。</p>`:''}
     <p class="subtle">核实样本时间：${esc(reviewTime(draft.observed_at))}<br>整车缓存时间；子字段可能不同步。</p>
     <div id="review-live-notice" class="${changed?'notice info':'subtle'}">${changed?`当前原值已变化为 ${esc(field.raw)}；填写内容仍对应原值 ${esc(draft.raw)}。`:'填写期间保留本次样本，刷新不会覆盖草稿。'}</div>
     ${changed?'<button class="text-link" data-review-action="latest">使用最新值核实</button>':''}
     <form id="review-form"><fieldset ${reviewSaving?'disabled':''}>
     ${reviewInput('确认含义','meaning',draft.meaning,200)}
-    <div class="review-input"><label for="review-scope">核实范围</label><select id="review-scope" data-review-input="scope" class="select"><option value="value" ${draft.scope==='value'?'selected':''}>当前原值的含义（枚举 / 状态）</option><option value="field" ${draft.scope==='field'?'selected':''}>整个字段（数值含义、单位 / 不适用）</option></select></div>
+    <div class="review-input"><label for="review-scope">核实范围</label><select id="review-scope" data-review-input="scope" class="select"><option value="value" ${draft.scope==='value'?'selected':''} ${field.research_only&&!draft.evidence?'disabled':''}>当前原值的含义（枚举 / 状态）</option><option value="field" ${draft.scope==='field'?'selected':''}>整个字段（数值含义、单位 / 不适用）</option></select></div>
     <p class="review-help">${draft.scope==='value'?`仅记录「${esc(draft.raw)}」的含义，其他原值不自动确认。`:'仅用于数值参数含义与单位，或整个字段不适用。数字编码也可能是枚举，请勿因此确认所有档位。'}</p>
-    <div class="review-input"><label for="review-status">核实结果</label><select id="review-status" data-review-input="status" class="select">${['confirmed','question','na'].map(key=>`<option value="${key}" ${draft.status===key?'selected':''}>${reviewLabels[key]}</option>`).join('')}</select></div>
+    <div class="review-input"><label for="review-status">核实结果</label><select id="review-status" data-review-input="status" class="select">${['confirmed','question','na'].map(key=>`<option value="${key}" ${draft.status===key?'selected':''} ${key!=='question'&&field.research_only&&!draft.evidence?'disabled':''}>${reviewLabels[key]}</option>`).join('')}</select></div>
 
     <div class="review-form-pair">${reviewInput('单位（可选）','unit',draft.unit,40)}${reviewInput('换算方式（仅记录，不执行）','conversion',draft.conversion,200)}</div>
     ${reviewInput('实际观察','observation',draft.observation,600,true)}
     ${reviewInput('核实场景','scene',draft.scene,200)}
     ${reviewInput('备注','note',draft.note,1200,true)}
-    <div class="review-quick"><button type="button" class="text-link" data-review-action="question">标记有疑问</button><button type="button" class="text-link" data-review-action="na">本字段不适用</button></div>
+    <div class="review-quick"><button type="button" class="text-link" data-review-action="question">标记有疑问</button><button type="button" class="text-link" data-review-action="na" ${field.research_only&&!draft.evidence?'disabled':''}>本字段不适用</button></div>
     </fieldset><div id="review-error" class="review-error" role="alert"></div>
     </form>
     <details class="review-history" ${records.length?'open':''}><summary>已保存的核实记录 · ${records.length} 条</summary>${records.map((record,index)=>`<button class="review-history-row" data-review-record="${index}" ${reviewSaving?'disabled':''}><span>${record.scope==='field'?'整个字段':`原值 ${esc(record.raw)}`} · ${reviewLabels[record.status]}</span><strong>${esc(record.meaning || record.note || '未填写说明')}</strong><small>${esc(reviewTime(record.saved_at))} · 查看 / 修改</small></button>`).join('')}</details>
     <p class="review-help">确认只保存网页注释，不向车辆下发指令。未核实参数可继续使用；车辆判断与通知仍沿用现有规则。</p></div><div class="review-panel-footer">    <div class="review-actions"><button type="submit" form="review-form" class="button" ${disabled?'disabled':''}>保存并下一项</button><button type="button" class="button secondary" data-review-action="save" ${disabled?'disabled':''}>保存</button><button type="button" class="button quiet" data-review-action="skip" ${reviewSaving?'disabled':''}>暂时跳过</button></div>
-    <div class="review-secondary"><button type="button" class="text-link" data-review-action="clear" ${disabled||!matched?'disabled':''}>清除本条确认</button><button type="button" class="text-link" data-review-action="discard" ${reviewSaving||!draft.dirty?'disabled':''}>放弃草稿</button><button type="button" class="text-link" data-review-action="undo" ${disabled||!reviewUndo?'disabled':''}>撤销上次操作</button></div>
+    <div class="review-secondary"><button type="button" class="text-link" data-review-action="clear" ${disabled||!matched||field.research_only?'disabled':''}>清除本条确认</button><button type="button" class="text-link" data-review-action="discard" ${reviewSaving||!draft.dirty?'disabled':''}>放弃草稿</button><button type="button" class="text-link" data-review-action="undo" ${disabled||!reviewUndo||field.research_only?'disabled':''}>撤销上次操作</button></div>
 </div>`;
   panel.querySelector('.review-panel-body').scrollTop = scroll;
 }
@@ -258,6 +285,7 @@ async function saveReview(action = 'save', next = false, override = null) {
   const snapshot = {...draft}, items = reviewItems();
   const payload = override || {...snapshot,action,vehicle,revision:draft.revision};
   payload.context=state.insights_context;
+  if(payload.hypothesis_context&&!(payload.action==='save'&&payload.status==='question'&&payload.scope==='field'))delete payload.hypothesis_context;
   if (payload.action === 'save' && payload.status === 'confirmed' && !payload.meaning.trim()) {
     $('#review-error').textContent = '请填写确认含义，再保存。'; $('#review-meaning').focus(); return;
   }
@@ -275,6 +303,7 @@ async function saveReview(action = 'save', next = false, override = null) {
     }
     const field = reviewVisibleFields().find(f => f.path === payload.path);
     const saved = newReviewDraft({...field,raw:payload.raw},payload.scope);
+    if(payload.hypothesis_context)saved.hypothesis_context=payload.hypothesis_context;
     saved.saved = true;
     reviewDrafts.set(reviewDraftKey(payload.path),saved);
     toast(override?'已撤销上次操作':action==='delete'?'已清除本条确认':'已保存核实记录');
@@ -310,7 +339,7 @@ function handleReviewAction(target) {
       reviewSelected=target.dataset.reviewPath;
       reviewRequested='';
       const field=reviewVisibleFields().find(f=>f.path===reviewSelected);
-      reviewEditing=!field?.research_only&&(reviewEditing||!!reviewDraft()?.dirty);
+      reviewEditing=reviewEditing&&canEditReview();
       renderFields();
     }
     return true;

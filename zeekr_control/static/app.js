@@ -71,7 +71,7 @@ let sectionTask='';
 function openSectionTask(task){sectionTask=task;render();if(task&&task!=='records')insightsPage.openTool(task);window.scrollTo({top:0,left:0,behavior:'instant'});}
 const insightSections = ['car','energy','tracks','insights','settings','calendar','report'];
 window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,trackSource].join('|');
-const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields},
+const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields,editing:()=>reviewEditing,edit:editReviewStep,canEdit:canEditReview,propose:proposeReview},
   navigate:(section,view,date)=>{page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
   openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{page=tool==='ledger'?'energy':'settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
@@ -1110,6 +1110,7 @@ function navigationSnapshot(){
   if(sectionTask)snapshot.t=sectionTask;
   else if(['insights','calendar','report'].includes(page))snapshot.t=insightsPage.currentTool();
   if(page==='tracks'&&!sectionTask)snapshot.s=trackSource;
+  if(snapshot.t==='parameters')snapshot.step=insightsPage.parameterStage();
   for(const [key,selector] of Object.entries(navigationFields)){
     const el=visibleNavigationField(selector);if(el)snapshot[key]=el.value;
   }
@@ -1153,6 +1154,7 @@ function restoreNavigation(snapshot,position=0){
     render();
   }
   if(snapshot.t&&insightSections.includes(page))insightsPage.openTool(snapshot.t);
+  if(snapshot.step&&insightsPage.currentTool()==='parameters')insightsPage.openParameterStage(snapshot.step,false);
   for(const [key,selector] of Object.entries(navigationFields)){
     const el=visibleNavigationField(selector);
     if(el&&snapshot[key]&&el.value!==snapshot[key]){el.value=snapshot[key];el.dispatchEvent(new Event(el.tagName==='SELECT'||['charge-date','charge-end-date','track-date'].includes(el.id)?'change':'input',{bubbles:true}));}

@@ -52,7 +52,7 @@ const entries=[];
     await field('外观').selectOption('dark');
     await capture('07-charge-comparison','充电曲线对比','共同 SOC 区间对照功率、温度和耗时；保留缺口与平台时间的不确定性。','[data-charge-chart]');
 
-    await field('外观').selectOption('light');await button('参数研究与核实').click();await page.locator('#parameter-experiments > summary').click();await page.locator('#lab-all-fields').check();await button('回看实验').click();
+    await field('外观').selectOption('light');await button('参数研究与核实').click();await button('3 操作验证').click();await page.locator('#lab-all-fields').check();await button('回看实验').click();
     await page.getByText(/保存时的观测摘录/).waitFor();
     await capture('08-experiments','车辆参数实验室','保存动作、前后样本和变化字段；研究线索保留原始摘录，不自动确认语义。','[data-lab-record]');
 

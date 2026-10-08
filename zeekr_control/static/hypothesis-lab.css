@@ -30,3 +30,20 @@
 #parameter-dictionary .review-intro{margin:0 0 12px}
 #parameter-dictionary .review-count{padding:10px 12px}
 #parameter-dictionary .review-count strong{font-size:22px}
+
+#parameter-flow{position:sticky;top:10px;z-index:4;background:var(--paper);border-block:1px solid var(--line);padding:10px 16px}
+#parameter-flow nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+#parameter-flow nav button{padding:10px 6px;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;min-height:44px;font-size:13px}
+#parameter-flow nav button[aria-current=step]{background:var(--soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.parameter-step-guide{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.parameter-step-guide p{flex:1;min-width:180px;margin:0;color:var(--muted);font-size:13px}
+.parameter-step-guide .button{font-size:12px;padding:8px 10px}
+.parameter-workspace .review-panel-footer{position:sticky;bottom:0;z-index:3;border-top:1px solid var(--line);padding-block:8px;background:var(--paper)}
+.parameter-workspace [hidden]{display:none!important}
+.parameter-directory-options{margin-bottom:12px;color:var(--muted);font-size:13px}
+.parameter-directory-options>summary{cursor:pointer}
+.parameter-directory-options .review-progress{margin-top:12px}
+.parameter-reference{margin-top:16px;font-size:13px}
+.parameter-reference>summary,.hypothesis-values>summary{cursor:pointer;color:var(--accent);padding:10px 0}
+.parameter-workspace .review-panel-body{padding-top:16px}
+.parameter-return{display:flex;align-items:center;gap:16px;margin-bottom:16px;color:var(--muted);font-size:13px}

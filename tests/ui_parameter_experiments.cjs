@@ -4,8 +4,9 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   const f=await fixture(),{page}=f;
   try{
     await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
-    await page.locator('#parameter-experiments > summary').click();
+    await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
     await page.locator('#lab-all-fields').check();
+    await page.getByRole('button',{name:'新建实验',exact:true}).click();
     for(const label of ['前','后']){
       await page.getByLabel(`${label}样本日期`,{exact:true}).fill('2026-09-20');
       await page.getByRole('button',{name:`读取${label}样本`,exact:true}).click();
@@ -51,7 +52,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await layouts(page,'parameter-experiments');
     await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
     await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
-    await page.locator('#parameter-experiments > summary').click();
+    await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
     await page.locator('#lab-all-fields').check();
     await page.getByRole('button',{name:'回看实验',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#lab-note')?.value==='补充研究备注');

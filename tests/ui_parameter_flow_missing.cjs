@@ -1,0 +1,24 @@
+const assert=require('node:assert/strict');
+const {fixture}=require('./ui_insight_helpers.cjs');
+(async()=>{const f=await fixture(),{page}=f;page.setDefaultTimeout(8000);try{
+  const path='basicVehicleStatus.usageMode';
+  await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
+  await page.waitForFunction(()=>reviewCatalog.length===217);
+  await page.locator('#search').fill(path);await page.locator('[data-review-path]').click();
+  await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+  await page.locator('#hypothesis-start').fill('2026-09-20');await page.locator('#hypothesis-end').fill('2026-09-20');
+  await page.getByRole('button',{name:'分析所选参数',exact:true}).click();
+  await page.getByRole('button',{name:'采用假设写结论',exact:true}).click();
+  await page.locator('#review-meaning').fill('未返回参数的待核实解释');
+  assert.equal(await page.locator('#review-status option[value=confirmed]').isDisabled(),true);
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await page.waitForFunction(()=>state.field_reviews.records.some(r=>r.meaning==='未返回参数的待核实解释'));
+  await page.reload();
+  await page.waitForFunction(()=>reviewCatalog.length===217);
+  await page.locator('#search').fill(path);await page.locator('[data-review-path]').click();
+  assert.equal(await page.getByRole('button',{name:'4 写结论',exact:true}).isDisabled(),false,'A saved hypothesis remains editable without running another analysis');
+  await page.getByRole('button',{name:'4 写结论',exact:true}).click();
+  assert.equal(await page.locator('#review-meaning').inputValue(),'未返回参数的待核实解释');
+  assert.equal(await page.locator('#review-status option[value=confirmed]').isDisabled(),true);
+  assert.deepEqual(f.errors,[]);console.log('DESKTOP_MISSING_PARAMETER_FLOW_PASS guarded question save and edit after reload');
+}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

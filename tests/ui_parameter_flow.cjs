@@ -1,0 +1,83 @@
+// Real disposable API and synthetic archive: exercise the user's ordered workflow.
+const assert=require('node:assert/strict'),fs=require('node:fs');
+const {fixture,contrast}=require('./ui_insight_helpers.cjs');
+(async()=>{const f=await fixture(),{page}=f;page.setDefaultTimeout(10000);try{
+  await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('[data-review-path]').length===217);
+  assert.equal(await page.getByRole('navigation',{name:'参数核实步骤',exact:true}).count(),1,'The workflow has an explicit entry and ordered next steps');
+  assert.deepEqual(await page.locator('[data-parameter-step]').allTextContents(),['1 看参数','2 分析证据','3 操作验证','4 写结论']);
+  assert.equal(await page.locator('[data-review-path][aria-pressed=true]').isVisible(),true);
+  assert.ok(await page.locator('[data-review-path][aria-pressed=true]').evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;}),'The selected field is visible next to its detail');
+  const path='additionalVehicleStatus.electricVehicleStatus.chargeLevel';
+  await page.locator('#search').fill(path);await page.locator('[data-review-path]').click();
+  await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+  assert.equal(await page.locator('#review-panel').getAttribute('data-path'),path);
+  assert.equal(await page.locator('#hypothesis-text').count(),0,'No unrelated default parking hypothesis');
+  await page.locator('#hypothesis-start').fill('2026-09-20');await page.locator('#hypothesis-end').fill('2026-09-20');
+  await page.getByRole('button',{name:'分析所选参数',exact:true}).click();
+  await page.getByRole('button',{name:'采用假设写结论',exact:true}).waitFor();
+  assert.equal(await page.locator('.hypothesis-notebook textarea').count(),0,'Evidence and conclusion use one editor');
+  assert.equal(await page.locator('.hypothesis-evidence table').isVisible(),false,'Raw distribution is available on demand');
+  await page.getByRole('button',{name:'采用假设写结论',exact:true}).click();
+  assert.equal(await page.locator('[data-parameter-step=conclusion]').getAttribute('aria-current'),'step');
+  assert.equal(await page.locator('#review-status').inputValue(),'question');
+  await page.getByLabel('确认含义',{exact:true}).fill('SOC 工作流假设');
+  await page.getByLabel('实际观察',{exact:true}).fill('支持与反例仍需复核');
+  await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+  assert.equal(new URL(page.url()).searchParams.get('step'),'evidence');
+  await page.goBack();
+  await page.locator('[data-parameter-step=conclusion][aria-current=step]').waitFor();
+  assert.equal(await page.getByLabel('确认含义',{exact:true}).inputValue(),'SOC 工作流假设','Browser back returns to the step and draft');
+  await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+  await page.getByRole('button',{name:'4 写结论',exact:true}).click();
+  assert.equal(await page.getByLabel('确认含义',{exact:true}).inputValue(),'SOC 工作流假设','Returning to the conclusion preserves the draft');
+  await page.getByRole('button',{name:'保存',exact:true}).click();
+  await page.waitForFunction(()=>state.field_reviews.records.some(r=>r.meaning==='SOC 工作流假设'));
+  assert.equal(await page.evaluate(()=>state.field_reviews.records.find(r=>r.meaning==='SOC 工作流假设').status),'question');
+  await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
+  assert.equal(await page.locator('#lab-form').isVisible(),false,'Reading associated experiments does not begin a new experiment');
+  await page.getByRole('button',{name:'新建实验',exact:true}).click();
+  await page.getByLabel('实验名称',{exact:true}).fill('SOC 操作验证');
+  await page.getByLabel('实际动作',{exact:true}).fill('记录用户实际动作');
+  await page.locator('#search').fill('additionalVehicleStatus.electricVehicleStatus.chargeSts');
+  await page.locator('[data-review-path]').click();
+  assert.equal(await page.locator('[data-parameter-step=experiment]').getAttribute('aria-current'),'step');
+  assert.match(await page.locator('#lab-draft-owner').innerText(),/chargeLevel/,'An unfinished operation retains the field chosen when it began');
+  await page.locator('#search').fill(path);await page.locator('[data-review-path]').click();
+  await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+  await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
+  assert.equal(await page.getByLabel('实验名称',{exact:true}).inputValue(),'SOC 操作验证');
+  // A detailed history visit has an explicit return to the originating field and step.
+  await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+  await page.getByRole('button',{name:'详细历史与场景',exact:true}).click();
+  await page.getByRole('button',{name:'返回参数研究',exact:true}).waitFor();
+  await page.getByRole('button',{name:'返回参数研究',exact:true}).click();
+  assert.equal(await page.locator('#review-panel').getAttribute('data-path'),path);
+  assert.equal(await page.locator('[data-parameter-step=evidence]').getAttribute('aria-current'),'step');
+  assert.equal(await page.locator('#search').inputValue(),path);
+  assert.equal(await page.locator('[data-review-path]').count(),1,'Returning from history retains the list filter');
+  await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
+  assert.equal(await page.getByLabel('实验名称',{exact:true}).inputValue(),'SOC 操作验证');
+  for(const theme of ['light','dark']){
+    await page.getByLabel('外观',{exact:true}).selectOption(theme);
+    for(const width of [1440,1280,1024]){
+      await page.setViewportSize({width,height:1050});
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${theme} ${width} overflow`);
+      await contrast(page);
+    }
+  }
+  await page.setViewportSize({width:1440,height:1050});
+  await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+  fs.mkdirSync('/tmp/zeekr-parameter-flow-qa',{recursive:true});
+  await page.evaluate(()=>{document.activeElement?.blur();document.querySelector('#toast').hidden=true;scrollTo({top:0,behavior:'instant'});});
+  await page.screenshot({path:'/tmp/zeekr-parameter-flow-qa/evidence.png',fullPage:true});
+  await page.getByRole('button',{name:'1 看参数',exact:true}).click();
+  await page.evaluate(()=>{document.activeElement?.blur();scrollTo({top:0,behavior:'instant'});});
+  await page.screenshot({path:'/tmp/zeekr-parameter-flow-qa/overview.png',fullPage:true});
+  await page.evaluate(()=>{state.insights_context='other-car';render();});
+  assert.equal(await page.locator('#review-form').count(),0);
+  assert.equal(await page.locator('#lab-title').isVisible(),false);
+  assert.equal(await page.locator('#lab-title').inputValue(),'');
+  assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
+  console.log('DESKTOP_PARAMETER_FLOW_PASS ordered steps, shared conclusion, drafts, experiment entry, history return, context isolation, six layouts');
+}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
