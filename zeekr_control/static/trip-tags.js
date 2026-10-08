@@ -63,10 +63,15 @@
     const placeLink=id=>data?.place_statistics?.places.some(p=>p.id===id)?`<button type="button" class="tag-place-link" data-tag="place-focus" data-id="${esc(id)}" aria-label="在地图定位 ${esc(placeLabel(id))}" ${busy?'disabled':''}>${esc(placeLabel(id))}</button>`:esc(placeLabel(id));
     function closeNameEditor(){nameMap?.remove();nameMap=null;namePlace=null;nameDraft='';namePreview=null;nameVertices=[];nameDrawing=false;nameVertex=null;nameViewport=null;}
     function closePlacesMap(){closeNameEditor();placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=focusedRegion=placesViewport=null;namePlace=null;nameDraft='';namePreview=null;}
+    function selectMapPlace(id,region=false){
+      focusedPlace=region?null:id;focusedRegion=region?id:null;placesViewport=null;
+      placesShown=true;placesMap?.remove();placesMap=null;
+    }
     function focusPlace(id,region=false){
       const items=region?data?.place_statistics?.name_regions:data?.place_statistics?.places;
       if(!items?.some(p=>p.id===id))return;
-      focusedPlace=region?null:id;focusedRegion=region?id:null;placesViewport=null;placesShown=true;placesMap?.remove();placesMap=null;paint();
+      if(namePlace&&(region?(namePlace.region_id||namePlace.manual_name_id)!==id:namePlace.id!==id))closeNameEditor();
+      selectMapPlace(id,region);paint();
       const map=node.querySelector('#tag-places-map');map?.focus({preventScroll:true});map?.scrollIntoView({block:'center'});
     }
     function regionLayer(map,region,color='#20776e'){
@@ -77,7 +82,8 @@
     function openNameEditor(place){
       closeNameEditor();namePlace=place;nameDraft=place.name_source==='manual'?place.label:'';
       nameRadius=place.name_radius_m||150;nameShape=place.name_shape||'circle';
-      nameVertices=(place.name_vertices||[]).map(p=>[...p]);nameDrawing=false;paint();
+      nameVertices=(place.name_vertices||[]).map(p=>[...p]);nameDrawing=false;
+      selectMapPlace(place.region_id||place.id,Boolean(place.region_id));paint();
       node.querySelector('#tag-place-name')?.focus({preventScroll:true});
       node.querySelector('#tag-place-name-editor')?.scrollIntoView({block:'nearest'});
     }
@@ -172,7 +178,7 @@
       for(const region of regions){
         const layer=regionLayer(placesMap,region).bindTooltip(esc(region.name))
           .bindPopup(`<strong>${esc(region.name)}</strong><p>已保存地点区域 · ${region.shape==='polygon'?'自定义多边形':(region.radius_m||150)+' 米圆形范围'}</p>`);
-        layer.on('click',()=>{focusedRegion=region.id;focusedPlace=null;});regionLayers.set(region.id,layer);
+        layer.on('click',()=>focusPlace(region.id,true));regionLayers.set(region.id,layer);
         bounds.push(...(region.shape==='polygon'?region.vertices:[[region.latitude,region.longitude]]));
       }
       for(const p of data.place_statistics.observed_points||[])L.circleMarker([p.latitude,p.longitude],{radius:3,color:'#16594f',fillOpacity:.6}).addTo(placesMap);
@@ -184,7 +190,7 @@
         const marker=L.marker(center,{icon,title:p.label}).addTo(placesMap)
           .bindTooltip(esc(p.label))
           .bindPopup(`<strong>${esc(p.label)}</strong><p>出发 ${p.departures} 次 · 到达 ${p.arrivals} 次<br>归并范围 ${p.name_shape==='polygon'?'自定义多边形':(p.name_radius_m||data.place_statistics.radius_m)+' 米'}</p><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">打开地图网站</a>`);
-        marker.on('click',()=>{focusedPlace=p.id;focusedRegion=null;});markers.set(p.id,marker);
+        marker.on('click',()=>focusPlace(p.id));markers.set(p.id,marker);
       }
       const selectedPlace=places.find(p=>p.id===focusedPlace),selectedRegion=regions.find(r=>r.id===focusedRegion);
       if(placesViewport)placesMap.setView(placesViewport.center,placesViewport.zoom,{animate:false});

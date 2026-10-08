@@ -3,6 +3,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
  const f=await fixture(),{page}=f;let manual='',rev=0,fail=false;const writes=[];
  try{
+  await page.route(/https:\/\/wprd0[1-4]\.is\.autonavi\.com\/appmaptile\?/,route=>route.fulfill({contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYZkAAAAASUVORK5CYII=','base64')}));
   await page.route('**/api/insights/trip-tags*',async route=>{
    if(route.request().method()==='POST'){
     const body=route.request().postDataJSON();
@@ -47,7 +48,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   await layouts(page,'trip-place-names');
   await page.locator('#tag-place-statistics').screenshot({path:'/tmp/zeekr-insights-qa/trip-place-names-desktop.png'});
   if(!process.env.DESKTOP_ONLY){await page.setViewportSize({width:390,height:844});await page.locator('#tag-place-statistics').screenshot({path:'/tmp/zeekr-insights-qa/trip-place-names-mobile.png'});}
-  assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
+  assert.deepEqual(f.errors,[]);assert.deepEqual(f.external.filter(url=>!/^https:\/\/wprd0[1-4]\.is\.autonavi\.com\/appmaptile\?/.test(url)),[]);
   console.log('UI_TRIP_PLACE_NAMES_PASS');
  }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
