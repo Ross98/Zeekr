@@ -190,6 +190,21 @@ class RegionNamingTests(unittest.TestCase):
         self.assertEqual(self.places()['places'][0]['label'],'园区')
         self.assertEqual(next(r for r in self.places()['name_regions'] if r['id']=='circle')['name'],'圆形车库')
 
+    def test_saved_circle_display_inherits_area_even_in_empty_month(self):
+        self.tags.store.change('owner','car','place_names','save','circle',
+                               dict(name='旧点位',latitude=31.2,longitude=121.4,radius_m=50),0)
+        self.tags.store.change('owner','car','place_names','save','area',body(name='统一区域标签'),1)
+        before=self.tags.store.path.read_bytes()
+        circle=next(r for r in self.places(date='2026-08-01')['name_regions'] if r['id']=='circle')
+        self.assertEqual(circle['display_name'],'统一区域标签')
+        self.assertEqual(circle['inherited_region_id'],'area')
+        self.assertEqual(circle['name'],'旧点位')
+        self.assertEqual(self.tags.store.path.read_bytes(),before)
+        self.tags.store.change('owner','car','place_names','delete','area',None,2)
+        circle=next(r for r in self.places(date='2026-08-01')['name_regions'] if r['id']=='circle')
+        self.assertEqual(circle.get('display_name',circle['name']),'旧点位')
+        self.assertNotIn('inherited_region_id',circle)
+
     def test_circle_to_polygon_preserves_original_centre_for_membership(self):
         self.tags.store.change('owner','car','place_names','save','circle',
                                dict(name='原圆形',latitude=31.1991,longitude=121.4,radius_m=150),0)

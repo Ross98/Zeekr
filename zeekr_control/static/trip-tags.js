@@ -59,6 +59,7 @@
         work:rule?.work?{latitude:rule.work.latitude,longitude:rule.work.longitude}:null,
         homeRadius:rule?.home?.radius_m||300,workRadius:rule?.work?.radius_m||300};
     }
+    const regionName=r=>r.display_name||r.name;
     const placeLabel=id=>data?.place_statistics?.places.find(p=>p.id===id)?.label||'未知';
     const placeLink=id=>data?.place_statistics?.places.some(p=>p.id===id)?`<button type="button" class="tag-place-link" data-tag="place-focus" data-id="${esc(id)}" aria-label="在地图定位 ${esc(placeLabel(id))}" ${busy?'disabled':''}>${esc(placeLabel(id))}</button>`:esc(placeLabel(id));
     function closeNameEditor(){nameMap?.remove();nameMap=null;namePlace=null;nameDraft='';namePreview=null;nameVertices=[];nameDrawing=false;nameVertex=null;nameViewport=null;}
@@ -97,7 +98,7 @@
         <p class="insight-note">出发地点未知 ${stats.unknown_departures} 次 · 到达地点未知 ${stats.unknown_arrivals} 次。完整与片段均按有效端点计入；次数表示行程端点，不表示停车时长。</p>
         ${places.length?`<table class="tag-place-table"><thead><tr><th scope="col">地点</th><th scope="col">出发</th><th scope="col">到达</th><th scope="col">名称</th></tr></thead><tbody>${places.slice(placePage*20,placePage*20+20).map(p=>`<tr><th scope="row">${placeLink(p.id)}<small class="tag-place-source">${({manual:'手动名称',commute:'按当前设置',address:'已有地址',reference:'参考编号'})[p.name_source]||'参考编号'}</small></th><td>${p.departures}</td><td>${p.arrivals}</td><td>${button('改名','place-name-edit',!p.name_key,`data-id="${esc(p.id)}" aria-label="修改地点名称 ${esc(p.label)}"`)}</td></tr>`).join('')}</tbody></table>${pages>1?`<div class="insight-pagination">${button('上一页地点','places-previous',placePage===0)}<span>${placePage+1} / ${pages}</span>${button('下一页地点','places-next',placePage+1===pages)}</div>`:''}`:'<p>本月暂无可信起止定位，仍可创建或管理地点区域。</p>'}
         <h4>已保存地点区域</h4><p class="insight-note">区域跨月保留，本月没有行程也可修改。不同区域即使同名也分别保存。</p>
-        <div class="tag-region-list">${regions.map(r=>`<div><button type="button" class="tag-place-link" data-tag="region-focus" data-id="${esc(r.id)}" aria-label="在地图定位 ${esc(r.name)}">${esc(r.name)}</button><span>${r.shape==='polygon'?`多边形 · ${r.vertices.length} 个顶点`:`圆形 · ${r.radius_m||150} 米`}</span>${button('编辑区域','region-edit',false,`data-id="${esc(r.id)}" aria-label="编辑区域 ${esc(r.name)}"`)}</div>`).join('')||'<p class="insight-note">暂无已保存区域。</p>'}</div>
+        <div class="tag-region-list">${regions.map(r=>`<div><button type="button" class="tag-place-link" data-tag="region-focus" data-id="${esc(r.id)}" aria-label="在地图定位 ${esc(regionName(r))}">${esc(regionName(r))}</button><span>${r.inherited_region_id?'归属自定义区域 · ':''}${r.shape==='polygon'?`多边形 · ${r.vertices.length} 个顶点`:`圆形 · ${r.radius_m||150} 米`}</span>${button(r.inherited_region_id?'编辑归属区域':'编辑区域','region-edit',false,`data-id="${esc(r.id)}" aria-label="编辑区域 ${esc(regionName(r))}"`)}</div>`).join('')||'<p class="insight-note">暂无已保存区域。</p>'}</div>
         <div class="insight-actions">${button('新建多边形地点','region-new')}${button('撤销地点操作','place-name-undo',!stats.name_can_undo)}</div>
         ${namePlace?nameEditor():''}
         <div class="insight-actions">${button(placesShown?'隐藏地点地图':'查看地点地图','places-map',!places.length&&!regions.length)}${placesShown?button('查看全部地点','places-all'):''}</div>${placesShown?'<p class="insight-note">点地点名称可放大定位；点编号查看详情和地图网站跳转。小点为本月实际起止观测。</p><div id="tag-places-map" role="region" tabindex="0" aria-label="本月地点地图"></div>':''}
@@ -124,7 +125,7 @@
       const regions=data.place_statistics.name_regions||[],points=data.place_statistics.observed_points||[];
       for(const region of regions){
         if(region.id===namePlace.region_id||region.id===namePlace.manual_name_id)continue;
-        regionLayer(nameMap,region,'#66746e').bindTooltip(esc(region.name));
+        regionLayer(nameMap,region,'#66746e').bindTooltip(esc(regionName(region)));
       }
       for(const p of points)L.circleMarker([p.latitude,p.longitude],{radius:3,color:'#16594f',fillOpacity:.6}).addTo(nameMap);
       if(nameVertices.length>=3)L.polygon(nameVertices,{color:'#20776e',fillOpacity:.16,interactive:false}).addTo(nameMap);
@@ -177,8 +178,8 @@
       AmapMaps.addTiles(placesMap);
       const bounds=[],markers=new Map(),regionLayers=new Map();
       for(const region of regions){
-        const layer=regionLayer(placesMap,region).bindTooltip(esc(region.name))
-          .bindPopup(`<strong>${esc(region.name)}</strong><p>已保存地点区域 · ${region.shape==='polygon'?'自定义多边形':(region.radius_m||150)+' 米圆形范围'}</p>`);
+        const layer=regionLayer(placesMap,region).bindTooltip(esc(regionName(region)))
+          .bindPopup(`<strong>${esc(regionName(region))}</strong><p>已保存地点区域 · ${region.shape==='polygon'?'自定义多边形':(region.radius_m||150)+' 米圆形范围'}</p>`);
         layer.on('click',()=>focusPlace(region.id,true));regionLayers.set(region.id,layer);
         bounds.push(...(region.shape==='polygon'?region.vertices:[[region.latitude,region.longitude]]));
       }
@@ -393,7 +394,9 @@
       const action=target.dataset.tag,id=target.dataset.id;
       if(action==='place-name-edit'){openNameEditor(data.place_statistics.places.find(p=>p.id===id));return true;}
       if(action==='region-edit'){
-        const r=data.place_statistics.name_regions.find(r=>r.id===id);
+        const regions=data.place_statistics.name_regions;
+        let r=regions.find(r=>r.id===id);if(!r)return true;
+        if(r.inherited_region_id)r=regions.find(parent=>parent.id===r.inherited_region_id)||r;
         openNameEditor({label:r.name,name_source:'manual',region_id:r.id,manual_name_id:r.id,latitude:r.latitude,longitude:r.longitude,name_shape:r.shape||'circle',name_vertices:r.vertices,name_radius_m:r.radius_m});return true;
       }
       if(action==='region-new'){closeNameEditor();namePlace={label:'新建地点区域',isNew:true};nameShape='polygon';nameDrawing=true;nameFreehand=true;paint();node.querySelector('#tag-place-name')?.focus({preventScroll:true});return true;}

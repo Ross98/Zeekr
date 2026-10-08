@@ -13,7 +13,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     places:empty?[]:[{id:'place_1',label:'地点甲',latitude:31.2,longitude:121.4,departures:1,arrivals:2,name_source:'manual',name_key:'key_1',manual_name_id:'region-0'},
                        {id:'place_2',label:'地点乙',latitude:31.21,longitude:121.41,departures:2,arrivals:1,name_source:'manual',name_key:'key_2',manual_name_id:'region-1'}],
     name_regions:[{id:'region-alone',name:'本月无行程区域',latitude:31.24,longitude:121.44,shape:'polygon',vertices:[[31.24,121.44],[31.24,121.445],[31.245,121.445],[31.245,121.44]]},
-      ...Array.from({length:24},(_,i)=>({id:'region-'+i,name:'保存地点 '+i,latitude:31.2+i*.001,longitude:121.4,radius_m:50}))],
+      ...Array.from({length:24},(_,i)=>({id:'region-'+i,name:'保存地点 '+i,latitude:31.2+i*.001,longitude:121.4,radius_m:50,...(i===23?{display_name:'本月无行程区域',inherited_region_id:'region-alone',latitude:31.242,longitude:121.442}:{})}))],
     observed_points:[],routes:empty?[]:[{start_place:'place_1',end_place:'place_2',count:1}]};
    data.events.forEach(e=>{e.start_place=empty?null:'place_1';e.end_place=empty?null:'place_2';});
    await route.fulfill({json:data});
@@ -33,7 +33,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   assert.equal(await page.locator('#tag-places-map').count(),0);
   await page.locator('.tag-place-table').getByRole('button',{name:'在地图定位 地点乙',exact:true}).click();await assertJump('地点乙');
   await page.getByRole('button',{name:'隐藏地点地图',exact:true}).click();
-  await page.locator('.tag-region-list').getByRole('button',{name:'在地图定位 本月无行程区域',exact:true}).click();await assertJump('本月无行程区域');
+  await page.locator('.tag-region-list [data-tag="region-focus"][data-id="region-alone"]').click();await assertJump('本月无行程区域');
   await page.evaluate(()=>render());await assertJump('本月无行程区域');
   await page.locator('.tag-place-routes').getByRole('button',{name:'在地图定位 地点甲',exact:true}).click();await assertJump('地点甲');
   // Editing another target must replace the previous popup and viewport.
@@ -50,7 +50,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.locator('#tag-places-map .leaflet-popup').getByText('保存地点 0',{exact:true}).waitFor();
   await assertCenter(31.2,121.4);
   assert.equal(await page.getByLabel('地点名称',{exact:true}).inputValue(),'保存地点 0');
-  await page.getByRole('button',{name:'编辑区域 本月无行程区域',exact:true}).click();
+  await page.locator('.tag-region-list [data-tag="region-edit"][data-id="region-alone"]').click();
   await page.locator('#tag-places-map .leaflet-popup').getByText('本月无行程区域',{exact:true}).waitFor();
   assert.equal(await page.locator('#tag-name-map').count(),1);
   await page.getByRole('button',{name:'取消地点命名',exact:true}).click();
@@ -68,7 +68,14 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await label.focus();await page.keyboard.press('Enter');await assertJump('保存地点 0');
   await page.getByLabel('标签月份',{exact:true}).fill('2026-08');await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
   assert.equal(await page.locator('#tag-places-map').count(),0);
-  await page.locator('.tag-region-list').getByRole('button',{name:'在地图定位 本月无行程区域',exact:true}).click();await assertJump('本月无行程区域');
+  await page.locator('.tag-region-list [data-tag="region-focus"][data-id="region-alone"]').click();await assertJump('本月无行程区域');
+  const inherited=page.locator('.tag-region-list [data-tag="region-focus"][data-id="region-23"]');
+  assert.equal(await inherited.innerText(),'本月无行程区域','saved point uses area label without trips');
+  await inherited.click();await assertJump('本月无行程区域');await assertCenter(31.242,121.442);
+  await page.locator('.tag-region-list [data-tag="region-edit"][data-id="region-23"]').click();
+  assert.equal(await page.getByLabel('地点名称',{exact:true}).inputValue(),'本月无行程区域','edit inherited name through owning area');
+  assert.equal(await page.getByLabel('区域形状',{exact:true}).inputValue(),'polygon');
+  assert.equal(await page.locator('#tag-name-map').count(),1);
   assert.deepEqual(f.posts,[]);assert.deepEqual(f.errors,[]);
   console.log('DESKTOP_PLACE_LABEL_JUMP_PASS table, routes, saved circle/polygon, keyboard, matching edit/selection/viewport, draft, refresh and empty month; no writes');
  }finally{await f.close();}

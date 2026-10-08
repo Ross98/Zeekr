@@ -81,8 +81,15 @@ class TripPlaceNames:
             label=place.pop('address_label',None)
             if label:place.update(label=label,name_source='address')
         for place in stats['places']:place.pop('address_label',None)
-        return dict(stats,name_revision=saved['revision'],name_can_undo=saved['can_undo'],
-                    name_regions=[dict(id=r['id'],**r['body']) for r in records])
+        regions=[]
+        for record in records:
+            region=dict(id=record['id'],**record['body'])
+            if region.get('shape')!='polygon':
+                assigned=index.pick((region['latitude'],region['longitude']))
+                if assigned and assigned['id']!=record['id'] and assigned['body'].get('shape')=='polygon':
+                    region.update(display_name=assigned['body']['name'],inherited_region_id=assigned['id'])
+            regions.append(region)
+        return dict(stats,name_revision=saved['revision'],name_can_undo=saved['can_undo'],name_regions=regions)
 
     def preview(self,owner,vehicle,data,stats):
         saved=self.store.read(owner,vehicle,'place_names')
