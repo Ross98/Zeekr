@@ -107,6 +107,97 @@ class ParkingPlaceTests(unittest.TestCase):
         self.assertIn('gap', result['reasons'])
         self.assertTrue(all(end-start <= 33*86400000 for start,end in self_ranges))
 
+    def arrival_reference(self, age=120, latitude=30, trusted=True, **extra):
+        with sqlite3.connect(self.database) as db:
+            body = json.loads(db.execute("SELECT summary FROM monitor_events WHERE id='a'").fetchone()[0])
+            body.update(end_address='示例商场', end_location_reference=dict(
+                age_seconds=age, state_time=body['end_time']-age*1000,
+                location=dict(latitude=latitude, longitude=120, valid=True, trusted=trusted,
+                              coordinate_system='WGS84（社区解释）')))
+            body.update(extra)
+            db.execute("UPDATE monitor_events SET summary=? WHERE id='a'", (json.dumps(body),))
+
+    def test_nearby_arrival_reference_names_untrusted_stop_and_preserves_energy(self):
+        self.save_name()
+        original = self.query()
+        self.raw['position']['posCanBeTrusted'] = False
+        self.arrival_reference()
+        row = self.query()
+        self.assertEqual(row['place_label'], '自家车库')
+        self.assertEqual(row['place_confidence'], 'reference')
+        self.assertEqual(row['place_reference_age_seconds'], 120)
+        for key in ('id','start_time','end_time','duration_seconds','status','soc_drop','estimated_kwh','reasons'):
+            self.assertEqual(row[key], original[key])
+        self.assertFalse(any(key.startswith('_') for key in row))
+        self.assertNotIn('latitude', row)
+        self.assertEqual(self.query(owner='another')['place_label'], '示例商场附近')
+
+    def test_trusted_parking_position_wins_over_arrival_reference(self):
+        self.save_name()
+        self.arrival_reference(latitude=31)
+        row = self.query()
+        self.assertEqual(row['place_label'], '自家车库')
+        self.assertEqual(row['place_confidence'], 'observed')
+
+    def test_reference_age_and_distance_are_bounded(self):
+        self.raw['position']['posCanBeTrusted'] = False
+        for age, latitude, trusted in [(301,30,True),(-1,30,True),(float('nan'),30,True),
+                                       (True,30,True),(120,30.002,True),(120,30,False)]:
+            with self.subTest(age=age, latitude=latitude, trusted=trusted):
+                self.arrival_reference(age,latitude,trusted)
+                row = self.query()
+                self.assertEqual(row['place_label'], '位置未知')
+                self.assertTrue(row['place_reason'])
+        self.arrival_reference(age=300)
+        self.assertEqual(self.query()['place_confidence'], 'reference')
+
+    def test_arrival_reference_time_must_match_its_saved_age(self):
+        self.raw['position']['posCanBeTrusted'] = False
+        self.arrival_reference()
+        with sqlite3.connect(self.database) as db:
+            body = json.loads(db.execute("SELECT summary FROM monitor_events WHERE id='a'").fetchone()[0])
+            body['end_location_reference']['state_time'] -= 600000
+            db.execute("UPDATE monitor_events SET summary=? WHERE id='a'",(json.dumps(body),))
+        row = self.query()
+        self.assertEqual(row['place_label'], '位置未知')
+        self.assertIn('时间', row['place_reason'])
+
+    def test_trusted_arrival_endpoint_is_a_reference_not_parking_gps(self):
+        self.save_name()
+        self.raw['position']['posCanBeTrusted'] = False
+        self.arrival_reference(end_location=dict(latitude=30,longitude=120,valid=True,
+                               trusted=True,coordinate_system='WGS84（社区解释）'))
+        row = self.query()
+        self.assertEqual(row['place_label'], '自家车库')
+        self.assertEqual(row['place_confidence'], 'reference')
+        self.assertEqual(row['place_reference_age_seconds'], 0)
+
+    def test_reference_never_overrides_movement_or_partial_arrival(self):
+        self.raw['position']['posCanBeTrusted'] = False
+        self.arrival_reference(partial=True)
+        self.assertEqual(self.query()['place_label'], '位置未知')
+        self.arrival_reference(partial=False)
+        self.raw['basicVehicleStatus']['speed'] = 2
+        self.assertEqual(self.query()['place_label'], '位置未知')
+
+    def test_reference_cannot_use_unknown_coordinate_system_or_missing_coordinates(self):
+        self.raw['position']['posCanBeTrusted'] = False
+        self.arrival_reference()
+        self.raw['position']['marsCoordinates'] = True
+        self.assertEqual(self.query()['place_label'], '位置未知')
+        self.raw['position'] = {}
+        self.assertEqual(self.query()['place_label'], '位置未知')
+
+    def test_reference_location_can_be_named_despite_stale_soc_observations(self):
+        self.save_name()
+        self.raw['position']['posCanBeTrusted'] = False
+        self.flags = ['stale']
+        self.arrival_reference()
+        row = self.query()
+        self.assertEqual(row['place_label'], '自家车库')
+        self.assertEqual(row['status'], 'uncertain')
+        self.assertIsNone(row['estimated_kwh'])
+
     def test_unnamed_trusted_position_is_not_missing_position(self):
         row = self.query(store=False)
         self.assertEqual(row.get('place_label'), '未命名地点')

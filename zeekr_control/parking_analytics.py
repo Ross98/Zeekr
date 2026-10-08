@@ -1,14 +1,17 @@
 """Parking SOC observations, never joined across charging or uncertain gaps."""
+import json
+import math
 from datetime import datetime
 
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
 from .vehicle_state import decode, numeric
 from .parking_events import build_events, time_advances
-from .usage_events import UsageEvents
+from .usage_events import UsageEvents, MAX_SUMMARY_BYTES
 from .web_model import parse_location
 from .commute_tags import CommuteTags, _distance
 from .trip_place_names import TripPlaceNames, cached_names
+from .geocoding import is_trusted_location
 
 
 MAX_GAP_MS = 600000
@@ -34,7 +37,7 @@ def analyze_parking(samples, lower, upper, capacity=None):
             record = sample['record']
             in_range = lower <= record['observed_at'] < upper
             quality['read_count' if in_range else 'boundary_reads'] += 1
-            if (record['change'] == 'repeat' and not record['flags']
+            if (record['change'] == 'repeat'
                     and not time_advances(record, pending['record'] if pending else None)):
                 quality['repeat_reads'] += int(in_range)
                 continue
@@ -142,6 +145,44 @@ def analyze_parking(samples, lower, upper, capacity=None):
             'gap_threshold_seconds': MAX_GAP_MS//1000, 'capacity_kwh': capacity}
 
 
+def arrival_position(db, vehicle, event, anchor):
+    """A recent trusted arrival point is a labelled reference, never a GPS repair."""
+    if event.get('parking_status') != 'parked' or 'movement' in event.get('reasons', []):
+        return None, None, '有移动或位置冲突证据，不能推断停车地点'
+    if not anchor:
+        return None, None, '缺少同坐标系的停车位置，无法核对参考定位'
+    if db is None or not event.get('start_trip_id'):
+        return None, None, '缺少到达行程的可信定位'
+    row = db.execute('SELECT summary FROM monitor_events WHERE vehicle=? AND id=? '
+                     'AND length(CAST(summary AS BLOB))<=?',
+                     (vehicle, event['start_trip_id'], MAX_SUMMARY_BYTES)).fetchone()
+    try:
+        body = json.loads(row[0]) if row else {}
+    except (ValueError, TypeError, RecursionError):
+        body = {}
+    if (not isinstance(body, dict) or body.get('end_time') != event['start_time']
+            or body.get('partial') is not False):
+        return None, None, '到达边界不完整或停车位置已变化'
+    position, age = body.get('end_location'), 0
+    if not is_trusted_location(position):
+        reference = body.get('end_location_reference')
+        if not isinstance(reference, dict):
+            return None, None, '到达前 5 分钟内没有可信定位'
+        position, age = reference.get('location'), reference.get('age_seconds')
+        if type(age) not in (int, float) or not math.isfinite(age) or not 0 <= age <= 300:
+            return None, None, '到达参考定位超过 5 分钟或时间无效'
+        stamp = reference.get('state_time')
+        if (type(stamp) not in (int, float) or not math.isfinite(stamp)
+                or abs((event['start_time']-stamp)/1000-age) > 1):
+            return None, None, '到达参考定位时间与行程边界不一致'
+    if not is_trusted_location(position) or position['coordinate_system'] != anchor.get('coordinate_system'):
+        return None, None, '到达参考定位不可信或坐标系不一致'
+    if _distance((anchor['latitude'], anchor['longitude']),
+                 (position['latitude'], position['longitude'])) > 150:
+        return None, None, '到达参考定位距停车坐标超过 150 米'
+    return position, age, None
+
+
 class ParkingAnalytics:
     def __init__(self, archive, database=None, *, store=None, owner=None):
         self.archive = archive
@@ -151,16 +192,23 @@ class ParkingAnalytics:
 
     def _name_events(self, result, vehicle, history, owner):
         places = []
-        for event in result['events']:
-            position = event.pop('_location', None)
-            event.update(place_label='未命名地点' if position else '位置未知', place_source='unknown')
-            if position:
-                places.append(dict(id=event['id'], latitude=position['latitude'],
-                                   longitude=position['longitude'], label='未命名地点'))
-        if not self.store or not places:
-            return
         with UsageEvents(self.database).connect() as db:
             addresses = cached_names(db, vehicle, history) if db is not None else {}
+            for event in result['events']:
+                position = event.pop('_location', None)
+                anchor = event.pop('_position', None)
+                confidence, age, reason = 'observed', None, None
+                if position is None:
+                    position, age, reason = arrival_position(db, vehicle, event, anchor)
+                    confidence = 'reference' if position else 'unknown'
+                event.update(place_label='未命名地点' if position else '位置未知', place_source='unknown',
+                             place_confidence=confidence, place_reason=reason,
+                             place_reference_age_seconds=age)
+                if position:
+                    places.append(dict(id=event['id'], latitude=position['latitude'],
+                                       longitude=position['longitude'], label='未命名地点'))
+        if not self.store or not places:
+            return
         for place in places:
             nearby = min(((_distance((place['latitude'], place['longitude']), value['point']), value['label'])
                           for value in addresses.values()), default=None)

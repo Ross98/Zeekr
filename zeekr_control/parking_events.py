@@ -5,6 +5,7 @@ from math import asin, cos, radians, sin, sqrt
 from .snapshot_archive import BEIJING
 from .vehicle_state import numeric
 from .geocoding import is_trusted_location
+from .tracks import valid_timestamp
 
 
 MAX_GAP_MS = 600000
@@ -29,6 +30,39 @@ def time_advances(record, previous):
     current, old = record.get('state_time'), previous.get('state_time')
     return (type(current) in (int, float) and type(old) in (int, float)
             and current > old)
+
+
+def observation_time(sample):
+    record=sample['record']
+    stamp=record.get('state_time')
+    return stamp if valid_timestamp(stamp) else record['observed_at']
+
+
+def fresh(sample):
+    record=sample['record']
+    return not record.get('flags') and record.get('change')!='regression' and valid_timestamp(record.get('state_time'))
+
+
+def observation_quality(reads, samples, start, end):
+    times=sorted({row['record']['state_time'] for row in samples if fresh(row)})
+    anchors=sorted(set([start,*times,end]))
+    gaps=[dict(start_time=a,end_time=b,duration_seconds=(b-a)/1000)
+          for a,b in zip(anchors,anchors[1:]) if b-a>MAX_GAP_MS]
+    supported=sum(b-a for a,b in zip(anchors,anchors[1:]) if b-a<=MAX_GAP_MS)/1000
+    seen=set();repeats=0
+    for row in reads:
+        stamp=row['record'].get('state_time')
+        if valid_timestamp(stamp):
+            repeats+=stamp in seen and row['record'].get('change')!='revision'
+            seen.add(stamp)
+    return dict(read_count=len(reads),fresh_samples=len(times),repeat_reads=repeats,
+                invalid_reads=sum(not fresh(row) for row in reads),
+                first_vehicle_time=times[0] if times else None,
+                last_vehicle_time=times[-1] if times else None,
+                last_read_time=max((row['record']['observed_at'] for row in reads),default=None),
+                max_gap_seconds=max((b-a for a,b in zip(anchors,anchors[1:])),default=0)/1000,
+                supported_seconds=supported,unknown_seconds=sum(row['duration_seconds'] for row in gaps),
+                gap_count=len(gaps),gaps_limited=len(gaps)>50),gaps[:50]
 
 
 def location_key(sample):
@@ -77,17 +111,15 @@ def charging_energy(charges, samples, start, end, boundary_socs):
             continue
         phases.append({'start_time': a, 'end_time': b,
                        'duration_seconds': (b-a)/1000 if a is not None and b >= a else None,
-                       'soc_gain': None})
+                       'soc_gain': None,'boundary_complete':charge.get('partial') is not True})
     phases.sort(key=lambda row: row['start_time'] if row['start_time'] is not None else start)
-    exact = {row['record']['observed_at']: row['state'].get('soc') for row in samples
-             if not row['record'].get('flags') and row['record'].get('change') != 'regression'
-             and row['record'].get('state_time') == row['record']['observed_at']}
+    exact = {row['record']['state_time']: row['state'].get('soc') for row in samples if fresh(row)}
     phase_known = True
     consumption_known = all(value is not None for value in boundary_socs)
     gain, previous = 0, start
     for phase in phases:
         a, b = phase['start_time'], phase['end_time']
-        if (a is None or a < previous or b > end or b <= a
+        if (not phase['boundary_complete'] or a is None or a < previous or b > end or b <= a
                 or exact.get(a) is None or exact.get(b) is None or exact[b] < exact[a]):
             phase_known = False
         else:
@@ -95,12 +127,12 @@ def charging_energy(charges, samples, start, end, boundary_socs):
             gain += phase['soc_gain']
         previous = b
     uncovered_charge = any(row['state'].get('charging') is True and not any(
-        phase['start_time'] is not None and phase['start_time'] <= row['record']['observed_at'] <= phase['end_time']
+        phase['start_time'] is not None and phase['start_time'] <= observation_time(row) <= phase['end_time']
         for phase in phases) for row in samples)
     if uncovered_charge:
         phase_known = False
         phases.append({'start_time': None, 'end_time': None, 'duration_seconds': None, 'soc_gain': None})
-    points = [(start, boundary_socs[0])] + [(row['record']['observed_at'], row['state'].get('soc')) for row in samples] + [(end, boundary_socs[1])]
+    points = [(start, boundary_socs[0])] + [(observation_time(row), row['state'].get('soc')) for row in samples] + [(end, boundary_socs[1])]
     consumption = 0
     for (a, x), (b, y) in zip(points, points[1:]):
         if x is None or y is None:
@@ -126,10 +158,11 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
                     isinstance(row.get('end_time'), (int, float))),
                    key=lambda row: (row['start_time'], row['end_time']))
     ordered = sorted(samples, key=lambda row: row['record']['observed_at'])
+    reads=ordered
     samples = []
     for row in ordered:
         record = row['record']
-        if (record.get('change') == 'repeat' and not record.get('flags')
+        if (record.get('change') == 'repeat'
                 and not time_advances(record, samples[-1]['record'] if samples else None)):
             continue
         if (record.get('change') == 'revision' and not record.get('flags') and samples and
@@ -139,22 +172,25 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
             samples.append(row)
     # Reconstruct physical boundaries before applying the requested date filter.
     windows = []
-    cursor = samples[0]['record']['observed_at'] if samples else lower
+    cursor = observation_time(samples[0]) if samples else lower
     previous_trip = None
     for trip in trips:
         if trip['start_time'] > cursor:
             windows.append((cursor, trip['start_time'], previous_trip, trip))
         cursor = max(cursor, trip['end_time']) if previous_trip else trip['end_time']
         previous_trip = trip
-    if samples and cursor < samples[-1]['record']['observed_at']:
-        windows.append((cursor, samples[-1]['record']['observed_at'], previous_trip, None))
+    latest=max((observation_time(row) for row in samples if fresh(row)),default=cursor)
+    if samples and cursor < latest:
+        windows.append((cursor, latest, previous_trip, None))
     intervals = []
     for start, end, before, after in windows:
         if end <= lower or start >= upper:
             continue
         # Charging belongs to this stop; only movement can split location runs.
         left, right = start, end
-        within = [row for row in samples if left <= row['record']['observed_at'] <= right]
+        within = [row for row in samples if left <= observation_time(row) <= right and not (
+            after and observation_time(row)==right and (row['state'].get('gear') in ('R','D') or
+                (row['state'].get('speed') or 0)>0))]
         if not within:
             continue
         # Tolerate bounded GPS drift only with stationary vehicle evidence.
@@ -173,11 +209,11 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
         if run:
             runs.append(run)
         for index, run in enumerate(runs):
-            a = left if index == 0 else run[0]['record']['observed_at']
-            b = right if index == len(runs)-1 else run[-1]['record']['observed_at']
+            a = left if index == 0 else observation_time(run[0])
+            b = right if index == len(runs)-1 else observation_time(run[-1])
             open_end = after is None and right == end
             if open_end:
-                b = min(b, run[-1]['record']['observed_at'])
+                b = min(b, observation_time(run[-1]))
             if b > a and b > lower and a < upper:
                 intervals.append((a, b, before, after, run, open_end,
                                   left != start or right != end or len(runs) > 1))
@@ -185,8 +221,11 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
     for start, end, before, after, within, open_end, clipped in intervals:
         positions = [row for row in within if location_key(row) is not None]
         stationary = len(positions) >= 2 and all(same_position(positions[0], row) for row in positions[1:])
-        parked = [row for row in within if not row['record'].get('flags')
-                  and row['record'].get('state_time') is not None]
+        parked = [row for row in within if fresh(row)]
+        read_end=max((row['record']['observed_at'] for row in reads),default=end) if open_end else end
+        event_reads=[row for row in reads if start<=row['record']['observed_at']<=read_end or
+                     (start<=observation_time(row)<=end and end<row['record']['observed_at']<=end+MAX_GAP_MS)]
+        quality,gaps=observation_quality(event_reads,within,start,end)
         reasons = set()
         odometers = [row['state'].get('km') for row in within if row['state'].get('km') is not None]
         if (len(set(odometers)) > 1 or any(
@@ -197,21 +236,20 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
             stationary = False
         if clipped or before is None or after is None or before.get('partial') or after.get('partial'):
             reasons.add('boundary')
-        if not parked or parked[0]['record']['observed_at'] - start > MAX_GAP_MS or end - parked[-1]['record']['observed_at'] > MAX_GAP_MS:
+        if not parked or observation_time(parked[0]) - start > MAX_GAP_MS or end - observation_time(parked[-1]) > MAX_GAP_MS:
             reasons.add('observations')
-        timed = [start] + [row['record']['observed_at'] for row in within] + [end]
-        if any(b-a > MAX_GAP_MS for a, b in zip(timed, timed[1:])):
+        if quality['gap_count']:
             reasons.add('gap')
         if not stationary:
             reasons.add('location')
         if any(row['state'].get('charging') is None for row in within):
             reasons.add('unknown')
         if any(row['record'].get('flags') or row['record'].get('change') == 'regression' or
-               row['record'].get('state_time') is None
+               not valid_timestamp(row['record'].get('state_time'))
                for row in within):
             reasons.add('invalid')
         vehicle_times = [row['record'].get('state_time') for row in within]
-        if any(a is not None and b is not None and (b < a or b-a > MAX_GAP_MS)
+        if any(a is not None and b is not None and b < a
                for a,b in zip(vehicle_times,vehicle_times[1:])):
             reasons.add('invalid')
         boundary_socs = [before.get('end_soc') if before and start == before['end_time'] else within[0]['state'].get('soc'),
@@ -236,12 +274,15 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
                        'parking_status': 'parked' if stationary else 'candidate',
                        'p_gear_samples': sum(row['state'].get('gear') == 'P' for row in parked),
                        'reasons': sorted(reasons), 'reason_labels': [LABELS[key] for key in sorted(reasons)],
-                       'sample_count': len(within), 'gap_count': sum(b-a > MAX_GAP_MS for a, b in zip(timed, timed[1:])),
+                       'sample_count': quality['fresh_samples'], 'gap_count': quality['gap_count'],
+                       'observation_quality': quality,'observation_gaps': gaps,
                        # Query resolves this private evidence to a name, then removes coordinates.
+                       '_position': next((row['location'] for row in positions
+                                          if row['location'].get('coordinate_system') == 'WGS84（社区解释）'), None),
                        '_location': next((row['location'] for row in parked
                                           if is_trusted_location(row.get('location')) and
                                           row['location']['coordinate_system'] == 'WGS84（社区解释）'), None)})
     events.sort(key=lambda row: row['start_time'], reverse=True)
     return {'events': events, 'parking_count': sum(row['parking_status'] == 'parked' for row in events), 'comparable_count': sum(row['status'] == 'comparable' for row in events),
             'uncertain_count': sum(row['status'] == 'uncertain' for row in events),
-            'calculation_version': 5}
+            'calculation_version': 6}

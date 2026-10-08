@@ -82,6 +82,16 @@ class ParkingAnalyticsTests(unittest.TestCase):
         self.assertEqual(row['sample_count'], 3)
         self.assertEqual(row['duration_seconds'], 600)
 
+    def test_stale_duplicate_does_not_poison_fresh_coverage(self):
+        points=self.complete()
+        repeat=deepcopy(points[1])
+        repeat['record'].update(observed_at=self.start+6*60000,change='repeat',flags=['stale'])
+        points.insert(2,repeat)
+        result=self.result(points)
+        self.assertEqual(result['quality']['repeat_reads'],1)
+        self.assertTrue(result['sessions'][0]['eligible'])
+        self.assertEqual(result['sessions'][0]['sample_count'],3)
+
     def test_revision_replaces_value_without_double_counting(self):
         points = self.complete()
         revision = deepcopy(points[2]);revision['state']['soc'] = 68.5

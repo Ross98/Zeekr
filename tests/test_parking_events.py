@@ -11,6 +11,73 @@ from zeekr_control.tracks import day_bounds
 
 
 class ParkingEventTests(unittest.TestCase):
+    def test_dense_stale_cache_cannot_hide_vehicle_observation_gap(self):
+        trips=[self.trip('a',0,300000,72,70),self.trip('b',2400000,3000000,69,68)]
+        first=self.sample(5,70);last=self.sample(40,69)
+        repeats=[self.sample(minute,70) for minute in range(6,40)]
+        for row in repeats:
+            row['record'].update(state_time=300000,change='repeat',flags=['stale'])
+        row=build_events(trips,[],[first,*repeats,last],0,3600000,86)['events'][0]
+        self.assertEqual(row['sample_count'],2)
+        self.assertEqual(row['gap_count'],1)
+        self.assertIsNone(row['soc_drop'])
+        self.assertEqual(row['observation_quality']['repeat_reads'],34)
+        self.assertEqual(row['observation_quality']['fresh_samples'],2)
+        self.assertEqual(row['observation_quality']['max_gap_seconds'],2100)
+        self.assertEqual(row['observation_gaps'][0]['duration_seconds'],2100)
+
+    def test_same_vehicle_cache_does_not_extend_open_parking(self):
+        trips=[self.trip('a',0,300000,72,70)]
+        samples=[self.sample(5,70),self.sample(10,70),self.sample(40,70)]
+        samples[-1]['record'].update(state_time=600000,change='repeat',flags=['stale'])
+        row=build_events(trips,[],samples,0,3600000)['events'][0]
+        self.assertEqual(row['end_time'],600000)
+        self.assertEqual(row['duration_seconds'],300)
+        self.assertEqual(row['observation_quality']['last_read_time'],2400000)
+        self.assertEqual(row['observation_quality']['last_vehicle_time'],600000)
+
+    def test_delayed_collection_still_uses_exact_vehicle_charge_endpoints(self):
+        trips=[self.trip('a',0,300000,72,70),self.trip('b',1200000,1800000,74,73)]
+        samples=[self.sample(minute,soc,charging=charging) for minute,soc,charging in
+                 [(5,70,False),(10,70,True),(15,75,False),(20,74,False)]]
+        for row in samples:row['record']['observed_at']+=3000
+        charges=[dict(start_time=600000,end_time=900000)]
+        row=build_events(trips,charges,samples,0,2400000,86)['events'][0]
+        self.assertEqual(row['status'],'comparable')
+        self.assertEqual(row['charged_soc_gain'],5)
+        self.assertEqual(row['soc_drop'],1)
+        self.assertEqual(row['estimated_kwh'],.86)
+
+    def test_partial_charge_report_cannot_claim_known_net_gain(self):
+        trips=[self.trip('a',0,300000,72,70),self.trip('b',1200000,1800000,74,73)]
+        samples=[self.sample(minute,soc,charging=charging) for minute,soc,charging in
+                 [(5,70,False),(10,70,True),(15,75,False),(20,74,False)]]
+        charge=dict(start_time=600000,end_time=900000,partial=True)
+        row=build_events(trips,[charge],samples,0,2400000,86)['events'][0]
+        self.assertIsNone(row['charged_soc_gain'])
+        self.assertIn('charging',row['reasons'])
+        self.assertIsNone(row['estimated_kwh'])
+
+    def test_old_moving_payload_collected_during_stop_is_not_new_movement(self):
+        trips=[self.trip('a',0,300000,72,70),self.trip('b',1200000,1800000,69,68)]
+        samples=[self.sample(minute,70 if minute<15 else 69) for minute in (5,10,15,20)]
+        old=self.sample(1,71,off=False,km=99)
+        old['state']['speed']=30;old['record'].update(observed_at=360000,flags=['stale'])
+        samples.insert(1,old)
+        row=build_events(trips,[],samples,0,2400000,86)['events'][0]
+        self.assertEqual(row['parking_status'],'parked')
+        self.assertEqual(row['status'],'comparable')
+        self.assertEqual(row['soc_drop'],1)
+
+    def test_departure_movement_is_boundary_evidence_not_parked_movement(self):
+        trips=[self.trip('a',0,300000,72,70),self.trip('b',1200000,1800000,69,68)]
+        samples=[self.sample(minute,70 if minute<15 else 69) for minute in (5,10,15,20)]
+        samples[-1]['state'].update(speed=30,gear='D',off=False)
+        row=build_events(trips,[],samples,0,2400000,86)['events'][0]
+        self.assertEqual(row['parking_status'],'parked')
+        self.assertEqual(row['status'],'comparable')
+        self.assertEqual(row['soc_drop'],1)
+
     def trip(self, identity, start, end, start_soc, end_soc):
         return {'id': identity, 'kind': 'trip_end', 'start_time': start, 'end_time': end,
                 'start_soc': start_soc, 'end_soc': end_soc, 'partial': False}
