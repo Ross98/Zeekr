@@ -2,11 +2,36 @@
   'use strict';
   const number=value=>Number.isFinite(value)?new Intl.NumberFormat('zh-CN',{maximumFractionDigits:2}).format(value):'—';
   const monthNow=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit'}).format(new Date());
+  function freehandVertices(samples){
+    if(samples.length<3)return [];
+    const first=samples[0],points=[...samples];
+    if(Math.hypot(points.at(-1).x-first.x,points.at(-1).y-first.y)<=2)points.pop();
+    points.push(first);
+    function simplify(tolerance){
+      const keep=new Set([0,points.length-1]),stack=[[0,points.length-1]];
+      while(stack.length){
+        const [start,end]=stack.pop(),a=points[start],b=points[end],dx=b.x-a.x,dy=b.y-a.y,length=dx*dx+dy*dy;
+        let farthest=-1,distance=tolerance*tolerance;
+        for(let i=start+1;i<end;i++){
+          const p=points[i],fraction=length?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/length)):0;
+          const squared=(p.x-a.x-fraction*dx)**2+(p.y-a.y-fraction*dy)**2;
+          if(squared>distance){distance=squared;farthest=i;}
+        }
+        if(farthest!==-1){keep.add(farthest);stack.push([start,farthest],[farthest,end]);}
+      }
+      return [...keep].sort((a,b)=>a-b).slice(0,-1).map(index=>points[index]);
+    }
+    let tolerance=2,ring=simplify(tolerance);
+    while(ring.length>100){tolerance*=1.5;ring=simplify(tolerance);}
+    const area=Math.abs(ring.reduce((sum,a,i)=>{const b=ring[(i+1)%ring.length];return sum+a.x*b.y-b.x*a.y;},0))/2;
+    return ring.length>=3&&area>=20?ring.map(p=>[p.lat,p.lng]):[];
+  }
   function create({getState,request,escape:esc,active,time}){
     let node=null,owner='',month=monthNow(),data=null,selected=null,tags='',note='',attempted=false,loading=false,busy=false;
     let serial=0,writeSerial=0,error='',status='',filter='',completeness='all',groupA='',groupB='',page=0,trashPage=0;
     let routeShown=false,routeBusy=false,routeData=null,routeError='',routeSerial=0,routeMap=null;
     let namePlace=null,nameDraft='',nameRadius=150,namePreview=null;
+    let nameShape='circle',nameVertices=[],nameDrawing=false,nameMap=null,nameViewport=null,nameVertex=null,nameFreehand=true;
     let placesShown=false,placesMap=null,placePage=0,focusedPlace=null,placesViewport=null;
     let commuteDraft={home:null,work:null,homeRadius:300,workRadius:300},commuteDirty=false;
     let commuteMap=null,commuteShown=false,placeMode=null,commuteBusy=false;
@@ -36,41 +61,123 @@
     }
     const placeLabel=id=>data?.place_statistics?.places.find(p=>p.id===id)?.label||'未知';
     const placeLink=id=>data?.place_statistics?.places.some(p=>p.id===id)?`<button type="button" class="tag-place-link" data-tag="place-focus" data-id="${esc(id)}" aria-label="在地图定位 ${esc(placeLabel(id))}" ${busy?'disabled':''}>${esc(placeLabel(id))}</button>`:esc(placeLabel(id));
-    function closePlacesMap(){placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=placesViewport=null;namePlace=null;nameDraft='';namePreview=null;}
+    function closeNameEditor(){nameMap?.remove();nameMap=null;namePlace=null;nameDraft='';namePreview=null;nameVertices=[];nameDrawing=false;nameVertex=null;nameViewport=null;}
+    function closePlacesMap(){closeNameEditor();placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=placesViewport=null;namePlace=null;nameDraft='';namePreview=null;}
     function focusPlace(id){
       if(!data?.place_statistics?.places.some(p=>p.id===id))return;
       focusedPlace=id;placesViewport=null;placesShown=true;placesMap?.remove();placesMap=null;paint();
       const map=node.querySelector('#tag-places-map');map?.focus({preventScroll:true});map?.scrollIntoView({block:'center'});
     }
+    function regionLayer(map,region,color='#20776e'){
+      return region.shape==='polygon'?L.polygon(region.vertices,{color,fillOpacity:.12}).addTo(map):
+        L.circle([region.latitude,region.longitude],{radius:region.radius_m||150,color,fillOpacity:.12}).addTo(map);
+    }
+    function invalidateName(){namePreview=null;}
+    function openNameEditor(place){
+      closeNameEditor();namePlace=place;nameDraft=place.name_source==='manual'?place.label:'';
+      nameRadius=place.name_radius_m||150;nameShape=place.name_shape||'circle';
+      nameVertices=(place.name_vertices||[]).map(p=>[...p]);nameDrawing=false;paint();
+      node.querySelector('#tag-place-name')?.focus({preventScroll:true});
+      node.querySelector('#tag-place-name-editor')?.scrollIntoView({block:'nearest'});
+    }
     function placesView(){
       const stats=data?.place_statistics;if(!stats)return '';
       const places=[...stats.places].sort((a,b)=>(b.departures+b.arrivals)-(a.departures+a.arrivals)||a.id.localeCompare(b.id));
-      const pages=Math.max(1,Math.ceil(places.length/20));placePage=Math.min(placePage,pages-1);
+      const regions=stats.name_regions||[],pages=Math.max(1,Math.ceil(places.length/20));placePage=Math.min(placePage,pages-1);
       return `<section class="card insight-panel" id="tag-place-statistics"><div class="insight-heading"><h3>本月出发与到达地点</h3><span class="insight-note">${places.length} 个参考地点</span></div>
-        <p class="insight-note">距固定参考中心 ${stats.radius_m} 米内归为同一地点，出发与到达共用分组；手动名称按所选小范围单独分组，不沿相邻点串联合并。使用起止三分钟内的可信采样，参考地点不一定是真实目的地。编号仅用于本月查询，地图默认隐藏。</p>
+        <p class="insight-note">已命名区域内的起止点共用地点标签，历史与后续月份自动匹配；多边形边界上的点也算范围内。未命名点仍按固定中心 ${stats.radius_m} 米分组，不沿相邻点串联合并。使用起止三分钟内的可信采样，原始坐标保留。</p>
         <p class="insight-note">名称优先使用手动命名，其次按当前设置匹配家／公司，再采用已有可信地址。地址带“附近”，无法确认时保留编号；读取统计不会额外查询地址。</p>
         <p class="insight-note">出发地点未知 ${stats.unknown_departures} 次 · 到达地点未知 ${stats.unknown_arrivals} 次。完整与片段均按有效端点计入；次数表示行程端点，不表示停车时长。</p>
-        ${places.length?`<table class="tag-place-table"><thead><tr><th scope="col">地点</th><th scope="col">出发</th><th scope="col">到达</th><th scope="col">名称</th></tr></thead><tbody>${places.slice(placePage*20,placePage*20+20).map(p=>`<tr><th scope="row">${placeLink(p.id)}<small class="tag-place-source">${({manual:'手动名称',commute:'按当前设置',address:'已有地址',reference:'参考编号'})[p.name_source]||'参考编号'}</small></th><td>${p.departures}</td><td>${p.arrivals}</td><td>${button('改名','place-name-edit',!p.name_key,`data-id="${esc(p.id)}" aria-label="修改地点名称 ${esc(p.label)}"`)}</td></tr>`).join('')}</tbody></table>${pages>1?`<div class="insight-pagination">${button('上一页地点','places-previous',placePage===0)}<span>${placePage+1} / ${pages}</span>${button('下一页地点','places-next',placePage+1===pages)}</div>`:''}
+        ${places.length?`<table class="tag-place-table"><thead><tr><th scope="col">地点</th><th scope="col">出发</th><th scope="col">到达</th><th scope="col">名称</th></tr></thead><tbody>${places.slice(placePage*20,placePage*20+20).map(p=>`<tr><th scope="row">${placeLink(p.id)}<small class="tag-place-source">${({manual:'手动名称',commute:'按当前设置',address:'已有地址',reference:'参考编号'})[p.name_source]||'参考编号'}</small></th><td>${p.departures}</td><td>${p.arrivals}</td><td>${button('改名','place-name-edit',!p.name_key,`data-id="${esc(p.id)}" aria-label="修改地点名称 ${esc(p.label)}"`)}</td></tr>`).join('')}</tbody></table>${pages>1?`<div class="insight-pagination">${button('上一页地点','places-previous',placePage===0)}<span>${placePage+1} / ${pages}</span>${button('下一页地点','places-next',placePage+1===pages)}</div>`:''}`:'<p>本月暂无可信起止定位，仍可创建或管理地点区域。</p>'}
+        <h4>已保存地点区域</h4><p class="insight-note">区域跨月保留，本月没有行程也可修改。不同区域即使同名也分别保存。</p>
+        <div class="tag-region-list">${regions.map(r=>`<div><strong>${esc(r.name)}</strong><span>${r.shape==='polygon'?`多边形 · ${r.vertices.length} 个顶点`:`圆形 · ${r.radius_m||150} 米`}</span>${button('编辑区域','region-edit',false,`data-id="${esc(r.id)}" aria-label="编辑区域 ${esc(r.name)}"`)}</div>`).join('')||'<p class="insight-note">暂无已保存区域。</p>'}</div>
+        <div class="insight-actions">${button('新建多边形地点','region-new')}${button('撤销地点操作','place-name-undo',!stats.name_can_undo)}</div>
         ${namePlace?nameEditor():''}
-        <div class="insight-actions">${button(placesShown?'隐藏地点地图':'查看地点地图','places-map')}${placesShown?button('查看全部地点','places-all'):''}</div>${placesShown?'<p class="insight-note">点地点名称可放大定位；点编号查看详情和地图网站跳转。</p><div id="tag-places-map" role="region" tabindex="0" aria-label="本月地点地图"></div>':''}`:'<p>本月暂无可信起止定位，无法归类地点；不代表没有出行。</p>'}
+        <div class="insight-actions">${button(placesShown?'隐藏地点地图':'查看地点地图','places-map',!places.length&&!regions.length)}${placesShown?button('查看全部地点','places-all'):''}</div>${placesShown?'<p class="insight-note">点地点名称可放大定位；点编号查看详情和地图网站跳转。小点为本月实际起止观测。</p><div id="tag-places-map" role="region" tabindex="0" aria-label="本月地点地图"></div>':''}
         <h4>常见方向</h4>${stats.routes.length?`<div class="tag-place-routes">${stats.routes.slice(0,10).map(r=>`<p><span>${placeLink(r.start_place)} → ${placeLink(r.end_place)}</span><strong>${r.count} 趟</strong></p>`).join('')}</div><p class="insight-note">按方向分别统计，仅列次数最多的前 10 组；缺少任一端点不计入方向。同地点往返也保留。</p>`:'<p class="insight-note">尚无两端都能归类的行程。</p>'}</section>`;
     }
     function nameEditor(){
-      return `<div id="tag-place-name-editor" role="group" aria-labelledby="tag-place-name-heading"><h4 id="tag-place-name-heading">修改地点名称 · ${esc(namePlace.label)}</h4><label>地点名称<input id="tag-place-name" aria-label="地点名称" maxlength="40" value="${esc(nameDraft)}" ${busy?'disabled':''}></label><label>命名匹配范围<select id="tag-name-radius" aria-label="命名匹配范围" ${busy?'disabled':''}>${[25,50,100,150].map(r=>`<option value="${r}" ${nameRadius===r?'selected':''}>${r} 米</option>`).join('')}</select></label><p class="insight-note">先预览本月可能受影响的行程。小范围会分开相邻地点；名称沿固定中心与所选范围跨月复用。预览不改记录，恢复自动名称只清除手动名。</p>${namePreview?`<div id="tag-name-preview"><p>本月可能影响 ${namePreview.affected_count} 趟行程 · 命名范围 ${namePreview.radius_m} 米</p>${namePreview.conflicts.length?`<p class="notice error">与 ${namePreview.conflicts.map(c=>esc(c.name)).join('、')} 的命名范围重叠；建议缩小范围后重新预览。</p>`:''}<div class="report-event-list">${namePreview.affected.slice(0,20).map(r=>`<article><span>${esc(time(data.events.find(e=>e.id===r.id)?.end_time))}</span><span>${r.sides.map(side=>side==='start'?'出发':'到达').join('、')} · ${r.within_range?'范围内':'缩小后在范围外'}</span></article>`).join('')}</div>${namePreview.affected_count>20?'<p>仅展示前 20 趟；数量为本月全部可能受影响行程。</p>':''}</div>`:''}<div class="insight-actions">${button('预览影响行程','place-name-preview',loading)}${button('保存地点名称','place-name-save',loading||!namePreview)}${namePlace.manual_name_id?button('恢复自动名称','place-name-clear',loading):''}${button('取消地点命名','place-name-cancel')}</div></div>`;
+      const polygon=nameShape==='polygon',ready=!polygon||nameVertices.length>=3&&!nameDrawing;
+      return `<div id="tag-place-name-editor" role="group" aria-labelledby="tag-place-name-heading"><h4 id="tag-place-name-heading">修改地点名称 · ${esc(namePlace.label)}</h4><label>地点名称<input id="tag-place-name" aria-label="地点名称" maxlength="40" value="${esc(nameDraft)}" ${busy?'disabled':''}></label>
+        <label>区域形状<select id="tag-name-shape" aria-label="区域形状" ${busy?'disabled':''}>${[['circle','圆形范围'],['polygon','自定义多边形']].map(([value,label])=>`<option value="${value}" ${nameShape===value?'selected':''} ${value==='circle'&&namePlace.isNew?'disabled':''}>${label}</option>`).join('')}</select></label>
+        ${polygon?`<p class="insight-note">${nameDrawing?(nameFreehand?'按住鼠标左键沿边界连续圈画，松开后自动闭合。圈画时地图不随鼠标平移。':'点击地图添加顶点，按顺序沿边界绘制，再按“闭合区域”。'):'可拖动顶点调整边界，点顶点选中后可删除。要重新圈画，请按“重新圈画”；浏览地图时可拖动地图平移。'}边界上的点归入区域；边界外不自动扩大匹配。</p>
+        <label>绘制方式<select id="tag-region-method" aria-label="绘制方式" ${busy?'disabled':''}><option value="freehand" ${nameFreehand?'selected':''}>鼠标连续圈画</option><option value="points" ${!nameFreehand?'selected':''}>逐点绘制</option></select></label>
+        <div class="insight-actions">${nameFreehand?button('重新圈画','region-freehand'):button(nameDrawing?'闭合区域':'继续添加顶点',nameDrawing?'region-finish':'region-draw',nameDrawing&&nameVertices.length<3)}${button('浏览地图','region-browse')}${button('撤回最后一个点','region-pop',!nameVertices.length)}${button('重新绘制','region-reset')}</div>
+        <div id="tag-name-map" class="${nameDrawing&&nameFreehand?'region-freehand':''}" role="region" tabindex="0" aria-label="地点区域绘制地图"></div>
+        <div class="tag-vertex-controls"><label>选择顶点<select id="tag-region-vertex" aria-label="选择顶点" ${busy?'disabled':''}><option value="">未选择</option>${nameVertices.map((_,i)=>`<option value="${i}" ${nameVertex===i?'selected':''}>顶点 ${i+1}</option>`).join('')}</select></label>${button('删除选中顶点','region-delete-vertex',nameVertex===null)}${button('将地图中心加入边界','region-add-center',nameFreehand||!nameDrawing||nameVertices.length>=100)}</div><p class="insight-note">${nameVertices.length} 个顶点。圈画松开后自动闭合，细小抖动会整理为可调整的顶点。小点为本月实际起止观测；其他已保存区域作为边界参考。</p>`:
+        `<label>命名匹配范围<select id="tag-name-radius" aria-label="命名匹配范围" ${busy?'disabled':''}>${[25,50,100,150].map(r=>`<option value="${r}" ${nameRadius===r?'selected':''}>${r} 米</option>`).join('')}</select></label>`}
+        <p class="insight-note">先预览本月受影响行程，保存后历史与新行程按区域自动命名。预览不改记录，恢复自动名称只清除这个区域的手动标签。</p>
+        ${namePreview?`<div id="tag-name-preview"><p>本月可能影响 ${namePreview.affected_count} 趟行程 · ${polygon?`多边形 ${namePreview.vertex_count} 个顶点`:`命名范围 ${namePreview.radius_m} 米`}</p>${namePreview.conflicts.length?`<p class="notice error">与 ${namePreview.conflicts.map(c=>esc(c.name)).join('、')} 的命名范围重叠；请调整边界后重新预览。</p>`:''}<div class="report-event-list">${namePreview.affected.slice(0,20).map(r=>`<article><span>${esc(time(data.events.find(e=>e.id===r.id)?.end_time))}</span><span>${r.sides.map(side=>side==='start'?'出发':'到达').join('、')} · ${r.within_range?'范围内':'调整后在范围外'}</span></article>`).join('')}</div>${namePreview.affected_count>20?'<p>仅展示前 20 趟；数量为本月全部可能受影响行程。</p>':''}</div>`:''}
+        <div class="insight-actions">${button('预览影响行程','place-name-preview',loading||!ready)}${button('保存地点名称','place-name-save',loading||!ready||!namePreview||namePreview?.conflicts.some(c=>polygon||c.shape==='polygon'))}${namePlace.manual_name_id?button('恢复自动名称','place-name-clear',loading):''}${button('取消地点命名','place-name-cancel')}</div></div>`;
+    }
+    function paintNameMap(){
+      const el=node?.querySelector('#tag-name-map');if(!el||nameMap)return;
+      nameMap=AmapMaps.createMap(el,{scrollWheelZoom:false,doubleClickZoom:false});AmapMaps.addTiles(nameMap);
+      const regions=data.place_statistics.name_regions||[],points=data.place_statistics.observed_points||[];
+      for(const region of regions){
+        if(region.id===namePlace.region_id||region.id===namePlace.manual_name_id)continue;
+        regionLayer(nameMap,region,'#66746e').bindTooltip(esc(region.name));
+      }
+      for(const p of points)L.circleMarker([p.latitude,p.longitude],{radius:3,color:'#16594f',fillOpacity:.6}).addTo(nameMap);
+      if(nameVertices.length>=3)L.polygon(nameVertices,{color:'#20776e',fillOpacity:.16,interactive:false}).addTo(nameMap);
+      else if(nameVertices.length)L.polyline(nameVertices,{color:'#20776e',interactive:false}).addTo(nameMap);
+      nameVertices.forEach((point,index)=>{
+        const icon=L.divIcon({className:'tag-place-marker',html:`<span>${index+1}</span>`,iconSize:[32,32],iconAnchor:[16,16]});
+        L.marker(point,{draggable:!busy,icon,title:`区域顶点 ${index+1}`}).addTo(nameMap).on('dragend',event=>{
+          if(busy)return;const p=event.target.getLatLng();nameVertices[index]=[p.lat,p.lng];nameVertex=index;invalidateName();paint();
+        }).on('click',()=>{if(busy)return;nameVertex=index;paint();});
+      });
+      if(nameViewport)nameMap.setView(nameViewport.center,nameViewport.zoom,{animate:false});
+      else if(nameVertices.length>=3)nameMap.fitBounds(nameVertices,{padding:[40,40],maxZoom:18});
+      else if(namePlace.latitude!==undefined)nameMap.setView([namePlace.latitude,namePlace.longitude],17);
+      else if(points.length)nameMap.fitBounds(points.map(p=>[p.latitude,p.longitude]),{padding:[40,40],maxZoom:17});
+      else if(regions.length)nameMap.setView([regions[0].latitude,regions[0].longitude],16);
+      else nameMap.setView([35,105],4);
+      if(nameFreehand&&nameDrawing&&!busy){nameMap.dragging.disable();bindFreehand(el,nameMap);}
+      nameMap.on('click',event=>{if(!nameDrawing||nameFreehand||busy||nameVertices.length>=100)return;nameVertices.push([event.latlng.lat,event.latlng.lng]);nameVertex=nameVertices.length-1;invalidateName();paint();});
+    }
+    function bindFreehand(el,map){
+      let pointer=null,stroke=[],line=null;
+      function add(event){
+        const pixel=map.mouseEventToContainerPoint(event),point=map.containerPointToLatLng(pixel),previous=stroke.at(-1);
+        if(previous&&Math.hypot(previous.x-pixel.x,previous.y-pixel.y)<2)return;
+        const sample={x:pixel.x,y:pixel.y,lat:point.lat,lng:point.lng};
+        if(stroke.length<8192)stroke.push(sample);else stroke[stroke.length-1]=sample;
+        line.setLatLngs(stroke.map(p=>[p.lat,p.lng]));
+      }
+      function cancel(){pointer=null;line?.remove();line=null;stroke=[];}
+      el.addEventListener('pointerdown',event=>{
+        if(event.button!==0||event.pointerType!=='mouse'||pointer!==null||event.target.closest('.leaflet-control,.leaflet-marker-icon'))return;
+        event.preventDefault();event.stopPropagation();pointer=event.pointerId;stroke=[];
+        el.setPointerCapture(pointer);line=L.polyline([],{color:'#20776e',weight:3,interactive:false}).addTo(map);add(event);
+      },true);
+      el.addEventListener('pointermove',event=>{if(event.pointerId!==pointer)return;event.preventDefault();event.stopPropagation();add(event);},true);
+      el.addEventListener('pointerup',event=>{
+        if(event.pointerId!==pointer)return;event.preventDefault();event.stopPropagation();add(event);
+        const vertices=freehandVertices(stroke),capture=pointer;cancel();el.releasePointerCapture(capture);
+        if(vertices.length){nameVertices=vertices;nameDrawing=false;nameVertex=null;invalidateName();error='';}
+        else error='圈画太小或没有围成区域，请按住鼠标重新圈画。';
+        paint();
+      },true);
+      el.addEventListener('pointercancel',cancel);
+      el.addEventListener('lostpointercapture',cancel);
+      el.addEventListener('keydown',event=>{if(event.key==='Escape'&&pointer!==null){const capture=pointer;cancel();el.releasePointerCapture(capture);event.preventDefault();}},true);
     }
     function paintPlacesMap(){
-      const el=node?.querySelector('#tag-places-map'),places=data?.place_statistics?.places;if(!el||!places?.length||placesMap)return;
+      const el=node?.querySelector('#tag-places-map'),places=data?.place_statistics?.places||[],regions=data?.place_statistics?.name_regions||[];if(!el||(!places.length&&!regions.length)||placesMap)return;
       placesMap=AmapMaps.createMap(el,{scrollWheelZoom:false});
       AmapMaps.addTiles(placesMap);
       const bounds=[],markers=new Map();
+      for(const region of regions){regionLayer(placesMap,region).bindTooltip(esc(region.name));bounds.push(...(region.shape==='polygon'?region.vertices:[[region.latitude,region.longitude]]));}
+      for(const p of data.place_statistics.observed_points||[])L.circleMarker([p.latitude,p.longitude],{radius:3,color:'#16594f',fillOpacity:.6}).addTo(placesMap);
       for(const [index,p] of places.entries()){
         const center=[p.latitude,p.longitude];bounds.push(center);
-        L.circle(center,{radius:p.name_radius_m||data.place_statistics.radius_m,color:'#20776e',fillOpacity:.12}).addTo(placesMap);
+        if(p.name_shape==='polygon')L.polygon(p.name_vertices,{color:'#20776e',fillOpacity:.12}).addTo(placesMap);else L.circle(center,{radius:p.name_radius_m||data.place_statistics.radius_m,color:'#20776e',fillOpacity:.12}).addTo(placesMap);
         const icon=L.divIcon({className:'tag-place-marker',html:`<span>${index+1}</span>`,iconSize:[32,32],iconAnchor:[16,16]});
         const href=`https://uri.amap.com/marker?position=${p.longitude},${p.latitude}&coordinate=wgs84&name=${encodeURIComponent(p.display_name||p.name||"地点")}`;
         const marker=L.marker(center,{icon,title:p.label}).addTo(placesMap)
           .bindTooltip(esc(p.label))
-          .bindPopup(`<strong>${esc(p.label)}</strong><p>出发 ${p.departures} 次 · 到达 ${p.arrivals} 次<br>归并范围 ${data.place_statistics.radius_m} 米</p><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">打开地图网站</a>`);
+          .bindPopup(`<strong>${esc(p.label)}</strong><p>出发 ${p.departures} 次 · 到达 ${p.arrivals} 次<br>归并范围 ${p.name_shape==='polygon'?'自定义多边形':(p.name_radius_m||data.place_statistics.radius_m)+' 米'}</p><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">打开地图网站</a>`);
         marker.on('click',()=>{focusedPlace=p.id;});markers.set(p.id,marker);
       }
       const selectedPlace=places.find(p=>p.id===focusedPlace);
@@ -119,13 +226,14 @@
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
+      if(nameMap)nameViewport={center:nameMap.getCenter(),zoom:nameMap.getZoom()};nameMap?.remove();nameMap=null;
       routeMap?.remove();routeMap=null;commuteMap?.remove();commuteMap=null;if(placesMap)placesViewport={center:placesMap.getCenter(),zoom:placesMap.getZoom()};placesMap?.remove();placesMap=null;
       node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">行程标签</span><h2>同类行程，放在一起看</h2><p>通勤、接娃、周末出游，让每趟记录有自己的分类。</p></div><span class="insight-source">自定义标签 · 同类比较</span></section>
         ${commuteView()}<section class="card insight-panel"><div class="insight-toolbar"><label>标签月份<input id="tag-month" type="month" aria-label="标签月份" value="${esc(month)}"></label>${button('读取行程标签','load',!owner||!month||loading)}${button('撤销标签操作','undo',!data?.can_undo)}</div>${loading?'<p role="status">正在读取…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${data?`<p class="insight-note">${data.window.start_date} — ${data.window.end_date} · 按行程结束日期归期，${data.events.length} 条行程，${data.untagged_count} 条未贴标签。一趟可有多个标签，同组结果不能相加当总量。</p>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可管理标签。</p>':''}</section>
         ${placesView()}${selected?`<section class="card insight-panel"><div class="insight-heading"><h3>标注这趟行程</h3>${button('取消标注','cancel')}</div><p>${esc(time(selected.start_time))} → ${esc(time(selected.end_time))}<br>${number(selected.distance_km)} km · ${number(selected.duration_seconds===null?null:selected.duration_seconds/60)} 分钟 · ${selected.partial?'观测片段':'完整记录'}</p>${selected.automatic_commute?`<p class="insight-note">本趟“通勤”为自动标注；手工标签可另行编辑。</p>${button('取消本趟自动通勤','commute-exclude',false,`data-id="${esc(selected.id)}"`)}`:selected.commute_excluded?button('恢复本趟自动通勤','commute-include',false,`data-id="${esc(selected.id)}"`):''}${routeView()}<form id="tag-form" class="ledger-form" novalidate><div class="ledger-wide"><strong>点选已有标签</strong><div class="tag-quick-list">${(data?.suggested_tags||[]).map(tag=>`<button type="button" class="tag-quick" data-tag="toggle-label" data-label="${esc(tag)}" aria-label="${labelList().includes(tag)?'取消':'选择'}标签 ${esc(tag)}" aria-pressed="${labelList().includes(tag)}" ${busy?'disabled':''}>${esc(tag)}</button>`).join('')||'<span class="insight-note">还没有已有标签，可在下方输入新标签。</span>'}</div></div><label class="ledger-wide">行程标签（逗号分隔）<input id="tag-labels" aria-label="行程标签（逗号分隔）" type="text" maxlength="300" value="${esc(tags)}" ${busy?'disabled':''}></label><label class="ledger-wide">行程备注<textarea id="tag-note" aria-label="行程备注" maxlength="1000" rows="3" ${busy?'disabled':''}>${esc(note)}</textarea></label></form><p class="insight-note">可用中文或英文逗号分隔，每趟最多 10 个标签，每个 24 字。留空可清除标签；备注单独保留。</p><div class="insight-actions">${button('保存行程标签','save',loading)}</div></section>`:''}
         ${data?`<section class="card insight-panel"><div class="insight-heading"><h3>同类比较</h3><span class="insight-badge">${data.groups.length} 类标签</span></div>${data.groups.length?`<div class="ledger-form"><label>比较标签 A<select id="tag-group-a" aria-label="比较标签 A">${options(groupA)}</select></label><label>比较标签 B<select id="tag-group-b" aria-label="比较标签 B">${options(groupB)}</select></label></div>`:'<p class="insight-empty">从下方选择行程添加标签，即可比较。</p>'}<div id="tag-comparison"></div><p class="insight-note">完整与片段均按有效观测计入，每项单列样本数；均值表示每条记录的观测值，不代表完整行程均值。SOC 回升不算负耗电。百公里估算使用同一批至少 10 km、SOC 下降至少 3 个百分点且电量可估算的记录，按总估算电量 ÷ 总里程计算。SOC 电量不是电表计量。</p><p class="insight-note">距离、时长、样本量不同都可能影响结果。没有天气、路况或驾驶方式证据，不据此归因或排名。</p></section>
         <section class="card insight-panel"><div class="insight-heading"><h3>本月行程</h3><div class="insight-toolbar"><label>筛选标签<select id="tag-filter" aria-label="筛选标签"><option value="">全部标签与未标注</option><option value="untagged" ${filter==='untagged'?'selected':''}>未标注</option>${filterOptions()}</select></label><label>标签行程完整性<select id="tag-completeness" aria-label="标签行程完整性">${[['all','全部记录'],['complete','完整记录'],['partial','仅片段']].map(([key,label])=>`<option value="${key}" ${key===completeness?'selected':''}>${label}</option>`).join('')}</select></label></div></div><div id="tag-events"></div></section><div id="tag-trash"></div>`:''}`;
-      paintGroups();paintEvents();paintRoute();paintCommuteMap();paintPlacesMap();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
+      paintGroups();paintEvents();paintRoute();paintCommuteMap();paintPlacesMap();paintNameMap();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
     }
     function paintGroups(){
       const el=node?.querySelector('#tag-comparison');if(!data||!el)return;
@@ -197,16 +305,16 @@
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
     }
     async function mutatePlaceName(action){
-      if(busy||loading||!namePlace||!data)return;
+      if(busy||loading||!data||!namePlace&&action!=='place-name-undo')return;
       const identity=owner,token=++writeSerial;
-      const payload={action,date:month+'-01',place_id:namePlace.id,place_key:namePlace.name_key,name:nameDraft,radius_m:nameRadius,preview_token:namePreview?.preview_token,revision:data.place_statistics.name_revision,context:owner};
+      const payload={action,date:month+'-01',place_id:namePlace?.id,place_key:namePlace?.name_key,region_id:namePlace?.region_id,name:nameDraft,radius_m:nameRadius,shape:nameShape,vertices:nameShape==='polygon'?nameVertices:undefined,preview_token:namePreview?.preview_token,revision:data.place_statistics.name_revision,context:owner};
       busy=true;error='';status='';paint();
       try{
         const result=await request('/api/insights/trip-tags',payload);
         if(!valid(token,writeSerial,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         if(action==='place-name-preview'){namePreview=result;return;}
-        data.place_statistics.name_revision=result.name_revision;namePlace=null;nameDraft='';namePreview=null;status='地点名称已保存。';
+        data.place_statistics.name_revision=result.name_revision;closeNameEditor();status=action==='place-name-undo'?'已撤销地点操作。':'地点名称已保存。';
         if(!await load()&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新读取核对。';
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 名称草稿保留；请重新读取后再保存。';}
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
@@ -255,6 +363,9 @@
         if(commuteMap){commuteMap.remove();commuteMap=null;paintCommuteMap();}return true;
       }
       if(event.type==='change'){
+        if(el.id==='tag-name-shape'){nameShape=el.value;nameDrawing=nameShape==='polygon'&&nameVertices.length<3;invalidateName();paint();return true;}
+        if(el.id==='tag-region-method'){nameFreehand=el.value==='freehand';nameDrawing=nameFreehand||nameVertices.length<3;invalidateName();paint();return true;}
+        if(el.id==='tag-region-vertex'){nameVertex=el.value===''?null:Number(el.value);paint();return true;}
         if(el.id==='tag-name-radius'){nameRadius=Number(el.value);namePreview=null;paint();return true;}
         if(el.id==='tag-group-a'){groupA=el.value;paintGroups();return true;}
         if(el.id==='tag-group-b'){groupB=el.value;paintGroups();return true;}
@@ -264,9 +375,22 @@
       if(event.type!=='click')return false;
       const target=el.closest('[data-tag]');if(!target||target.disabled)return false;
       const action=target.dataset.tag,id=target.dataset.id;
-      if(action==='place-name-edit'){namePlace=data.place_statistics.places.find(p=>p.id===id);nameDraft=namePlace.name_source==='manual'?namePlace.label:'';nameRadius=namePlace.name_radius_m||150;namePreview=null;paint();node.querySelector('#tag-place-name').focus({preventScroll:true});node.querySelector('#tag-place-name-editor').scrollIntoView({block:'nearest'});return true;}
-      if(action==='place-name-cancel'){namePlace=null;nameDraft='';namePreview=null;paint();return true;}
-      if(action==='place-name-save'||action==='place-name-clear'||action==='place-name-preview'){mutatePlaceName(action);return true;}
+      if(action==='place-name-edit'){openNameEditor(data.place_statistics.places.find(p=>p.id===id));return true;}
+      if(action==='region-edit'){
+        const r=data.place_statistics.name_regions.find(r=>r.id===id);
+        openNameEditor({label:r.name,name_source:'manual',region_id:r.id,manual_name_id:r.id,latitude:r.latitude,longitude:r.longitude,name_shape:r.shape||'circle',name_vertices:r.vertices,name_radius_m:r.radius_m});return true;
+      }
+      if(action==='region-new'){closeNameEditor();namePlace={label:'新建地点区域',isNew:true};nameShape='polygon';nameDrawing=true;nameFreehand=true;paint();node.querySelector('#tag-place-name')?.focus({preventScroll:true});return true;}
+      if(action==='region-freehand'||action==='region-browse'){nameDrawing=action==='region-freehand';if(nameDrawing)nameFreehand=true;invalidateName();paint();return true;}
+      if(action==='region-finish'||action==='region-draw'){nameDrawing=action==='region-draw';invalidateName();paint();return true;}
+      if(action==='region-reset'){nameVertices=[];nameVertex=null;nameDrawing=true;invalidateName();paint();return true;}
+      if(action==='region-pop'||action==='region-delete-vertex'){
+        if(action==='region-pop')nameVertices.pop();else if(nameVertex!==null)nameVertices.splice(nameVertex,1);
+        nameVertex=null;if(nameVertices.length<3)nameDrawing=true;invalidateName();paint();return true;
+      }
+      if(action==='region-add-center'){const point=nameMap?.getCenter();if(point&&nameDrawing&&nameVertices.length<100){nameVertices.push([point.lat,point.lng]);nameVertex=nameVertices.length-1;invalidateName();paint();}return true;}
+      if(action==='place-name-cancel'){closeNameEditor();paint();return true;}
+      if(['place-name-save','place-name-clear','place-name-preview','place-name-undo'].includes(action)){mutatePlaceName(action);return true;}
       if(action==='place-focus'){focusPlace(id);return true;}
       if(action==='places-all'){focusedPlace=placesViewport=null;placesMap?.remove();placesMap=null;paint();return true;}
       if(action==='places-map'){placesShown=!placesShown;if(!placesShown){focusedPlace=placesViewport=null;placesMap?.remove();placesMap=null;}paint();return true;}
@@ -294,5 +418,5 @@
     }
     return {mount,handle};
   }
-  root.TripTagsPage={create};
+  root.TripTagsPage={create,freehandVertices};
 })(window);

@@ -6,8 +6,7 @@ import math
 from .commute_tags import _distance
 from .geocoding import is_trusted_location, _without_units
 from .usage_events import MAX_SUMMARY_BYTES
-from .trip_place_geometry import cell, NEIGHBOURS
-from collections import defaultdict
+from .place_regions import RegionIndex, contains, overlaps, validate_polygon
 
 
 def anchor_key(place):
@@ -55,17 +54,20 @@ class TripPlaceNames:
     def apply(self,owner,vehicle,stats,rule):
         saved=self.store.read(owner,vehicle,'place_names')
         records=[r for r in saved['records'] if not r['deleted']]
-        buckets=defaultdict(list)
-        for record in records:buckets[cell((record['body']['latitude'],record['body']['longitude']))].append(record)
+        index=RegionIndex(records)
         for place in stats['places']:
             point=(place['latitude'],place['longitude'])
             place.update(name_key=anchor_key(place),name_source='reference',manual_name_id=None)
-            bucket=cell(point)
-            candidates=[r for delta in NEIGHBOURS for r in buckets.get(tuple(a+b for a,b in zip(bucket,delta)),())]
-            nearby=sorted((_distance(point,(r['body']['latitude'],r['body']['longitude'])),r['id'],r)
-                          for r in candidates if _distance(point,(r['body']['latitude'],r['body']['longitude']))<=r['body'].get('radius_m',150)+1e-7)
+            nearby=index.matches(point)
+            if len(nearby)>1 and any(r['body'].get('shape')=='polygon' for r in nearby):
+                place['candidate_conflict']=True
+                continue
             if nearby:
-                record=nearby[0][2];place.update(label=record['body']['name'],name_source='manual',manual_name_id=record['id'],name_radius_m=record['body'].get('radius_m',150));continue
+                record=nearby[0];body=record['body']
+                place.update(label=body['name'],name_source='manual',manual_name_id=record['id'],
+                             name_shape=body.get('shape','circle'),name_vertices=body.get('vertices'),
+                             name_radius_m=body.get('radius_m',150))
+                continue
             matches=[]
             if not rule.get('deleted'):
                 for key,label in (('home','家'),('work','公司')):
@@ -76,34 +78,47 @@ class TripPlaceNames:
             label=place.pop('address_label',None)
             if label:place.update(label=label,name_source='address')
         for place in stats['places']:place.pop('address_label',None)
-        return dict(stats,name_revision=saved['revision'],name_can_undo=saved['can_undo'])
+        return dict(stats,name_revision=saved['revision'],name_can_undo=saved['can_undo'],
+                    name_regions=[dict(id=r['id'],**r['body']) for r in records])
 
     def preview(self,owner,vehicle,data,stats):
-        place=next((p for p in stats['places'] if p['id']==data.get('place_id')),None)
-        if not place or place['name_key']!=data.get('place_key'):raise ValueError('地点分组已变化，请重新读取后命名。')
-        name=data.get('name');radius=data.get('radius_m',150)
-        if not isinstance(name,str) or not 1<=len(name.strip())<=40 or any(ord(c)<32 for c in name):raise ValueError('地点名称需为 1–40 字，不能含换行或控制字符。')
-        if type(radius) is not int or not 25<=radius<=150:raise ValueError('命名范围应为 25–150 米的整数。')
         saved=self.store.read(owner,vehicle,'place_names')
         if data.get('revision')!=saved['revision']:raise ValueError('地点名称已有更新，请重新读取。')
-        identity=place['manual_name_id'] or place['name_key']
-        old=next((r for r in saved['records'] if r['id']==identity and not r['deleted']),None)
-        anchor=(old['body']['latitude'],old['body']['longitude']) if old else (place['latitude'],place['longitude'])
-        extent=max(radius,old['body'].get('radius_m',150) if old else radius)
+        old=next((r for r in saved['records'] if r['id']==data.get('region_id') and not r['deleted']),None)
+        place=next((p for p in stats['places'] if p['id']==data.get('place_id')),None)
+        if data.get('region_id') and old is None:raise ValueError('地点区域已变化，请重新读取。')
+        if not old and data.get('place_id') and (not place or place['name_key']!=data.get('place_key')):
+            raise ValueError('地点分组已变化，请重新读取后命名。')
+        name=data.get('name');radius=data.get('radius_m',150)
+        if not isinstance(name,str) or not 1<=len(name.strip())<=40 or any(ord(c)<32 for c in name):raise ValueError('地点名称需为 1–40 字，不能含换行或控制字符。')
+        shape=data.get('shape','circle')
+        if shape not in ('circle','polygon'):raise ValueError('地点区域形状无效。')
+        if shape=='polygon':
+            vertices=validate_polygon(data.get('vertices'))
+            anchor=vertices[0]
+            body=dict(name=name.strip(),latitude=anchor[0],longitude=anchor[1],shape=shape,vertices=vertices)
+        else:
+            if type(radius) is not int or not 25<=radius<=150:raise ValueError('命名范围应为 25–150 米的整数。')
+            if not old and not place:raise ValueError('请选择参考地点或在地图绘制多边形区域。')
+            body=dict(name=name.strip(),latitude=(old['body'] if old else place)['latitude'],
+                      longitude=(old['body'] if old else place)['longitude'],radius_m=radius)
+        if old:identity=old['id']
+        elif place:identity=place['manual_name_id'] or place['name_key']
+        else:identity='place_region_'+hashlib.sha256(json.dumps(body['vertices'],separators=(',',':')).encode()).hexdigest()
+        if old is None:old=next((r for r in saved['records'] if r['id']==identity and not r['deleted']),None)
         affected={}
         for sample in stats.get('_endpoints',[]):
-            distance=_distance(anchor,sample['point'])
-            if distance<=extent+1e-7:
+            inside=contains(body,sample['point'])
+            if inside or old and contains(old['body'],sample['point']):
                 row=affected.setdefault(sample['event_id'],dict(id=sample['event_id'],sides=[],within_range=False))
-                row['sides'].append(sample['side']);row['within_range']|=distance<=radius+1e-7
-        conflicts=[dict(name=r['body']['name'],radius_m=r['body'].get('radius_m',150)) for r in saved['records']
-                   if not r['deleted'] and r['id']!=identity and _distance(anchor,(r['body']['latitude'],r['body']['longitude']))<=radius+r['body'].get('radius_m',150)]
-        body=dict(name=name.strip(),latitude=anchor[0],longitude=anchor[1],radius_m=radius)
+                row['sides'].append(sample['side']);row['within_range']|=inside
+        conflicts=[dict(name=r['body']['name'],shape=r['body'].get('shape','circle'),radius_m=r['body'].get('radius_m'))
+                   for r in saved['records'] if not r['deleted'] and r['id']!=identity and overlaps(body,r['body'])]
         evidence=dict(owner=owner,vehicle=vehicle,identity=identity,body=body,revision=saved['revision'],
                       samples=stats.get('_endpoints',[]),records=saved['records'])
         token=hashlib.sha256(json.dumps(evidence,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
         return dict(preview_token=token,affected_count=len(affected),affected=list(affected.values()),conflicts=conflicts,
-                    radius_m=radius,name_revision=saved['revision']),identity,body
+                    radius_m=radius,shape=shape,vertex_count=len(body.get('vertices',[])),name_revision=saved['revision']),identity,body
 
     def update(self,owner,vehicle,data,stats,guard=None):
         action=data.get('action')
@@ -113,17 +128,22 @@ class TripPlaceNames:
                 if guard:guard()
                 return preview
             if data.get('preview_token')!=preview['preview_token']:raise ValueError('命名预览已变化，请重新预览后保存。')
+            if preview['conflicts'] and (body.get('shape')=='polygon' or any(c['shape']=='polygon' for c in preview['conflicts'])):
+                raise ValueError('地点区域存在重叠，请调整边界后重新预览。')
             saved=self.store.change(owner,vehicle,'place_names','save',identity,body,data.get('revision'),guard=guard)
             return dict(name_revision=saved['revision'],name_can_undo=saved['can_undo'])
         if action=='place-name-undo':
             saved=self.store.change(owner,vehicle,'place_names','undo',None,None,data.get('revision'),guard=guard)
         else:
+            records=self.regions(owner,vehicle)
+            region=next((r for r in records if r['id']==data.get('region_id')),None)
             place=next((p for p in stats['places'] if p['id']==data.get('place_id')),None)
-            if not place or place['name_key']!=data.get('place_key'):
+            if data.get('region_id') and region is None:raise ValueError('地点区域已变化，请重新读取。')
+            if not region and (not place or place['name_key']!=data.get('place_key')):
                 raise ValueError('地点分组已变化，请重新读取后命名。')
-            identity=place['manual_name_id'] or place['name_key']
+            identity=region['id'] if region else place['manual_name_id'] or place['name_key']
             body=None
-            if action=='place-name-clear' and place['manual_name_id']:operation='delete'
+            if action=='place-name-clear' and (region or place['manual_name_id']):operation='delete'
             else:raise ValueError('地点名称操作无效。')
             saved=self.store.change(owner,vehicle,'place_names',operation,identity,body,data.get('revision'),guard=guard)
         return dict(name_revision=saved['revision'],name_can_undo=saved['can_undo'])
@@ -134,9 +154,9 @@ def current_location_name(location, regions, rule, addresses):
     if not is_trusted_location(location) or location['coordinate_system'] != 'WGS84（社区解释）':
         return None
     point = (location['latitude'], location['longitude'])
-    nearby = sorted((_distance(point, (r['body']['latitude'], r['body']['longitude'])), r['body']['name'])
-                    for r in regions if _distance(point, (r['body']['latitude'], r['body']['longitude'])) <= r['body'].get('radius_m', 150))
-    label = nearby[0][1] if nearby else None
+    matches=RegionIndex(regions).matches(point)
+    if len(matches)>1 and any(r['body'].get('shape')=='polygon' for r in matches):return None
+    label=matches[0]['body']['name'] if matches else None
     if not label and not rule.get('deleted'):
         matches = [name for key, name in (('home', '家'), ('work', '公司'))
                    if rule.get(key) and _distance(point, (rule[key]['latitude'], rule[key]['longitude'])) <= rule[key]['radius_m']]

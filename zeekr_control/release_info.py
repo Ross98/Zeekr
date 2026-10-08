@@ -14,7 +14,7 @@ FEATURES={
  'charging-readability':dict(label='充电图表可读性',files=['zeekr_control/static/app.js','zeekr_control/static/app.css','zeekr_control/static/theme.css']),
  'home-attention':dict(label='首页异常提示',files=['zeekr_control/static/app.js','zeekr_control/static/app.css']),
  'pending-ledger':dict(label='充电待补账',files=['zeekr_control/static/charge-ledger.js','zeekr_control/static/app.css']),
- 'place-names':dict(label='地点命名与范围预览',files=['zeekr_control/trip_place_names.py','zeekr_control/trip_places.py','zeekr_control/trip_tags.py','zeekr_control/static/trip-tags.js','zeekr_control/static/insights.css']),
+ 'place-names':dict(label='地点命名与范围预览',files=['zeekr_control/place_regions.py','zeekr_control/trip_place_names.py','zeekr_control/trip_places.py','zeekr_control/trip_tags.py','zeekr_control/static/trip-tags.js','zeekr_control/static/insights.css']),
  'travel-insights':dict(label='路线对比与用车回顾',files=['zeekr_control/travel_insights.py','zeekr_control/static/travel-insights.js','zeekr_control/static/insights.js','zeekr_control/web.py','zeekr_control/static/index.html','zeekr_control/static/insights.css']),
  'url-navigation':dict(label='URL 导航恢复',files=['zeekr_control/static/navigation-state.js','zeekr_control/static/app.js','zeekr_control/static/insights.js','zeekr_control/static/index.html']),
  'release-summary':dict(label='实际发布版本摘要',files=['zeekr_control/release_info.py','zeekr_control/web.py','zeekr_control/static/app.js']),

@@ -8,6 +8,7 @@ import time
 from .commute_tags import CommuteTags, _distance
 from .parking_analytics import ParkingAnalytics
 from .trip_place_names import TripPlaceNames, anchor_key
+from .place_regions import contains
 from .trip_places import TripPlaces, cluster_endpoints
 from .tracks import day_bounds
 from .usage_calendar import UsageCalendar
@@ -54,7 +55,7 @@ class DailyTimeline:
         result['candidate']=candidate
         if place.get('candidate_conflict'):result['issues'].append('candidate_conflict')
         regions=saved.get('_regions',[])
-        nearby=[r for r in regions if _distance((result['latitude'],result['longitude']),(r['body']['latitude'],r['body']['longitude']))<=r['body'].get('radius_m',150)]
+        nearby=[r for r in regions if contains(r['body'],(result['latitude'],result['longitude']))]
         if len(nearby)>1:result['issues'].append('adjacent_conflict')
         if '_decisions' not in saved:
             saved['_decisions']={};saved['_remembered']=[]

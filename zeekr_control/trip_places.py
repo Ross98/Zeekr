@@ -7,25 +7,24 @@ from .trip_endpoints import endpoint
 from .trip_place_names import cached_names
 
 from .trip_place_geometry import RADIUS_M, cell, NEIGHBOURS
+from .place_regions import RegionIndex
 
 
 def cluster_endpoints(rows, regions=()):
     """Fixed chronological anchors, nearest matching centre, no transitive chaining."""
     places, centers, buckets, assignments = [], [], defaultdict(list), {}
-    names=defaultdict(list)
-    for record in regions:
-        body=record['body'];names[cell((body['latitude'],body['longitude']))].append(record)
+    regions_index=RegionIndex(regions)
+    region_places={}
     for row in sorted(rows, key=lambda r: (r['time'], r['event_id'], r['side'])):
         point, key = row['point'], cell(row['point'])
-        candidates=[r for delta in NEIGHBOURS for r in names.get(tuple(a+b for a,b in zip(key,delta)),())]
-        candidates=sorted((_distance(point,(r['body']['latitude'],r['body']['longitude'])),r['id'],r)
-                          for r in candidates if _distance(point,(r['body']['latitude'],r['body']['longitude']))<=r['body'].get('radius_m',RADIUS_M)+1e-7)
-        region=candidates[0][2] if candidates else None
+        region=regions_index.pick(point)
         region_id=region['id'] if region else None
         nearby = [index for delta in NEIGHBOURS
                   for index in buckets.get(tuple(a+b for a,b in zip(key,delta)),())]
         matches = sorted((_distance(point, centers[i]), i) for i in nearby if places[i].get('name_region_id')==region_id)
-        if matches and matches[0][0] <= RADIUS_M + 1e-7:
+        if region_id in region_places:
+            index=region_places[region_id]
+        elif matches and matches[0][0] <= RADIUS_M + 1e-7:
             index = matches[0][1]
         else:
             index = len(places)
@@ -34,6 +33,7 @@ def cluster_endpoints(rows, regions=()):
             places.append(dict(id='place_'+str(index+1), label='参考地点 '+str(index+1),
                                latitude=center[0], longitude=center[1], departures=0, arrivals=0,
                                name_region_id=region_id))
+        if region_id is not None:region_places[region_id]=index
         place = places[index]
         place['departures' if row['side']=='start' else 'arrivals'] += 1
         assignments.setdefault(row['event_id'], dict(start=None,end=None))[row['side']] = place['id']
@@ -84,6 +84,7 @@ class TripPlaces:
                 if pair[side] is None: unknown[side] += 1
             if pair['start'] and pair['end']:
                 routes[(pair['start'],pair['end'])] += 1
+        result['observed_points']=[dict(latitude=s['point'][0],longitude=s['point'][1],side=s['side']) for s in observations]
         if include_samples:result['_endpoints']=observations
         return dict(result,radius_m=RADIUS_M,unknown_departures=unknown['start'],unknown_arrivals=unknown['end'],
                     routes=[dict(start_place=a,end_place=b,count=count)
