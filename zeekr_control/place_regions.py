@@ -101,21 +101,34 @@ def overlaps(first, second):
     return False
 
 
+def circle_anchors(records):
+    """Retain the original point circle when its naming area becomes a polygon."""
+    for record in records:
+        if record.get('deleted'):continue
+        body=record['body']
+        if body.get('shape')!='polygon':yield record
+        elif body.get('point_circle'):
+            yield dict(id=record['id'],body=body['point_circle'],anchor_only=True)
+
+
 class RegionIndex:
-    """Keep legacy circle lookup bounded; polygons use exact boundary membership."""
+    """Assign polygons by the representative circle centre; retain circles outside."""
     def __init__(self, records):
         self.circles=defaultdict(list);self.polygons=[]
-        for record in records:
-            if record.get('deleted'):continue
+        records=list(records)
+        self.polygons=[r for r in records if not r.get('deleted') and r['body'].get('shape')=='polygon']
+        for record in circle_anchors(records):
             body=record['body']
-            if body.get('shape')=='polygon':self.polygons.append(record)
-            else:self.circles[cell((body['latitude'],body['longitude']))].append(record)
+            self.circles[cell((body['latitude'],body['longitude']))].append(record)
 
     def matches(self, point):
         bucket=cell(point)
-        candidates=[r for delta in NEIGHBOURS for r in self.circles.get(tuple(a+b for a,b in zip(bucket,delta)),())]+self.polygons
-        return sorted((r for r in candidates if contains(r['body'],point)),
-                      key=lambda r:(_distance(point,(r['body']['latitude'],r['body']['longitude'])),r.get('id','')))
+        candidates=[r for delta in NEIGHBOURS for r in self.circles.get(tuple(a+b for a,b in zip(bucket,delta)),())]
+        circles=sorted((r for r in candidates if contains(r['body'],point)),
+                       key=lambda r:(_distance(point,(r['body']['latitude'],r['body']['longitude'])),r.get('id','')))
+        centre=(circles[0]['body']['latitude'],circles[0]['body']['longitude']) if circles else point
+        polygons=[r for r in self.polygons if contains(r['body'],centre)]
+        return sorted(polygons,key=lambda r:r.get('id','')) or [r for r in circles if not r.get('anchor_only')]
 
     def pick(self, point):
         matches=self.matches(point)

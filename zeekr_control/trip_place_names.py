@@ -55,10 +55,13 @@ class TripPlaceNames:
         saved=self.store.read(owner,vehicle,'place_names')
         records=[r for r in saved['records'] if not r['deleted']]
         index=RegionIndex(records)
+        by_id={r['id']:r for r in records}
         for place in stats['places']:
             point=(place['latitude'],place['longitude'])
             place.update(name_key=anchor_key(place),name_source='reference',manual_name_id=None)
-            nearby=index.matches(point)
+            # Preserve the region assigned to the representative circle centre.
+            assigned=by_id.get(place.get('name_region_id'))
+            nearby=[assigned] if assigned else index.matches(point)
             if len(nearby)>1 and any(r['body'].get('shape')=='polygon' for r in nearby):
                 place['candidate_conflict']=True
                 continue
@@ -100,16 +103,25 @@ class TripPlaceNames:
         else:
             if type(radius) is not int or not 25<=radius<=150:raise ValueError('命名范围应为 25–150 米的整数。')
             if not old and not place:raise ValueError('请选择参考地点或在地图绘制多边形区域。')
-            body=dict(name=name.strip(),latitude=(old['body'] if old else place)['latitude'],
-                      longitude=(old['body'] if old else place)['longitude'],radius_m=radius)
+            source=(old['body'].get('point_circle') or old['body']) if old else place
+            body=dict(name=name.strip(),latitude=source['latitude'],longitude=source['longitude'],radius_m=radius)
         if old:identity=old['id']
         elif place:identity=place['manual_name_id'] or place['name_key']
         else:identity='place_region_'+hashlib.sha256(json.dumps(body['vertices'],separators=(',',':')).encode()).hexdigest()
         if old is None:old=next((r for r in saved['records'] if r['id']==identity and not r['deleted']),None)
+        if shape=='polygon':
+            source=old['body'] if old else place
+            if source and source.get('shape',source.get('name_shape'))!='polygon':
+                body['point_circle']=dict(latitude=source['latitude'],longitude=source['longitude'],
+                                          radius_m=source.get('radius_m',source.get('name_radius_m',150)))
+            elif source and source.get('point_circle'):body['point_circle']=dict(source['point_circle'])
         affected={}
         for sample in stats.get('_endpoints',[]):
-            inside=contains(body,sample['point'])
-            if inside or old and contains(old['body'],sample['point']):
+            centre=sample.get('place_point',sample['point'])
+            point=centre if shape=='polygon' else sample['point']
+            inside=contains(body,point)
+            old_point=centre if old and old['body'].get('shape')=='polygon' else sample['point']
+            if inside or old and contains(old['body'],old_point):
                 row=affected.setdefault(sample['event_id'],dict(id=sample['event_id'],sides=[],within_range=False))
                 row['sides'].append(sample['side']);row['within_range']|=inside
         conflicts=[dict(name=r['body']['name'],shape=r['body'].get('shape','circle'),radius_m=r['body'].get('radius_m'))
@@ -128,7 +140,7 @@ class TripPlaceNames:
                 if guard:guard()
                 return preview
             if data.get('preview_token')!=preview['preview_token']:raise ValueError('命名预览已变化，请重新预览后保存。')
-            if preview['conflicts'] and (body.get('shape')=='polygon' or any(c['shape']=='polygon' for c in preview['conflicts'])):
+            if body.get('shape')=='polygon' and any(c['shape']=='polygon' for c in preview['conflicts']):
                 raise ValueError('地点区域存在重叠，请调整边界后重新预览。')
             saved=self.store.change(owner,vehicle,'place_names','save',identity,body,data.get('revision'),guard=guard)
             return dict(name_revision=saved['revision'],name_can_undo=saved['can_undo'])

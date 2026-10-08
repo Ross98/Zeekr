@@ -7,10 +7,10 @@ from .trip_endpoints import endpoint
 from .trip_place_names import cached_names
 
 from .trip_place_geometry import RADIUS_M, cell, NEIGHBOURS
-from .place_regions import RegionIndex
+from .place_regions import RegionIndex, circle_anchors
 
 
-def cluster_endpoints(rows, regions=()):
+def _cluster_circles(rows, regions=()):
     """Fixed chronological anchors, nearest matching centre, no transitive chaining."""
     places, centers, buckets, assignments = [], [], defaultdict(list), {}
     regions_index=RegionIndex(regions)
@@ -40,6 +40,33 @@ def cluster_endpoints(rows, regions=()):
     return dict(places=places, assignments=assignments)
 
 
+def cluster_endpoints(rows, regions=()):
+    """Build fixed circles first, then assign whole circles by polygon membership."""
+    regions=list(regions)
+    base=_cluster_circles(rows,[dict(r,anchor_only=False) for r in circle_anchors(regions)])
+    index=RegionIndex(regions)
+    places=[];merged={};mapped={};centres={}
+    for place in base['places']:
+        centre=(place['latitude'],place['longitude'])
+        centres[place['id']]=centre
+        region=index.pick(centre)
+        region_id=region['id'] if region else None
+        target=merged.get(region_id) if region_id is not None else None
+        if target is None:
+            target=dict(place,id='place_'+str(len(places)+1),name_region_id=region_id,
+                        departures=0,arrivals=0)
+            places.append(target)
+            if region_id is not None:merged[region_id]=target
+        target['departures']+=place['departures'];target['arrivals']+=place['arrivals']
+        mapped[place['id']]=target['id']
+    assignments={};point_centres={}
+    for event,pair in base['assignments'].items():
+        assignments[event]={side:mapped[identity] if identity else None for side,identity in pair.items()}
+        for side,identity in pair.items():
+            if identity:point_centres[(event,side)]=centres[identity]
+    return dict(places=places,assignments=assignments,point_centres=point_centres)
+
+
 class TripPlaces:
     def __init__(self, database):
         self.tracks = TrackStore(database, readonly=True)
@@ -64,6 +91,8 @@ class TripPlaces:
                                 observations.append(dict(event_id=event['id'],side=side,time=sample[0],point=sample[1]))
         result = cluster_endpoints(observations,regions)
         assignments = result.pop('assignments')
+        point_centres=result.pop('point_centres')
+        for sample in observations:sample['place_point']=point_centres[(sample['event_id'],sample['side'])]
         votes=defaultdict(Counter)
         by_id={p['id']:p for p in result['places']}
         for sample in observations:

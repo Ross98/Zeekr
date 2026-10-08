@@ -9,7 +9,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
    if(route.request().method()==='POST'){
     const body=route.request().postDataJSON();
     if(body.action==='place-name-preview'){
-     previews.push(body);await route.fulfill({json:{context:body.context,preview_token:'preview-'+previews.length,affected_count:2,affected:[{id:'report-trip',sides:['start'],within_range:true}],shape:body.shape,vertex_count:body.vertices.length,conflicts:conflict?[{name:'相邻车库',shape:'polygon'}]:[]}});return;
+     previews.push(body);await route.fulfill({json:{context:body.context,preview_token:'preview-'+previews.length,affected_count:2,affected:[{id:'report-trip',sides:['start'],within_range:true}],shape:body.shape,vertex_count:body.vertices.length,conflicts:conflict?[{name:'相邻车库',shape:conflict}]:[]}});return;
     }
     writes.push(body);previous=saved;
     if(body.action==='place-name-save')saved={id:body.region_id||'synthetic-region',name:body.name,shape:body.shape,vertices:body.vertices,latitude:body.vertices[0][0],longitude:body.vertices[0][1]};
@@ -66,7 +66,9 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   await page.getByLabel('标签月份',{exact:true}).fill('2026-08');await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
   await page.getByRole('button',{name:'编辑区域 园区停车场',exact:true}).click();assert.equal(await page.getByLabel('地点名称',{exact:true}).inputValue(),'园区停车场');
   assert.equal(await page.locator('#tag-name-map .leaflet-marker-icon').count(),3);
-  conflict=true;await page.getByRole('button',{name:'预览影响行程',exact:true}).click();await page.getByText(/与 相邻车库 的命名范围重叠/).waitFor();
+  conflict='circle';await page.getByRole('button',{name:'预览影响行程',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'保存地点名称',exact:true}).isDisabled(),false,'Circle overlap allows precise polygon edits');
+  conflict='polygon';await page.getByRole('button',{name:'预览影响行程',exact:true}).click();await page.getByText(/与 相邻车库 的命名范围重叠/).waitFor();
   assert.equal(await page.getByRole('button',{name:'保存地点名称',exact:true}).isDisabled(),true,'Overlapping polygons cannot save');
   previousUndo=saved;await page.getByRole('button',{name:'恢复自动名称',exact:true}).click();await page.getByText('暂无已保存区域。',{exact:true}).waitFor();
   await page.getByRole('button',{name:'撤销地点操作',exact:true}).click();await page.getByRole('button',{name:'编辑区域 园区停车场',exact:true}).waitFor();
