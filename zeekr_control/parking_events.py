@@ -4,6 +4,7 @@ from math import asin, cos, radians, sin, sqrt
 
 from .snapshot_archive import BEIJING
 from .vehicle_state import numeric
+from .geocoding import is_trusted_location
 
 
 MAX_GAP_MS = 600000
@@ -198,7 +199,11 @@ def build_events(trips, charges, samples, lower, upper, capacity=None):
                        'parking_status': 'parked' if stationary else 'candidate',
                        'p_gear_samples': sum(row['state'].get('gear') == 'P' for row in parked),
                        'reasons': sorted(reasons), 'reason_labels': [LABELS[key] for key in sorted(reasons)],
-                       'sample_count': len(within), 'gap_count': sum(b-a > MAX_GAP_MS for a, b in zip(timed, timed[1:]))})
+                       'sample_count': len(within), 'gap_count': sum(b-a > MAX_GAP_MS for a, b in zip(timed, timed[1:])),
+                       # Query resolves this private evidence to a name, then removes coordinates.
+                       '_location': next((row['location'] for row in parked
+                                          if is_trusted_location(row.get('location')) and
+                                          row['location']['coordinate_system'] == 'WGS84（社区解释）'), None)})
     events.sort(key=lambda row: row['start_time'], reverse=True)
     return {'events': events, 'parking_count': sum(row['parking_status'] == 'parked' for row in events), 'comparable_count': sum(row['status'] == 'comparable' for row in events),
             'uncertain_count': sum(row['status'] == 'uncertain' for row in events),

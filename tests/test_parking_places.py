@@ -1,0 +1,111 @@
+"""Parking names require parking evidence and the current owner's saved regions."""
+import json
+from pathlib import Path
+import sqlite3
+import tempfile
+import unittest
+
+from zeekr_control.parking_analytics import ParkingAnalytics
+from zeekr_control.personal_store import PersonalStore
+from zeekr_control.tracks import day_bounds
+
+
+class ParkingPlaceTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        root.chmod(0o700)
+        self.database = root / 'tracks.sqlite3'
+        self.store = PersonalStore(root / 'personal.sqlite3')
+        self.lower, _ = day_bounds('2026-09-20')
+        with sqlite3.connect(self.database) as db:
+            db.execute('CREATE TABLE monitor_events(id TEXT,vehicle TEXT,kind TEXT,summary TEXT,created INTEGER)')
+            for identity, start, end, soc in [('a', 0, 5, 70), ('b', 20, 25, 69)]:
+                body = dict(start_time=self.lower+start*60000, end_time=self.lower+end*60000,
+                            start_soc=soc, end_soc=soc, duration_seconds=300, partial=False)
+                db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                           (identity, 'car', 'trip_end', json.dumps(body), body['end_time']))
+        self.database.chmod(0o600)
+        self.raw = dict(position=dict(latitude=108000000, longitude=432000000,
+                                      marsCoordinates=False, posCanBeTrusted=True),
+                        basicVehicleStatus=dict(engineStatus='engine_off', speed=0, speedValidity=True),
+                        additionalVehicleStatus=dict(electricVehicleStatus=dict(ptReady=0, chargeLevel=70,
+                            chargeSts=0, chargerState=0, statusOfChargerConnection=0),
+                            maintenanceStatus=dict(odometer=100)))
+        outer = self
+        class Archive:
+            def iter_records(self, scope, vehicle, lower, upper):
+                for minute in (5, 10, 15, 20):
+                    stamp = outer.lower + minute*60000
+                    raw = dict(outer.raw, updateTime=stamp)
+                    if lower <= stamp < upper:
+                        yield dict(key=str(minute), state_time=stamp, observed_at=stamp,
+                                   flags=list(outer.flags), change='new'), raw
+        self.archive = Archive()
+        self.flags = []
+
+    def save_name(self, owner='owner', vehicle='car', **extra):
+        body = dict(name='自家车库', latitude=30, longitude=120, radius_m=25)
+        body.update(extra)
+        self.store.change(owner, vehicle, 'place_names', 'save', 'garage', body, 0)
+
+    def query(self, owner='owner', store=True):
+        options = dict(store=self.store, owner=owner) if store else {}
+        return ParkingAnalytics(self.archive, self.database, **options).query(
+            'archive-scope', 'car', '2026-09-20', '2026-09-20', 75)['events'][0]
+
+    def test_unnamed_trusted_position_is_not_missing_position(self):
+        row = self.query(store=False)
+        self.assertEqual(row.get('place_label'), '未命名地点')
+
+    def test_saved_name_uses_current_owner_without_current_period_trips_at_that_place(self):
+        self.save_name()
+        row = self.query()
+        self.assertEqual(row['place_label'], '自家车库')
+        self.assertEqual(row['place_source'], 'manual')
+        self.assertNotIn('_location', row)
+        self.assertNotIn('latitude', row)
+        self.assertEqual(self.query(owner='another')['place_label'], '未命名地点')
+
+    def test_saved_radius_is_respected(self):
+        self.save_name(latitude=30.0005)
+        self.assertEqual(self.query()['place_label'], '未命名地点')
+
+    def test_polygon_match_uses_shared_region_rules(self):
+        self.save_name(shape='polygon', vertices=[[29.999,119.999],[29.999,120.001],[30.001,120.001],[30.001,119.999]])
+        self.assertEqual(self.query()['place_label'], '自家车库')
+
+    def test_other_vehicle_and_deleted_names_are_not_reused(self):
+        self.save_name(vehicle='other-car')
+        self.assertEqual(self.query()['place_label'], '未命名地点')
+        self.save_name()
+        self.store.change('owner', 'car', 'place_names', 'delete', 'garage', None, 1)
+        self.assertEqual(self.query()['place_label'], '未命名地点')
+
+    def test_trusted_local_address_is_only_a_nearby_reference(self):
+        with sqlite3.connect(self.database) as db:
+            body = json.loads(db.execute("SELECT summary FROM monitor_events WHERE id='a'").fetchone()[0])
+            body.update(end_address='示例商场', end_location=dict(latitude=30, longitude=120,
+                        valid=True, trusted=True, coordinate_system='WGS84（社区解释）'))
+            db.execute("UPDATE monitor_events SET summary=? WHERE id='a'", (json.dumps(body),))
+        row = self.query()
+        self.assertEqual(row['place_label'], '示例商场附近')
+        self.assertEqual(row['place_source'], 'address')
+        self.save_name()
+        self.assertEqual(self.query()['place_label'], '自家车库')
+
+    def test_untrusted_wrong_system_and_invalid_time_never_receive_saved_name(self):
+        self.save_name()
+        for key, value in [('posCanBeTrusted', False), ('marsCoordinates', True)]:
+            with self.subTest(key=key):
+                original = self.raw['position'][key]
+                self.raw['position'][key] = value
+                self.assertEqual(self.query()['place_label'], '位置未知')
+                self.raw['position'][key] = original
+        self.flags = ['stale']
+        self.assertEqual(self.query()['place_label'], '位置未知')
+
+
+if __name__ == '__main__':
+    unittest.main()

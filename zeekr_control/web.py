@@ -509,7 +509,9 @@ class App:
                 vehicle, context = self._archive_vehicle(), self._insights_context()
                 scope = session_scope(session)
                 capacity = (self.profile or {}).get('battery_capacity_kwh')
-            result = ParkingAnalytics(self.archive_reader, self.database_path).query(
+                owner = account_scope(session)
+            result = ParkingAnalytics(self.archive_reader, self.database_path,
+                                      store=self.personal_store, owner=owner).query(
                 scope, vehicle, *args, capacity)
             with self.lock:
                 if session_scope(self._read_session()) != scope or context != self._insights_context():

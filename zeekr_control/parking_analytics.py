@@ -7,6 +7,8 @@ from .vehicle_state import decode, numeric
 from .parking_events import build_events, time_advances
 from .usage_events import UsageEvents
 from .web_model import parse_location
+from .commute_tags import CommuteTags, _distance
+from .trip_place_names import TripPlaceNames, cached_names
 
 
 MAX_GAP_MS = 600000
@@ -141,9 +143,36 @@ def analyze_parking(samples, lower, upper, capacity=None):
 
 
 class ParkingAnalytics:
-    def __init__(self, archive, database=None):
+    def __init__(self, archive, database=None, *, store=None, owner=None):
         self.archive = archive
         self.database = database
+        self.store = store
+        self.owner = owner
+
+    def _name_events(self, result, vehicle, history, owner):
+        places = []
+        for event in result['events']:
+            position = event.pop('_location', None)
+            event.update(place_label='未命名地点' if position else '位置未知', place_source='unknown')
+            if position:
+                places.append(dict(id=event['id'], latitude=position['latitude'],
+                                   longitude=position['longitude'], label='未命名地点'))
+        if not self.store or not places:
+            return
+        with UsageEvents(self.database).connect() as db:
+            addresses = cached_names(db, vehicle, history) if db is not None else {}
+        for place in places:
+            nearby = min(((_distance((place['latitude'], place['longitude']), value['point']), value['label'])
+                          for value in addresses.values()), default=None)
+            if nearby and nearby[0] <= 150:
+                place['address_label'] = nearby[1]
+        named = TripPlaceNames(self.store).apply(owner, vehicle, dict(places=places),
+                                               CommuteTags(self.store, self.database).rule(owner, vehicle))
+        by_id = {place['id']: place for place in named['places']}
+        for event in result['events']:
+            place = by_id.get(event['id'])
+            if place and place['name_source'] != 'reference':
+                event.update(place_label=place['label'], place_source=place['name_source'])
 
     def query(self, scope, vehicle, start, end, capacity=None, *, context_days=0):
         lower, _ = day_bounds(start)
@@ -176,5 +205,6 @@ class ParkingAnalytics:
                  row['start_time'] in (event['start_time'], event['end_time']))
                 for event in result['events'])]
             result['orphan_count'] = len(result['orphan_sessions'])
+            self._name_events(result, vehicle, events, self.owner or scope)
         result.update(start_date=start, end_date=end)
         return result
