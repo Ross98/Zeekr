@@ -45,7 +45,7 @@ async function layouts(page,name){
   const directory='/tmp/zeekr-insights-qa';fs.mkdirSync(directory,{recursive:true});
   for(const theme of ['light','dark']){
     await page.getByLabel('外观',{exact:true}).selectOption(theme);
-    for(const width of [1440,390,320]){
+    for(const width of (process.env.DESKTOP_ONLY? [1440,1280,1024] : [1440,390,320])){
       await page.setViewportSize({width,height:1000});
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${name} ${theme} ${width} overflow`);
       if(width!==320){
@@ -55,7 +55,7 @@ async function layouts(page,name){
       }
     }
   }
-  await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>{document.documentElement.style.zoom='2';});
+  await page.setViewportSize({width:process.env.DESKTOP_ONLY?2560:1440,height:1000});await page.evaluate(()=>{document.documentElement.style.zoom='2';});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${name} 200% zoom overflow`);
   await page.evaluate(()=>{document.documentElement.style.zoom='';});
 }

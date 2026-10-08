@@ -1,15 +1,18 @@
 // Desktop-only synthetic integration; production archive is never included here.
 const {fixture}=require('./ui_insight_helpers.cjs'),assert=require('node:assert/strict'),fs=require('node:fs');
 (async()=>{const f=await fixture(),{page}=f;try{
-const context=await page.evaluate(()=>state.insights_context);let reads=0,release,posts=[];
+const context=await page.evaluate(()=>state.insights_context),vehicle=await page.evaluate(()=>state.field_reviews.vehicle);let reads=0,release,posts=[];
 const path='additionalVehicleStatus.drivingSafetyStatus.electricParkBrakeStatus';
 const candidate={path,name:'电子驻车',group:'门窗与安全',kind:'enum',pending:true,evidence:'待解释',status:'varied',distinct:2,count:12,
 study:{stage:'cross_checked',definition:'电子驻车状态码，独立行程对照。',test:'检查两种反例。',cross_evidence:{pairs:12,spread:0}},inside:{'"1"':5},outside:{'"0"':6,'"1"':1},unknown:{},displayed_values:['"1"','"0"'],other_values:0,
 transitions:{both:2,state_only:1,field_only:3,gaps:1,unavailable:1},examples:{both:[{before:1789884000000,after:1789884060000,before_value:'"0"',after_value:'"1"',before_state:false,after_state:true}],state_only:[],field_only:[]},proposal:{source:'自动假设，未确认',value_meanings:[{raw:'"0"',meaning:'驻车制动释放',source:'推断映射'},{raw:'"1"',meaning:'驻车制动生效',source:'推断映射'}],meaning:'大胆假设：0=驻车制动释放，1=驻车制动生效。',basis:'两种反例共同保留。',next:'回看反例，必要时推翻假设。'}};
-let data={context,start_date:'2026-09-20',end_date:'2026-09-20',state:'parked',anchor:'',value:'',catalog:217,study_counts:{cross_checked:1},reads:15,valid_samples:12,excluded:1,collapsed:2,boundary_unknown:0,source:'合成归档',target_true:5,target_false:7,target_unknown:0,candidates:[candidate],reviews:{vehicle:'synthetic-car',revision:0,records:[]}};
+let data={context,start_date:'2026-09-20',end_date:'2026-09-20',state:'parked',anchor:'',value:'',catalog:217,study_counts:{cross_checked:1},reads:15,valid_samples:12,excluded:1,collapsed:2,boundary_unknown:0,source:'合成归档',target_true:5,target_false:7,target_unknown:0,candidates:[candidate],reviews:{vehicle,revision:0,records:[]}};
 await page.route('**/api/insights/hypotheses?*',async route=>{reads++;if(reads===2)await new Promise(r=>release=r);await route.fulfill({json:data})});
-await page.route('**/api/field-reviews',async route=>{const body=route.request().postDataJSON();posts.push(body);await route.fulfill({json:{vehicle:'synthetic-car',revision:1,records:[{path,scope:'field',status:'question',meaning:body.meaning,note:body.note}]}})});
-await page.getByRole('button',{name:'假设与验证',exact:true}).click();assert.equal(reads,0);
+await page.route('**/api/field-reviews',async route=>{const body=route.request().postDataJSON();posts.push(body);await route.fulfill({json:{vehicle,revision:1,records:[{path,scope:'field',status:'question',meaning:body.meaning,note:body.note}]}})});
+await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
+await page.waitForFunction(()=>document.querySelectorAll('[data-review-path]').length===217);
+await page.locator('#search').fill(path);await page.locator('[data-review-path]').click();
+await page.locator('#parameter-hypotheses > summary').click();assert.equal(reads,0);
 await page.locator('#hypothesis-start').fill('2026-09-20');await page.locator('#hypothesis-end').fill('2026-09-20');assert.equal(reads,0);
 await page.getByRole('button',{name:'起草假设并寻找证据',exact:true}).click();await page.locator('#hypothesis-meaning').waitFor();
 assert.match(await page.locator('.hypothesis-evidence').innerText(),/中文含义（推断映射）/);assert.match(await page.locator('.hypothesis-evidence').innerText(),/驻车制动生效/);assert.match(await page.locator('.hypothesis-evidence').innerText(),/状态变，参数没变/);assert.match(await page.locator('.hypothesis-evidence').innerText(),/参数变，状态没变/);assert.match(await page.locator('#hypothesis-meaning').inputValue(),/驻车制动/);

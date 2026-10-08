@@ -3,7 +3,9 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
-    await page.getByRole('button',{name:'参数实验室',exact:true}).click();
+    await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
+    await page.locator('#parameter-experiments > summary').click();
+    await page.locator('#lab-all-fields').check();
     for(const label of ['前','后']){
       await page.getByLabel(`${label}样本日期`,{exact:true}).fill('2026-09-20');
       await page.getByRole('button',{name:`读取${label}样本`,exact:true}).click();
@@ -48,11 +50,13 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.waitForFunction(()=>document.querySelector('#lab-note')?.value==='补充研究备注');
     await layouts(page,'parameter-experiments');
     await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
-    await page.getByRole('button',{name:'参数实验室',exact:true}).click();
+    await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
+    await page.locator('#parameter-experiments > summary').click();
+    await page.locator('#lab-all-fields').check();
     await page.getByRole('button',{name:'回看实验',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#lab-note')?.value==='补充研究备注');
     assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/experiments'),'Never promote field review or send vehicle actions');
     assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
-    console.log('UI_PARAMETER_EXPERIMENTS_PASS: before/after samples, field filtering, action/time/notes, save/review/edit/delete/restore, frozen research status, XSS, persistence, themes/mobile/zoom/contrast; no vehicle actions or evidence promotion');
+    console.log('UI_PARAMETER_EXPERIMENTS_PASS: before/after samples, field filtering, action/time/notes, save/review/edit/delete/restore, frozen research status, XSS, persistence, themes/desktop/zoom/contrast; no vehicle actions or evidence promotion');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

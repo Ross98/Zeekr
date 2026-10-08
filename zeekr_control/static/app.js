@@ -41,7 +41,7 @@ const icons = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
 };
-const pages = { overview: '总览', calendar: '用车日历', tracks: '行程与轨迹', energy: '能源与充电', report: '用车周报', car: '车辆', fields: '参数字典', insights: '用车研究', settings: '设置', more: '更多' };
+const pages = { overview: '总览', calendar: '用车日历', tracks: '行程与轨迹', energy: '能源与充电', report: '用车周报', car: '车辆', fields: '参数研究与核实', insights: '用车研究', settings: '设置', more: '更多' };
 const descriptions = { overview: '', calendar: '按日期回看行程、充电与费用，补齐待录记录。', report: '查看每周用车汇总，也可切换月报。', car: '完整参数与状态总览，保留原值、解释依据和来源时间。', energy: '查看当前观测状态、充电记录与计算依据。', tracks: '留住走过的路，也如实保留数据的空白。', fields: '查看中文解释、原始字段与验证状态。', insights: '从历史观测，看懂每一次变化。', settings: '管理本机连接、隐私与轨迹采集。', more: '更多车辆信息与本机设置。' };
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -71,7 +71,7 @@ let sectionTask='';
 function openSectionTask(task){sectionTask=task;render();if(task&&task!=='records')insightsPage.openTool(task);window.scrollTo({top:0,left:0,behavior:'instant'});}
 const insightSections = ['car','energy','tracks','insights','settings','calendar','report'];
 window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,trackSource].join('|');
-const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false},
+const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields},
   navigate:(section,view,date)=>{page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
   openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{page=tool==='ledger'?'energy':'settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
@@ -1137,6 +1137,7 @@ function persistNavigation(){
 }
 function restoreNavigation(snapshot,position=0){
   navigationRestoring=true;restoringQuery=null;
+  if(snapshot.p==='fields')snapshot={...snapshot,p:'insights',t:'parameters'};
   page=snapshot.p==='map'?'overview':snapshot.p||'overview';sectionTask='';
   trackSource=snapshot.s||'local';
   if(page==='tracks'&&snapshot.date)trackDate=snapshot.date;

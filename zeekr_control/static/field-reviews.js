@@ -4,6 +4,20 @@ let reviewFilter = '', reviewSelected = '', reviewVehicle = null, reviewSaving =
 let reviewEditing = false;
 let reviewExternal=null, reviewExternalContext='', reviewContext='';
 const reviewDrafts = new Map();
+let reviewCatalog = [], reviewPanelMount = null, reviewRequested = '';
+
+function setReviewCatalog(fields) {
+  reviewCatalog = fields;
+  if(reviewRequested&&fields.some(f=>f.path===reviewRequested)){reviewSelected=reviewRequested;reviewRequested='';}
+  if ($('#field-results')) renderFields();
+}
+function selectReviewField(path) {
+  if (reviewSaving) return;
+  reviewSelected=path;search=groupFilter=reviewFilter='';unknownOnly=false;
+  reviewRequested=reviewVisibleFields().some(f=>f.path===path)?'':path;
+  reviewEditing=!!reviewDraft()?.dirty;
+  renderFields();
+}
 
 function reviewData() { return state?.field_reviews || {vehicle:null,revision:null,records:[]}; }
 function reviewRecords(path) { return reviewData().records.filter(record => record.path === path); }
@@ -29,6 +43,8 @@ function reviewSync() {
     reviewSelected = '';
     reviewUndo = null;
     reviewEditing = false;
+    reviewCatalog = [];
+    reviewRequested = '';
   }
 }
 function newReviewDraft(field, scope = null) {
@@ -40,7 +56,13 @@ function newReviewDraft(field, scope = null) {
     dirty:false, saved:false, revision:reviewData().revision};
 }
 function reviewVisibleFields() {
-  const fields=(state?.model?.fields || []).filter(f => f.evidence !== '未知' && f.value !== '未知' && f.raw !== '未知');
+  const modelFields=state?.model?.fields || [];
+  const live=modelFields.filter(f => f.evidence !== '未知' && f.value !== '未知' && f.raw !== '未知');
+  const fields=reviewCatalog.length ? reviewCatalog.map(f=>{
+    const current=live.find(v=>v.path===f.path);
+    return {...f,...current,research_only:!current,
+      reference:modelFields.find(v=>v.path===f.path)?.reference||{unit:f.unit,note:f.note,basis:f.basis,sources:[]}};
+  }) : live;
   if(reviewExternal && reviewExternalContext===state?.insights_context && !fields.some(f=>f.path===reviewExternal.path))fields.push(reviewExternal);
   return fields;
 }
@@ -93,9 +115,9 @@ function fieldsPage() {
     ${state.profile?.variant ? `<p class="section-note">本车资料：${esc(state.profile.name)} · ${esc(state.profile.variant)}</p>` : ''}
     <div id="review-progress" class="review-progress" aria-label="人工核实进度"></div>
     <div class="filters"><input type="search" id="search" aria-label="搜索参数" placeholder="搜索中文名称或字段，如：胎压、chargeLevel" value="${esc(search)}"><select class="select" id="group" aria-label="参数分类"><option value="">全部分类</option>${groups.map(g => `<option ${groupFilter===g?'selected':''}>${esc(g)}</option>`).join('')}</select><label class="check"><input type="checkbox" id="unknown" ${unknownOnly?'checked':''}>仅系统待核实</label></div>
-    <p class="section-note">未核实参数也可正常读取、展示和参考；标记仅说明解释尚未确认。枚举按具体原值核实，未知项已隐藏（${Math.max(0,state.model.fields.length-reviewVisibleFields().length)} 项）；有效值返回后恢复展示。</p>
+    <p class="section-note">未返回参数也保留在清单，可研究历史证据；取得有效原值后再人工核实。枚举按具体原值确认。自动假设、实验线索与人工结论分别保存。</p>
     ${reviewData().error ? `<div class="notice error" role="alert">${esc(reviewData().error)}</div>` : ''}
-    <div class="review-workspace"><section class="card review-list" id="field-results"></section><aside class="card review-panel" id="review-panel" aria-label="参数核实面板"></aside></div>`;
+    <div class="review-workspace parameter-workspace"><section class="card review-list" id="field-results"></section><aside class="card review-panel" id="review-panel" aria-label="参数核实面板"></aside></div>`;
 }
 function renderFields(){
   return window.RefreshView?window.RefreshView.preserve($('.review-workspace'),renderFieldsContent):renderFieldsContent();
@@ -105,6 +127,11 @@ function renderFieldsContent(){
   reviewSync();
   const focus = reviewFocusSnapshot();
   const all = reviewVisibleFields(), items = reviewItems();
+  const groupSelect=$('#group');
+  if(groupSelect){
+    const groups=[...new Set(all.map(f=>f.group))];
+    groupSelect.innerHTML='<option value="">全部分类</option>'+groups.map(g=>`<option ${groupFilter===g?'selected':''}>${esc(g)}</option>`).join('');
+  }
   $('#field-results').closest('.review-workspace')?.classList.toggle('compact',items.length<=3);
   if (!all.some(f => f.path === reviewSelected)) reviewSelected = '';
   const counts = Object.fromEntries(Object.keys(reviewLabels).map(key => [key,all.filter(f => reviewStatus(f) === key).length]));
@@ -139,10 +166,14 @@ function renderReviewPanel(){
   return window.RefreshView?window.RefreshView.preserve($('.review-workspace'),renderReviewPanelContent):renderReviewPanelContent();
 }
 function renderReviewPanelContent(){
+  try { renderReviewPanelBody(); } finally { reviewPanelMount?.(reviewSelected); }
+}
+function renderReviewPanelBody(){
   const panel = $('#review-panel');
   if (!panel) return;
   const field = reviewVisibleFields().find(f => f.path === reviewSelected);
   if (!field) { panel.innerHTML = empty('选择一项参数','从左侧清单开始逐项核实。'); return; }
+  if(field.research_only&&!reviewDraft()?.evidence)reviewEditing=false;
   if (!reviewEditing) {
     panel.dataset.path=field.path;
     const records = reviewRecords(field.path), status = reviewStatus(field);
@@ -217,7 +248,8 @@ function reviewRestoreFocus(focus) {
 }
 function reviewNext(items, path) {
   const index = items.findIndex(f => f.path === path);
-  const next = items.slice(index+1).concat(items.slice(0,index)).find(f => f.path !== path);
+  const next = items.slice(index+1).concat(items.slice(0,index)).find(f =>
+    f.path !== path && (!f.research_only || reviewDrafts.get(reviewDraftKey(f.path))?.evidence));
   if (next) reviewSelected = next.path;
 }
 async function saveReview(action = 'save', next = false, override = null) {
@@ -274,7 +306,13 @@ function handleReviewAction(target) {
     reviewFilter=target.dataset.reviewFilter; renderFields(); return true;
   }
   if (target.dataset.reviewPath) {
-    if (!reviewSaving) {reviewSelected=target.dataset.reviewPath;renderFields();}
+    if (!reviewSaving) {
+      reviewSelected=target.dataset.reviewPath;
+      reviewRequested='';
+      const field=reviewVisibleFields().find(f=>f.path===reviewSelected);
+      reviewEditing=!field?.research_only&&(reviewEditing||!!reviewDraft()?.dirty);
+      renderFields();
+    }
     return true;
   }
   const operation = target.dataset.reviewAction;

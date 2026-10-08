@@ -14,9 +14,7 @@
       {id:'review',label:'轻量用车回顾',description:'本周参考地点、实际费用与待补记录'}
     ]},
     {name:'参数核实',tools:[
-      {id:'hypotheses',label:'假设与验证',description:'全目录起草解释、查状态变化与两种反例'},
-      {id:'fields',label:'参数字典',description:'中文解释、原始字段与参数核实'},
-      {id:'lab',label:'参数实验室',description:'保存实验、动作、样本与研究备注'}
+      {id:'parameters',label:'参数研究与核实',description:'参数字典、假设与验证、实验依据与人工核实'}
     ]},
     {name:'能源与充电',page:'energy',tools:[
       {id:'charge-comparison',label:'充电曲线对比',description:'对照两次充电的功率、温度与耗时'},
@@ -36,6 +34,68 @@
   ];
   const toolsFor=section=>toolGroups.filter(group=>(group.page || 'insights')===section).flatMap(group=>group.tools);
 
+  function parameterWorkspace({getState,request,esc,active,dictionary,time,review}) {
+    let node=null,owner='',serial=0,attempted='',loading=false,error='';
+    const hypotheses=document.createElement('details'),experiments=document.createElement('details');
+    hypotheses.id='parameter-hypotheses';experiments.id='parameter-experiments';
+    hypotheses.innerHTML='<summary>历史假设、支持与反例 · 全目录分析</summary><div></div>';
+    experiments.innerHTML='<summary>关联实验 · 记录动作与前后样本</summary><div></div>';
+    const hypothesisPage=root.HypothesisLabPage.create({getState,request,escape:esc,active,time,review,
+      integrated:{selected:dictionary.selected,refresh:dictionary.refresh}});
+    const labPage=root.ParameterExperimentsPage.create({getState,request,escape:esc,active,time,integrated:true});
+    function attach(path) {
+      if(!active()||!node?.isConnected)return;
+      const body=node.querySelector('.review-panel-body');
+      if(!body)return;
+      body.append(hypotheses,experiments);
+      hypothesisPage.mount(hypotheses.querySelector(':scope > div'));
+      hypothesisPage.selectField(path);
+      labPage.mount(experiments.querySelector(':scope > div'));
+      labPage.selectField(path);
+    }
+    function status() {
+      const el=node?.querySelector('#parameter-catalog-status');
+      if(el)el.innerHTML=loading?'正在读取公开参数目录…':error?`${esc(error)} <button class="text-link" data-parameter-retry>重试目录</button>`:'';
+    }
+    async function ensure(force=false) {
+      const state=getState(),key=root.VehiclePage.stateKey(state);
+      if(!owner||loading||!force&&attempted===key)return;
+      const identity=owner,token=++serial;attempted=key;loading=true;error='';status();
+      try{
+        const result=await request('/api/vehicle/parameters');
+        if(token!==serial||identity!==getState()?.insights_context)return;
+        if(result.vehicle_key!==getState()?.field_reviews?.vehicle||result.vehicle!==getState()?.vehicle)throw Error('车辆缓存已切换，请重新读取目录。');
+        dictionary.catalog(result.fields);
+      }catch(e){if(token===serial&&identity===getState()?.insights_context)error=e.message;}
+      finally{if(token===serial){loading=false;status();}}
+    }
+    function mount(container) {
+      const changed=owner!==(getState()?.insights_context||'');node=container;
+      if(changed){owner=getState()?.insights_context||'';serial++;attempted='';loading=false;error='';hypotheses.open=experiments.open=false;}
+      dictionary.onPanel(attach);
+      if(!node.querySelector('#field-results'))node.innerHTML='<header class="research-header"><div><h2>参数研究与核实</h2><p>选一个参数，查看解释、研究证据、关联实验与人工结论。</p></div></header><p id="parameter-catalog-status" class="insight-note" role="status"></p><div id="parameter-dictionary"></div>';
+      dictionary.mount(node.querySelector('#parameter-dictionary'));
+      ensure();
+    }
+    function handle(event) {
+      if(!active()||!node?.contains(event.target))return false;
+      if(event.type==='click'&&event.target.closest('[data-parameter-retry]')){ensure(true);return true;}
+      if(hypotheses.contains(event.target)){hypothesisPage.handle(event);return !!event.target.closest('[data-hypothesis]')||event.target.id.startsWith('hypothesis-');}
+      if(experiments.contains(event.target))return labPage.handle(event);
+      return false;
+    }
+    function openExperiment(selection) {
+      if(selection.path)dictionary.select(selection.path);
+      experiments.open=true;labPage.openEvidence(selection);
+      experiments.scrollIntoView({block:'nearest'});
+    }
+    function openPart(part) {
+      if(part==='hypotheses')hypotheses.open=true;
+      if(part==='lab')experiments.open=true;
+    }
+    return {mount,handle,openExperiment,openPart};
+  }
+
   function create({getState,request,escape:esc,active,review,navigate,dictionary}) {
     let tab='research', section='insights', toolQuery='', toolsExpanded=false;
     const groups=()=>toolGroups.filter(group=>(group.page || 'insights')===section);
@@ -45,15 +105,14 @@
     const ledgerPage=root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time});
     const rulesPage=root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time});
     const chargeComparisonPage=root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time});
-    const labPage=root.ParameterExperimentsPage.create({getState,request,escape:esc,active:()=>active() && tab==='lab',time});
-    const hypothesisPage=root.HypothesisLabPage.create({getState,request,escape:esc,active:()=>active()&&tab==='hypotheses',time,review});
+    const parameterPage=parameterWorkspace({getState,request,esc,active:()=>active()&&tab==='parameters',dictionary,time,review});
     const researchPage=root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review,diagnose:()=>navigate('settings','quality')});
     const calendarPage=root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate});
     const lifePage=root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time});
     const qualityPage=root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate});
     const routesPage=root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate});
     const reviewPage=root.TravelInsightsPage.create({kind:'review',getState,request,escape:esc,active:()=>active()&&tab==='review',time,navigate});
-    const views={hypotheses:hypothesisPage,parking:parkingPage,routes:routesPage,review:reviewPage,fields:dictionary,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,lab:labPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
+    const views={parameters:parameterPage,parking:parkingPage,routes:routesPage,review:reviewPage,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
@@ -66,8 +125,8 @@
     }
     function context() {return getState()?.insights_context || '';}
     function openField(path){tab='research';toolQuery='';paint();researchPage.openField(path);}
-    function openExperiment(selection){tab='lab';toolQuery='';paint();labPage.openEvidence(selection);}
-    function openTool(id){if(['calendar','report'].includes(id)&&section!==id){navigate(id,id);return true;}if(!toolsFor(section).some(tool=>tool.id===id))return false;tab=id;toolQuery='';toolsExpanded=false;paint();return true;}
+    function openExperiment(selection){tab='parameters';toolQuery='';paint();parameterPage.openExperiment(selection);}
+    function openTool(id){const part=id;if(['fields','hypotheses','lab'].includes(id))id='parameters';if(['calendar','report'].includes(id)&&section!==id){navigate(id,id);return true;}if(!toolsFor(section).some(tool=>tool.id===id))return false;tab=id;toolQuery='';toolsExpanded=false;paint();if(id==='parameters')parameterPage.openPart(part);return true;}
     function openDate(view,target){
       const destination=toolGroups.find(group=>group.tools.some(tool=>tool.id===view))?.page || 'insights';
       if(destination!==section){navigate(destination,view,target);return;}

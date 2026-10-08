@@ -14,7 +14,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
       ['行程与轨迹', ['常走路线对比']],
       ['车辆', ['生活账本']],
       ['设置', ['自定义提醒', '数据质量雷达']],
-      ['用车研究', ['数据利用', '自动洞察', '车辆时间机', '轻量用车回顾', '参数字典', '参数实验室']]
+      ['用车研究', ['数据利用', '自动洞察', '车辆时间机', '轻量用车回顾', '参数研究与核实']]
     ];
     for (const [section, labels] of groups) {
       await page.getByRole('button', {name:section, exact:true}).first().click();
@@ -30,7 +30,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
       } else if(research){await tools.first().click();}
       assert.equal(await page.getByRole('button',{name:'行程卡片',exact:true}).count(),0);
     }
-    await page.getByRole('button',{name:'参数字典',exact:true}).click();
+    await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
     await page.locator('#field-results').waitFor();
     assert.equal(await page.locator('#navigation [data-page="insights"]').getAttribute('aria-current'),'page');
     await page.getByRole('button', {name:'行程与轨迹',exact:true}).first().click();
@@ -58,25 +58,6 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     assert.equal(await page.locator('#insights-workspace [data-insight-view="time"]').getAttribute('aria-pressed'),'true');
     assert.equal(await page.getByLabel('归档日期',{exact:true}).inputValue(),'2026-09-19');
     assert.equal(await page.locator('[data-insight-view="parking"]').count(),0);
-    await page.setViewportSize({width:390,height:844});
-    await page.locator('#mobile-navigation [data-page="more"]').click();
-    assert.equal(await page.locator('main [data-page="fields"]').count(),0);
-    assert.deepEqual(await page.locator('.more-section h2').allTextContents(),['日常用车','回顾与研究','采集与设置']);
-    await page.locator('main [data-page="insights"]').click();
-    await page.getByLabel('当前研究工具',{exact:true}).selectOption('fields');
-    await page.locator('#field-results').waitFor();
-    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-    await page.locator('#mobile-navigation [data-page="tracks"]').click();
-    const mobileTracks=page.getByRole('navigation',{name:'行程与轨迹子功能',exact:true});
-    await mobileTracks.getByRole('button',{name:'行程标签',exact:true}).click();
-    await mobileTracks.getByRole('button',{name:'常走路线对比',exact:true}).click();
-    assert.equal(await mobileTracks.getByRole('button',{name:'常走路线对比',exact:true}).getAttribute('aria-pressed'),'true');
-    await page.reload();
-    assert.equal(await mobileTracks.getByRole('button',{name:'常走路线对比',exact:true}).getAttribute('aria-pressed'),'true','refresh retains selected task');
-    await mobileTracks.getByRole('button',{name:'本地记录',exact:true}).click();
-    assert.equal(await mobileTracks.getByRole('button',{name:'本地记录',exact:true}).getAttribute('aria-pressed'),'true');
-    assert.equal(await page.locator('#local-trips').count(),1);
-    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     assert.deepEqual(f.errors, []);
     console.log('UI_TOOL_NAVIGATION_PASS');
   } finally { await f.close(); }

@@ -3,7 +3,8 @@
   const beijingInput=stamp=>new Date(stamp+8*3600000).toISOString().slice(0,19);
   const blank=()=>({id:'',title:'',action_text:'',action_time:beijingInput(Date.now()),note:''});
   const warningLabels={action_not_bracketed:'动作时间不在两条采集时间之间，不能据此前后关系推断影响。',vehicle_time_unknown:'样本车辆时间未知。',vehicle_time_not_advanced:'车辆时间没有推进，可能只是重复或修订。',flagged_samples:'样本有陈旧、时间异常等标记。',wide_sample_gap:'两个采集样本相隔超过十分钟，期间可能有其他变化。'};
-  function create({getState,request,escape:esc,active,time}){
+  function create({getState,request,escape:esc,active,time,integrated=false}){
+    let fieldPath='',experimentPath='',allFields=false;
     let node=null,owner='',data=null,attempted=false,loading=false,busy=false,serial=0,detailSerial=0,writeSerial=0;
     let draft=blank(),dirty=false,comparison=null,chosen=new Set(),query='',fieldPage=0,page=0,recordFilter='active',error='',status='';
     const today=()=>beijingInput(Date.now()).slice(0,10);
@@ -20,7 +21,7 @@
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
-      node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">车辆参数实验室</span><h2>记录动作，留住变化线索</h2><p>前后样本、实际动作、研究备注，放进同一条记录。</p></div><span class="insight-source">研究记录 · 不自动核验</span></section>
+      node.innerHTML=`${integrated?'':`<section class="insight-hero"><div><span class="insight-eyebrow">车辆参数实验室</span><h2>记录动作，留住变化线索</h2><p>前后样本、实际动作、研究备注，放进同一条记录。</p></div><span class="insight-source">研究记录 · 不自动核验</span></section>`}${integrated?`<p class="insight-note">当前参数：<span class="research-path">${esc(fieldPath)}</span> · 实验仍是研究线索。</p>${experimentPath&&(dirty||draft.id)?`<p id="lab-draft-owner" class="insight-note">当前实验保留原参数：${esc(experimentPath)}。切换清单不改变实验；新建实验采用当前参数。</p>`:''}<label class="check"><input type="checkbox" id="lab-all-fields" ${allFields?'checked':''}> 跨参数实验：查看全部字段与记录</label>`:''}
         <section class="card insight-panel"><div class="insight-toolbar">${button('读取实验记录','load',!owner||loading)}${button('撤销实验操作','undo',!data?.can_undo)}${button('新建实验','new')}</div>${loading?'<p role="status">正在读取记录…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存后，可管理实验。</p>':!data?'<p>点击“读取实验记录”加载记录后，可保存实验。</p>':''}<p class="insight-note">这里只记录你实际做过的动作，不操作车辆。看到变化不代表动作导致变化，也不会更改参数核验状态或提醒能力。</p></section>
         <section class="card insight-panel"><h3>${draft.id?'编辑实验描述':'选择前后观测'}</h3>${draft.id?'<p class="insight-note">保存后的样本与字段保留原记录；更换样本或增加字段，请新建实验。</p>':`<div class="charge-selectors">${['before','after'].map(side=>{
           const label=side==='before'?'前':'后',list=lists[side];
@@ -40,7 +41,7 @@
       if(b.observed_at-a.observed_at>600000)warnings.push('wide_sample_gap');
       el.innerHTML=warnings.map(code=>`<p class="insight-note insight-warning">${warningLabels[code]}</p>`).join('');
     }
-    const filtered=()=>comparison?.changes.filter(f=>(f.path+' '+f.name+' '+f.group).toLowerCase().includes(query.toLowerCase()))||[];
+    const filtered=()=>comparison?.changes.filter(f=>(!integrated||allFields||f.path===(experimentPath||fieldPath))&&(f.path+' '+f.name+' '+f.group).toLowerCase().includes(query.toLowerCase()))||[];
     function paintChanges(){
       const el=node?.querySelector('#lab-fields');if(!el||!comparison)return;
       const fields=filtered(),pages=Math.max(1,Math.ceil(fields.length/12));fieldPage=Math.min(fieldPage,pages-1);
@@ -49,7 +50,7 @@
     }
     function paintRecords(){
       const el=node?.querySelector('#lab-records');if(!el||!data)return;
-      const rows=data.records.filter(r=>r.deleted===(recordFilter==='deleted')),pages=Math.max(1,Math.ceil(rows.length/10));page=Math.min(page,pages-1);
+      const rows=data.records.filter(r=>r.deleted===(recordFilter==='deleted')&&(!integrated||allFields||r.body.paths.includes(fieldPath))),pages=Math.max(1,Math.ceil(rows.length/10));page=Math.min(page,pages-1);
       el.innerHTML=(rows.slice(page*10,page*10+10).map(r=>`<article class="rule-record" data-lab-record="${esc(r.id)}"><div class="insight-heading"><h4>${esc(r.body.title)}</h4><span class="insight-badge">研究记录 · ${r.body.change_count} 项字段</span></div><p>动作：${esc(r.body.action_text)}<br>动作时间 ${esc(time(r.body.action_at))}</p><div class="insight-actions">${button('回看实验','review',sampleLoading.before||sampleLoading.after,`data-id="${esc(r.id)}"`)}${r.deleted?button('恢复实验','restore',false,`data-id="${esc(r.id)}"`):button('删除实验','delete',false,`data-id="${esc(r.id)}"`)}</div></article>`).join('')||'<p class="insight-empty">没有符合筛选的实验记录</p>')+`<div class="insight-pagination">${button('上一页实验','previous',page===0)}<span>${page+1} / ${pages}</span>${button('下一页实验','next',page+1===pages)}</div>`;
     }
     async function loadRecords(){
@@ -72,12 +73,13 @@
     }
     async function readDetail(identityToRead,preferredPath=''){
       if(busy||sampleLoading.before||sampleLoading.after)return;
-      const identity=owner,token=++detailSerial;busy=true;error='';paint();
+      const identity=owner,token=++detailSerial,sourcePath=fieldPath;busy=true;error='';paint();
       try{
         const result=await request(identityToRead?'/api/insights/experiments/detail?id='+encodeURIComponent(identityToRead):'/api/insights/compare?before='+encodeURIComponent(selected.before)+'&after='+encodeURIComponent(selected.after));
         if(!valid(token,detailSerial,identity))return;if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        if(identityToRead){const b=result.body;draft={id:result.id,title:b.title,action_text:b.action_text,action_time:beijingInput(b.action_at),note:b.note};comparison={before:b.before,after:b.after,changes:b.changes};chosen=new Set(b.paths);}
-        else{comparison=result;chosen=new Set(result.changes.slice(0,40).map(f=>f.path));}
+        experimentPath=preferredPath||sourcePath;
+        if(identityToRead){const b=result.body;if(!b.paths.includes(experimentPath))experimentPath=b.paths[0]||sourcePath;draft={id:result.id,title:b.title,action_text:b.action_text,action_time:beijingInput(b.action_at),note:b.note};comparison={before:b.before,after:b.after,changes:b.changes};chosen=new Set(b.paths);}
+        else{comparison=result;chosen=new Set(result.changes.filter(f=>!integrated||allFields||f.path===sourcePath).slice(0,40).map(f=>f.path));}
         if(identityToRead||preferredPath)dirty=false;
         if(preferredPath){chosen=new Set(result.changes.filter(f=>f.path===preferredPath).map(f=>f.path));query=preferredPath;}
         else query='';fieldPage=0;
@@ -93,15 +95,16 @@
       try{const result=await request('/api/insights/experiments',payload);if(!valid(token,writeSerial,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');data.revision=result.revision;data.can_undo=result.can_undo;
         status=action==='save'?'实验记录已保存。':'实验操作已保存。';
-        if(action==='save'||action==='delete'&&draft.id===id){draft=blank();dirty=false;comparison=null;chosen.clear();}
+        if(action==='save'||action==='delete'&&draft.id===id){draft=blank();experimentPath='';dirty=false;comparison=null;chosen.clear();}
         if(!await loadRecords()&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新读取核对。';
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 填写内容保留；请重新读取核对后操作。';}
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
     }
     function mount(container){
       const changed=owner!==context(),remount=node!==container;node=container;
-      if(changed){owner=context();data=null;draft=blank();dirty=false;comparison=null;chosen.clear();attempted=loading=busy=false;serial++;detailSerial++;writeSerial++;error=status='';for(const side of ['before','after']){lists[side]=null;selected[side]='';sampleLoading[side]=false;sampleSerial[side]++;sampleError[side]='';}}
+      if(changed){owner=context();allFields=false;data=null;draft=blank();experimentPath='';dirty=false;comparison=null;chosen.clear();attempted=loading=busy=false;serial++;detailSerial++;writeSerial++;error=status='';for(const side of ['before','after']){lists[side]=null;selected[side]='';sampleLoading[side]=false;sampleSerial[side]++;sampleError[side]='';}}
       if(changed||remount)paint();
+      if(integrated&&owner&&!attempted)loadRecords();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;const el=event.target;
@@ -114,11 +117,12 @@
       if(event.type==='change'){
         if(el.id.startsWith('lab-sample-')){selected[el.id.endsWith('before')?'before':'after']=el.value;comparison=null;detailSerial++;paint();return true;}
         if(el.dataset.labPath&&!draft.id){if(el.checked&&chosen.size>=40){el.checked=false;status='最多选择 40 项。';}else if(el.checked)chosen.add(el.dataset.labPath);else chosen.delete(el.dataset.labPath);paintChanges();return true;}
+        if(el.id==='lab-all-fields'){allFields=el.checked;fieldPage=page=0;paint();return true;}
         if(el.id==='lab-record-filter'){recordFilter=el.value;page=0;paintRecords();return true;}
       }
       if(event.type!=='click')return false;const target=el.closest('[data-lab]');if(!target||target.disabled)return false;
       const action=target.dataset.lab;
-      if(action==='load')loadRecords();else if(action==='new'){draft=blank();dirty=false;comparison=null;chosen.clear();error=status='';detailSerial++;paint();}
+      if(action==='load')loadRecords();else if(action==='new'){draft=blank();experimentPath='';dirty=false;comparison=null;chosen.clear();error=status='';detailSerial++;paint();}
       else if(action==='samples'||action==='more')loadSamples(target.dataset.side,action==='more');
       else if(action==='compare')readDetail();else if(action==='review')readDetail(target.dataset.id);
       else if(action==='select-filter'){chosen=new Set(filtered().slice(0,40).map(f=>f.path));paintChanges();}
@@ -140,7 +144,8 @@
       }
       paint();readDetail(undefined,selection.path);
     }
-    return {mount,handle,openEvidence};
+    function selectField(path){if(fieldPath===path)return;fieldPath=path;fieldPage=page=0;if(!dirty&&!draft.id&&!busy){query='';experimentPath='';comparison=null;chosen.clear();detailSerial++;}paint();}
+    return {mount,handle,openEvidence,selectField};
   }
   root.ParameterExperimentsPage={create};
 })(window);
