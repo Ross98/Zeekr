@@ -1,6 +1,7 @@
 const assert=require('node:assert/strict');
 const {fixture}=require('./ui_insight_helpers.cjs');
 (async()=>{const f=await fixture({initialResearch:false}),{page}=f;try{
+  await page.waitForFunction(()=>Boolean(state?.insights_context));
   const job='/api/analysis/'+'a'.repeat(32);let starts=0,polls=0,prefer;
   await page.route('**/api/insights/calendar?*',route=>{starts++;prefer=route.request().headers().prefer;return route.fulfill({status:202,json:{analysis_job_url:job,retry_after_ms:1}});});
   await page.route('**'+job,route=>route.fulfill(++polls===1?{status:202,json:{analysis_job_url:job,retry_after_ms:1}}:{json:{context:'synthetic',result:'complete'}}));
