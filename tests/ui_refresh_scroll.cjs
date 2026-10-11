@@ -115,15 +115,19 @@ const {fixture}=require('./ui_insight_helpers.cjs');
           const before=await page.evaluate(()=>({scroll:scrollY,details:[...document.querySelectorAll('main details')].filter(el=>el.checkVisibility()).map(el=>({label:el.querySelector('summary')?.textContent,open:el.open}))}));
           await page.evaluate(()=>pollState(true));
           await page.waitForTimeout(200);
-          const after=await page.evaluate(()=>({scroll:scrollY,details:[...document.querySelectorAll('main details')].filter(el=>el.checkVisibility()).map(el=>({label:el.querySelector('summary')?.textContent,open:el.open}))}));
-          if(Math.abs(after.scroll-before.scroll)>=2)failures.push(`${section}/${tool||'main'} ${width}: refresh scrolled ${before.scroll} -> ${after.scroll}`);
+          const after=await page.evaluate(()=>({scroll:scrollY,maxScroll:Math.max(0,document.documentElement.scrollHeight-innerHeight),details:[...document.querySelectorAll('main details')].filter(el=>el.checkVisibility()).map(el=>({label:el.querySelector('summary')?.textContent,open:el.open}))}));
+          // At the document bottom, a shorter result necessarily clamps scrollY.
+          const expectedAfter=Math.min(before.scroll,after.maxScroll);
+          if(Math.abs(after.scroll-expectedAfter)>=2)failures.push(`${section}/${tool||'main'} ${width}: refresh scrolled ${before.scroll} -> ${after.scroll}, expected ${expectedAfter}`);
           if(JSON.stringify(after.details)!==JSON.stringify(before.details))failures.push(`${section}/${tool||'main'} ${width}: disclosure state changed`);
           checks++;
           recordsRevision++;
           await page.evaluate(()=>pollState(true));
           await page.waitForTimeout(250);
-          const updated=await page.evaluate(()=>({scroll:scrollY,details:[...document.querySelectorAll('main details')].filter(el=>el.checkVisibility()).map(el=>({label:el.querySelector('summary')?.textContent,open:el.open}))}));
-          if(Math.abs(updated.scroll-before.scroll)>=2)failures.push(`${section}/${tool||'main'} ${width}: record update scrolled ${before.scroll} -> ${updated.scroll}`);
+          const updated=await page.evaluate(()=>({scroll:scrollY,maxScroll:Math.max(0,document.documentElement.scrollHeight-innerHeight),details:[...document.querySelectorAll('main details')].filter(el=>el.checkVisibility()).map(el=>({label:el.querySelector('summary')?.textContent,open:el.open}))}));
+          // The next update preserves the reading position after the first refresh.
+          const expectedUpdated=Math.min(after.scroll,updated.maxScroll);
+          if(Math.abs(updated.scroll-expectedUpdated)>=2)failures.push(`${section}/${tool||'main'} ${width}: record update scrolled ${after.scroll} -> ${updated.scroll}, expected ${expectedUpdated}`);
           if(JSON.stringify(updated.details)!==JSON.stringify(before.details))failures.push(`${section}/${tool||'main'} ${width}: record update lost disclosures`);
           checks++;
         }

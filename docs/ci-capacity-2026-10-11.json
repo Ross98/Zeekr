@@ -1,0 +1,202 @@
+{
+  "passed": false,
+  "production_stable": true,
+  "source": "/opt/zeekr-control/releases/20261011-idle-daily-0409c9c",
+  "records": 267840,
+  "source_commit": "0409c9cb051b6ed8ff411a7ada01db4dda5e463c",
+  "units": {
+    "monitor": {
+      "state": {
+        "MainPID": "0",
+        "Result": "success",
+        "NRestarts": "0",
+        "ExecMainStatus": "0",
+        "ControlGroup": "",
+        "MemoryPeak": "80044032",
+        "CPUUsageNSec": "3284647000",
+        "CPUQuotaPerSecUSec": "150ms",
+        "MemoryHigh": "infinity",
+        "MemoryMax": "134217728",
+        "ActiveState": "active",
+        "SubState": "exited"
+      },
+      "memory": {
+        "oom": 0,
+        "oom_kill": 0,
+        "peak_bytes": 80044032
+      },
+      "workload": {
+        "ticks": 20,
+        "ticks_during_image": 20,
+        "reads": 20,
+        "max_tick_seconds": 0.386,
+        "png_bytes": 47867,
+        "task": "monitor",
+        "seconds_total": 20.215
+      }
+    },
+    "month": {
+      "state": {
+        "MainPID": "0",
+        "Result": "success",
+        "NRestarts": "0",
+        "ExecMainStatus": "0",
+        "ControlGroup": "",
+        "MemoryPeak": "129024000",
+        "CPUUsageNSec": "16215102000",
+        "CPUQuotaPerSecUSec": "150ms",
+        "MemoryHigh": "infinity",
+        "MemoryMax": "134217728",
+        "ActiveState": "active",
+        "SubState": "exited"
+      },
+      "memory": {
+        "oom": 0,
+        "oom_kill": 0,
+        "peak_bytes": 129024000
+      },
+      "workload": {
+        "observed_days": 31,
+        "archive_limited": false,
+        "png_bytes": 50172,
+        "task": "month",
+        "seconds_total": 106.501
+      }
+    },
+    "web": {
+      "state": {
+        "MainPID": "0",
+        "Result": "timeout",
+        "NRestarts": "0",
+        "ExecMainStatus": "15",
+        "ControlGroup": "",
+        "MemoryPeak": "201383936",
+        "CPUUsageNSec": "149765313000",
+        "CPUQuotaPerSecUSec": "250ms",
+        "MemoryHigh": "201326592",
+        "MemoryMax": "268435456",
+        "ActiveState": "failed",
+        "SubState": "failed"
+      },
+      "memory": {
+        "oom": 0,
+        "oom_kill": 0,
+        "peak_bytes": 201383936
+      },
+      "workload": null
+    }
+  },
+  "production_before": {
+    "zeekr-control": {
+      "MainPID": "2772869",
+      "Result": "success",
+      "NRestarts": "0",
+      "ExecMainStatus": "0",
+      "ControlGroup": "/system.slice/zeekr-control.service",
+      "MemoryPeak": "20062208",
+      "CPUUsageNSec": "527247000",
+      "CPUQuotaPerSecUSec": "250ms",
+      "MemoryHigh": "201326592",
+      "MemoryMax": "268435456",
+      "ActiveState": "active",
+      "SubState": "running"
+    },
+    "zeekr-monitor": {
+      "MainPID": "2772865",
+      "Result": "success",
+      "NRestarts": "0",
+      "ExecMainStatus": "0",
+      "ControlGroup": "/system.slice/zeekr-monitor.service",
+      "MemoryPeak": "40407040",
+      "CPUUsageNSec": "7000689000",
+      "CPUQuotaPerSecUSec": "150ms",
+      "MemoryHigh": "infinity",
+      "MemoryMax": "134217728",
+      "ActiveState": "active",
+      "SubState": "running"
+    },
+    "zeekr-reports": {
+      "MainPID": "2772867",
+      "Result": "success",
+      "NRestarts": "0",
+      "ExecMainStatus": "0",
+      "ControlGroup": "/system.slice/zeekr-reports.service",
+      "MemoryPeak": "13914112",
+      "CPUUsageNSec": "180634000",
+      "CPUQuotaPerSecUSec": "150ms",
+      "MemoryHigh": "infinity",
+      "MemoryMax": "134217728",
+      "ActiveState": "active",
+      "SubState": "running"
+    }
+  },
+  "production_after": {
+    "zeekr-control": {
+      "MainPID": "2772869",
+      "Result": "success",
+      "NRestarts": "0",
+      "ExecMainStatus": "0",
+      "ControlGroup": "/system.slice/zeekr-control.service",
+      "MemoryPeak": "20062208",
+      "CPUUsageNSec": "683855000",
+      "CPUQuotaPerSecUSec": "250ms",
+      "MemoryHigh": "201326592",
+      "MemoryMax": "268435456",
+      "ActiveState": "active",
+      "SubState": "running"
+    },
+    "zeekr-monitor": {
+      "MainPID": "2772865",
+      "Result": "success",
+      "NRestarts": "0",
+      "ExecMainStatus": "0",
+      "ControlGroup": "/system.slice/zeekr-monitor.service",
+      "MemoryPeak": "41693184",
+      "CPUUsageNSec": "13113612000",
+      "CPUQuotaPerSecUSec": "150ms",
+      "MemoryHigh": "infinity",
+      "MemoryMax": "134217728",
+      "ActiveState": "active",
+      "SubState": "running"
+    },
+    "zeekr-reports": {
+      "MainPID": "2772867",
+      "Result": "success",
+      "NRestarts": "0",
+      "ExecMainStatus": "0",
+      "ControlGroup": "/system.slice/zeekr-reports.service",
+      "MemoryPeak": "13918208",
+      "CPUUsageNSec": "199805000",
+      "CPUQuotaPerSecUSec": "150ms",
+      "MemoryHigh": "infinity",
+      "MemoryMax": "134217728",
+      "ActiveState": "active",
+      "SubState": "running"
+    }
+  },
+  "network_disabled": true,
+  "production_data_used": false,
+  "swap_disabled": true,
+  "pagination_diagnostic": [
+    {
+      "after_record": 0,
+      "rows": 512,
+      "seconds": 0.0005,
+      "plan": [
+        "SEARCH reads USING COVERING INDEX reads_scope_observed (scope_key=? AND vehicle_key=? AND observed_at>? AND observed_at<?)"
+      ]
+    },
+    {
+      "after_record": 260000,
+      "rows": 512,
+      "seconds": 0.0374,
+      "plan": [
+        "SEARCH reads USING COVERING INDEX reads_scope_observed (scope_key=? AND vehicle_key=? AND observed_at>? AND observed_at<?)"
+      ]
+    }
+  ],
+  "harness_sha256": {
+    "scripts/capacity_acceptance.py": "5d623b069a4c98a5cd50f7903dcb036664d8257369beebe7cd1eaa685a28c104",
+    "tests/capacity_workload.py": "3339e4983400b7074912af908cc238ad5c8035e79b5b1a1223585111d37171f4"
+  }
+}

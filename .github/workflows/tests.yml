@@ -1,0 +1,58 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  DESKTOP_ONLY: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+  TZ: Asia/Shanghai
+
+jobs:
+  python:
+    name: Python tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Run Python suite
+        run: python -m unittest discover -s tests
+
+  desktop:
+    name: Desktop tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Install Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Use the locked Chromium in every browser check
+        run: node -e "console.log('CHROMIUM_EXECUTABLE=' + require('playwright').chromium.executablePath())" >> "$GITHUB_ENV"
+      - name: Check JavaScript syntax
+        run: npm run check:js
+      - name: Run JavaScript unit checks
+        run: npm run test:unit
+      - name: Run desktop browser checks
+        run: npm run test:desktop
