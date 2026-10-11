@@ -4,6 +4,7 @@ Copy this script and tests/capacity_workload.py outside the active release.
 Workload imports use --source, so no production code or data is overwritten.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,36 @@ def properties(unit):
         '-p', 'ActiveState', '-p', 'SubState', '-p', 'MemoryPeak', '-p', 'MemoryMax', '-p', 'MemoryHigh',
         '-p', 'CPUQuotaPerSecUSec', '-p', 'CPUUsageNSec', '-p', 'ControlGroup'], text=True)
     return dict(line.split('=', 1) for line in result.splitlines() if '=' in line)
+
+
+def sample_memory(group, sample):
+    memory_stat = None
+    for name, keys in (('memory.events', ('high', 'max', 'oom', 'oom_kill')),
+                       ('memory.stat', ('anon', 'file'))):
+        try:
+            values = dict(line.split() for line in (group / name).read_text().splitlines())
+        except OSError:
+            continue
+        if name == 'memory.stat':
+            memory_stat = {key: int(value) for key, value in values.items()}
+        for key in keys:
+            label = key if name == 'memory.events' else key+'_peak_bytes'
+            sample[label] = max(sample.get(label, 0), int(values.get(key, 0)))
+    try:
+        current = int((group / 'memory.current').read_text())
+        if current > sample.get('current_peak_bytes', 0):
+            sample['current_peak_bytes'] = current
+            sample['stat_at_sampled_peak'] = memory_stat
+    except OSError:
+        pass
+
+
+def workload_passed(row):
+    limit = row['state']['MemoryMax']
+    return (row['state']['Result'] == 'success' and row['state']['ExecMainStatus'] == '0'
+            and row['workload'] is not None and limit.isdigit()
+            and row['memory']['oom'] == 0 and row['memory']['oom_kill'] == 0
+            and 0 < row['memory']['peak_bytes'] <= int(limit))
 
 
 def main():
@@ -81,18 +112,17 @@ def main():
             time.sleep(0.2)
         barrier.touch()
         print('CONCURRENT_WORKLOAD_STARTED', flush=True)
-        deadline = time.monotonic()+600
+        # Workers keep the 600-second budget. Allow systemd termination to be
+        # observed before collecting the failure evidence and cleaning up.
+        deadline = time.monotonic()+630
         while len(final)<len(units):
             for task, unit in units.items():
                 if task in final:
                     continue
                 state = properties(unit)
                 group = Path('/sys/fs/cgroup') / state['ControlGroup'].lstrip('/')
-                events = group / 'memory.events'
-                if events.exists():
-                    values = dict(line.split() for line in events.read_text().splitlines())
-                    for key in ('oom', 'oom_kill'):
-                        samples[task][key] = max(samples[task][key], int(values[key]))
+                if state['ControlGroup']:
+                    sample_memory(group, samples[task])
                 peak = state.get('MemoryPeak', '')
                 if peak.isdigit():
                     samples[task]['peak_bytes'] = max(samples[task]['peak_bytes'], int(peak))
@@ -103,22 +133,29 @@ def main():
                         final[task]['workload'] = json.loads(path.read_text())
                     except (ValueError, OSError):
                         final[task]['workload'] = None
+                    if task == 'web':
+                        try:
+                            final[task]['progress'] = json.loads((root/'web-progress.json').read_text())
+                        except (ValueError, OSError):
+                            final[task]['progress'] = None
                     print(json.dumps({'completed': task, **final[task]}), flush=True)
             if time.monotonic()>deadline:
-                raise TimeoutError('Acceptance exceeded 600 seconds')
+                raise TimeoutError('Workers did not terminate after the 600-second budget')
             time.sleep(1)
         after = {unit: properties(unit) for unit in production}
         stable = all(before[u]['MainPID']==after[u]['MainPID'] and
             before[u]['NRestarts']==after[u]['NRestarts'] and after[u]['ActiveState']=='active'
             for u in production)
-        passed = stable and all(row['state']['Result']=='success' and row['state']['ExecMainStatus']=='0'
-            and row['memory']['oom']==0 and row['memory']['oom_kill']==0
-            and 0 < row['memory']['peak_bytes'] <= int(row['state']['MemoryMax'])
-            and row['workload'] is not None for row in final.values())
+        passed = stable and all(workload_passed(row) for row in final.values())
         evidence = dict(passed=passed, production_stable=stable, source=str(source),
             records=args.records, source_commit=json.loads((source/'release-manifest.json').read_text())['base_version'],
             units=final, production_before=before, production_after=after,
             network_disabled=True, production_data_used=False, swap_disabled=True)
+        evidence['workload_budget_seconds'] = 600
+        evidence['source_archive_reader_sha256'] = hashlib.sha256(
+            (source/'zeekr_control/archive_reader.py').read_bytes()).hexdigest()
+        evidence['harness_sha256'] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                                     for path in (Path(__file__), worker)}
         (output/'result.json').write_text(json.dumps(evidence, indent=2)+'\n')
         print('CAPACITY_ACCEPTANCE_'+('PASS' if passed else 'FAIL'), flush=True)
         if not passed:

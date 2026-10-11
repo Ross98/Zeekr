@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from contextlib import contextmanager
 
 from zeekr_control.archive_reader import ArchiveChanged, ArchiveReader
 from zeekr_control.data_quality import DataQuality
@@ -42,6 +43,29 @@ class ArchiveCapacityTests(unittest.TestCase):
                          self.end, limit=None)), 50001)
         with self.assertRaises(ValueError):
             list(self.reader.iter_metadata('owner', 'car', self.start, self.end, limit=1))
+
+    def test_dense_stream_does_not_rescan_consumed_month_prefix(self):
+        self.populate(20001, step=10000)
+        connect = self.reader.connect
+        steps = [0]
+
+        @contextmanager
+        def measured(month):
+            with connect(month) as db:
+                if db is not None:
+                    def progress():
+                        steps[0] += 1000
+                        return 0
+                    db.set_progress_handler(progress, 1000)
+                yield db
+
+        self.reader.connect = measured
+        count = sum(1 for _ in self.reader.iter_metadata(
+            'owner', 'car', self.start, self.end, limit=None))
+        self.assertEqual(count, 20001)
+        # A linear traversal needs fewer than 50 VM instructions per record.
+        # Repeated prefix scans consume over 3 million for this fixture.
+        self.assertLess(steps[0], 1000000)
 
     def test_new_rows_between_pages_are_excluded_even_when_backdated(self):
         self.populate(1025)

@@ -136,11 +136,24 @@ def web_work(root):
     end = day_bounds('2026-11-01')[0]
     counts = json.loads((root / 'fixture.json').read_text())['records']
     timings = {}
+    progress = dict(records=counts, active_stage=None, stages=[])
+    path = root / 'web-progress.json'
+
+    def checkpoint():
+        temporary = path.with_suffix('.tmp')
+        temporary.write_text(json.dumps(progress, indent=2)+'\n')
+        temporary.replace(path)
+
     for name, query in (
         ('calendar', lambda: UsageCalendar(database, reader).query('owner', 'car', '2026-10-01', now=end)),
         ('month_report', lambda: UsageReports(database, reader).query('owner', 'car', 'month', '2026-10-01', now=end)),
         ('parking', lambda: ParkingAnalytics(reader, database).query('owner', 'car', '2026-10-01', '2026-10-31', 86))):
         begin = time.monotonic()
+        stage = dict(name=name, status='running', started_monotonic=begin,
+                     resources_before=resource_snapshot())
+        progress['active_stage'] = name
+        progress['stages'].append(stage)
+        checkpoint()
         result = query()
         timings[name] = round(time.monotonic()-begin, 3)
         if name == 'calendar':
@@ -149,7 +162,27 @@ def web_work(root):
             assert result['current']['coverage']['reads'] == counts
         else:
             assert result['parking_count'] == 1
+        stage.update(status='completed', seconds=timings[name], resources_after=resource_snapshot())
+        progress['active_stage'] = None
+        checkpoint()
+        del result
     return dict(records=counts, seconds=timings)
+
+
+def resource_snapshot():
+    """cgroup totals include descendants and file cache, not just Python RSS."""
+    try:
+        suffix = next(line[3:] for line in Path('/proc/self/cgroup').read_text().splitlines()
+                      if line.startswith('0::'))
+        group = Path('/sys/fs/cgroup') / suffix.lstrip('/')
+        result = {}
+        for name in ('memory.current', 'memory.peak', 'memory.stat', 'memory.events', 'cpu.stat'):
+            value = (group / name).read_text().strip()
+            result[name] = (int(value) if name in ('memory.current', 'memory.peak') else
+                            {key: int(count) for key, count in (line.split() for line in value.splitlines())})
+        return result
+    except (OSError, StopIteration, ValueError):
+        return None
 
 
 def main():

@@ -1,10 +1,12 @@
 import gzip
+import hashlib
 import json
 import os
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+import tracemalloc
 
 from zeekr_control.snapshot_archive import SnapshotArchive
 from zeekr_control.tracks import day_bounds
@@ -12,6 +14,53 @@ from zeekr_control.archive_reader import ArchiveReader
 
 
 class ArchiveReaderTests(unittest.TestCase):
+    def test_false_small_payload_size_bounds_decompression_memory(self):
+        compressed = gzip.compress(b' ' * (3 * 1024 * 1024))
+        row = dict(encoding='gzip-json-v1', raw_bytes=2,
+                   compressed_json=compressed, digest=hashlib.sha256(b'{}').hexdigest())
+        tracemalloc.start()
+        try:
+            with self.assertRaises(ValueError):
+                ArchiveReader._payload(row)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 256 * 1024)
+
+    def test_gzip_members_padding_crc_and_truncation_remain_validated(self):
+        payload = b'{"answer":42}'
+        row = dict(encoding='gzip-json-v1', raw_bytes=len(payload),
+                   digest=hashlib.sha256(payload).hexdigest())
+        joined = gzip.compress(payload[:5])+b'\0\0'+gzip.compress(payload[5:])+b'\0'
+        self.assertEqual(ArchiveReader._payload(dict(row, compressed_json=joined)), {'answer': 42})
+        encoded = gzip.compress(payload)
+        corrupt = encoded[:-8]+bytes([encoded[-8] ^ 1])+encoded[-7:]
+        for blob in (corrupt, encoded[:-1], encoded+b'garbage'):
+            with self.subTest(blob=blob), self.assertRaises((ValueError, OSError, EOFError)):
+                ArchiveReader._payload(dict(row, compressed_json=blob))
+
+    def test_large_trailing_gzip_input_does_not_allocate_an_unbounded_tail(self):
+        row = dict(encoding='gzip-json-v1', raw_bytes=2,
+                   compressed_json=gzip.compress(b'{}')+b'x'*(1024*1024),
+                   digest=hashlib.sha256(b'{}').hexdigest())
+        tracemalloc.start()
+        try:
+            with self.assertRaises(ValueError):
+                ArchiveReader._payload(row)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertLess(peak, 256*1024)
+
+    def test_large_gzip_members_and_padding_cross_input_chunks(self):
+        value = b''.join(hashlib.sha256(str(i).encode()).digest() for i in range(4096)).hex()
+        payload = json.dumps({'blob': value}).encode()
+        middle = len(payload)//2
+        compressed = gzip.compress(payload[:middle])+b'\0'*70000+gzip.compress(payload[middle:])
+        row = dict(encoding='gzip-json-v1', raw_bytes=len(payload), compressed_json=compressed,
+                   digest=hashlib.sha256(payload).hexdigest())
+        self.assertEqual(ArchiveReader._payload(row), {'blob': value})
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

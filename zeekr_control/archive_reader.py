@@ -1,15 +1,14 @@
 """Bounded, read-only access to private snapshots with explicit public projection."""
 from contextlib import contextmanager
 from datetime import datetime
-import gzip
 import hashlib
-import io
 import json
 import os
 from pathlib import Path
 import re
 import sqlite3
 import stat
+import zlib
 
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
@@ -223,11 +222,37 @@ class ArchiveReader:
 
     @staticmethod
     def _payload(row):
-        if (row['encoding'] != 'gzip-json-v1' or not 0 < row['raw_bytes'] <= MAX_PAYLOAD_BYTES
+        if (row['encoding'] != 'gzip-json-v1' or type(row['raw_bytes']) is not int
+                or not 0 < row['raw_bytes'] <= MAX_PAYLOAD_BYTES
                 or len(row['compressed_json']) > MAX_PAYLOAD_BYTES + 65536):
             raise ValueError('归档正文格式或大小无效。')
-        with gzip.GzipFile(fileobj=io.BytesIO(row['compressed_json'])) as compressed:
-            payload = compressed.read(MAX_PAYLOAD_BYTES + 1)
+        # Native gzip decoding avoids a Python buffered stream for every read.
+        # Bound all members together by the declared size plus one sentinel;
+        # zlib still verifies each member's trailer and CRC before EOF.
+        payload, compressed = bytearray(), row['compressed_json']
+        position, decoder = 0, None
+        try:
+            while position < len(compressed):
+                chunk = compressed[position:position + 65536]
+                if decoder is None:
+                    if position:
+                        padding = len(chunk) - len(chunk.lstrip(b'\0'))
+                        position += padding
+                        chunk = chunk[padding:]
+                        if not chunk:
+                            continue
+                    decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                payload.extend(decoder.decompress(chunk, row['raw_bytes'] + 1 - len(payload)))
+                if len(payload) > row['raw_bytes']:
+                    raise ValueError('归档正文校验失败。')
+                # Feed bounded input so unused_data cannot copy a huge tail.
+                position += len(chunk) - len(decoder.unused_data)
+                if decoder.eof:
+                    decoder = None
+            if decoder is not None:
+                raise ValueError('归档正文校验失败。')
+        except zlib.error:
+            raise ValueError('归档正文校验失败。') from None
         if (len(payload) != row['raw_bytes'] or len(payload) > MAX_PAYLOAD_BYTES or
                 hashlib.sha256(payload).hexdigest() != row['digest']):
             raise ValueError('归档正文校验失败。')
@@ -301,10 +326,12 @@ class ArchiveReader:
                 while True:
                     if self._identity(month) != identity:
                         raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+                    # Seek from the current timestamp, not the original month
+                    # prefix. Keep the id tie-break and frozen high watermark.
                     rows = db.execute('SELECT ' + READ_COLUMNS + ' FROM reads WHERE scope_key=? AND vehicle_key=? '
                         'AND observed_at>=? AND observed_at<? AND id<=? '
                         'AND (observed_at>? OR (observed_at=? AND id>?)) ORDER BY observed_at,id LIMIT ?',
-                        (scope, vehicle, lower, upper, high, after_time, after_time, after_id,
+                        (scope, vehicle, after_time, upper, high, after_time, after_time, after_id,
                          READ_PAGE_SIZE if limit is None else min(READ_PAGE_SIZE, limit-count+1))).fetchall()
                     if not rows:
                         break
