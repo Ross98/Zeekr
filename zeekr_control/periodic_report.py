@@ -154,8 +154,17 @@ class ReportImage:
         return result.stdout
 
 
+def text_only_report(report):
+    return (report['period']=='day' and report['metrics']['trip_count']==0
+            and report['metrics']['charge_count']==0)
+
+
 def markdown(report):
     view=report_view(report)
+    if text_only_report(report):
+        note='未记录到行程或充电，本次仅发送文字总结。'
+        if view['warning']:note+='数据不完整，不能据此确认车辆未使用。'
+        return view['title']+'（'+view['date']+'）：'+note
     return '\n'.join(['## '+view['title'],view['date'],
         ('部分里程' if view['distance_partial'] else '里程')+'：'+view['distance']+' km',view['counts'],
         *[label+('（部分）' if partial else '')+'：'+value for label,value,partial in
@@ -217,6 +226,10 @@ class PeriodicDelivery:
                 (scope,vehicle,now,now,key))
             row=dict(db.execute('SELECT r.*,m.image_prepare_attempts FROM reports r JOIN report_delivery_metadata m USING(id) WHERE id=?',(key,)).fetchone())
         report=json.loads(row['payload']);theme=row['theme']
+        # Apply the policy to the frozen payload, including legacy pending retries.
+        if text_only_report(report) and row['image'] in ('pending','retry','ready'):
+            self.finish(key,'image','skipped',0)
+            row['image']='skipped'
         if now<row['next_at']:return self.status(key)
         if row['text'] in ('sending','unknown','failed'):return self.status(key)
         content=None

@@ -96,7 +96,7 @@ class ScheduledReports:
                 state=self.delivery.lookup(owner,vehicle,job['period'],job['start_date'],job['end_date'])
                 if state:
                     if state['text'] in ('sending','unknown','failed'):continue
-                    if state['text']=='sent' and state['image'] in ('sent','failed','unknown','sending'):continue
+                    if state['text']=='sent' and state['image'] in ('sent','failed','unknown','sending','skipped'):continue
                     if state['next_at']>now:continue
                 report=self.summary.query(scope,vehicle,owner,job['period'],job['date'],now=now,vehicle_time=vehicle_time)
                 # Cancel if account/binding/settings changed during the readonly query.
