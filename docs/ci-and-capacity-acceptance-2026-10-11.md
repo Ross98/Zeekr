@@ -10,6 +10,8 @@
 
 GitHub 在本轮检查时 main 为 `2af79d8`，工作流数量为 0；本地已上线提交 `0409c9c` 尚未 push。用户随后明确授权 commit、push；工作流随本次上传激活。首次 GitHub Ubuntu 检查结果以 Actions 运行记录为准，不能用本地结果代替。
 
+首次 GitHub Actions 运行 [38145337217](https://github.com/Ross98/Zeekr/actions/runs/38145337217)：Ubuntu／Python 3.12 的 1087 项测试通过，93.686 秒；桌面任务在 `ui_tool_navigation.cjs` 的账本懒加载可见性检查失败。测试先前点击后立即查询 `isVisible()`；补充等待目标 visible/hidden 状态，保留原可见性、导航和选中状态断言。本地专项通过，后续 Actions 结果仍以运行记录为准。
+
 规范依据：[GitHub workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)、[Playwright CI](https://playwright.dev/docs/ci)。
 
 ## 生产配置与隔离方法
