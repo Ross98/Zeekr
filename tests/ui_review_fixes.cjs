@@ -36,7 +36,10 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.locator('#notification-health').getByText('部分通知来源暂不可用',{exact:false}).waitFor();
   assert.match(await page.locator('#notification-health').innerText(),/下次计划：日报 2026-10-09 00:10/);
   assert.match(await page.locator('#notification-health').innerText(),/2026-10-07 — 2026-10-07/);
-  assert.deepEqual(f.posts,[]);assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
+  assert.ok(f.posts.every(url=>{
+    const target=new URL(url);
+    return target.origin===f.origin&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(target.pathname)&&url===f.origin+target.pathname;
+  }),'Only same-origin analysis cancellation; no business POST');assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1280,1024]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);}}
   console.log('REVIEW_UI_PASS: focus, shared costs, empty ledger, draft, sampling and read-only notification health');
 }finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});

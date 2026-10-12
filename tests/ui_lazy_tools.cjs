@@ -29,6 +29,9 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.evaluate(()=>insightsPage.openDate('calendar','2026-01-15'));
   await page.evaluate(()=>{state={...state,insights_context:'another-fixture-account'};render();});finishCalendar();
   await page.locator('#calendar-month').waitFor();assert.notEqual(await page.locator('#calendar-month').inputValue(),'2026-01','old-account generic input restoration discarded');
-  assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.posts,[]);
+  assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);assert.ok(f.posts.every(url=>{
+    const target=new URL(url);
+    return target.origin===f.origin&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(target.pathname)&&url===f.origin+target.pathname;
+  }),'Only same-origin analysis cancellation; no business POST');
   console.log('LAZY_TOOLS_PASS: overview resources, failure/retry, late completion, single load, URL reload and account isolation');
 }finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});
