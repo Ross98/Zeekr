@@ -12,6 +12,32 @@ from zeekr_control.storage import save
 
 
 class DeliveryReliabilityTests(unittest.TestCase):
+    def test_health_merges_latest_events_before_limiting_each_page(self):
+        from zeekr_control.monitor import Monitor
+        from zeekr_control.personal_store import PersonalStore
+        from zeekr_control.custom_reminders import Reminders
+        from zeekr_control.tyre_notifications import TyreNotifications
+        from zeekr_control.notification_health import read_health
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);monitor=Monitor(root/'tracks.sqlite3')
+            with monitor.tracks.connect() as db:
+                db.executemany("INSERT INTO monitor_events(id,vehicle,kind,summary,message,created,delivery) VALUES(?,?,'trip_end','{}','safe',?,'sent')",
+                    [(f'vehicle-{i}','v',i*3) for i in range(40)])
+            with PersonalStore(root/'personal.sqlite3').connect(write=True) as db,db:
+                Reminders._tables(db);TyreNotifications._tables(db)
+                db.executemany("INSERT INTO rule_history(id,owner,vehicle,kind,created,delivery) VALUES(?,'o','v','low_soc',?,'sent')",
+                    [(f'custom-{i}',i*3+1) for i in range(40)])
+                db.executemany("INSERT INTO tyre_outbox(id,owner,vehicle,created,bark,wecom) VALUES(?,'o','v',?,'sent','sent')",
+                    [(f'tyre-{i}',i*3+2) for i in range(40)])
+                db.execute("UPDATE tyre_outbox SET bark='failed' WHERE id IN ('tyre-0','tyre-39')")
+                db.execute("INSERT INTO tyre_outbox(id,owner,vehicle,created,bark,wecom) VALUES('other','other','v',1000,'failed','sent')")
+            health=read_health(root,owner='o',vehicle='v',now_ms=2000)
+            self.assertEqual([e['created_at'] for e in health['events']],list(range(119,89,-1)))
+            self.assertEqual(health['events'][0]['id'],'tyre-39')
+            self.assertEqual(health['events'][0]['parts']['bark']['state'],'failed')
+            self.assertEqual(health['summary']['failed_events'],2)
+            self.assertTrue(health['summary']['complete'])
+
     def test_event_revision_tracks_same_length_summary_edits_insert_delete_and_vehicle_move(self):
         from zeekr_control.monitor import Monitor
         with tempfile.TemporaryDirectory() as folder:

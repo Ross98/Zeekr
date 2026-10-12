@@ -75,6 +75,9 @@ def read_health(root,*,owner=None,vehicle=None,context=None,now_ms=None):
     enabled=settings.get('enabled')=='1'
     result['services']['reports'].update(enabled=enabled,next_due=next_times(now) if enabled else None)
     if not enabled:result['services']['reports']['status']='disabled'
+    # Each source is ordered newest first. Its first 30 contain every
+    # possible member of the merged top 30; counts still cover all rows.
+    vehicle_events=[];reminder_events=[];tyre_events=[]
     def count(event):
         parts=[p for p in event['parts'].values() if p]
         states={p['state'] for p in parts};summary=result['summary']
@@ -106,7 +109,7 @@ def read_health(root,*,owner=None,vehicle=None,context=None,now_ms=None):
                             'text':None if kind=='trip_start' or kind=='charge_start' and r['bark'] is not None else part(r['delivery'],r['attempts'],r['next_attempt'],r['sent_at'],r['error']),
                             'image':part(r['image'],r['image_attempts'],r['image_next'],r['image_sent'],r['image_error'],r['image_preparations'])})
                         count(event)
-                        if len(result['events'])<30:result['events'].append(event)
+                        if len(vehicle_events)<30:vehicle_events.append(event)
         except (OSError,ValueError,sqlite3.Error):unavailable('vehicle')
     if owner and vehicle:
         try:
@@ -139,13 +142,13 @@ def read_health(root,*,owner=None,vehicle=None,context=None,now_ms=None):
                     for r in db.execute('SELECT id,kind,created,delivery,error FROM rule_history WHERE owner=? AND vehicle=? ORDER BY created DESC',(owner,vehicle)):
                         event=dict(id=r['id'],kind='custom_reminder',created_at=number(r['created']),parts={'text':part(r['delivery'],error=r['error']),'bark':None,'image':None})
                         count(event)
-                        if len(result['events'])<60:result['events'].append(event)
+                        if len(reminder_events)<30:reminder_events.append(event)
                 if columns(db,'tyre_outbox'):
                     for r in db.execute('SELECT id,created,bark,wecom,attempts_bark,attempts_wecom,next_bark,next_wecom FROM tyre_outbox WHERE owner=? AND vehicle=? ORDER BY created DESC',(owner,vehicle)):
                         event=dict(id=r['id'],kind='tyre_alert',created_at=number(r['created']),parts={'image':None,
                             'bark':part(r['bark'],r['attempts_bark'],r['next_bark']),'text':part(r['wecom'],r['attempts_wecom'],r['next_wecom'])})
                         count(event)
-                        if len(result['events'])<60:result['events'].append(event)
+                        if len(tyre_events)<30:tyre_events.append(event)
         except (OSError,ValueError,sqlite3.Error):unavailable('personal')
     try:
         state=json.loads(load(root/'storage-health.json').get('state','{}'))
@@ -161,6 +164,7 @@ def read_health(root,*,owner=None,vehicle=None,context=None,now_ms=None):
     except (OSError,ValueError,sqlite3.Error):unavailable('auth')
     for alert in result['system_alerts'].values():
         count(dict(parts=alert['parts'],created_at=alert.get('last_attempt_at')))
+    result['events']=vehicle_events+reminder_events+tyre_events
     result['events'].sort(key=lambda event:event['created_at'] or 0,reverse=True)
     result['events']=result['events'][:30]
     result['summary']['complete']=not result.get('unavailable_sources')

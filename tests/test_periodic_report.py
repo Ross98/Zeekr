@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,6 +76,63 @@ class PeriodicReportTests(unittest.TestCase):
             delivery.deliver('scope','car',delivery_report(),sender)
             self.assertEqual(sender.send_markdown.call_count,1)
             self.assertEqual(sender.send_image.call_count,2)
+
+    def test_text_retries_do_not_exhaust_later_image_retry(self):
+        with tempfile.TemporaryDirectory() as folder:
+            sender=Mock();renderer=Mock();renderer.render.return_value=b'PNG'
+            sender.send_markdown.side_effect=[DeliveryError('被拒绝'),DeliveryError('被拒绝'),None]
+            sender.send_image.side_effect=[DeliveryError('被拒绝'),None]
+            now=[1000];path=Path(folder)/'reports.sqlite3'
+            for _ in range(4):
+                # Reopen the durable queue, as a restarted scheduler would.
+                state=PeriodicDelivery(path,renderer,clock=lambda:now[0]).deliver('scope','car',delivery_report(),sender)
+                now[0]+=120000
+            self.assertEqual((state['text'],state['image']),('sent','sent'))
+            self.assertEqual((state['text_attempts'],state['image_attempts']),(3,2))
+            self.assertEqual(sender.send_markdown.call_count,3)
+            self.assertEqual(sender.send_image.call_count,2)
+
+    def test_successful_preparation_preserves_full_image_send_budget(self):
+        with tempfile.TemporaryDirectory() as folder:
+            sender=Mock();renderer=Mock()
+            renderer.render.side_effect=[ImagePreparationError('超时'),ImagePreparationError('超时'),b'PNG',b'PNG',b'PNG']
+            sender.send_image.side_effect=[DeliveryError('被拒绝'),DeliveryError('被拒绝'),None]
+            now=[1000];delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:now[0])
+            for _ in range(5):
+                state=delivery.deliver('scope','car',delivery_report(),sender)
+                now[0]+=120000
+            self.assertEqual((state['text'],state['image']),('sent','sent'))
+            self.assertEqual((state['text_attempts'],state['image_attempts']),(1,3))
+            self.assertEqual(sender.send_markdown.call_count,1)
+
+    def test_legacy_successful_preparations_do_not_block_pending_image(self):
+        from zeekr_control.periodic_report import report_id
+        for image_state,error in [('ready',None),('retry','send_rejected')]:
+            with self.subTest(image=image_state),tempfile.TemporaryDirectory() as folder:
+                sender=Mock();renderer=Mock();renderer.render.return_value=b'PNG'
+                delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:1000)
+                report=delivery_report()
+                key=report_id('scope','car',report['period'],report['start_date'],report['end_date'])
+                with delivery.connect() as db,db:
+                    db.execute('INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)',
+                        (key,json.dumps(report),'light','sent',image_state,3,1,0))
+                    db.execute('INSERT INTO report_delivery_metadata(id,image_prepare_attempts,image_error) VALUES(?,3,?)',(key,error))
+                state=delivery.deliver('scope','car',report,sender)
+                self.assertEqual((state['text'],state['image']),('sent','sent'))
+                self.assertEqual((state['text_attempts'],state['image_attempts']),(3,2))
+                sender.send_markdown.assert_not_called()
+
+    def test_image_send_rejections_still_stop_after_three_attempts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            sender=Mock();renderer=Mock();renderer.render.return_value=b'PNG'
+            sender.send_image.side_effect=DeliveryError('被拒绝')
+            now=[1000];delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:now[0])
+            for _ in range(5):
+                state=delivery.deliver('scope','car',delivery_report(),sender)
+                now[0]+=120000
+            self.assertEqual((state['text'],state['image']),('sent','failed'))
+            self.assertEqual((state['text_attempts'],state['image_attempts']),(1,3))
+            self.assertEqual(sender.send_image.call_count,3)
 
     def test_preparation_backoff_survives_text_success_and_snapshot_is_frozen(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -206,6 +206,9 @@ class PeriodicDelivery:
 
     @staticmethod
     def _recover(db):
+        # Older queues counted successful renders against the preparation
+        # budget. These states prove preparation succeeded before sending.
+        db.execute("UPDATE report_delivery_metadata SET image_prepare_attempts=0 WHERE id IN (SELECT r.id FROM reports r JOIN report_delivery_metadata m USING(id) WHERE r.image='ready' OR (r.image='retry' AND m.image_error='send_rejected'))")
         for part in ('text','image'):
             db.execute('UPDATE report_delivery_metadata SET '+part+"_error='send_interrupted' WHERE id IN (SELECT id FROM reports WHERE "+part+"='sending')")
             db.execute('UPDATE reports SET '+part+"='unknown' WHERE "+part+"='sending'")
@@ -269,6 +272,10 @@ class PeriodicDelivery:
             db.execute('UPDATE reports SET '+part+'=?,next_at=MAX(next_at,?) WHERE id=?',(state,next_at,key))
             db.execute('UPDATE report_delivery_metadata SET '+part+'_error=?,updated_at=?,'+part+"_sent_at=CASE WHEN ?='sent' THEN ? ELSE "+part+'_sent_at END WHERE id=?',
                 (error,self.clock(),state,self.clock(),key))
+            if part=='image' and state=='ready':
+                # Bound consecutive failed/interrupted preparations separately
+                # from sends. Successful rerenders cannot consume send retries.
+                db.execute('UPDATE report_delivery_metadata SET image_prepare_attempts=0 WHERE id=?',(key,))
 
     def send(self,key,part,action,now):
         try:action()
