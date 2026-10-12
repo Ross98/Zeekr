@@ -30,7 +30,7 @@
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
       const today=dateAt(Date.now());
       node.innerHTML=`<header class="calendar-header"><div><h2>用车日历</h2><p>看整月规律，选一天回顾、补账。</p></div><span>北京时间</span></header>
-        <section class="card calendar-controls"><div class="insight-toolbar">${button('上一个月','previous',!month)}<label>日历月份<input id="calendar-month" type="month" value="${esc(month)}" ${saving?'disabled':''}></label>${button('下一个月','next',!month)}${button('读取用车日历','load',!owner||!month)}<label class="calendar-selected-control">回顾日期<input id="calendar-selected" ${saving?'disabled':''} type="date" value="${esc(selected)}" min="${esc(month)}-01" max="${data?.window.end_date||''}"></label></div>${!data?`<label class="calendar-mode-control">显示<select id="calendar-view" ${saving?'disabled':''} aria-label="日历显示内容">${Object.entries(modes).map(([key,label])=>`<option value="${key}" ${mode===key?'selected':''}>${label}</option>`).join('')}</select></label>`:''}${!data&&!loading&&owner?'<p class="insight-note">选择月份，点击“读取用车日历”。</p>':''}${loading?'<p role="status">正在读取本月观测…</p>':''}${error?`<p role="alert" class="notice error">${esc(error)}${data?' · 保留上次结果与原月份。':''}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存后，可查看日历。</p>':''}</section>
+        <section class="card calendar-controls"><div class="insight-toolbar">${button('上一个月','previous',!month)}<label>日历月份<input id="calendar-month" type="month" value="${esc(month)}" ${saving?'disabled':''}></label>${button('下一个月','next',!month)}${button('读取用车日历','load',!owner||!month)}<label class="calendar-selected-control">回顾日期<input id="calendar-selected" ${saving?'disabled':''} type="date" value="${esc(selected)}" min="${esc(month)}-01" max="${data?.window.end_date||''}"></label></div>${!data?`<label class="calendar-mode-control">显示<select id="calendar-view" ${saving?'disabled':''} aria-label="日历显示内容">${Object.entries(modes).map(([key,label])=>`<option value="${key}" ${mode===key?'selected':''}>${label}</option>`).join('')}</select></label>`:''}${!data&&!loading&&owner?'<p class="insight-note">选择月份，点击“读取用车日历”。</p>':''}${loading?button('停止分析','stop')+'<p role="status">正在读取本月观测…</p>':''}${error?`<p role="alert" class="notice error">${esc(error)}${data?' · 保留上次结果与原月份。':''}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存后，可查看日历。</p>':''}</section>
         ${root.recallYearPanel?root.recallYearPanel():''}${data?`${monthSummary()}<div class="calendar-layout"><section class="card insight-panel calendar-panel"><div class="calendar-month-heading"><h3 id="calendar-result-month">${esc(data.window.start_date.slice(0,7))} · 月历</h3><label class="calendar-mode-control">显示<select id="calendar-view" ${saving?'disabled':''} aria-label="日历显示内容">${Object.entries(modes).map(([key,label])=>`<option value="${key}" ${mode===key?'selected':''}>${label}</option>`).join('')}</select></label></div><div class="calendar-week" aria-hidden="true">${['一','二','三','四','五','六','日'].map(day=>`<span>周${day}</span>`).join('')}</div><div class="calendar-grid" role="group" aria-label="按日期查看用车记录">${Array.from({length:data.weekday_offset},()=>'<span aria-hidden="true"></span>').join('')}${data.days.map(day=>{
           const label=`${day.date}${day.date===today?'，今天':''}，有效里程 ${number(day.distance_km)} 公里，用车时长 ${duration(day.duration_seconds)}，行程 ${day.trip_count} 趟，充电 ${day.charge_count} 次，停车观测 ${day.parked_samples} 条，待补账 ${day.pending_count} 次，${coverage[day.coverage]}`;
           return `<button id="calendar-day-${day.date}" data-calendar-day="${day.date}" aria-label="${label}" aria-pressed="${selected===day.date}" ${day.date===today?'aria-current="date"':''} style="${distanceStyle(day)}" class="calendar-day ${day.coverage} ${dayLevel(day)} ${mode==='pending'&&!day.pending_count?'calendar-muted':''} ${day.pending_count?'calendar-needs-bill':''}"><span class="calendar-date"><strong>${Number(day.date.slice(-2))}</strong>${day.date===today?'<small>今天</small>':''}${dayConsumption(day)}</span>${dayValue(day)}<span class="calendar-flags">${day.trip_count?`<span class="calendar-trip"><span>行程</span><span class="calendar-count">${day.trip_count} 趟</span></span>`:''}${day.charge_count?`<span class="calendar-charge"><span>充电</span><span class="calendar-count">${day.charge_count} 次</span></span>`:''}</span>${day.pending_count?`<span class="calendar-pending">待补 ${day.pending_count}</span>`:''}${marks[day.coverage]?`<span class="calendar-coverage">${marks[day.coverage]}</span>`:!day.trip_count&&!day.charge_count&&!day.parked_samples?'<span class="calendar-coverage">有观测</span>':''}${dayDuration(day)}</button>`;
@@ -144,10 +144,11 @@
       const trip=event.kind==='trip_end';
       el.innerHTML=`<section class="calendar-inline-detail"><div class="insight-heading"><h3>${trip?'行程':'充电'}详情${event.cross_midnight?' · 跨午夜':''}</h3><span class="insight-badge">${event.partial?'部分记录':'完整记录'}</span></div><p>起点 ${esc(time(event.start_time))}<br>终点 ${esc(time(event.end_time))}</p><div class="insight-metrics"><div><span>${trip?'整趟里程':'充电类型'}</span><strong>${trip?number(event.distance_km)+' km':({ac:'交流',dc:'直流'}[event.charge_mode]||'未知')}</strong></div><div><span>整段观测时长</span><strong>${number(event.duration_seconds===null?null:event.duration_seconds/60)} 分钟</strong></div><div><span>起止 SOC</span><strong>${number(event.start_soc)}% → ${number(event.end_soc)}%</strong></div><div><span>SOC 电量估算</span><strong>${number(event.estimated_kwh)} kWh</strong></div></div>${costReading(event.energy_cost)}<p class="insight-note">${event.partial?'起止或过程存在缺失，不能按完整记录理解。':'记录未标记为部分，不表示位置轨迹完整。'} 以上为整条事件摘要，不按本日时长分摊里程或电量。SOC 电量仅为容量与 SOC 变化换算，不是电表计量；无有效证据时显示未知。</p></section>`;
     }
-    function invalidate(){serial++;data=null;attempted=loading=false;billEvent=billError=billStatus='';error=selected=eventId='';eventPage=0;paint();}
+    let analysisController=null;
+    function invalidate(){analysisController?.abort();serial++;data=null;attempted=loading=false;billEvent=billError=billStatus='';error=selected=eventId='';eventPage=0;paint();}
     async function load(preserveSelection=false){
-      if(!owner||!month)return;const identity=owner,token=++serial,target=month;loading=attempted=true;error='';paint();
-      try{const result=await request('/api/insights/calendar?date='+encodeURIComponent(target+'-01'));
+      if(!owner||!month||loading)return;analysisController=new AbortController();const identity=owner,token=++serial,target=month;loading=attempted=true;error='';paint();
+      try{const result=await request('/api/insights/calendar?date='+encodeURIComponent(target+'-01'),undefined,50000,{signal:analysisController.signal,active});
         if(!valid(token,identity))return;if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         data=result;
         if(!data.days.some(d=>d.date===selected))selected=data.days.find(d=>d.date===dateAt(data.as_of))?.date||data.days.find(d=>d.trip_count||d.charge_count||d.reads)?.date||data.days[0].date;
@@ -160,8 +161,8 @@
     function mount(container){
       const changed=owner!==context(),recordsChanged=!saving&&(personalRevision!==root.recallPersonalRevision||tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision),remount=node!==container;node=container;
       if(changed||recordsChanged){personalRevision=root.recallPersonalRevision;tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;}
-      if(changed){writeSerial++;saving=false;billEvent=billAmount=billError=billStatus='';owner=context();data=null;selected=eventId='';eventPage=0;attempted=loading=false;error='';serial++;}
-      else if(recordsChanged&&attempted){load(true);}
+      if(changed){analysisController?.abort();writeSerial++;saving=false;billEvent=billAmount=billError=billStatus='';owner=context();data=null;selected=eventId='';eventPage=0;attempted=loading=false;error='';serial++;}
+      else if(recordsChanged&&attempted){analysisController?.abort();serial++;loading=false;load(true);}
       if(changed||remount)paint();
     }
     function handle(event){
@@ -182,6 +183,7 @@
       const action=target.dataset.calendar;
       if(action==='load'){billError=billStatus='';load();}
       else if(action==='bill-save')saveBill();
+      else if(action==='stop'){analysisController?.abort();serial++;loading=false;error='分析已取消。';paint();}
       else if(action==='bill-cancel'){billEvent='';paint();}
       else if(action==='ledger'){
         const event=eventsForDay().find(e=>e.id===eventId&&e.kind==='charge_end');

@@ -138,33 +138,57 @@ function samplingDescription(recording){
 }
 window.samplingDescription=samplingDescription;
 
-async function api(path, data, timeout = 50000) {
+async function api(path, data, timeout = 50000, analysisOptions = {}) {
   const analysis=data===undefined&&/^\/api\/(?:insights\/(?:calendar|parking|report|quality)|charging\/(?:process|statistics|series)|timeline|place-history|year-review|place-corrections)(?:\?|$)/.test(path);
-  const identity=state?.insights_context,deadline=Date.now()+600000;
-  const options=data===undefined?{cache:'no-store',...(analysis?{headers:{Prefer:'respond-async'}}:{})}:{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':state?.request_key||''},body:JSON.stringify(data)};
-  let target=path;
-  while(true){
-    if(analysis&&identity!==state?.insights_context)throw Error('车辆或账号已切换，请重新读取分析。');
-    const remaining=deadline-Date.now();
-    if(analysis&&remaining<=0)throw Error('分析等待超过 10 分钟，请稍后重试。');
-    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),analysis?Math.min(timeout,remaining):timeout);
-    let response,value;
-    try{
-      response=await fetch(target,{...options,signal:controller.signal});
-      if(response.status===401){location.replace('/');throw Error('请重新登录。');}
-      try{value=await response.json();}catch{throw Error('本机服务响应无效，请重试。');}
-      if(!response.ok)throw Error(value.error||'请求失败，请稍后重试。');
-    }catch(error){if(error.name==='AbortError')throw Error('本机服务响应超时，请稍后重试。');throw error;}
-    finally{clearTimeout(timer);}
-    if(analysis&&identity!==state?.insights_context)throw Error('车辆或账号已切换，请重新读取分析。');
-    if(analysis&&response.status===202){
-      if(!/^\/api\/analysis\/[a-f0-9]{32}$/.test(value.analysis_job_url||''))throw Error('本机分析任务地址无效，请重新读取。');
-      target=value.analysis_job_url;
-      const wait=Math.min(5000,Math.max(50,Number(value.retry_after_ms)||1000),Math.max(0,deadline-Date.now()));
-      await new Promise(resolve=>setTimeout(resolve,wait));continue;
+  const identity=state?.insights_context,originPage=page,originTask=sectionTask,deadline=Date.now()+600000;
+  const requestKey=state?.request_key||'';
+  const options=data===undefined?{cache:'no-store',...(analysis?{headers:{Prefer:'respond-async'}}:{})}:{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':requestKey},body:JSON.stringify(data)};
+  const lifetime=new AbortController();
+  let target=path,ticket='',completed=false,cancelReason='分析已取消。';
+  const stop=()=>lifetime.abort();
+  const check=()=>{
+    if(identity!==state?.insights_context){cancelReason='车辆或账号已切换，请重新读取分析。';stop();}
+    else if(page!==originPage||sectionTask!==originTask||analysisOptions.active?.()===false)stop();
+    else if(Date.now()>=deadline){cancelReason='分析等待超过 10 分钟，请稍后重试。';stop();}
+  };
+  const monitor=analysis?setInterval(check,100):null;
+  if(analysis){analysisOptions.signal?.addEventListener('abort',stop,{once:true});window.addEventListener('pagehide',stop);if(analysisOptions.signal?.aborted)stop();}
+  try{
+    while(true){
+      if(analysis){check();if(lifetime.signal.aborted)throw Error(cancelReason);}
+      const controller=new AbortController(),abort=()=>controller.abort();
+      lifetime.signal.addEventListener('abort',abort,{once:true});
+      const timer=setTimeout(abort,analysis?Math.min(timeout,deadline-Date.now()):timeout);
+      let response,value;
+      try{
+        response=await fetch(target,{...options,signal:controller.signal});
+        if(response.status===401){location.replace('/');throw Error('请重新登录。');}
+        try{value=await response.json();}catch{throw Error('本机服务响应无效，请重试。');}
+        if(!response.ok)throw Error(value.error||'请求失败，请稍后重试。');
+        if(analysis&&response.status===202){
+          if(!/^\/api\/analysis\/[a-f0-9]{32}$/.test(value.analysis_job_url||''))throw Error('本机分析任务地址无效，请重新读取。');
+          target=ticket=value.analysis_job_url;
+        }
+      }catch(error){if(error.name==='AbortError')throw Error(lifetime.signal.aborted?cancelReason:'本机服务响应超时，请稍后重试。');throw error;}
+      finally{clearTimeout(timer);lifetime.signal.removeEventListener('abort',abort);}
+      if(analysis){check();if(lifetime.signal.aborted)throw Error(cancelReason);}
+      if(analysis&&response.status===202){
+        const wait=Math.min(5000,Math.max(50,Number(value.retry_after_ms)||1000),Math.max(0,deadline-Date.now()));
+        await new Promise(resolve=>{
+          const finish=()=>{clearTimeout(delay);lifetime.signal.removeEventListener('abort',finish);resolve();};
+          const delay=setTimeout(finish,wait);lifetime.signal.addEventListener('abort',finish,{once:true});
+        });continue;
+      }
+      completed=true;
+      if(data&&value.context===state?.insights_context&&['/api/place-corrections','/api/insights/ledger','/api/insights/trip-tags'].includes(path)&&data.operation!=='preview'&&!String(data.action||'').endsWith('preview'))window.recallInvalidate?.();
+      return value;
     }
-    if(data&&value.context===state?.insights_context&&['/api/place-corrections','/api/insights/ledger','/api/insights/trip-tags'].includes(path)&&data.operation!=='preview'&&!String(data.action||'').endsWith('preview'))window.recallInvalidate?.();
-    return value;
+  }finally{
+    clearInterval(monitor);analysisOptions.signal?.removeEventListener('abort',stop);window.removeEventListener('pagehide',stop);
+    if(ticket&&!completed){
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),2000);
+      try{await fetch(ticket+'/cancel',{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':requestKey},body:'{}',keepalive:true,signal:controller.signal});}catch{}finally{clearTimeout(timer);}
+    }
   }
 }
 

@@ -7,9 +7,11 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+
 import stat
 import zlib
 
+from .analysis_cancel import configure_sqlite, check_cancelled
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
 from .vehicle_parameters import lookup, parameters
@@ -98,6 +100,7 @@ class ArchiveReader:
 
     @contextmanager
     def connect(self, month):
+        check_cancelled()
         month = _month(month)
         year = self.root / month[:4]
         path = year / (month[4:] + '.sqlite3')
@@ -113,6 +116,7 @@ class ArchiveReader:
         _private(path)
         db = sqlite3.connect(path.absolute().as_uri() + '?mode=ro', uri=True, timeout=5)
         try:
+            configure_sqlite(db)
             db.row_factory = sqlite3.Row
             db.execute('PRAGMA query_only=ON')
             if db.execute('PRAGMA user_version').fetchone()[0] != 1:
@@ -233,6 +237,7 @@ class ArchiveReader:
         position, decoder = 0, None
         try:
             while position < len(compressed):
+                check_cancelled()
                 chunk = compressed[position:position + 65536]
                 if decoder is None:
                     if position:
@@ -324,6 +329,7 @@ class ArchiveReader:
                 # long analytics must not hold up the monitor's archive commits.
                 after_time, after_id = lower, 0
                 while True:
+                    check_cancelled()
                     if self._identity(month) != identity:
                         raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
                     # Seek from the current timestamp, not the original month
@@ -336,6 +342,7 @@ class ArchiveReader:
                     if not rows:
                         break
                     for row in rows:
+                        check_cancelled()
                         count += 1
                         if limit is not None and count > limit:
                             raise ValueError('归档观测超过 %d 条，请缩小日期范围。' % limit)

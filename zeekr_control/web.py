@@ -1,5 +1,6 @@
 """Loopback-only Web UI and shared background cached-position collection."""
 import hashlib
+from datetime import datetime
 import hmac
 import ipaddress
 import os
@@ -41,7 +42,9 @@ from .storage_health import StorageHealth, severity
 from .charging_analytics import ChargingAnalytics
 from .vehicle_parameters import parameters
 from .archive_reader import ArchiveReader, ArchiveChanged
+from .snapshot_archive import BEIJING
 from .analysis_work import AnalysisCapacity
+from .analysis_cancel import check_cancelled
 from .analysis_jobs import AnalysisJobs, JobsBusy
 from .parking_analytics import ParkingAnalytics
 from .usage_reports import UsageReports
@@ -537,13 +540,17 @@ class App:
             return ReadContext(session_scope(session), account_scope(session), vehicle,
                                self._insights_context(), int(time.time()*1000))
 
-    def _check_context(self, context):
+    def _context_matches(self, context):
         with self.lock:
             session = self._read_session()
             self._restore_snapshot(session)
-            if (session_scope(session) != context.scope or self._archive_vehicle() != context.vehicle
-                    or self._insights_context() != context.context):
-                raise ValueError('账号或车辆已切换，请重新读取。')
+            return (session_scope(session) == context.scope and self._archive_vehicle() == context.vehicle
+                    and self._insights_context() == context.context)
+
+    def _check_context(self, context):
+        check_cancelled()
+        if not self._context_matches(context):
+            raise ValueError('账号或车辆已切换，请重新读取。')
 
     def _analysis_revision(self, context):
         personal = self.personal_store.revisions(context.owner, context.vehicle,
@@ -607,7 +614,7 @@ class App:
         self._check_context(context)
         return result
 
-    def start_analysis(self, read):
+    def start_analysis(self, read, key=None):
         context = self._read_context(allow_archive=True)
         identity = (context.scope, context.owner, context.vehicle, context.context)
         def guarded():
@@ -624,7 +631,18 @@ class App:
                 return 503, {'error':str(exc),'code':'analysis_capacity'}
             except ValueError:
                 return 400, {'error':'日期、参数或账号状态已变化，请重新读取。'}
-        return self.analysis_jobs.submit(identity, guarded)
+        revision = repr((datetime.fromtimestamp(context.now/1000, BEIJING).strftime('%Y-%m-%d'),
+                         self._analysis_revision(context),
+                         self.archive_reader._freeze(context.scope, context.vehicle, '999912'))) if key is not None else None
+        return self.analysis_jobs.submit(identity, guarded, key=(key, revision) if key is not None else None,
+                                         alive=lambda:self._context_matches(context))
+
+    def cancel_analysis(self, ticket):
+        context = self._read_context(allow_archive=True)
+        identity = (context.scope, context.owner, context.vehicle, context.context)
+        result = self.analysis_jobs.cancel(ticket, identity)
+        self._check_context(context)
+        return result
 
     def poll_analysis(self, ticket):
         context = self._read_context(allow_archive=True)
@@ -1069,7 +1087,10 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
         def send_analysis(self, read):
             if 'respond-async' not in self.headers.get('Prefer',''):
                 return self.send(200, read())
-            ticket = app.start_analysis(read)
+            url = urlsplit(self.path)
+            query = parse_qs(url.query, keep_blank_values=True)
+            key = (url.path, tuple(sorted((name, tuple(values)) for name, values in query.items())))
+            ticket = app.start_analysis(read, key=key)
             return self.send(202, {'analysis_job_url':'/api/analysis/'+ticket,'retry_after_ms':750})
 
         def do_GET(self):
@@ -1279,6 +1300,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
             try:
                 limit = 32768 if self.path == '/api/field-reviews' else 16384 if self.path.startswith(('/api/insights/','/api/trips/manage/','/api/charging/manage/')) else 4096
                 data = self.read_json(limit)
+                if self.path.startswith('/api/analysis/') and self.path.endswith('/cancel'):
+                    return self.send(*app.cancel_analysis(self.path.split('/')[-2]))
                 if self.path == '/api/refresh':
                     return self.send(200, app.refresh(data.get('vehicle', 1)))
                 if self.path in ('/api/trips/manage/preview','/api/trips/manage/execute'):

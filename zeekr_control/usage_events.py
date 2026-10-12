@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import sqlite3
 
+from .analysis_cancel import configure_sqlite, check_cancelled
 from .archive_reader import _private
 from .trip_visibility import has_charge_trash, visible_clause
 from .start_evidence import from_summary as start_evidence
@@ -78,6 +79,7 @@ class UsageEvents:
 
     @contextmanager
     def connect(self):
+        check_cancelled()
         if not self.path.exists() and not self.path.is_symlink():
             yield None
             return
@@ -85,6 +87,7 @@ class UsageEvents:
         _private(self.path)
         db = sqlite3.connect(self.path.absolute().as_uri()+'?mode=ro', uri=True, timeout=5)
         try:
+            configure_sqlite(db)
             db.execute('PRAGMA query_only=ON')
             exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_events'").fetchone()
             yield db if exists else None
@@ -109,6 +112,7 @@ class UsageEvents:
                 return {'events': [], 'unreadable_or_undated': 0}
             high = db.execute('SELECT MAX(rowid) FROM monitor_events WHERE vehicle=?', (vehicle,)).fetchone()[0] or 0
             while cursor < high:
+                check_cancelled()
                 # Short bounded reads release SQLite's cursor lock before JSON parsing.
                 rows = db.execute('SELECT rowid,id,kind,CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END,length(CAST(summary AS BLOB)) '
                                   'FROM monitor_events WHERE vehicle=? AND rowid>? AND rowid<=? '
@@ -117,6 +121,7 @@ class UsageEvents:
                 if not rows:
                     break
                 for rowid, identity, kind, encoded, size in rows:
+                    check_cancelled()
                     scanned += 1
                     if scanned > MAX_SCAN:
                         raise ValueError('事件历史过大，需先建立归期索引。')

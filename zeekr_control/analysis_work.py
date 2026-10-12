@@ -8,6 +8,8 @@ from pathlib import Path
 import sqlite3
 import tempfile
 
+from .analysis_cancel import configure_sqlite, check_cancelled
+
 
 MAX_RESULT_BYTES = 4 * 1024 * 1024
 
@@ -23,6 +25,7 @@ class ResultRows(list):
         self.encoded_bytes = 2
 
     def append(self, row):
+        check_cancelled()
         size = len(json.dumps(row, ensure_ascii=False, separators=(',', ':')).encode())+1
         if self.encoded_bytes+size > MAX_RESULT_BYTES:
             raise AnalysisCapacity('分析结果片段过多，请缩小日期范围后重试。')
@@ -39,7 +42,9 @@ class WorkDatabase:
     def __enter__(self):
         try:
             self.path.touch(mode=0o600)
+            check_cancelled()
             self.db = sqlite3.connect(self.path)
+            configure_sqlite(self.db)
             self.db.execute('PRAGMA page_size=4096')
             self.db.execute('PRAGMA journal_mode=OFF')
             self.db.execute('PRAGMA synchronous=OFF')
@@ -91,22 +96,26 @@ class SampleRows:
     def query(self, columns='r.*', suffix=''):
         source = 'canonical c JOIN samples r ON r.id=c.source_id' if self.canonical else 'samples r'
         order = 'c.id' if self.canonical else 'r.observed,r.id'
+        check_cancelled()
         return self.store.db.execute('SELECT '+columns+' FROM '+source+' WHERE '+self.where+
                                      ' ORDER BY '+order+' '+suffix, self.args)
 
     def indexed(self):
         columns = 'c.id,r.*' if self.canonical else 'r.id,r.*'
         for row in self.query(columns):
+            check_cancelled()
             yield row[0], self.store.decode(row[1:])
 
     def __iter__(self):
         for row in self.query():
+            check_cancelled()
             yield self.store.decode(row)
 
     def projected(self, indexed=False):
         """Run calculations need scalar timing, not the full public metadata."""
         columns=('c.id' if self.canonical else 'r.id')+',r.observed,r.stamp,r.fresh,r.soc,r.charging,r.km,r.off,r.speed,r.gear,r.location,r.change'
         for row in self.query(columns):
+            check_cancelled()
             sample=dict(record=dict(observed_at=row[1],state_time=row[2],flags=[] if row[3] else ['invalid'],change=row[11]),
                         state=dict(soc=row[4],charging=None if row[5] is None else bool(row[5]),km=row[6],
                                    off=None if row[7] is None else bool(row[7]),speed=row[8],gear=row[9]),
@@ -140,6 +149,7 @@ class SampleStore(WorkDatabase):
                             'location TEXT, inside_temp, inside_time, change TEXT, flagged INTEGER)')
             def encoded():
                 for sample in self.samples:
+                    check_cancelled()
                     record, state = sample['record'], sample['state']
                     projection = (json.dumps(record, ensure_ascii=False, separators=(',', ':')),
                                   json.dumps(sample.get('location'), ensure_ascii=False, separators=(',', ':')))
@@ -156,6 +166,7 @@ class SampleStore(WorkDatabase):
             self.db.execute('CREATE TABLE canonical (id INTEGER PRIMARY KEY, source_id INTEGER UNIQUE)')
             previous, identity = None, 0
             for source_id,stamp,flagged,change in self.raw().query('r.id,r.stamp,r.flagged,r.change'):
+                check_cancelled()
                 advances=(previous is not None and type(stamp) in (int,float) and type(previous) in (int,float) and stamp>previous)
                 if change == 'repeat' and not advances:
                     continue

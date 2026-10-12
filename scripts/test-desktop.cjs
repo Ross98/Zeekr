@@ -9,7 +9,7 @@ const groups={
     'parking_calendar','parking_calendar_model','parking_manual_start','vehicle_life_history',
     'usage_report_analysis','test_freehand_regions','ui_field_review_rules'],
   smoke:['ui_smoke','ui_status_summary','ui_overview_dashboard'],
-  review:['ui_review_fixes','ui_lazy_tools','ui_async_analysis','ui_overview_dashboard','ui_books_overview',
+  review:['ui_review_fixes','ui_lazy_tools','ui_async_analysis','ui_analysis_cancel','ui_overview_dashboard','ui_books_overview',
     'ui_books_navigation','ui_books_safety','ui_tool_navigation','ui_insights_navigation',
     'ui_parameter_flow','ui_parameter_workspace','ui_refresh_view','ui_refresh_scroll']
 };
