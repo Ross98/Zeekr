@@ -5,14 +5,6 @@
   const time = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '未知';
   const today = () => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   const toolGroups = [
-    {name:'数据分析',tools:[
-      {id:'research',label:'数据利用',description:'全部字段、历史变化、场景分析与证据'},
-      {id:'automatic',label:'自动洞察',description:'近期估算能耗与历史基线对照'}
-    ]},
-    {name:'历史回看',tools:[
-      {id:'time',label:'车辆时间机',description:'历史归档、车况回看、前后参数变化'},
-      {id:'review',label:'轻量用车回顾',description:'本周参考地点、实际费用与待补记录'}
-    ]},
     {name:'参数核实',tools:[
       {id:'parameters',label:'参数研究与核实',description:'参数字典、假设与验证、实验依据与人工核实'}
     ]},
@@ -81,8 +73,42 @@
 
   function parameterWorkspace({getState,request,esc,active,dictionary,time,review,history}) {
     let node=null,owner='',serial=0,attempted='',loading=false,error='',stage='overview',catalogReady=false;
+    let study=null,studyLoading=false,studyError='',studySerial=0,detailSerial=0,detailPath='',detail=null,detailError='',advanced=false;
+    const sevenDays=()=>({start:new Date(Date.now()-6*86400000+8*3600000).toISOString().slice(0,10),end:today()});
+    function studyStatus(){
+      const el=node?.querySelector('#parameter-study-status');if(!el)return;
+      el.textContent=studyLoading?'正在分析近 7 天归档…':studyError||(study?`${study.start_date} 至 ${study.end_date} · 截至 ${time(study.as_of)}。只列观测变化，不推断原因。`:'点击分析后筛出有变化的待研究参数；不会刷新车辆。');
+      const button=node.querySelector('[data-parameter-study]');if(button)button.disabled=studyLoading||!owner;
+    }
+    async function analyze(){
+      if(studyLoading||!owner)return;
+      const token=++studySerial,identity=owner,range=sevenDays();studyLoading=true;studyError='';studyStatus();
+      try{
+        const result=await request(`/api/insights/research?start=${range.start}&end=${range.end}`,undefined,300000,{active});
+        if(token!==studySerial||identity!==getState()?.insights_context)return;
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新分析。');
+        study=result;detail=null;detailPath='';detailSerial++;dictionary.study(result);
+      }catch(e){if(token===studySerial&&identity===getState()?.insights_context)studyError=e.message;}
+      finally{if(token===studySerial){studyLoading=false;studyStatus();}}
+    }
+    function changes(){
+      const el=node?.querySelector('#parameter-changes');if(!el)return;
+      el.innerHTML=`<h3>观测变化</h3>${!study?'<p class="insight-note">先点击“分析近 7 天”，再查看这个参数的变化。</p>':detailError?`<p role="alert">${esc(detailError)} <button class="text-link" data-parameter-detail-retry>重试变化</button></p>`:!detail?'<p role="status">正在读取变化…</p>':`<p class="insight-note">变化发生在两次观测之间；不能确定精确时刻。最多列出前 100 条。</p><div class="parameter-transition-list">${detail.transitions.map(t=>`<article><strong>${esc(t.before_raw)} → ${esc(t.after_raw)}</strong><small>${esc(time(t.from_time))} 至 ${esc(time(t.to_time))}${t.gap?' · 有缺样或时间异常':''}${t.display_limited?' · 原值显示已简化':''}</small></article>`).join('')||'<p>本范围未观察到变化。</p>'}</div>`}
+        `;
+    }
+    async function loadChanges(path,force=false){
+      if(!study||!path||(!force&&detailPath===path))return;
+      const identity=owner,token=++detailSerial;detailPath=path;detail=null;detailError='';changes();
+      try{
+        const result=await request(`/api/insights/research?start=${study.start_date}&end=${study.end_date}&path=${encodeURIComponent(path)}`,undefined,300000,{active});
+        if(token!==detailSerial||identity!==getState()?.insights_context)return;
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
+        detail=result.detail;
+      }catch(e){if(token===detailSerial&&identity===getState()?.insights_context)detailError=e.message;}
+      finally{if(token===detailSerial&&identity===getState()?.insights_context)changes();}
+    }
     const steps=[['overview','1 看参数'],['evidence','2 分析证据'],['experiment','3 操作验证'],['conclusion','4 写结论']];
-    const guidance={overview:'先选参数，再分析历史证据；已有实际观察也可直接写结论。',evidence:'先看支持与反例。需要实际操作核对时进入操作验证，或采用假设写结论。',experiment:'先看关联记录。记录实际动作、选择前后样本，保存后可带证据写结论。',conclusion:'填写解释与依据，再选择保留为有疑问或人工确认；确认不会修改运行解码。'};
+
     const flow=document.createElement('div'),hypotheses=document.createElement('section'),experiments=document.createElement('section');
     flow.id='parameter-flow';hypotheses.id='parameter-hypotheses';experiments.id='parameter-experiments';
     hypotheses.innerHTML='<div></div><button class="button secondary" data-parameter-history>详细历史与场景</button>';
@@ -99,12 +125,13 @@
       if(dictionary.editing())stage='conclusion';
       else if(stage==='conclusion')stage='overview';
       const base=document.createElement('div');base.className='parameter-base';base.append(...body.childNodes);
-      body.replaceChildren(base,hypotheses,experiments);
+      const changePanel=document.createElement('section');changePanel.id='parameter-changes';changePanel.className='parameter-changes';
+      body.replaceChildren(changePanel,base,hypotheses,experiments);
+      changePanel.hidden=!['overview','conclusion'].includes(stage);changes();loadChanges(path);
       base.hidden=!['overview','conclusion'].includes(stage);
       hypotheses.hidden=stage!=='evidence';experiments.hidden=stage!=='experiment';
-      panel.querySelector('.review-panel-footer').hidden=!['overview','conclusion'].includes(stage);
-      const index=steps.findIndex(([key])=>key===stage),next=steps[index+1];
-      flow.innerHTML=`<nav aria-label="参数核实步骤">${steps.map(([key,label])=>`<button data-parameter-step="${key}" aria-current="${key===stage?'step':'false'}" ${key==='conclusion'&&!dictionary.canEdit()?'disabled':''}>${label}</button>`).join('')}</nav><div class="parameter-step-guide"><p>${guidance[stage]}</p>${index?'<button class="text-link" data-parameter-previous>上一步</button>':''}${next?`<button class="button secondary" data-parameter-next="${next[0]}" ${next[0]==='conclusion'&&!dictionary.canEdit()?'disabled':''}>下一步：${next[1].slice(2)}</button>`:''}</div>`;
+      panel.querySelector('.review-panel-footer').hidden=stage!=='conclusion';
+      flow.innerHTML=`<div class="insight-actions"><button class="button secondary" data-parameter-step="overview" aria-current="${stage==='overview'?'step':'false'}">看变化</button><button class="button" data-parameter-step="conclusion" aria-current="${stage==='conclusion'?'step':'false'}" ${!dictionary.canEdit()?'disabled':''}>写结论</button><button class="text-link" data-parameter-advanced aria-expanded="${advanced}">高级研究</button></div><div ${advanced?'':'hidden'}>${[['evidence','假设与反例'],['experiment','记录操作实验']].map(([key,label])=>`<button class="button secondary" data-parameter-step="${key}" aria-current="${stage===key?'step':'false'}">${label}</button>`).join('')}<button class="button secondary" data-parameter-history>完整历史、分布与场景</button><button class="button secondary" data-parameter-archive>原始归档取证</button></div>`;
       panel.querySelector('.card-head').after(flow);
       hypothesisPage.mount(hypotheses.querySelector(':scope > div'));hypothesisPage.selectField(path);
       labPage.mount(experiments.querySelector(':scope > div'));labPage.selectField(path);
@@ -133,14 +160,19 @@
     }
     function mount(container) {
       const changed=owner!==(getState()?.insights_context||'');node=container;
-      if(changed){owner=getState()?.insights_context||'';serial++;attempted='';loading=false;error='';stage='overview';catalogReady=false;}
+      if(changed){owner=getState()?.insights_context||'';serial++;attempted='';loading=false;error='';stage='overview';catalogReady=false;study=null;studyLoading=false;studyError='';studySerial++;detailSerial++;detailPath='';detail=null;detailError='';advanced=false;}
       dictionary.onPanel(attach);
-      if(!node.querySelector('#field-results'))node.innerHTML='<header class="research-header"><div><h2>参数研究与核实</h2><p>选参数、分析证据、记录操作，再保存解释与核实结论。</p></div></header><p id="parameter-catalog-status" class="insight-note" role="status"></p><div id="parameter-dictionary"></div>';
-      dictionary.mount(node.querySelector('#parameter-dictionary'));ensure();
+      if(!node.querySelector('#field-results'))node.innerHTML='<header class="research-header"><div><h2>参数研究与核实</h2><p>先看待研究参数与观测变化，再就地写解释和依据。</p></div></header><div class="insight-actions"><button class="button secondary" data-parameter-study>分析近 7 天</button><button class="text-link" data-parameter-all-history>自选日期与场景分析</button></div><p id="parameter-study-status" class="insight-note" role="status"></p><p id="parameter-catalog-status" class="insight-note" role="status"></p><div id="parameter-dictionary"></div>';
+      dictionary.mount(node.querySelector('#parameter-dictionary'));ensure();studyStatus();
     }
     function handle(event) {
       if(!active()||!node?.contains(event.target))return false;
       if(event.type==='click'){
+        if(event.target.closest('[data-parameter-study]')){analyze();return true;}
+        if(event.target.closest('[data-parameter-detail-retry]')){loadChanges(dictionary.selected(),true);return true;}
+        if(event.target.closest('[data-parameter-advanced]')){advanced=!advanced;dictionary.refresh();return true;}
+        if(event.target.closest('[data-parameter-all-history]')){history('',stage,dictionary.selected());return true;}
+        if(event.target.closest('[data-parameter-archive]')){history(null,stage,dictionary.selected());return true;}
         const step=event.target.closest('[data-parameter-step],[data-parameter-next]');
         if(step){if(!step.disabled)openStage(step.dataset.parameterStep||step.dataset.parameterNext);return true;}
         if(event.target.closest('[data-parameter-previous]')){openStage(steps[Math.max(0,steps.findIndex(([key])=>key===stage)-1)][0]);return true;}
@@ -165,10 +197,10 @@
   }
 
   function create({getState,request,escape:esc,active,review,navigate,dictionary}) {
-    let tab='research', section='insights', toolQuery='', toolsExpanded=false,researchReturn=null;
+    let tab='parameters', section='insights', toolQuery='', toolsExpanded=false,researchReturn=null;
     const groups=()=>toolGroups.filter(group=>(group.page || 'insights')===section);
-    const automaticPage=lazyPage([['AutomaticInsightsPage','automatic-insights.js']],()=>root.AutomaticInsightsPage.create({getState,request,escape:esc,active:()=>active() && tab==='automatic',time,navigate}),{getState,active:()=>active()&&tab==='automatic'});
-    const reportPage=lazyPage([['UsageReportPage','usage-reports.js']],()=>root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time}),{getState,active:()=>active()&&tab==='report'});
+
+    const reportPage=lazyPage([['AutomaticInsightsPage','automatic-insights.js'],['UsageReportPage','usage-reports.js']],()=>root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time}),{getState,active:()=>active()&&tab==='report'});
     const parkingPage=lazyPage([['ParkingPage','parking.js']],()=>root.ParkingPage.create({getState,request,escape:esc,active:()=>active() && tab==='parking',time}),{getState,active:()=>active()&&tab==='parking'});
     const ledgerPage=lazyPage([['ChargeLedgerPage','charge-ledger.js']],()=>root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time}),{getState,active:()=>active()&&tab==='ledger'});
     const rulesPage=lazyPage([['CustomRemindersPage','custom-reminders.js']],()=>root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time}),{getState,active:()=>active()&&tab==='rules'});
@@ -179,9 +211,9 @@
     const lifePage=lazyPage([['VehicleLifePage','vehicle-life.js']],()=>root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time}),{getState,active:()=>active()&&tab==='life'});
     const qualityPage=lazyPage([['DataQualityPage','data-quality.js']],()=>root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate}),{getState,active:()=>active()&&tab==='quality'});
     const routesPage=lazyPage([['TravelInsightsPage','travel-insights.js']],()=>root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate}),{getState,active:()=>active()&&tab==='routes'});
-    const reviewPage=lazyPage([['TravelInsightsPage','travel-insights.js']],()=>root.TravelInsightsPage.create({kind:'review',getState,request,escape:esc,active:()=>active()&&tab==='review',time,navigate}),{getState,active:()=>active()&&tab==='review'});
+
     const costsPage=lazyPage([['BooksOverview','books-overview.js']],()=>root.BooksOverview.create({getState,request,escape:esc,active:()=>active()&&tab==='costs',navigate:(view,date,filter)=>{navigate('books',view,date);if(view==='ledger')ledgerPage.setFilter(filter);}}),{getState,active:()=>active()&&tab==='costs'});
-    const views={costs:costsPage,parameters:parameterPage,parking:parkingPage,routes:routesPage,review:reviewPage,automatic:automaticPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
+    const views={costs:costsPage,parameters:parameterPage,parking:parkingPage,routes:routesPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
@@ -193,11 +225,12 @@
       listSerial++;detailSerial++;compareSerial++;clearTimeout(selectTimer);
     }
     function context() {return getState()?.insights_context || '';}
-    function openField(path){researchReturn=null;tab='research';toolQuery='';paint();researchPage.openField(path);}
-    function openParameterHistory(path,stage,origin){researchReturn={path:origin||path,stage};tab='research';toolQuery='';paint();researchPage.openField(path);}
+    function openField(path){researchReturn={path,stage:'overview'};tab='research';toolQuery='';paint();researchPage.openField(path);}
+    function openParameterHistory(path,stage,origin){researchReturn={path:origin||path,stage};tab=path===null?'time':'research';toolQuery='';paint();if(path)researchPage.openField(path);}
     function openExperiment(selection){tab='parameters';toolQuery='';paint();parameterPage.openExperiment(selection);}
-    function openTool(id){const part=id;if(['fields','hypotheses','lab'].includes(id))id='parameters';if(['calendar','report'].includes(id)&&section!==id){navigate(id,id);return true;}if(!toolsFor(section).some(tool=>tool.id===id))return false;tab=id;toolQuery='';toolsExpanded=false;paint();if(id==='parameters')parameterPage.openPart(part);return true;}
+    function openTool(id){const part=id;if(id==='automatic'||id==='review'){navigate('report','report');return true;}if(id==='research'||id==='time')id='parameters';if(['fields','hypotheses','lab'].includes(id))id='parameters';if(['calendar','report'].includes(id)&&section!==id){navigate(id,id);return true;}if(!toolsFor(section).some(tool=>tool.id===id))return false;tab=id;toolQuery='';toolsExpanded=false;paint();if(id==='parameters')parameterPage.openPart(part);return true;}
     function openDate(view,target){
+      if(view==='automatic'||view==='review'){navigate('report','report',target);return;}
       const destination=toolGroups.find(group=>group.tools.some(tool=>tool.id===view))?.page || 'insights';
       if(destination!==section){navigate(destination,view,target);return;}
       if(view==='costs'){tab=view;paint();costsPage.openDate(target);return;}
@@ -268,12 +301,12 @@
       const content=node.querySelector('.insight-content');
       if(!tab){content.innerHTML='<section class="card insight-panel"><h2>选择子功能</h2><p>从上方快捷入口或这里的工具列表打开。</p></section>';return;}
       if(views[tab]){
-        content.innerHTML=`${tab==='research'&&researchReturn?'<div class="parameter-return"><button class="button secondary" data-insight="return-parameter">返回参数研究</button><span>查看完历史后，返回原参数与操作步骤。</span></div>':''}<div id="${tab}-workspace"></div>`;
+        content.innerHTML=`${['research','time'].includes(tab)&&researchReturn?'<div class="parameter-return"><button class="button secondary" data-insight="return-parameter">返回参数研究</button><span>查看完历史后，返回原参数与操作步骤。</span></div>':''}<div id="${tab}-workspace"></div>`;
         views[tab].mount(node.querySelector(`#${tab}-workspace`));
         restoreFocus(focus);
         return;
       }
-      content.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">车辆时间机</span><h2>回到每一次观测</h2><p>看当时的车况，比较前后的变化。</p></div><span class="insight-source">本机归档 · 北京时间</span></section>
+      content.innerHTML=`${researchReturn?'<div class="parameter-return"><button class="button secondary" data-insight="return-parameter">返回参数研究</button></div>':''}<section class="insight-hero"><div><span class="insight-eyebrow">原始归档取证</span><h2>回到每一次观测</h2><p>看当时的车况，比较前后的变化。</p></div><span class="insight-source">本机归档 · 北京时间</span></section>
         <section class="card insight-panel"><div class="insight-toolbar"><label>归档日期<input id="insight-date" type="date" value="${esc(date)}"></label>${button('查看归档','load',!owner || !date)}<span id="insight-count" role="status">${loading?'正在读取…':loadedDate?`${loadedDate} · 已载入 ${records.length} 条${cursor?'，还有更多':''}`:'选择日期查看'}</span></div>
         <p class="insight-note">按采集日期查找。每条保留独立的车辆时间；重复读取不代表车辆产生新数据。</p>
         ${!owner?'<p class="insight-empty">连接车辆账号并取得当前车辆绑定后，可查看对应归档。</p>':''}
@@ -379,10 +412,10 @@
     }
     function mount(container, nextSection='insights') {
       const changed=context()!==owner, sectionChanged=section!==nextSection, remount=node!==container;
-      if(sectionChanged){researchReturn=null;section=nextSection;tab=section==='insights'?'research':section==='books'?'ledger':['calendar','report'].includes(section)?section:'';toolQuery='';toolsExpanded=false;}
+      if(sectionChanged){researchReturn=null;section=nextSection;tab=section==='insights'?'parameters':section==='books'?'ledger':['calendar','report'].includes(section)?section:'';toolQuery='';toolsExpanded=false;}
       if(changed){researchReturn=null;owner=context();toolQuery='';toolsExpanded=false;reset();}
       node=container;
-      node.classList.toggle('standalone-task',section!=='insights');
+      node.classList.toggle('standalone-task',true);
       if(sectionChanged)node.innerHTML='';
       if(changed || remount || sectionChanged)paint();
       if(views[tab])views[tab].mount(node.querySelector(`#${tab}-workspace`));

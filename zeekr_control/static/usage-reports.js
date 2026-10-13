@@ -25,6 +25,23 @@
     let node=null,owner='',period='week',date=currentDate(),data=null,error='',loading=false,attempted=false,serial=0;
     let dayFilter='',kind='all',quality='all',page=0;
     const context=()=>getState()?.insights_context||'';
+    let places=null,placesError='',placesLoading=false,placesSerial=0;
+    const automatic=root.AutomaticInsightsPage?.create({getState,request,escape:esc,active,time,compact:true,navigate:()=>{}});
+    function placesView(){
+      if(data?.period!=='week')return '';
+      return `<section class="card insight-panel"><div class="insight-heading"><h3>本周地点回顾</h3><button class="button secondary" data-report="places" ${placesLoading?'disabled':''}>读取本周地点</button></div><div id="report-places">${placesLoading?'<p role="status">正在读取地点…</p>':placesError?`<p role="alert">${esc(placesError)}</p>`:places?`<p class="insight-note">${esc(places.window.start_date)} 至 ${esc(places.window.end_date)} · 参考地点不保证真实目的地；没有记录不代表没去过。</p><div class="report-event-list">${places.places.map(p=>`<article><strong>${esc(p.label)}</strong><span>出发 ${p.departures} 次 · 到达 ${p.arrivals} 次</span></article>`).join('')||'<p>暂无可信地点记录。</p>'}</div><p class="insight-note">起点未知 ${places.unknown_departures} 次 · 终点未知 ${places.unknown_arrivals} 次。</p>`:'<p class="insight-note">按需读取本周行程的参考地点。费用与待补账单在费用总览。</p>'}</div></section>`;
+    }
+    async function loadPlaces(){
+      if(!data||data.period!=='week'||placesLoading)return;
+      const token=++placesSerial,identity=owner,selected=data.current.window.start_date;placesLoading=true;placesError='';paint();
+      try{
+        const result=await request(`/api/insights/review?date=${encodeURIComponent(selected)}`);
+        if(token!==placesSerial||identity!==context())return;
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
+        places=result;
+      }catch(e){if(token===placesSerial&&identity===context())placesError=e.message;}
+      finally{if(token===placesSerial){placesLoading=false;paint();}}
+    }
     const valid=(token,identity)=>token===serial&&identity===owner&&identity===context();
     const button=(text,action,disabled=false,extra='')=>`<button class="button secondary" data-report="${action}" ${disabled?'disabled':''} ${extra}>${text}</button>`;
     function events(){return (data?.current.events||[]).filter(row=>(!dayFilter||new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(row.end_time))===dayFilter)&&(kind==='all'||row.kind===kind)&&(quality==='all'||(quality==='partial')===row.partial));}
@@ -65,6 +82,7 @@
         <section class="card insight-panel"><h3>归档覆盖</h3><div class="parking-row-values">${metric('本期有归档读取的日期',c.coverage.days_with_reads,'天',`周期共 ${w.days} 天；有读取不等于全天覆盖`)}${metric('有效不同车辆时间',c.coverage.new_states,'个',`${c.coverage.reads} 次读取 · 重复 ${c.coverage.repeats} 次 · 修订 ${c.coverage.revisions} 次`)}${metric('旧值或异常观测',c.coverage.invalid_or_stale,'次','不算有效新状态')}${metric('上期有归档读取的日期',data.previous.coverage.days_with_reads,'天',`上期共 ${data.previous.window.days} 天`)}</div><p class="insight-note">本期首次读取 ${esc(time(c.coverage.first_read))}，最后读取 ${esc(time(c.coverage.last_read))}。归档覆盖按当前账号统计；事件保留当前车辆已有历史。没有归档不等于没有行程。${data.history_quality.unreadable_or_undated?`另有 ${data.history_quality.unreadable_or_undated} 条车辆历史记录格式或结束时间无效，无法归期（非仅本期）。`:''}</p></section>
         <section class="card insight-panel"><h3>常见出发时段</h3><p class="insight-note">按本期结束行程的已知开始时间统计，含片段。跨午夜行程仍按自身出发时刻计数。</p><div class="report-hours">${Array.from({length:6},(_,i)=>{const count=c.departure_hours.slice(i*4,i*4+4).reduce((a,b)=>a+b,0),max=Math.max(1,...Array.from({length:6},(_,j)=>c.departure_hours.slice(j*4,j*4+4).reduce((a,b)=>a+b,0)));return `<div><span>${String(i*4).padStart(2,'0')}—${String(i*4+3).padStart(2,'0')} 时</span><i aria-hidden="true" style="--bar:${count/max*100}%"></i><strong>${count} 次</strong></div>`;}).join('')}</div></section>
         <section class="card insight-panel"><div class="insight-heading"><h3>本期结束事件${dayFilter?' · '+esc(dayFilter):''}</h3><div class="insight-toolbar"><label>事件类型<select id="report-kind" aria-label="事件类型">${[['all','全部事件'],['trip_end','行程'],['charge_end','充电']].map(([k,v])=>`<option value="${k}" ${kind===k?'selected':''}>${v}</option>`).join('')}</select></label><label>事件完整性<select id="report-quality" aria-label="事件完整性">${[['all','全部记录'],['complete','完整记录'],['partial','片段记录']].map(([k,v])=>`<option value="${k}" ${quality===k?'selected':''}>${v}</option>`).join('')}</select></label></div></div><div id="report-events"></div></section>`:''}`;
+      if(data){const extra=document.createElement('div');extra.innerHTML=placesView()+'<section class="card insight-panel" id="report-automatic"></section>';node.querySelector('#report-observations')?.after(extra);automatic?.mount(node.querySelector('#report-automatic'));}
       paintEvents();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
     }
     function paintEvents(){
@@ -73,7 +91,7 @@
       el.innerHTML=`<p class="insight-note">匹配 ${rows.length} 条</p><div class="report-event-list">${rows.slice(page*12,page*12+12).map(row=>`<article data-report-event="${esc(row.id)}"><div class="insight-heading"><h4>${row.kind==='trip_end'?'行程':'充电'}</h4><span class="insight-badge ${row.partial?'insight-warning':''}">${row.partial?'片段记录':'完整记录'}</span></div><p>${esc(time(row.start_time))} → ${esc(time(row.end_time))}</p><div class="parking-row-values"><span>${row.kind==='trip_end'?'里程':'观测时长'}<strong>${row.kind==='trip_end'?num(row.distance_km)+' km':num(row.duration_seconds===null?null:row.duration_seconds/60)+' 分钟'}</strong></span><span>SOC 端点<strong>${num(row.start_soc)}% → ${num(row.end_soc)}%</strong></span><span>电量估算<strong>${num(row.estimated_kwh)} kWh</strong></span><span>事件记录容量<strong>${num(row.battery_capacity_kwh)} kWh</strong></span></div></article>`).join('')||'<p class="insight-empty">没有符合筛选的结束事件。没有记录不表示车辆未使用。</p>'}</div><div class="insight-pagination">${button('上一页事件','events-previous',page===0)}<span>${page+1} / ${pages}</span>${button('下一页事件','events-next',page+1===pages)}</div>`;
     }
     let analysisController=null;
-    function invalidate(){analysisController?.abort();serial++;data=null;attempted=loading=false;error=dayFilter='';page=0;paint();}
+    function invalidate(){analysisController?.abort();serial++;placesSerial++;places=null;placesError='';placesLoading=false;data=null;attempted=loading=false;error=dayFilter='';page=0;paint();}
     async function load(preserveSelection=false){
       if(!owner||!date||loading)return;analysisController=new AbortController();
       const token=++serial,identity=owner;
@@ -82,7 +100,7 @@
         const result=await request(`/api/insights/report?period=${period}&date=${encodeURIComponent(date)}`,undefined,50000,{signal:analysisController.signal,active});
         if(!valid(token,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        data=result;if(!preserveSelection){dayFilter='';page=0;}
+        data=result;placesSerial++;places=null;placesError='';placesLoading=false;if(!preserveSelection){dayFilter='';page=0;}
       }catch(failure){if(valid(token,identity))error=failure.message;}
       finally{if(valid(token,identity)){loading=false;paint();}}
     }
@@ -90,12 +108,13 @@
     function mount(container){
       const changed=owner!==context(),recordsChanged=tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision,remount=node!==container;node=container;
       tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;
-      if(changed){analysisController?.abort();owner=context();data=null;error='';loading=false;attempted=false;serial++;dayFilter='';page=0;}
+      if(changed){analysisController?.abort();owner=context();data=null;error='';loading=false;attempted=false;serial++;placesSerial++;places=null;placesError='';placesLoading=false;dayFilter='';page=0;}
       else if(recordsChanged&&attempted){analysisController?.abort();serial++;loading=false;load(true);}
       if(changed||remount)paint();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;
+      if(automatic?.handle(event))return true;
       const el=event.target;
       if(event.type==='input'&&el.id==='report-date'){if(date!==el.value){date=el.value;invalidate();}return true;}
       if(event.type==='change'){
@@ -108,6 +127,7 @@
       if(event.type!=='click')return false;
       const target=el.closest('[data-report]');if(!target||target.disabled)return false;
       switch(target.dataset.report){
+        case 'places':loadPlaces();break;
         case 'load':load();break;
         case 'stop':analysisController?.abort();serial++;loading=false;error='分析已取消。';paint();break;
         case 'previous':date=data.current.window.previous_date;period=data.period;invalidate();break;

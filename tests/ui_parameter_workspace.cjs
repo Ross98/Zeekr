@@ -1,19 +1,19 @@
 // Synthetic desktop workflow; all records belong to the disposable fixture.
 const assert=require('node:assert/strict'),fs=require('node:fs');
-const {fixture,contrast}=require('./ui_insight_helpers.cjs');
+const {fixture,contrast,parameterStage}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   page.setDefaultTimeout(8000);
   try{
-    assert.equal(await page.locator('[data-insight-group="2"] [data-insight-view]').count(),1,'One parameter workspace replaces the three tool entries');
-    await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelectorAll('[data-review-path]').length===217);
+    assert.equal(await page.locator('[data-insight-view]').count(),1,'One parameter workspace replaces the three tool entries');
+    await page.getByRole('button',{name:'全部参数',exact:true}).click();
+    await page.waitForFunction(()=>reviewCatalog.length===217);
     const path='additionalVehicleStatus.electricVehicleStatus.chargeLevel';
     await page.locator('#search').fill(path);
     await page.locator('[data-review-path]').click();
     assert.equal(await page.locator('#review-panel').getAttribute('data-path'),path);
     assert.equal(await page.locator('.hypothesis-catalog').count(),0,'Analysis uses the shared field list');
-    await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+    await parameterStage(page,'evidence');
     await page.locator('#hypothesis-start').fill('2026-09-20');
     await page.locator('#hypothesis-end').fill('2026-09-20');
     await page.getByRole('button',{name:'分析所选参数',exact:true}).click();
@@ -25,7 +25,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     await page.locator('#review-observation').fill('合成证据，待核实');
     await page.getByRole('button',{name:'保存',exact:true}).click();
     await page.waitForFunction(()=>state.field_reviews.records.some(r=>r.meaning==='合成 SOC 假设'));
-    await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
+    await parameterStage(page,'experiment');
     await page.getByRole('button',{name:'新建实验',exact:true}).click();
     for(const side of ['前','后']){
       await page.getByLabel(`${side}样本日期`,{exact:true}).fill('2026-09-20');
@@ -55,16 +55,16 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     await page.getByLabel('核实结果',{exact:true}).selectOption('confirmed');
     await page.getByRole('button',{name:'保存',exact:true}).click();
     await page.waitForFunction(()=>state.field_reviews.records.some(r=>r.scope==='field'&&r.status==='confirmed'));
-    await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+    await parameterStage(page,'evidence');
     assert.equal(await page.getByRole('button',{name:'采用假设写结论',exact:true}).isDisabled(),true,'Manual confirmation immediately protects the hypothesis editor');
-    await page.getByRole('button',{name:'4 写结论',exact:true}).click();
+    await parameterStage(page,'conclusion');
     await page.locator('#search').fill('chargeLevel');
     await page.locator(`[data-review-path="${path}"]`).click();
     await page.getByRole('button',{name:'暂时跳过',exact:true}).click();
     assert.equal(await page.locator('#review-panel').getAttribute('data-path'),path,'Next-item navigation skips parameters without usable values');
     await page.locator('#search').fill(path);await page.locator('[data-review-path]').click();
     await page.locator('#review-observation').fill('未保存结论草稿');
-    await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
+    await parameterStage(page,'experiment');
     await page.getByRole('button',{name:'回看实验',exact:true}).click();
     await page.getByLabel('研究备注',{exact:true}).fill('未保存实验草稿');
     // Missing fields stay searchable, and cannot be confirmed using a missing raw value.
@@ -72,14 +72,14 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     const missing=await page.evaluate(()=>reviewVisibleFields().find(f=>f.research_only).path);
     await page.locator('#search').fill(missing);
     await page.locator('[data-review-path]').click();
-    assert.equal(await page.getByRole('button',{name:'4 写结论',exact:true}).isDisabled(),true);
+    assert.equal(await page.getByRole('button',{name:'写结论',exact:true}).isDisabled(),true);
     assert.match(await page.locator('#lab-draft-owner').innerText(),/chargeLevel/,'Switching fields must keep the draft associated with its original parameter');
-    await page.getByRole('button',{name:'2 分析证据',exact:true}).click();
+    await parameterStage(page,'evidence');
     assert.match(await page.locator('#parameter-hypotheses').innerText(),new RegExp(missing.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
     await page.locator('#search').fill(path);await page.locator('[data-review-path]').click();
-    await page.getByRole('button',{name:'4 写结论',exact:true}).click();
+    await parameterStage(page,'conclusion');
     assert.equal(await page.locator('#review-observation').inputValue(),'未保存结论草稿');
-    await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
+    await parameterStage(page,'experiment');
     assert.equal(await page.getByLabel('研究备注',{exact:true}).inputValue(),'未保存实验草稿');
     for(const theme of ['light','dark']){
       await page.getByLabel('外观',{exact:true}).selectOption(theme);
@@ -96,7 +96,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     assert.equal(await page.locator('[data-lab-record]').count(),0,'Vehicle switch clears previous experiments');
     for(const legacy of ['fields','hypotheses','lab']){
       await page.goto(`${f.origin}/?p=insights&t=${legacy}`);
-      await page.waitForFunction(()=>document.querySelectorAll('[data-review-path]').length===217);
+      await page.waitForFunction(()=>reviewCatalog.length===217);
       assert.equal(await page.locator('[data-insight-view="parameters"]').getAttribute('aria-pressed'),'true');
       if(legacy!=='fields')assert.equal(await page.locator(legacy==='lab'?'#parameter-experiments':'#parameter-hypotheses').isVisible(),true);
       assert.equal(new URL(page.url()).searchParams.get('t'),'parameters');

@@ -14,7 +14,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         }
         await Promise.all(pages.map(async page=>{
           await page.goto(f.origin);await page.getByRole('button',{name:'用车研究',exact:true}).click();
-          await page.getByRole('button',{name:'充电曲线对比',exact:true}).waitFor();
+          await page.locator('#field-results').waitFor();
         }));
       }finally{await Promise.all(pages.map(page=>page.close()));}
     }

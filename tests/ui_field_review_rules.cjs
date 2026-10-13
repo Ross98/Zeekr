@@ -19,6 +19,7 @@ assert.equal(context.reviewStatus(context.state.model.fields[0]),'na');
 console.log('Review rules passed: unknowns hidden, unverified visible, enum isolation, whole-field not applicable.');
 context.esc = value => String(value ?? '').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
 context.state.model.fields[0].reference = {unit:'未知',basis:'术语推测',note:'动态弯道照明',sources:[]};
+vm.runInContext("reviewFocus='all'",context);
 context.search = '动态弯道';
 assert.equal(context.reviewItems().length,1,'Search includes dictionary explanations');
 assert.match(context.renderFieldReference(context.state.model.fields[0]),/术语推测/);

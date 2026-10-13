@@ -59,4 +59,9 @@ async function layouts(page,name){
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${name} 200% zoom overflow`);
   await page.evaluate(()=>{document.documentElement.style.zoom='';});
 }
-module.exports={fixture,layouts,contrast};
+async function parameterStage(page,stage){
+  const button=page.locator(`#parameter-flow [data-parameter-step="${stage}"]`);
+  if(!await button.isVisible())await page.locator('#parameter-flow [data-parameter-advanced]').click();
+  await button.click();
+}
+module.exports={fixture,layouts,contrast,parameterStage};

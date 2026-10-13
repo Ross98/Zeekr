@@ -2,7 +2,7 @@
   'use strict';
   const number = value => Number.isFinite(value) ? new Intl.NumberFormat('zh-CN', {maximumFractionDigits:2}).format(value) : '未知';
   const statuses = {waiting:'等待首次分析',ready:'最近分析已完成',partial:'部分分析暂不可用',stale:'上次结果待更新',error:'最近分析失败',changed:'记录或统计口径已变化，等待重新分析'};
-  function create({getState,request,escape:esc,active,time,navigate}) {
+  function create({getState,request,escape:esc,active,time,navigate,compact=false}) {
     let node=null, owner='', data=null, error='', loading=false, serial=0;
     const context=()=>getState()?.insights_context || '';
     const valid=(token,identity)=>token===serial && owner===identity && identity===context();
@@ -36,6 +36,14 @@
         ${report?`<div class="auto-grid"><section class="card insight-panel" id="auto-energy"><h3>行驶能耗</h3>${energy(report)}</section></div>
         <section class="card insight-panel"><h3>查看相关记录</h3><div class="insight-actions"><button class="button secondary" data-auto="report">周报与月报</button><button class="button secondary" data-auto="ledger">充电账本</button><button class="button secondary" data-auto="quality">采集诊断</button></div></section>
         ${report.unreadable_events?`<p class="insight-note">另有 ${report.unreadable_events} 条历史事件无法解析或归期，不能断言这些统计覆盖全部记录。</p>`:''}`:''}`;
+      if(compact){
+        node.querySelector('.insight-hero')?.remove();
+        node.querySelector('[data-auto="report"]')?.closest('section')?.remove();
+        const content=document.createElement('div');content.append(...node.childNodes);
+        const details=document.createElement('details'),summary=document.createElement('summary');
+        summary.textContent='近期能耗趋势';details.open=expanded;details.append(summary,content);node.append(details);
+        details.addEventListener('toggle',()=>{expanded=details.open;});
+      }
       if(focused)node.querySelector('#'+focused)?.focus({preventScroll:true});
     }
     async function load() {
@@ -50,9 +58,10 @@
       } catch(failure) {if(valid(token,identity))error=failure.message;}
       finally {if(valid(token,identity)){loading=false;paint();}}
     }
+    let expanded=false;
     function mount(container) {
       const changed=owner!==context(), remount=node!==container;node=container;
-      if(changed){owner=context();data=null;error='';loading=false;serial++;}
+      if(changed){owner=context();data=null;error='';loading=false;serial++;expanded=false;}
       if(changed||remount)paint();
     }
     function handle(event) {

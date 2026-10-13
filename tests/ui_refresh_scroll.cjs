@@ -32,7 +32,9 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         await page.locator('#ledger-month').fill('2026-09');
         await page.getByRole('button',{name:'读取账本',exact:true}).click();
         await page.waitForSelector('#ledger-range');
-      }else if(view==='research'||view==='insights'){
+      }else if(view==='insights'){
+        await page.waitForSelector('#field-results');
+      }else if(view==='research'){
         await page.getByLabel('研究开始日期',{exact:true}).fill('2026-09-20');
         await page.getByLabel('研究结束日期',{exact:true}).fill('2026-09-20');
         await page.getByRole('button',{name:'分析本地数据',exact:true}).click();

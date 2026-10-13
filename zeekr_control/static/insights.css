@@ -290,3 +290,13 @@
 .parking-detail-dialog::backdrop{background:rgb(0 0 0 / .55)}
 .parking-detail-dialog .insight-panel{margin:0;padding:0}
 .parking-detail-dialog .insight-heading{align-items:flex-start;gap:20px}
+
+/* Parameter research starts with changes; dense source records remain optional. */
+.parameter-focus { margin: 12px 0; }
+.parameter-focus [aria-pressed="true"] { border-color: var(--accent); font-weight: 700; }
+.parameter-changes { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
+.parameter-transition-list { max-height: 300px; overflow: auto; margin-bottom: 12px; }
+.parameter-transition-list article { padding: 10px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.parameter-transition-list small { display: block; margin-top: 4px; }
+#parameter-flow .insight-actions { margin: 12px 0; }
+#report-automatic summary { cursor: pointer; font-weight: 700; }

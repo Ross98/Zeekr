@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
+const field=(path,raw='1')=>({path,name:path,group:'测试',raw,value:raw,evidence:'待核实'});
+const state={insights_context:'owner-a',model:{fields:[field('pending'),field('confirmed'),field('na'),field('missing','未知')]},field_reviews:{vehicle:'v',records:[{path:'confirmed',scope:'field',status:'confirmed'},{path:'na',scope:'field',status:'na'}]}};
+const sandbox={state,search:'',groupFilter:'',unknownOnly:false,window:{},document:{addEventListener:()=>{},querySelectorAll:()=>[]},$:()=>null};vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync('zeekr_control/static/field-reviews.js','utf8'),sandbox);
+const run=code=>vm.runInContext(code,sandbox);
+assert.deepEqual(Array.from(run('reviewItems().map(f=>f.path)')),['pending'],'Default focus hides confirmed and inapplicable fields');
+run("reviewFocus='all'");assert.equal(run('reviewItems().length'),3);
+run("reviewFocus='changed';setReviewStudy({context:'owner-a',fields:[{path:'pending',samples:3,changes:2},{path:'confirmed',samples:3,changes:1}]})");
+assert.deepEqual(Array.from(run('reviewItems().map(f=>f.path)')),['pending'],'Changed focus still excludes resolved fields');
+run("setReviewStudy({context:'different-owner',fields:[]})");assert.equal(run('reviewStudy.context'),'owner-a','Reject an analysis from a different context');
+run("search='private-filter';state.insights_context='owner-b';reviewSync()");assert.equal(sandbox.search,'','Context changes clear the previous search');assert.equal(run('reviewStudy'),null,'Study must not cross vehicle/account contexts');
+console.log('PARAMETER_RESEARCH_FOCUS_PASS');
