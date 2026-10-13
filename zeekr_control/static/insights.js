@@ -64,6 +64,7 @@
       handle(event){if(event.type==='click'&&event.target.closest('[data-lazy-retry]')){ready();return true;}return instance?.handle?.(event)||false;},
       currentStage:()=>instance?.currentStage?.()||'overview'
     };
+    page.suspend=()=>instance?.suspend?.();
     for(const method of ['openField','openExperiment','openPart','openStage','returnTo','openDate','openEvent','setFilter'])page[method]=(...args)=>{
       if(instance)return instance[method]?.(...args);
       commands.push({method,args,context:context()});ready();
@@ -74,6 +75,24 @@
   function parameterWorkspace({getState,request,esc,active,dictionary,time,review,history}) {
     let node=null,owner='',serial=0,attempted='',loading=false,error='',stage='overview',catalogReady=false;
     let study=null,studyLoading=false,studyError='',studySerial=0,detailSerial=0,detailPath='',detail=null,detailError='',advanced=false;
+    let reading=false,queuedRead=null,suspended=false;
+    // Overview and field reads share one lane; synchronous scans cannot be aborted.
+    async function serialize(read){
+      if(!active())return;
+      if(reading){queuedRead=read;return;}
+      reading=true;
+      try{await read();}
+      finally{
+        reading=false;
+        const next=queuedRead;queuedRead=null;
+        if(next&&active())serialize(next);
+      }
+    }
+    function suspend(){
+      if(suspended)return;
+      suspended=true;queuedRead=null;studySerial++;detailSerial++;
+      studyLoading=false;detailPath='';detail=null;detailError='';
+    }
     const sevenDays=()=>({start:new Date(Date.now()-6*86400000+8*3600000).toISOString().slice(0,10),end:today()});
     function studyStatus(){
       const el=node?.querySelector('#parameter-study-status');if(!el)return;
@@ -83,13 +102,17 @@
     async function analyze(){
       if(studyLoading||!owner)return;
       const token=++studySerial,identity=owner,range=sevenDays();studyLoading=true;studyError='';studyStatus();
-      try{
-        const result=await request(`/api/insights/research?start=${range.start}&end=${range.end}`,undefined,300000,{active});
+      detailSerial++;detailPath='';detail=null;
+      await serialize(async()=>{
         if(token!==studySerial||identity!==getState()?.insights_context)return;
-        if(result.context!==identity)throw Error('账号或车辆已切换，请重新分析。');
-        study=result;detail=null;detailPath='';detailSerial++;dictionary.study(result);
-      }catch(e){if(token===studySerial&&identity===getState()?.insights_context)studyError=e.message;}
-      finally{if(token===studySerial){studyLoading=false;studyStatus();}}
+        try{
+          const result=await request(`/api/insights/research?start=${range.start}&end=${range.end}`,undefined,300000,{active});
+          if(token!==studySerial||identity!==getState()?.insights_context)return;
+          if(result.context!==identity)throw Error('账号或车辆已切换，请重新分析。');
+          study=result;studyLoading=false;dictionary.study(result);
+        }catch(e){if(token===studySerial&&identity===getState()?.insights_context)studyError=e.message;}
+        finally{if(token===studySerial){studyLoading=false;studyStatus();}}
+      });
     }
     function changes(){
       const el=node?.querySelector('#parameter-changes');if(!el)return;
@@ -97,15 +120,18 @@
         `;
     }
     async function loadChanges(path,force=false){
-      if(!study||!path||(!force&&detailPath===path))return;
+      if(studyLoading||!study||!path||(!force&&detailPath===path))return;
       const identity=owner,token=++detailSerial;detailPath=path;detail=null;detailError='';changes();
-      try{
-        const result=await request(`/api/insights/research?start=${study.start_date}&end=${study.end_date}&path=${encodeURIComponent(path)}`,undefined,300000,{active});
+      await serialize(async()=>{
         if(token!==detailSerial||identity!==getState()?.insights_context)return;
-        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        detail=result.detail;
-      }catch(e){if(token===detailSerial&&identity===getState()?.insights_context)detailError=e.message;}
-      finally{if(token===detailSerial&&identity===getState()?.insights_context)changes();}
+        try{
+          const result=await request(`/api/insights/research?start=${study.start_date}&end=${study.end_date}&path=${encodeURIComponent(path)}`,undefined,300000,{active});
+          if(token!==detailSerial||identity!==getState()?.insights_context)return;
+          if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
+          detail=result.detail;
+        }catch(e){if(token===detailSerial&&identity===getState()?.insights_context)detailError=e.message;}
+        finally{if(token===detailSerial&&identity===getState()?.insights_context)changes();}
+      });
     }
     const steps=[['overview','1 看参数'],['evidence','2 分析证据'],['experiment','3 操作验证'],['conclusion','4 写结论']];
 
@@ -160,6 +186,8 @@
     }
     function mount(container) {
       const changed=owner!==(getState()?.insights_context||'');node=container;
+      suspended=false;
+      if(changed)queuedRead=null;
       if(changed){owner=getState()?.insights_context||'';serial++;attempted='';loading=false;error='';stage='overview';catalogReady=false;study=null;studyLoading=false;studyError='';studySerial++;detailSerial++;detailPath='';detail=null;detailError='';advanced=false;}
       dictionary.onPanel(attach);
       if(!node.querySelector('#field-results'))node.innerHTML='<header class="research-header"><div><h2>参数研究与核实</h2><p>先看待研究参数与观测变化，再就地写解释和依据。</p></div></header><div class="insight-actions"><button class="button secondary" data-parameter-study>分析近 7 天</button><button class="text-link" data-parameter-all-history>自选日期与场景分析</button></div><p id="parameter-study-status" class="insight-note" role="status"></p><p id="parameter-catalog-status" class="insight-note" role="status"></p><div id="parameter-dictionary"></div>';
@@ -193,7 +221,7 @@
       if(part==='lab')openStage('experiment',false);
     }
     function returnTo(path,next){dictionary.select(path);openStage(next);}
-    return {mount,handle,openExperiment,openPart,openStage,returnTo,currentStage:()=>stage};
+    return {mount,handle,suspend,openExperiment,openPart,openStage,returnTo,currentStage:()=>stage};
   }
 
   function create({getState,request,escape:esc,active,review,navigate,dictionary}) {
@@ -293,6 +321,7 @@
     function paintContent(){
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected || !active())return;
+      if(section!=='insights'||tab!=='parameters')parameterPage.suspend();
       const focus=saveFocus();
       if(!node.querySelector('.insight-layout')){
         node.innerHTML=`<div class="insight-layout">${navigation()}<div class="insight-content"></div></div>`;
@@ -458,7 +487,7 @@
       }
       return true;
     }
-    return {ready:()=>views[tab]?.ready?.()||Promise.resolve(),mount,handle,openField,openExperiment,openTool,openDate,openLedgerEvent:ledgerPage.openEvent,currentTool:()=>tab,parameterStage:parameterPage.currentStage,openParameterStage:parameterPage.openStage};
+    return {ready:()=>views[tab]?.ready?.()||Promise.resolve(),suspend:parameterPage.suspend,mount,handle,openField,openExperiment,openTool,openDate,openLedgerEvent:ledgerPage.openEvent,currentTool:()=>tab,parameterStage:parameterPage.currentStage,openParameterStage:parameterPage.openStage};
   }
   root.InsightsPage={create,toolsFor};
 })(window);

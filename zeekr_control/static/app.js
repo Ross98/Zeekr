@@ -929,6 +929,7 @@ function renderContent() {
   const chargeManagerNode=page==='energy'?$('#charge-management'):null;
   const chargeManagerFocus=chargeManagerNode?.contains(document.activeElement)?document.activeElement:null;
   if(page!=='energy')chargeManager.suspend();
+  if(page!=='insights')insightsPage.suspend();
   const insightsNode = insightSections.includes(page) ? document.getElementById('insights-workspace') : null;
   const insightsFocus = insightsNode?.contains(document.activeElement) ? document.activeElement : null;
   const tripTagsNode = page === 'tracks' && !sectionTask && trackSource === 'tags' ? $('#trip-tags-workspace') : null;
