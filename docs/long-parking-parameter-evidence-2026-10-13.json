@@ -1,0 +1,49 @@
+{
+  "source": "生产服务器已有车辆快照归档，只读查询，未主动刷新车辆",
+  "timezone": "Asia/Shanghai",
+  "observed_from": "2026-10-09 09:47:48",
+  "observed_to": "2026-10-13 20:59:09",
+  "latest_vehicle_state_time": "2026-10-13 17:58:15",
+  "reads": 18785,
+  "distinct_payloads": 23,
+  "sample_limit": "读取次数包含重复缓存；不同响应也不保证每个子系统都提供新测量。",
+  "observations": {
+    "parkTime.status": {
+      "raw": 1791510453522,
+      "distinct_values": 1,
+      "meaning": "停车起点候选；挂P或下电触发仍待区分"
+    },
+    "additionalVehicleStatus.climateStatus.temperatureUpdateTime": {
+      "latest_raw": 1791511046497,
+      "latest_time": "2026-10-09 09:57:26",
+      "latest_interior_temp_c": 26.3,
+      "latest_exterior_temp_c": 24.2,
+      "meaning": "整车快照更新时温度仍可保留旧值；按独立时间判断时效"
+    },
+    "additionalVehicleStatus.maintenanceStatus.mainBatteryStatus.voltage": {
+      "first_raw": 13.575,
+      "latest_raw": 5.0,
+      "reads_at_5v": 16795,
+      "meaning": "动力关闭且DC/DC未激活时的5.000V疑似休眠占位值，未实车确认"
+    },
+    "additionalVehicleStatus.maintenanceStatus.daysToService": {
+      "raw": 310,
+      "distinct_values": 1,
+      "meaning": "停车期间可多日不刷新，不假定每天递减"
+    },
+    "additionalVehicleStatus.electricVehicleStatus.dcDcActvd": {
+      "first_raw": 1,
+      "latest_raw": 0,
+      "reads_at_1": 22,
+      "reads_at_0": 18763,
+      "meaning": "停车初期仍可激活，不能单独作为行驶标记"
+    },
+    "parking_soc": {
+      "first_percent": 51,
+      "latest_percent": 51,
+      "odometer_km": 45856,
+      "meaning": "未见整百分点掉电；不能标定真实待机功耗"
+    }
+  },
+  "scope": "更新本地参数解释和研究统计有效性；不修改原始观测、人工确认记录、通知或耗电阈值；未发布生产。"
+}

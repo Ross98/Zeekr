@@ -10,6 +10,10 @@ GROUPS = ('门窗与安全', '轮胎与保养', '空调与座舱', '座椅与方
           '能源与充放电', '低压电池', '基础车况与行驶', '灯光', '报警与通知',
           '定位状态', '通信与备用电池', '车辆档案', '平台配置与其他')
 MISSING = object()
+TEMPERATURE_STALE_MS = 600000
+TEMPERATURE_PATHS = frozenset('additionalVehicleStatus.climateStatus.' + key
+                              for key in ('interiorTemp', 'exteriorTemp'))
+AUX_VOLTAGE_PATH = 'additionalVehicleStatus.maintenanceStatus.mainBatteryStatus.voltage'
 
 
 def group_for(path):
@@ -97,11 +101,29 @@ def parameters(raw, model):
             time_source = '整车快照；独立更新时间未提供'
         if status == 'missing':
             updated_time, time_source = None, '本次未返回'
+        value_validity = 'unknown'
+        note = entry['note']
+        if path in TEMPERATURE_PATHS and status in ('known', 'pending'):
+            snapshot_time = model.get('updated_time')
+            if (type(snapshot_time) in (int, float) and type(updated_time) in (int, float)
+                    and updated_time > 0 and snapshot_time - updated_time > TEMPERATURE_STALE_MS):
+                value_validity = 'stale'
+                display += '（旧温度）'
+                evidence = '温度独立时间落后整车快照超过10分钟'
+                note += ' 保留旧温度原值；不用于当前温度关联分析。'
+        if (path == AUX_VOLTAGE_PATH and status in ('known', 'pending')
+                and number(value) == 5
+                and lookup(raw, 'basicVehicleStatus.engineStatus') == 'engine_off'
+                and number(lookup(raw, 'additionalVehicleStatus.electricVehicleStatus.dcDcActvd')) == 0):
+            value_validity = 'suspect'
+            status, display = 'pending', '疑似占位值（5 V）'
+            evidence = '停车休眠场景的疑似无效读数；未确认占位含义'
+            note += ' 原值保留，但排除电压数值统计；不能据此判定低压电池亏电。'
         rows.append({'path': path, 'name': entry['name'], 'group': group_for(path),
                      'value': str(display)[:160],
                      'raw': field.get('raw_json', raw_text(value)) if metadata and field else raw_text(value),
                      'status': status, 'evidence': evidence, 'unit': entry['unit'],
-                     'note': entry['note'], 'basis': entry['basis'],
+                     'note': note, 'basis': entry['basis'], 'value_validity': value_validity,
                      'updated_time': updated_time, 'time_source': time_source})
         counts[status] += 1
     counts.update(total=len(rows), returned=len(rows) - counts['missing'])

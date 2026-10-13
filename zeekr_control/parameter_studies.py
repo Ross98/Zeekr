@@ -18,6 +18,23 @@ def number(row,path):
     except (KeyError,ValueError,TypeError):return None
 
 
+def parked_constant_span(samples, path):
+    """Longest observed parked run with one numeric value; never implies gap coverage."""
+    first = previous_time = previous_value = None
+    longest = 0
+    for row in samples:
+        value = number(row, path)
+        stamp = row['time']
+        if not row['states'].get('parked') or value is None:
+            first = previous_time = previous_value = None
+            continue
+        if previous_time is None or stamp <= previous_time or value != previous_value:
+            first = stamp
+        longest = max(longest, stamp - first)
+        previous_time, previous_value = stamp, value
+    return longest / 1000
+
+
 def evidence_profiles(samples):
     out={}
     odo=P+'maintenanceStatus.odometer'
@@ -42,7 +59,8 @@ def evidence_profiles(samples):
     days=P+'maintenanceStatus.daysToService';vals=[(r['time'],number(r,days)) for r in samples if number(r,days) is not None]
     if vals:
         day_delta=(datetime.fromtimestamp(vals[-1][0]/1000,BEIJING).date()-datetime.fromtimestamp(vals[0][0]/1000,BEIJING).date()).days
-        out['daysToService']={'samples':len(vals),'calendar_days':day_delta,'decrease':vals[0][1]-vals[-1][1],'distinct':len({v for t,v in vals})}
+        out['daysToService']={'samples':len(vals),'calendar_days':day_delta,'decrease':vals[0][1]-vals[-1][1],'distinct':len({v for t,v in vals}),
+                              'parked_constant_days':int(parked_constant_span(samples,days)//86400)}
     stamp_path='parkTime.status';engine_path='basicVehicleStatus.engineStatus'
     changes=[];off_times=[];park_times=[];previous=None
     for r in samples:
@@ -56,7 +74,12 @@ def evidence_profiles(samples):
     def matched(times):
         differences=[min(abs(v-t) for t in times)/1000 for v in changes] if times else []
         return sum(v<=600 for v in differences)
-    out['parkTime.status']={'timestamp_changes':len(changes),'near_power_off':matched(off_times),'near_p_gear':matched(park_times)}
+    out['parkTime.status']={'timestamp_changes':len(changes),'near_power_off':matched(off_times),'near_p_gear':matched(park_times),
+                            'parked_constant_span_seconds':parked_constant_span(samples,stamp_path)}
+    dcdc=P+'electricVehicleStatus.dcDcActvd'
+    parked_dcdc=[number(r,dcdc) for r in samples if r['states'].get('parked')]
+    out['dcDcActvd']={'parked_active_samples':sum(v==1 for v in parked_dcdc),
+                     'parked_inactive_samples':sum(v==0 for v in parked_dcdc)}
     for key,state in [('drvHeatDetail','drvHeatSts'),('passHeatingDetail','passHeatingSts'),('rlHeatingDetail','rlHeatingSts'),('rrHeatingDetail','rrHeatingSts')]:
         off=Counter();path=P+'climateStatus.'+key;anchor=P+'climateStatus.'+state
         for r in samples:
@@ -67,7 +90,20 @@ def evidence_profiles(samples):
     out['tripMeter2']={'samples':len(vals),'reset_windows':sum(b<a-1 for (t,a),(u,b) in zip(vals,vals[1:])),
                      'max':max((v for t,v in vals),default=None)}
     v=P+'maintenanceStatus.mainBatteryStatus.voltage';soc=P+'maintenanceStatus.mainBatteryStatus.chargeLevel'
-    out['aux_voltage']={'low_voltage_zero_soc':sum(number(r,v) is not None and number(r,v)<8 and number(r,soc)==0 for r in samples)}
+    out['aux_voltage']={
+        'low_voltage_zero_soc':sum(number(r,v) is not None and number(r,v)<8 and number(r,soc)==0 for r in samples),
+        'suspected_sleep_samples':sum(
+            bool(r['states'].get('parked')) and number(r,v)==5 and number(r,dcdc)==0
+            and r['values'].get(engine_path)=='"engine_off"' for r in samples)}
+    temperature_clock=P+'climateStatus.temperatureUpdateTime'
+    temperature_times=[(r['time'],number(r,temperature_clock)) for r in samples]
+    valid_temperature_times=[(t,v) for t,v in temperature_times if v is not None and v>0]
+    out['temperatureUpdateTime']={
+        'timed_samples':len(valid_temperature_times),
+        'stale_samples':sum(t-v>600000 for t,v in valid_temperature_times),
+        'max_age_seconds':max((max(0,t-v)/1000 for t,v in valid_temperature_times),default=None)}
+    for key in ('interiorTemp','exteriorTemp'):
+        out[key]=dict(out['temperatureUpdateTime'])
     def code(r,path):
         try:
             v=json.loads(r['values'][path])
@@ -106,11 +142,14 @@ DEFINITIONS={
  'theftNotification.activated':('历史防盗通知的保留状态码，不作当前布防/报警开关。','与历史通知时间一起看；本期没有状态变化，枚举3不能认作实时已布防。'),
  'dcChargeIAct':('电池侧高压电流：正值放电，负值充电或能量回收；不是桩侧电流。','对照保存的充电区间、桩侧电流符号及行程中电流变化。'),
  'distanceToService':('距下次保养的剩余里程，单位 km。','检查它与总里程的和是否保持不变。'),
- 'daysToService':('距下次保养的剩余天数。','对照日历经过天数与原值递减。'),
+ 'daysToService':('距下次保养的剩余天数；停车期间可能多日不刷新，不假定每天递减。','对照日历经过天数与原值递减；分别检查停车与重新用车后的刷新。'),
  'tripMeter1':('累计小计里程 A，单位 km；观察期未见清零，不是总里程。','对照与总里程的增量及差值稳定性。'),
  'tripMeter2':('可复位的驾驶周期小计里程 B，单位 km；不是固定自然日里程。','回看归零时刻与启动、行程开始；归零机制尚需实车核对。'),
  'relHumSts':('湿度传感器原始指标；百分比缩放未标定，不直接显示为 %RH。','比较直接百分比、0.5缩放、字节量程等假设；缺少独立湿度读数时不选择换算系数。'),
- 'parkTime.status':('最近一次停车相关事件时间，Unix 毫秒；触发是挂P或下电尚待区分。','与行程结束和动力关闭的边界对照，不当停车持续时长。'),
+ 'parkTime.status':('最近一次停车相关事件时间，Unix 毫秒；长停车中可保持起点不变，触发是挂P或下电尚待区分。','与行程结束和动力关闭的边界对照；原值是起点候选，不是停车持续时长，时间差也不证明连续覆盖。'),
+ 'temperatureUpdateTime':('座舱温度的独立更新时间；整车快照更新时温度仍可能保留旧值。','温度时间落后整车快照超过10分钟时标记旧温度，不用于当前温度关联分析。'),
+ 'interiorTemp':('车内温度，单位°C；必须结合温度独立更新时间，不能把整车更新时间当作温度更新时间。','只用来源时间有效的温度做场景关联，保留过期原值供查看。'),
+ 'exteriorTemp':('车外温度，单位°C；必须结合温度独立更新时间，长停车可能保留旧值。','只用来源时间有效的温度做场景关联，保留过期原值供查看。'),
  'theftNotification.time':('防盗通知的历史时间，Unix 秒；不表示此刻仍有报警。','核对时间数量级、通知时间是否变化；常量只证明旧时间被保留。'),
  'direction':('车辆航向角原值，按度解释；0–360的方向约定尚需轨迹对照。','用移动轨迹方位核对0北/顺时针假设；静止和定位漂移不用于标定。'),
  'altitude':('定位海拔高度，单位 m 候选；允许负值，GPS噪声不当作楼层变化。','需要可信定位和独立地形高度；本期只有量级支持，绝对高度未标定。'),
@@ -161,7 +200,8 @@ def study_for(row,evidence):
     if key in FUEL and row['status']=='varied':
         definition='兼容字段出现动态值；需复核对象/单位，不继续按恒定不适用解释。'
     if '.mainBatteryStatus.voltage' in path:
-        definition='低压辅助电池电压；低电压与SOC=0同时出现时，先排查无效/缺省读数。'
+        definition='低压辅助电池电压；动力关闭且DC/DC未激活时返回5.000V，标为疑似休眠占位值，不据此判定电池亏电。'
+        test='保留原值，疑似占位值排除电压数值统计；需唤醒后读数或独立电表验证，不把其他低电压直接当占位值。'
         ev=evidence.get('aux_voltage',{})
     if key.startswith('winStatus'):
         definition='车窗状态：1打开、2关闭；与同侧位置原值非零/零交叉对照。'

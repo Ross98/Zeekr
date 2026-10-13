@@ -114,14 +114,16 @@ def new_field(path, entry):
                 unit=entry['unit'], applicability=entry['applicability'], note=entry['note'],
                 read_counts=dict.fromkeys(STATUSES, 0), first_returned=None, last_returned=None,
                 samples=0, known_samples=0, pending_samples=0, time_excluded=0, changes=0,
-                numeric=numeric(), scenarios={name: dict(samples=0, numeric=numeric()) for name in SCENARIOS},
+                numeric=numeric(), numeric_excluded=0,
+                scenarios={name: dict(samples=0, numeric=numeric()) for name in SCENARIOS},
                 cadence_seconds=numeric(), rate_per_minute=numeric(), delay_seconds=numeric(),
                 _values={}, _other=0, _last=None, _last_stamp=None, _previous=None,
                 _distinct=set(), _distinct_overflow=False)
 
 
 def usable_number(field, raw_value):
-    if field['status'] not in ('known', 'pending') or type(raw_value) is bool:
+    if (field['status'] not in ('known', 'pending') or type(raw_value) is bool
+            or field.get('value_validity') in ('suspect', 'stale')):
         return None
     value = number(raw_value) if PUBLIC[field['path']]['kind'] == 'number' else None
     return float(value) if value is not None and math.isfinite(value) and abs(value) <= 1e12 else None
@@ -174,6 +176,8 @@ class VehicleResearch:
                 value = lookup(raw, p)
                 n = usable_number(field, value) if valid else None
                 if valid:
+                    if field.get('value_validity') == 'suspect':
+                        row['numeric_excluded'] += 1
                     previous = row['_previous']
                     if previous:
                         seconds = (stamp-previous['time'])/1000
@@ -320,6 +324,8 @@ class VehicleResearch:
                     row['uses'].append('更新时间与新旧程度')
                 row['reason'] = ('含义或单位待核实；仅描述原值变化。' if row['pending_samples']
                                  else '按有效观测统计；不表示连续覆盖。')
+                if row['numeric_excluded']:
+                    row['reason'] += f" {row['numeric_excluded']}个疑似占位值仅保留原值分布，不参与数值统计。"
             else:
                 row['disposition'] = 'insufficient'
                 row['reason'] = ('所选范围未返回该字段。' if row['first_returned'] is None else
