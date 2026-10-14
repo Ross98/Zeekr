@@ -246,8 +246,32 @@ function action(label, name, kind = '', symbol = '') { return `<button class="bu
 function link(label, target) { return `<button class="text-link" data-page="${target}">${esc(label)}${icon('arrow')}</button>`; }
 function empty(title, text, symbol = 'info') { return `<div class="empty">${icon(symbol)}<h2>${esc(title)}</h2><p>${esc(text)}</p></div>`; }
 function head() {
+  if(page==='books'){
+    const id={ledger:'ledger-month',costs:'books-month',life:'life-month'}[sectionTask]||'books-month';
+    const month=window.BookSession.month(state?.insights_context,new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit'}).format(new Date()).slice(0,7));
+    const life=window.BookSession.read(state?.insights_context,'life');
+    const range=sectionTask==='life'&&life?.rangeMode==='custom'?`自定义区间 ${life.startDate} 至 ${life.endDate}`:'';
+    return `<div class="page-head books-page-head"><div><h1 id="page-heading" tabindex="-1">用车账本</h1><div class="subtle">充电、日常支出与到期待办</div></div><div class="page-actions" id="books-period"><label class="books-month-control">账本月份<input id="${id}" data-books-period type="month" value="${esc(month)}" ${window.booksWritePending?.()?'disabled':''}></label><span class="books-custom-range">${esc(range)}${range?'<button class="button secondary" data-life="range-month" data-books-month-range>回到所选月份</button>':''}</span>${window.booksCanReturn?.()?'<button class="button secondary" data-books-return>返回来源页面</button>':''}</div></div>`;
+  }
   return `<div class="page-head"><div><div class="eyebrow">MY ZEEKR / ${new Intl.DateTimeFormat('zh-CN',{month:'2-digit',day:'2-digit'}).format(new Date())}</div><h1 id="page-heading" tabindex="-1">${pages[page]}</h1><div class="subtle">${descriptions[page]}</div></div><div class="page-actions">${page!=='tracks' && state?.vehicles?.length > 1 ? `<select id="vehicle-select" class="select" aria-label="选择车辆" >${state.vehicles.map(v => `<option value="${v.number}" ${v.number === state.vehicle ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select>` : ''}<div class="refresh-control">${action(busy ? '读取中…' : '刷新状态','refresh','','refresh')}<span id="refresh-hint" class="subtle"></span></div></div></div>`;
 }
+let booksWriteOwner='',booksWriteBusy=false;
+window.booksWritePending=()=>page==='books'&&booksWriteBusy&&booksWriteOwner===state?.insights_context;
+window.syncBooksWriteControls=()=>{
+  if(page!=='books')return;
+  const pending=window.booksWritePending();
+  document.querySelectorAll('#navigation [data-page],.task-navigation [data-section-task],[data-books-return],#books-summary [data-costs]').forEach(button=>{button.disabled=pending;});
+};
+window.updateBooksPeriod=({id,month,busy=false,customRange=''})=>{
+  const container=$('#books-period');
+  if(page!=='books'||!container||id!==({ledger:'ledger-month',costs:'books-month',life:'life-month'}[sectionTask]))return;
+  let input=container.querySelector('input');
+  if(input?.id!==id){container.innerHTML=`<label class="books-month-control">账本月份<input id="${id}" data-books-period type="month"></label><span class="books-custom-range"></span>${window.booksCanReturn?.()?'<button class="button secondary" data-books-return>返回来源页面</button>':''}`;input=container.querySelector('input');}
+  if(input.value!==month)input.value=month;
+  input.disabled=busy;
+  booksWriteOwner=state?.insights_context;booksWriteBusy=busy;window.syncBooksWriteControls();
+  container.querySelector('.books-custom-range').innerHTML=`${esc(customRange)}${customRange?`<button class="button secondary" data-life="range-month" data-books-month-range ${busy?'disabled':''}>回到所选月份</button>`:''}`;
+};
 
 function modelRequired() {
   if (state?.model) return '';
@@ -1029,7 +1053,7 @@ function renderContent() {
   updateConnection();
   $('.breadcrumb').textContent = `我的车库 / ${state?.profile?.name || '我的车辆'}`;
   const error = transientError || state?.error;
-  if(page==='books'&&!sectionTask){const last=window.BookSession.read(state?.insights_context,'navigation')?.task;sectionTask=['ledger','life','costs'].includes(last)?last:'ledger';}
+  if(page==='books'&&!sectionTask){const last=window.BookSession.read(state?.insights_context,'navigation')?.task;sectionTask=['ledger','life','costs'].includes(last)?last:'costs';}
   if(page==='energy'&&sectionTask==='records'){sectionTask='';chargingTab='records';chargingSelection=chargeSelected?.id || '';}
   const taskPage=['car','energy','books','settings','tracks'].includes(page)&&sectionTask;
   const body = taskPage?'<div id="insights-workspace"></div>':{overview,car,energy,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',calendar:()=>'<div id="insights-workspace"></div>',report:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
@@ -1162,6 +1186,7 @@ async function updateRecording(saveInterval = false) {
 }
 
   document.addEventListener('click', event => {
+  if(window.booksWritePending()&&event.target.closest('[data-page],[data-section-task],[data-costs],[data-books-return],[data-overview-back]')){event.preventDefault();return;}
   if(event.target.closest('[data-overview-back]')){page='overview';sectionTask='';render();overviewDashboard.restore();return;}
   if(overviewDashboard.handle(event))return;
   const attentionLink=event.target.closest('[data-attention-target]');
@@ -1187,7 +1212,7 @@ async function updateRecording(saveInterval = false) {
   if (handleReviewAction(target)) return;
   if (handleCloudAction(target)) return;
   if (handleLocalTripAction(target)) return;
-  if (target.dataset.page==='books') {enterBooks(window.BookSession.read(state?.insights_context,'navigation')?.task||'ledger');return;}
+  if (target.dataset.page==='books') {enterBooks(window.BookSession.read(state?.insights_context,'navigation')?.task||'costs');return;}
   if (target.dataset.page) { sectionTask='';page=target.dataset.page==='map'?'overview':target.dataset.page==='fields'?'insights':target.dataset.page; render(); if(target.dataset.page==='fields')insightsPage.openTool('fields');window.scrollTo(0,0);focusPageHeading(); return; }
   if (target.dataset.source) { sectionTask='';trackSource=target.dataset.source; render();window.scrollTo(0,0);focusPageHeading(); return; }
   switch(target.dataset.action) {
@@ -1264,7 +1289,7 @@ document.addEventListener('change', event => {
   if(event.target.id==='vehicle-select') {chargeRequest++;chargeQuery=null;chargeBusy=false;chargeError='';chargeNextCursor=null;chargeDateInitialized=false;chargeCursor=null;chargeCursorStack=[];chargeSelected=null;chargeEvents=[];chargingSelection='current';chargingSession=null;chargingSeries=null;chargingStats=null;chargingAnalyticsLoadedKey='';chargingAnalyticsLoadingKey='';refresh();}
 });
 
-function enterBooks(view='ledger',date,eventId){
+function enterBooks(view='costs',date,eventId){
   if(!eventId&&typeof recallLedgerReturn!=='undefined')recallLedgerReturn=null;
   if(page!=='books')window.BookSession.write(state?.insights_context,'return',{snapshot:navigationSnapshot(),position:scrollY});
   page='books';sectionTask=view;window.BookSession.write(state?.insights_context,'navigation',{task:view});render();
@@ -1278,6 +1303,7 @@ window.booksCanReturn=()=>!!window.BookSession.read(state?.insights_context,'ret
 document.addEventListener('click',event=>{if(event.target.closest('[data-books-return]')){const saved=window.BookSession.read(state?.insights_context,'return');if(saved?.snapshot)restoreNavigation(saved.snapshot,saved.position||0);}});
 let navigationReady=false,navigationRestoring=false,restoringQuery=null,navigationRestoreSerial=0;
 const navigationQueries={
+  costs:['#books-totals','[data-costs=load]'],
   calendar:['#calendar-result-month','[data-calendar=load]'],
   ledger:['#ledger-range','#ledger-load'],routes:['#routes-results','[data-travel="load"]'],
   review:['#usage-review','[data-travel="load"]'],report:['#report-observations','[data-report="load"]'],
@@ -1285,7 +1311,7 @@ const navigationQueries={
 };
 const navigationFields={
   range:'#charge-query-mode',
-  month:'#ledger-month,#tag-month,#routes-month,#calendar-month',
+  month:'#ledger-month,#books-month,#life-month,#tag-month,#routes-month,#calendar-month',
   date:'#calendar-selected,#track-date,#report-date,#insight-date,#review-date,#charge-date',
   start:'#quality-start,#research-start,#life-start,#parking-start,#trip-manage-start,#charge-manage-start',
   end:'#quality-end,#research-end,#life-end,#parking-end,#trip-manage-end,#charge-manage-end,#charge-end-date',
@@ -1354,6 +1380,9 @@ async function restoreNavigation(snapshot,position=0){
   if(snapshot.t&&insightSections.includes(page))insightsPage.openTool(snapshot.t);
   if(insightSections.includes(page)){await insightsPage.ready();if(restoreSerial!==navigationRestoreSerial||restoreContext!==state?.insights_context)return;}
   if(snapshot.step&&insightsPage.currentTool()==='parameters')insightsPage.openParameterStage(snapshot.step,false);
+  if(page==='books'&&snapshot.t==='life'&&(snapshot.start||snapshot.end)){
+    const range=$('[data-detail="life-range"]');if(range)range.open=true;
+  }
   for(const [key,selector] of Object.entries(navigationFields)){
     const el=visibleNavigationField(selector);
     if(el&&snapshot[key]&&el.value!==snapshot[key]){el.value=snapshot[key];el.dispatchEvent(new Event(el.tagName==='SELECT'||['charge-date','charge-end-date','track-date'].includes(el.id)?'change':'input',{bubbles:true}));}

@@ -12,7 +12,19 @@
   // Private drafts live only in this browser tab, scoped to account and vehicle.
   root.BookSession={
     read(owner,book){try{return JSON.parse(sessionStorage.getItem('zeekr-books-v1:'+owner+':'+book)||'null');}catch{return null;}},
-    write(owner,book,value){if(!owner)return;try{sessionStorage.setItem('zeekr-books-v1:'+owner+':'+book,JSON.stringify(value));}catch{}}
+    write(owner,book,value){if(!owner)return;try{sessionStorage.setItem('zeekr-books-v1:'+owner+':'+book,JSON.stringify(value));}catch{}},
+    month(owner,fallback){
+      const selected=this.read(owner,'period')?.month;
+      if(rules.month(selected||''))return selected;
+      for(const book of ['charge','costs']){const value=this.read(owner,book)?.month;if(rules.month(value||''))return value;}
+      return fallback;
+    },
+    setMonth(owner,month){if(rules.month(month||''))this.write(owner,'period',{month});},
+    monthRange(month){
+      if(!rules.month(month||''))return null;
+      const end=new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5,7)),0)).getUTCDate();
+      return {start:month+'-01',end:month+'-'+end};
+    }
   };
 
   // A repaint is one synchronous transaction. Restore only within the same

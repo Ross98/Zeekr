@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');
 const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
-  const f=await fixture(),{page}=f;
+  const f=await fixture({initialResearch:false}),{page}=f;
   try{
     const projection=await page.evaluate(()=>{
       const crs=AmapMaps.crs,source=L.latLng(31.2,121.4);
@@ -133,9 +133,11 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
     assert.equal(await page.getByLabel('行程标签（逗号分隔）',{exact:true}).inputValue(),'接娃');
     assert.equal(await page.getByRole('button',{name:'取消本趟自动通勤'}).count(),1);
-    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/trip-tags'));
+    // Reload may leave a read-only research job; navigation cancels that job.
+    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/trip-tags'||
+      /^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(new URL(url).pathname)));
     assert.ok(f.external.every(url=>/^https:\/\/wprd0[1-4]\.is\.autonavi\.com\//.test(url)));
     assert.deepEqual(f.errors,[]);
-    console.log('UI_TRIP_TAGS_PASS: custom/multiple tags, notes escaping/preservation, group comparison and denominators, filters, delete/restore, persistence, themes/mobile/zoom/contrast');
+    console.log('UI_TRIP_TAGS_PASS: custom/multiple tags, notes escaping/preservation, group comparison and denominators, filters, delete/restore, persistence, desktop themes/zoom/contrast');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

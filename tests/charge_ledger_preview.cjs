@@ -3,6 +3,10 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 
 const window={};
+const navigationWindow={addEventListener(){}};
+const storage=new Map(),sessionStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)};
+vm.runInNewContext(fs.readFileSync('zeekr_control/static/navigation-state.js','utf8'),{window:navigationWindow,sessionStorage,URLSearchParams,Date});
+window.BookSession=navigationWindow.BookSession;
 const entries={innerHTML:''},trash={innerHTML:''};
 const node={isConnected:true,innerHTML:'',contains:()=>false,
   querySelector:selector=>({'#ledger-entries':entries,'#ledger-trash':trash}[selector]||null)};

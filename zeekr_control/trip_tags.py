@@ -46,6 +46,10 @@ class TripTags:
                 stats=self.place_names.apply(owner,vehicle,self.places.query(vehicle,events,self.place_names.regions(owner,vehicle),include_samples=True),self.commute.rule(owner,vehicle))
             return self.place_names.update(owner,vehicle,data,stats,guard=guard)
         if isinstance(action,str) and action.startswith('commute-'):
+            if action in ('commute-preview','commute-apply'):
+                window=period_window('month',data.get('date'))
+                events=[row for row in self.events.between(vehicle,window['start'],window['end'])['events'] if row['kind']=='trip_end']
+                return self.commute.reassess(owner,vehicle,events,data,guard=guard)
             if action in ('commute-exclude','commute-include'):
                 event_id=data.get('event_id')
                 event=self.events.get(vehicle,event_id)
@@ -94,6 +98,7 @@ class TripTags:
             tags=list(manual)
             if auto and '通勤' not in tags:tags.append('通勤')
             rows.append(dict(event,tags=tags,manual_tags=manual,note=body.get('note',''),
+                             commute_evidence=decision[2] if decision else None,
                              automatic_commute=auto,commute_excluded=bool(decision and decision[1]),
                              commute_reason=decision[0] if decision and decision[0]!='matched' else None,
                              annotation_id=record['id'] if body else None))
