@@ -35,9 +35,10 @@
     let placesShown=false,placesMap=null,placePage=0,focusedPlace=null,focusedRegion=null,placesViewport=null;
     let commuteDraft={home:null,work:null,homeRadius:300,workRadius:300},commuteDirty=false;
     let commuteMap=null,commuteShown=false,placeMode=null,commuteBusy=false;
+    let commuteRule=null,ruleLoading=false,ruleSerial=0,commutePreview=null,previewPage=0;
     const context=()=>getState()?.insights_context||'';
     const valid=(token,current,identity)=>token===current&&owner===identity&&context()===identity;
-    const button=(label,action,disabled=false,extra='')=>`<button class="button secondary" data-tag="${action}" ${disabled||busy?'disabled':''} ${extra}>${label}</button>`;
+    const button=(label,action,disabled=false,extra='')=>`<button class="button secondary" data-tag="${action}" ${disabled||busy||commuteBusy?'disabled':''} ${extra}>${label}</button>`;
     const options=value=>(data?.groups||[]).map(g=>`<option value="${esc(g.tag)}" ${g.tag===value?'selected':''}>${esc(g.tag)}</option>`).join('');
     const filterOptions=()=>(data?.groups||[]).map(g=>`<option value="${esc('tag:'+g.tag)}" ${filter==='tag:'+g.tag?'selected':''}>${g.tag==='未标注'?'标签：':''}${esc(g.tag)}</option>`).join('');
     const labelList=()=>[...new Set(tags.split(/[,，\n]/).map(s=>s.trim()).filter(Boolean))];
@@ -54,7 +55,7 @@
     function closeCommuteMap(){commuteMap?.remove();commuteMap=null;commuteShown=false;placeMode=null;}
     function syncCommuteRule(){
       if(commuteDirty)return;
-      const rule=data?.commute_rule;
+      const rule=commuteRule||data?.commute_rule;
       commuteDraft={home:rule?.home?{latitude:rule.home.latitude,longitude:rule.home.longitude}:null,
         work:rule?.work?{latitude:rule.work.latitude,longitude:rule.work.longitude}:null,
         homeRadius:rule?.home?.radius_m||300,workRadius:rule?.work?.radius_m||300};
@@ -207,14 +208,43 @@
       if(selectedRegion)regionLayers.get(selectedRegion.id)?.openPopup();
     }
 
+    function commuteEvidence(row){
+      const evidence=row.commute_evidence;
+      if(!evidence)return row.commute_reason==='insufficient'?'<p class="insight-note">起止位置证据不足，等待采样补齐后重试。</p>':'';
+      const backward=evidence.direction==='backward',direction=(backward?'返程':'去程')+(row.commute_reason==='outside'?'范围对照':'');
+      const facts=evidence.direction?`${direction} · 起点距${backward?'公司':'家'}中心 ${number(evidence.start_distance_m)} 米（范围 ${number(evidence.start_radius_m)} 米）；终点距${backward?'家':'公司'}中心 ${number(evidence.end_distance_m)} 米（范围 ${number(evidence.end_radius_m)} 米）。`:evidence.legacy?'历史判定保留；方向信息未记录。':'';
+      const reason=row.commute_reason==='insufficient'?'起止位置证据不足，等待采样补齐后重试。':row.commute_reason==='outside'?'位置未同时进入家和公司范围；采样变化后重试。':'';
+      return `<p class="insight-note">${esc(facts)} ${esc(reason)} ${(evidence.partial||row.partial)?'仅观测片段位置匹配，不能确认完整通勤。':''}${row.commute_excluded?'本趟已手动排除，历史重判也会保留。':''}</p>`;
+    }
+    function previewView(){
+      if(!commutePreview)return '';
+      const {counts,rows,date}=commutePreview,pages=Math.max(1,Math.ceil(rows.length/20));
+      previewPage=Math.max(0,Math.min(previewPage,pages-1));
+      return `<div id="commute-preview"><h4>${esc(date.slice(0,7))} 历史重判预览</h4><p>共 ${rows.length} 条 · 新增 ${counts.add} 条 · 移除 ${counts.remove} 条 · 不变 ${counts.unchanged} 条 · 手动排除 ${counts.excluded} 条 · 证据不足 ${counts.insufficient} 条。</p><p class="insight-note">使用已保存的当前规则重判本月自动标签。手工标签、备注与手动排除保留；证据不足数量包含在上述分类中。</p><div class="insight-table-scroll"><table class="tag-place-table"><thead><tr><th>结束时间</th><th>标签变化</th><th>判定依据</th></tr></thead><tbody>${rows.slice(previewPage*20,previewPage*20+20).map(row=>`<tr><td>${esc(time(row.end_time))}</td><td>${({add:'新增自动通勤',remove:'移除自动通勤',unchanged:'不变',excluded:'保留手动排除'})[row.change]}</td><td>${row.result==='insufficient'?'证据不足':`${row.direction==='backward'?'返程':'去程'} · 起点 ${number(row.start_distance_m)} / ${number(row.start_radius_m)} 米 · 终点 ${number(row.end_distance_m)} / ${number(row.end_radius_m)} 米 · ${row.result==='matched'?'位置匹配':'超出范围'}`}${row.partial?' · 观测片段':''}</td></tr>`).join('')}</tbody></table></div>${pages>1?`<div class="insight-pagination">${button('上一页重判预览','commute-preview-previous',previewPage===0)}<span>${previewPage+1} / ${pages}</span>${button('下一页重判预览','commute-preview-next',previewPage+1===pages)}</div>`:''}<div class="insight-actions">${button('应用本月历史重判','commute-apply',commuteBusy||commuteDirty)}${button('取消历史重判','commute-preview-cancel',commuteBusy)}</div></div>`;
+    }
     function commuteView(){
-      const rule=data?.commute_rule||{};
-      return `<section class="card insight-panel"><div class="insight-heading"><h3>通勤自动标注</h3><span class="insight-badge">${rule.deleted?'已删除':rule.enabled?'运行中':rule.revision?'已暂停':'未设置'}</span></div>
-        <p class="insight-note">在地图上选家和公司。新行程首次读取标签月份时，可信起止位置分别进入两个圆形范围，就自动标“通勤”；返程也匹配。位置采样可能有误差。</p>
-        <div class="ledger-form"><label>家范围半径（米）<input id="commute-home-radius" aria-label="家范围半径" type="number" min="100" max="1000" step="50" value="${esc(commuteDraft.homeRadius)}"></label><label>公司范围半径（米）<input id="commute-work-radius" aria-label="公司范围半径" type="number" min="100" max="1000" step="50" value="${esc(commuteDraft.workRadius)}"></label></div>
-        <p class="insight-note">家：${commuteDraft.home?'已选点':'未选点'} · 公司：${commuteDraft.work?'已选点':'未选点'}。范围可在地图上查看后调整。</p>
-        <div class="insight-actions">${button(commuteShown?'隐藏选点地图':'打开选点地图','commute-map')}${button('保存通勤规则','commute-save',!owner||!data||!commuteDraft.home||!commuteDraft.work||commuteBusy)}${rule.revision&&!rule.deleted?button(rule.enabled?'暂停自动标注':'恢复自动标注',rule.enabled?'commute-pause':'commute-resume',commuteBusy):''}${rule.revision&&!rule.deleted?button('删除通勤规则','commute-delete',commuteBusy):''}</div>
-        ${commuteShown?`<div class="insight-actions"><button class="button secondary" data-tag="commute-place-home" aria-pressed="${placeMode==='home'}">选择家地点</button><button class="button secondary" data-tag="commute-place-work" aria-pressed="${placeMode==='work'}">选择公司地点</button>${button('将地图中心设为家','commute-center-home')}${button('将地图中心设为公司','commute-center-work')}</div><div id="commute-map" aria-label="通勤地点选点地图"></div><p class="insight-note">${placeMode?`点击地图放置${placeMode==='home'?'家':'公司'}地点。放置后退出选点，再次修改请重新按“选择地点”。`:'选点已结束。要修改地点，请先按“选择家地点”或“选择公司地点”。'}也可拖动标记调整中心；键盘可平移地图，再用“将地图中心设为”按钮选点。圆圈是当前匹配边界。</p>`:''}</section>`;
+      const rule=commuteRule||data?.commute_rule||{},ready=!!commuteRule;
+      return `<section class="card insight-panel"><div class="insight-heading"><h3>通勤自动标注</h3><span class="insight-badge">${!ready?'待读取':rule.deleted?'已删除':rule.enabled?'运行中':rule.revision?'已暂停':'未设置'}</span></div>
+        <p class="insight-note">在地图上选家和公司。采集后台对近期结束行程匹配可信起止位置，两个方向都可自动标“通勤”；证据不足时等待采样后重试。位置匹配不代表已确认完整通勤。</p>
+        <div class="insight-actions">${button('重新读取通勤设置','commute-reload',!owner||ruleLoading||commuteBusy)}${ruleLoading?'<span role="status">正在读取通勤设置…</span>':''}</div>
+        <div class="ledger-form"><label>家范围半径（米）<input id="commute-home-radius" aria-label="家范围半径" type="number" min="100" max="1000" step="50" value="${esc(commuteDraft.homeRadius)}" ${commuteBusy?'disabled':''}></label><label>公司范围半径（米）<input id="commute-work-radius" aria-label="公司范围半径" type="number" min="100" max="1000" step="50" value="${esc(commuteDraft.workRadius)}" ${commuteBusy?'disabled':''}></label></div>
+        <p class="insight-note">家：${commuteDraft.home?'已选点':'未选点'} · 公司：${commuteDraft.work?'已选点':'未选点'}。${commuteDirty?'设置有未保存修改。':'范围可在地图上查看后调整。'}</p>
+        <div class="insight-actions">${button(commuteShown?'隐藏选点地图':'打开选点地图','commute-map',commuteBusy)}${button('保存通勤规则','commute-save',!owner||!ready||!commuteDraft.home||!commuteDraft.work||commuteBusy||ruleLoading)}${rule.revision&&!rule.deleted?button(rule.enabled?'暂停自动标注':'恢复自动标注',rule.enabled?'commute-pause':'commute-resume',commuteBusy):''}${rule.revision&&!rule.deleted?button('删除通勤规则','commute-delete',commuteBusy):''}</div>
+        <p class="insight-note">保存、暂停或删除只影响后续行程；已有自动标签保留。历史纠错请先预览，再应用。</p>
+        <div class="insight-actions">${button('预览本月历史重判','commute-preview',!owner||!ready||!rule.enabled||commuteDirty||commuteBusy||!month)}</div>
+        ${previewView()}
+        ${commuteShown?`<div class="insight-actions"><button class="button secondary" data-tag="commute-place-home" aria-pressed="${placeMode==='home'}" ${commuteBusy?'disabled':''}>选择家地点</button><button class="button secondary" data-tag="commute-place-work" aria-pressed="${placeMode==='work'}" ${commuteBusy?'disabled':''}>选择公司地点</button>${button('将地图中心设为家','commute-center-home',commuteBusy)}${button('将地图中心设为公司','commute-center-work',commuteBusy)}</div><div id="commute-map" aria-label="通勤地点选点地图"></div><p class="insight-note">${placeMode?`点击地图放置${placeMode==='home'?'家':'公司'}地点。放置后退出选点，再次修改请重新按“选择地点”。`:'选点已结束。要修改地点，请先按“选择家地点”或“选择公司地点”。'}也可拖动标记调整中心；键盘可平移地图，再用“将地图中心设为”按钮选点。圆圈是当前匹配边界。</p>`:''}</section>`;
+    }
+    async function loadCommuteRule(){
+      if(!owner||ruleLoading||commuteBusy)return;
+      const identity=owner,token=++ruleSerial;ruleLoading=true;paint();
+      try{
+        const result=await request('/api/insights/commute-rule');
+        if(!valid(token,ruleSerial,identity))return;
+        if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
+        commuteRule=result.commute_rule;commutePreview=null;syncCommuteRule();
+      }catch(failure){if(valid(token,ruleSerial,identity))error=failure.message;}
+      finally{if(valid(token,ruleSerial,identity)){ruleLoading=false;paint();}}
     }
     function paintCommuteMap(){
       const el=node?.querySelector('#commute-map');if(!el||commuteMap)return;
@@ -229,11 +259,11 @@
         const center=[point.latitude,point.longitude];
         L.circle(center,{radius:commuteDraft[key+'Radius'],color,fillOpacity:.12}).addTo(commuteMap);
         const icon=L.divIcon({className:`commute-pin commute-pin-${key}`,html:`<span>${key==='home'?'家':'公司'}</span>`,iconSize:[38,38],iconAnchor:[19,19]});
-        L.marker(center,{draggable:true,icon,title:key==='home'?'家地点':'公司地点'}).addTo(commuteMap).bindTooltip(key==='home'?'家':'公司').on('dragend',event=>{
-          const where=event.target.getLatLng();commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;placeMode=null;commuteMap.remove();commuteMap=null;paint();
+        L.marker(center,{draggable:!commuteBusy,icon,title:key==='home'?'家地点':'公司地点'}).addTo(commuteMap).bindTooltip(key==='home'?'家':'公司').on('dragend',event=>{
+          if(commuteBusy)return;const where=event.target.getLatLng();commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;commutePreview=null;placeMode=null;commuteMap.remove();commuteMap=null;paint();
         });
       }
-      commuteMap.on('click',event=>{if(!placeMode)return;commuteDraft[placeMode]={latitude:event.latlng.lat,longitude:event.latlng.lng};commuteDirty=true;placeMode=null;commuteMap.remove();commuteMap=null;paint();});
+      commuteMap.on('click',event=>{if(commuteBusy||!placeMode)return;commuteDraft[placeMode]={latitude:event.latlng.lat,longitude:event.latlng.lng};commuteDirty=true;commutePreview=null;placeMode=null;commuteMap.remove();commuteMap=null;paint();});
     }
     function routeView(){
       if(!selected)return '';
@@ -249,7 +279,7 @@
       if(nameMap)nameViewport={center:nameMap.getCenter(),zoom:nameMap.getZoom()};nameMap?.remove();nameMap=null;
       routeMap?.remove();routeMap=null;commuteMap?.remove();commuteMap=null;if(placesMap)placesViewport={center:placesMap.getCenter(),zoom:placesMap.getZoom()};placesMap?.remove();placesMap=null;
       node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">行程标签</span><h2>同类行程，放在一起看</h2><p>通勤、接娃、周末出游，让每趟记录有自己的分类。</p></div><span class="insight-source">自定义标签 · 同类比较</span></section>
-        ${commuteView()}<section class="card insight-panel"><div class="insight-toolbar"><label>标签月份<input id="tag-month" type="month" aria-label="标签月份" value="${esc(month)}"></label>${button('读取行程标签','load',!owner||!month||loading)}${button('撤销标签操作','undo',!data?.can_undo)}</div>${loading?'<p role="status">正在读取…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${data?`<p class="insight-note">${data.window.start_date} — ${data.window.end_date} · 按行程结束日期归期，${data.events.length} 条行程，${data.untagged_count} 条未贴标签。一趟可有多个标签，同组结果不能相加当总量。</p>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可管理标签。</p>':''}</section>
+        ${commuteView()}<section class="card insight-panel"><div class="insight-toolbar"><label>标签月份<input id="tag-month" type="month" aria-label="标签月份" value="${esc(month)}" ${commuteBusy?'disabled':''}></label>${button('读取行程标签','load',!owner||!month||loading)}${button('撤销标签操作','undo',!data?.can_undo)}</div>${loading?'<p role="status">正在读取…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${data?`<p class="insight-note">${data.window.start_date} — ${data.window.end_date} · 按行程结束日期归期，${data.events.length} 条行程，${data.untagged_count} 条未贴标签。一趟可有多个标签，同组结果不能相加当总量。</p>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可管理标签。</p>':''}</section>
         ${placesView()}${selected?`<section class="card insight-panel"><div class="insight-heading"><h3>标注这趟行程</h3>${button('取消标注','cancel')}</div><p>${esc(time(selected.start_time))} → ${esc(time(selected.end_time))}<br>${number(selected.distance_km)} km · ${number(selected.duration_seconds===null?null:selected.duration_seconds/60)} 分钟 · ${selected.partial?'观测片段':'完整记录'}</p>${selected.automatic_commute?`<p class="insight-note">本趟“通勤”为自动标注；手工标签可另行编辑。</p>${button('取消本趟自动通勤','commute-exclude',false,`data-id="${esc(selected.id)}"`)}`:selected.commute_excluded?button('恢复本趟自动通勤','commute-include',false,`data-id="${esc(selected.id)}"`):''}${routeView()}<form id="tag-form" class="ledger-form" novalidate><div class="ledger-wide"><strong>点选已有标签</strong><div class="tag-quick-list">${(data?.suggested_tags||[]).map(tag=>`<button type="button" class="tag-quick" data-tag="toggle-label" data-label="${esc(tag)}" aria-label="${labelList().includes(tag)?'取消':'选择'}标签 ${esc(tag)}" aria-pressed="${labelList().includes(tag)}" ${busy?'disabled':''}>${esc(tag)}</button>`).join('')||'<span class="insight-note">还没有已有标签，可在下方输入新标签。</span>'}</div></div><label class="ledger-wide">行程标签（逗号分隔）<input id="tag-labels" aria-label="行程标签（逗号分隔）" type="text" maxlength="300" value="${esc(tags)}" ${busy?'disabled':''}></label><label class="ledger-wide">行程备注<textarea id="tag-note" aria-label="行程备注" maxlength="1000" rows="3" ${busy?'disabled':''}>${esc(note)}</textarea></label></form><p class="insight-note">可用中文或英文逗号分隔，每趟最多 10 个标签，每个 24 字。留空可清除标签；备注单独保留。</p><div class="insight-actions">${button('保存行程标签','save',loading)}</div></section>`:''}
         ${data?`<section class="card insight-panel"><div class="insight-heading"><h3>同类比较</h3><span class="insight-badge">${data.groups.length} 类标签</span></div>${data.groups.length?`<div class="ledger-form"><label>比较标签 A<select id="tag-group-a" aria-label="比较标签 A">${options(groupA)}</select></label><label>比较标签 B<select id="tag-group-b" aria-label="比较标签 B">${options(groupB)}</select></label></div>`:'<p class="insight-empty">从下方选择行程添加标签，即可比较。</p>'}<div id="tag-comparison"></div><p class="insight-note">完整与片段均按有效观测计入，每项单列样本数；均值表示每条记录的观测值，不代表完整行程均值。SOC 回升不算负耗电。百公里估算使用同一批至少 10 km、SOC 下降至少 3 个百分点且电量可估算的记录，按总估算电量 ÷ 总里程计算。SOC 电量不是电表计量。</p><p class="insight-note">距离、时长、样本量不同都可能影响结果。没有天气、路况或驾驶方式证据，不据此归因或排名。</p></section>
         <section class="card insight-panel"><div class="insight-heading"><h3>本月行程</h3><div class="insight-toolbar"><label>筛选标签<select id="tag-filter" aria-label="筛选标签"><option value="">全部标签与未标注</option><option value="untagged" ${filter==='untagged'?'selected':''}>未标注</option>${filterOptions()}</select></label><label>标签行程完整性<select id="tag-completeness" aria-label="标签行程完整性">${[['all','全部记录'],['complete','完整记录'],['partial','仅片段']].map(([key,label])=>`<option value="${key}" ${key===completeness?'selected':''}>${label}</option>`).join('')}</select></label></div></div><div id="tag-events"></div></section><div id="tag-trash"></div>`:''}`;
@@ -293,7 +323,7 @@
       const el=node?.querySelector('#tag-events');if(!el||!data)return;
       const rows=data.events.filter(r=>(!filter||(filter==='untagged'?!r.tags.length:r.tags.includes(filter.slice(4))))&&(completeness==='all'||r.partial===(completeness==='partial')));
       const pages=Math.max(1,Math.ceil(rows.length/10));page=Math.max(0,Math.min(page,pages-1));
-      el.innerHTML=(rows.slice(page*10,page*10+10).map(r=>`<article class="rule-record" data-tag-event="${esc(r.id)}"><div class="insight-heading"><h4>${esc(time(r.end_time))}</h4><span class="insight-badge">${r.partial?'观测片段':'完整记录'}</span></div><div class="tag-trip-facts"><span>开始<strong>${esc(time(r.start_time))}</strong></span><span>结束<strong>${esc(time(r.end_time))}</strong></span><span>里程<strong>${number(r.distance_km)} km</strong></span><span>时长<strong>${number(r.duration_seconds===null?null:r.duration_seconds/60)} 分钟</strong></span></div><p class="insight-note">参考地点：${placeLink(r.start_place)} → ${placeLink(r.end_place)}</p><p>SOC ${number(r.start_soc)}% → ${number(r.end_soc)}% · 电量估算 ${number(r.estimated_kwh)} kWh</p><div class="insight-badges">${r.tags.map(tag=>`<span class="insight-badge">${esc(tag)}${tag==='通勤'&&r.automatic_commute?' · 自动':''}</span>`).join('')||'<span class="insight-note">未贴标签</span>'}</div>${r.commute_reason==='insufficient'?'<p class="insight-note">起止位置证据不足，未自动判定通勤。</p>':''}${r.note?`<p class="ledger-note">${esc(r.note)}</p>`:''}<div class="insight-actions">${button('标注这趟行程','edit',false,`data-id="${esc(r.id)}"`)}${r.annotation_id?button('删除行程标签','delete',false,`data-id="${esc(r.annotation_id)}"`):''}</div></article>`).join('')||'<p class="insight-empty">本月没有符合筛选的行程</p>')+`<div class="insight-pagination">${button('上一页标签行程','previous',page===0)}<span>${rows.length} 条 · ${page+1} / ${pages}</span>${button('下一页标签行程','next',page+1===pages)}</div>`;
+      el.innerHTML=(rows.slice(page*10,page*10+10).map(r=>`<article class="rule-record" data-tag-event="${esc(r.id)}"><div class="insight-heading"><h4>${esc(time(r.end_time))}</h4><span class="insight-badge">${r.partial?'观测片段':'完整记录'}</span></div><div class="tag-trip-facts"><span>开始<strong>${esc(time(r.start_time))}</strong></span><span>结束<strong>${esc(time(r.end_time))}</strong></span><span>里程<strong>${number(r.distance_km)} km</strong></span><span>时长<strong>${number(r.duration_seconds===null?null:r.duration_seconds/60)} 分钟</strong></span></div><p class="insight-note">参考地点：${placeLink(r.start_place)} → ${placeLink(r.end_place)}</p><p>SOC ${number(r.start_soc)}% → ${number(r.end_soc)}% · 电量估算 ${number(r.estimated_kwh)} kWh</p><div class="insight-badges">${r.tags.map(tag=>`<span class="insight-badge">${esc(tag)}${tag==='通勤'&&r.automatic_commute?' · 自动':''}</span>`).join('')||'<span class="insight-note">未贴标签</span>'}</div>${commuteEvidence(r)}${r.note?`<p class="ledger-note">${esc(r.note)}</p>`:''}<div class="insight-actions">${button('标注这趟行程','edit',false,`data-id="${esc(r.id)}"`)}${r.annotation_id?button('删除行程标签','delete',false,`data-id="${esc(r.annotation_id)}"`):''}</div></article>`).join('')||'<p class="insight-empty">本月没有符合筛选的行程</p>')+`<div class="insight-pagination">${button('上一页标签行程','previous',page===0)}<span>${rows.length} 条 · ${page+1} / ${pages}</span>${button('下一页标签行程','next',page+1===pages)}</div>`;
       const trashPages=Math.max(1,Math.ceil(data.trash.length/10));trashPage=Math.min(trashPage,trashPages-1);
       node.querySelector('#tag-trash').innerHTML=data.trash.length?`<section class="card insight-panel"><h3>已删除的行程标签</h3><div class="ledger-trash-list">${data.trash.slice(trashPage*10,trashPage*10+10).map(r=>`<div><span>${esc(time(r.end_time))} · ${esc(r.tags.join('、')||'无标签')}</span>${button('恢复行程标签','restore',false,`data-id="${esc(r.id)}"`)}</div>`).join('')}</div><div class="insight-pagination">${button('上一页删除标签','trash-previous',trashPage===0)}<span>${trashPage+1} / ${trashPages}</span>${button('下一页删除标签','trash-next',trashPage+1===trashPages)}</div></section>`:'';
     }
@@ -303,7 +333,7 @@
       try{const result=await request('/api/insights/trip-tags?date='+encodeURIComponent(month+'-01'));
         if(!valid(token,serial,identity))return false;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        data=result;if(!preservePages)page=trashPage=0;syncCommuteRule();
+        data=result;commuteRule=result.commute_rule;if(!preservePages)page=trashPage=0;syncCommuteRule();
         if(selected){selected=data.events.find(row=>row.id===selected.id)||null;if(!selected)closeRoute();}
         if(!data.groups.some(g=>g.tag===groupA))groupA=data.groups[0]?.tag||'';
         if(!data.groups.some(g=>g.tag===groupB))groupB=data.groups[1]?.tag||data.groups[0]?.tag||'';
@@ -340,9 +370,11 @@
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
     }
     async function mutateCommute(action,eventId){
-      if(commuteBusy||busy||!owner||!data)return;
+      if(commuteBusy||busy||loading||ruleLoading||!owner||!commuteRule)return;
+      if(action==='commute-apply'&&!commutePreview)return;
+      if(['commute-preview','commute-apply'].includes(action)&&commuteDirty){error='请先保存通勤设置，再预览历史重判。';paint();return;}
       const identity=owner,token=++writeSerial;
-      const payload={action,context:owner,revision:data.commute_rule?.revision||0};
+      const payload={action,context:owner,revision:commuteRule.revision||0};
       if(action==='commute-save'){
         const {home,work,homeRadius,workRadius}=commuteDraft;
         if(!home||!work||![homeRadius,workRadius].every(v=>Number.isInteger(v)&&v>=100&&v<=1000)){
@@ -351,36 +383,43 @@
         payload.home={...home,radius_m:homeRadius};payload.work={...work,radius_m:workRadius};
       }
       if(eventId)payload.event_id=eventId;
+      if(action==='commute-preview'||action==='commute-apply'){payload.date=month+'-01';if(action==='commute-apply')payload.token=commutePreview.token;}
       commuteBusy=true;error=status='';paint();
       try{
         const result=await request('/api/insights/trip-tags',payload);
         if(!valid(token,writeSerial,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        if(action==='commute-save')commuteDirty=false;
-        status=action==='commute-exclude'?'已取消本趟自动通勤。':action==='commute-include'?'已恢复本趟自动通勤。':'通勤设置已保存。';await load();
-      }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 当前设置已保留。';}
+        if(action==='commute-preview'){commutePreview=result;previewPage=0;status='历史重判预览已生成，尚未修改标签。';return;}
+        commutePreview=null;
+        if(action==='commute-save'){commuteDirty=false;commuteRule=result;syncCommuteRule();}
+        else if(['commute-pause','commute-resume','commute-delete'].includes(action)){commuteRule=result;}
+        status=action==='commute-apply'?'历史重判已应用，手工标签、备注和手动排除保留。':action==='commute-exclude'?'已取消本趟自动通勤。':action==='commute-include'?'已恢复本趟自动通勤。':'通勤设置已保存。';
+        if(data||action==='commute-apply')await load();
+      }catch(failure){if(valid(token,writeSerial,identity)){error=failure.message+' 当前设置已保留。';if(action==='commute-apply')commutePreview=null;}}
       finally{if(valid(token,writeSerial,identity)){commuteBusy=false;paint();}}
     }
     let tripRevision;
     function mount(container){
-      const contextChanged=owner!==context(),recordsChanged=!busy&&tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
+      const contextChanged=owner!==context(),recordsChanged=!busy&&!commuteBusy&&tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
       if(contextChanged||recordsChanged)tripRevision=getState()?.trip_records_revision;
-      if(contextChanged){owner=context();data=null;selected=null;tags=note='';attempted=false;loading=busy=false;serial++;writeSerial++;error=status='';filter=groupA=groupB='';closeRoute();closePlacesMap();closeCommuteMap();commuteDraft={home:null,work:null,homeRadius:300,workRadius:300};commuteDirty=false;}
+      if(recordsChanged){commutePreview=null;node.querySelector('#commute-preview')?.remove();}
+      if(contextChanged){ruleSerial++;ruleLoading=commuteBusy=false;commuteRule=commutePreview=null;owner=context();data=null;selected=null;tags=note='';attempted=false;loading=busy=false;serial++;writeSerial++;error=status='';filter=groupA=groupB='';closeRoute();closePlacesMap();closeCommuteMap();commuteDraft={home:null,work:null,homeRadius:300,workRadius:300};commuteDirty=false;}
       else if(recordsChanged&&attempted){
         if(selected||namePlace||commuteDirty){serial++;loading=false;status='行程记录已变化；填写内容保留，请重新读取核对后再保存。';}
         else load(true);
       }
       if(contextChanged||remount||recordsChanged)paint();
+      if(owner&&!commuteRule&&!ruleLoading)loadCommuteRule();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;const el=event.target;
-      if((event.type==='input'||event.type==='change')&&el.id==='tag-month'){if(month===el.value)return true;month=el.value;serial++;writeSerial++;loading=busy=false;data=selected=null;tags=note=error='';status='日期已修改，请重新读取行程标签。';page=trashPage=0;filter=groupA=groupB='';closeRoute();closeCommuteMap();closePlacesMap();paint();return true;}
+      if((event.type==='input'||event.type==='change')&&el.id==='tag-month'){if(commuteBusy||month===el.value)return true;month=el.value;serial++;writeSerial++;commutePreview=null;node.querySelector('#commute-preview')?.remove();loading=busy=false;data=selected=null;tags=note=error='';status='日期已修改，请重新读取行程标签。';page=trashPage=0;filter=groupA=groupB='';closeRoute();closeCommuteMap();closePlacesMap();paint();return true;}
       if(event.type==='input'&&el.id==='tag-place-name'){nameDraft=el.value;namePreview=null;node.querySelector('[data-tag="place-name-save"]')?.setAttribute('disabled','');node.querySelector('#tag-name-preview')?.remove();return true;}
       if(event.type==='input'&&el.id==='tag-labels'){tags=el.value;syncQuickLabels();return true;}
       if(event.type==='input'&&el.id==='tag-note'){note=el.value;return true;}
       if(event.type==='input'&&['commute-home-radius','commute-work-radius'].includes(el.id)){
-        commuteDraft[el.id==='commute-home-radius'?'homeRadius':'workRadius']=Number(el.value);commuteDirty=true;
-        if(commuteMap){commuteMap.remove();commuteMap=null;paintCommuteMap();}return true;
+        commuteDraft[el.id==='commute-home-radius'?'homeRadius':'workRadius']=Number(el.value);commuteDirty=true;commutePreview=null;
+        node.querySelector('#commute-preview')?.remove();paint();return true;
       }
       if(event.type==='change'){
         if(el.id==='tag-name-shape'){nameShape=el.value;nameDrawing=nameShape==='polygon'&&nameVertices.length<3;invalidateName();paint();return true;}
@@ -418,11 +457,14 @@
       if(action==='places-all'){focusedPlace=focusedRegion=placesViewport=null;placesMap?.remove();placesMap=null;paint();return true;}
       if(action==='places-map'){placesShown=!placesShown;if(!placesShown){focusedPlace=focusedRegion=placesViewport=null;placesMap?.remove();placesMap=null;}paint();return true;}
       if(action==='places-previous'||action==='places-next'){placePage+=action==='places-next'?1:-1;paint();return true;}
+      if(action==='commute-reload'){loadCommuteRule();return true;}
+      if(action==='commute-preview-cancel'){commutePreview=null;paint();return true;}
+      if(action==='commute-preview-previous'||action==='commute-preview-next'){previewPage+=action==='commute-preview-next'?1:-1;paint();return true;}
       if(action==='commute-map'){commuteShown=!commuteShown;placeMode=commuteShown&&!commuteDraft.home?'home':null;paint();return true;}
       if(action==='commute-place-home'||action==='commute-place-work'){const key=action.endsWith('home')?'home':'work';placeMode=placeMode===key?null:key;paint();return true;}
       if(action==='commute-center-home'||action==='commute-center-work'){
         const where=commuteMap?.getCenter(),key=action.endsWith('home')?'home':'work';
-        if(where){commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;placeMode=null;paint();}return true;
+        if(where){commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;commutePreview=null;placeMode=null;paint();}return true;
       }
       if(action.startsWith('commute-')){mutateCommute(action,id);return true;}
       if(action==='load')load();

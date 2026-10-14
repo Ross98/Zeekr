@@ -688,6 +688,7 @@ class App:
                         'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
                         'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
                         'tyres': lambda scope, car: self.tyre_notifications.query(account_scope(session),car),
+                        'commute-rule': lambda scope, car: dict(commute_rule=self.trip_tags.commute.rule(account_scope(session),car)),
                         'trip-tags': lambda scope, car, date: self.trip_tags.query(account_scope(session),car,date,
                             guard=lambda: self._guard_insight_session(session,context)),
                         'routes':lambda scope,car,date:self.travel_insights.routes(account_scope(session),car,date),
@@ -1152,6 +1153,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                         return self.send(200, app.insights('tyres'))
                     if url.path == '/api/insights/rules':
                         return self.send(200, app.insights('rules'))
+                    if url.path == '/api/insights/commute-rule':
+                        return self.send(200, app.insights('commute-rule'))
                     if url.path == '/api/insights/trip-tags':
                         return self.send(200, app.insights('trip-tags',value('date')))
                     if url.path in ('/api/insights/routes','/api/insights/review'):

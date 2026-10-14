@@ -10,7 +10,7 @@ const groups={
     'usage_report_analysis','test_freehand_regions','ui_field_review_rules','parameter_research_focus'],
   smoke:['ui_smoke','ui_status_summary','ui_overview_dashboard'],
   review:['ui_research_serial','ui_research_simplification','ui_review_fixes','ui_lazy_tools','ui_async_analysis','ui_analysis_cancel','ui_overview_dashboard','ui_books_overview',
-    'ui_books_navigation','ui_books_safety','ui_tool_navigation','ui_insights_navigation',
+    'ui_books_navigation','ui_books_safety','ui_tool_navigation','ui_insights_navigation','ui_commute_reassessment','ui_trip_tags',
     'ui_parameter_flow','ui_parameter_workspace','ui_refresh_view','ui_refresh_scroll']
 };
 const group=process.argv[2]||'review';

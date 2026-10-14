@@ -1,5 +1,7 @@
 """Owner-scoped commute rules and evidence-bound endpoint matching."""
 import math
+import hashlib
+import json
 import time
 
 from .tracks import TrackStore
@@ -83,9 +85,9 @@ class CommuteTags:
     def exclude(self, owner, vehicle, event_id, excluded, guard=None):
         with self.store.connect(write=True) as db, db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT result FROM commute_decisions WHERE owner=? AND vehicle=? AND event_id=?',
+            row = db.execute('SELECT result,excluded FROM commute_decisions WHERE owner=? AND vehicle=? AND event_id=?',
                              (owner, vehicle, event_id)).fetchone()
-            if not row or row[0] != 'matched':
+            if not row or (row[0] != 'matched' and not row[1]):
                 raise ValueError('这趟行程没有自动通勤标签。')
             db.execute('UPDATE commute_decisions SET excluded=? WHERE owner=? AND vehicle=? AND event_id=?',
                        (int(excluded), owner, vehicle, event_id))
@@ -100,43 +102,156 @@ class CommuteTags:
                 return None
             return endpoint(db, vehicle, lower, upper, near_start)
 
-    def _match(self, vehicle, event, rule):
+    def _evaluate(self, vehicle, event, rule):
         start, end = event['start_time'], event['end_time']
-        if type(start) not in (int,float) or type(end) not in (int,float) or end <= start:
-            return ('insufficient', None, None, None, None)
-        first, last = self._endpoint(vehicle,start,end,True), self._endpoint(vehicle,start,end,False)
+        valid = type(start) in (int, float) and type(end) in (int, float) and end > start
+        first = self._endpoint(vehicle, start, end, True) if valid else None
+        last = self._endpoint(vehicle, start, end, False) if valid else None
+        signature = hashlib.sha256(json.dumps(
+            [start, end, event.get('partial'), first, last, list(rule)],
+            separators=(',', ':')).encode()).hexdigest()
+        evidence = dict(direction=None, partial=bool(event.get('partial')), rule_revision=rule[0],
+                        start_distance_m=None, end_distance_m=None,
+                        start_radius_m=rule[6], end_radius_m=rule[9],
+                        start_sample_time=first[0] if first else None,
+                        end_sample_time=last[0] if last else None)
         if first is None or last is None or first[0] == last[0]:
-            return ('insufficient', first[0] if first else None,last[0] if last else None,None,None)
-        home, work = (rule[4:6], rule[7:9])
-        a_home, a_work = _distance(first[1],home), _distance(first[1],work)
-        b_home, b_work = _distance(last[1],home), _distance(last[1],work)
+            return ('insufficient', evidence['start_sample_time'], evidence['end_sample_time'], None, None), evidence, signature
+        a_home, a_work = _distance(first[1], rule[4:6]), _distance(first[1], rule[7:9])
+        b_home, b_work = _distance(last[1], rule[4:6]), _distance(last[1], rule[7:9])
         outward = a_home <= rule[6] and b_work <= rule[9]
         backward = a_work <= rule[9] and b_home <= rule[6]
-        distances = (a_home,b_work) if outward or not backward else (a_work,b_home)
-        return ('matched' if outward or backward else 'outside',first[0],last[0],*distances)
+        use_backward = backward or (not outward and max(a_work/rule[9], b_home/rule[6]) < max(a_home/rule[6], b_work/rule[9]))
+        a, b = (a_work, b_home) if use_backward else (a_home, b_work)
+        evidence.update(direction='backward' if use_backward else 'outbound',
+                        start_distance_m=round(a, 1), end_distance_m=round(b, 1),
+                        start_radius_m=rule[9] if use_backward else rule[6],
+                        end_radius_m=rule[6] if use_backward else rule[9])
+        return ('matched' if outward or backward else 'outside', first[0], last[0], a, b), evidence, signature
+
+    def _match(self, vehicle, event, rule):
+        return self._evaluate(vehicle, event, rule)[0]
+
+    @staticmethod
+    def _evidence(db, owner, vehicle, event_id):
+        if db is None or not db.execute("SELECT 1 FROM sqlite_master WHERE name='commute_evidence'").fetchone():
+            return None
+        row = db.execute('SELECT signature,body FROM commute_evidence WHERE owner=? AND vehicle=? AND event_id=?',
+                         (owner, vehicle, event_id)).fetchone()
+        return (row[0], json.loads(row[1])) if row else None
+
+    @staticmethod
+    def _save(db, owner, vehicle, event_id, rule, result, evidence, signature, excluded):
+        db.execute('CREATE TABLE IF NOT EXISTS commute_evidence ('
+                   'owner TEXT,vehicle TEXT,event_id TEXT,signature TEXT NOT NULL,body TEXT NOT NULL,'
+                   'PRIMARY KEY(owner,vehicle,event_id))')
+        db.execute('INSERT OR REPLACE INTO commute_decisions VALUES(?,?,?,?,?,?,?,?,?,?)',
+                   (owner, vehicle, event_id, rule[0], *result, int(excluded)))
+        db.execute('INSERT OR REPLACE INTO commute_evidence VALUES(?,?,?,?,?)',
+                   (owner, vehicle, event_id, signature, json.dumps(evidence, separators=(',', ':'))))
 
     def decisions(self, owner, vehicle, events, guard=None):
         with self.store.connect() as db:
             versions = self._versions(db, owner, vehicle)
-            found = {}
-            if db is not None and versions:
-                for event in events:
-                    row = db.execute('SELECT result,excluded FROM commute_decisions '
-                                     'WHERE owner=? AND vehicle=? AND event_id=?',
-                                     (owner,vehicle,event['id'])).fetchone()
-                    if row: found[event['id']] = row
+            found, existing, evidence_rows = {}, {}, {}
+            for event in events if versions else []:
+                row = db.execute('SELECT result,excluded,rule_version,start_time,end_time,start_distance,end_distance '
+                                 'FROM commute_decisions WHERE owner=? AND vehicle=? AND event_id=?',
+                                 (owner, vehicle, event['id'])).fetchone()
+                if row:
+                    existing[event['id']] = row
+                    evidence_rows[event['id']] = self._evidence(db, owner, vehicle, event['id'])
         for event in events:
-            if event['id'] in found:
-                continue
-            rule = next((row for row in reversed(versions) if event['end_time'] > row[1]),None)
+            old = existing.get(event['id'])
+            stored = evidence_rows.get(event['id'])
+            rule = (next((row for row in versions if row[0] == old[2]), None) if old else
+                    next((row for row in reversed(versions) if event['end_time'] > row[1]), None))
             if rule is None or not rule[2] or rule[3]:
                 continue
-            result = self._match(vehicle,event,rule)
+            if old and (old[0] == 'matched' or old[1]):
+                details = stored[1] if stored else dict(direction=None, partial=bool(event.get('partial')),
+                    rule_revision=rule[0], start_distance_m=old[5], end_distance_m=old[6],
+                    start_sample_time=old[3], end_sample_time=old[4], legacy=True)
+                found[event['id']] = (old[0], old[1], details)
+                continue
+            result, details, signature = self._evaluate(vehicle, event, rule)
+            if old and stored and stored[0] == signature:
+                found[event['id']] = (old[0], old[1], stored[1])
+                continue
             with self.store.connect(write=True) as db, db:
                 db.execute('BEGIN IMMEDIATE')
-                db.execute('INSERT OR IGNORE INTO commute_decisions VALUES(?,?,?,?,?,?,?,?,?,0)',
-                           (owner,vehicle,event['id'],rule[0],*result))
+                # A concurrent preview application or manual exclusion wins.
+                current = db.execute('SELECT result,excluded,rule_version FROM commute_decisions '
+                    'WHERE owner=? AND vehicle=? AND event_id=?', (owner, vehicle, event['id'])).fetchone()
+                expected = old[:3] if old else None
+                current_evidence = self._evidence(db, owner, vehicle, event['id'])
+                if current != expected or (current_evidence[0] if current_evidence else None) != (stored[0] if stored else None):
+                    if current:
+                        saved = self._evidence(db, owner, vehicle, event['id'])
+                        found[event['id']] = (*current[:2], saved[1] if saved else None)
+                    continue
+                self._save(db, owner, vehicle, event['id'], rule, result, details, signature, False)
                 if guard: guard()
-                found[event['id']] = db.execute('SELECT result,excluded FROM commute_decisions '
-                    'WHERE owner=? AND vehicle=? AND event_id=?',(owner,vehicle,event['id'])).fetchone()
+                found[event['id']] = (result[0], 0, details)
         return found
+
+    def reassess(self, owner, vehicle, events, data, guard=None):
+        apply = data['action'] == 'commute-apply'
+        with self.store.connect(write=apply) as db:
+            if db is None:
+                raise ValueError('请先保存并启用通勤规则。')
+            with db:
+                db.execute('BEGIN IMMEDIATE' if apply else 'BEGIN')
+                versions = self._versions(db, owner, vehicle)
+                rule = versions[-1] if versions else None
+                if not rule or not rule[2] or rule[3]:
+                    raise ValueError('请先保存并启用通勤规则。')
+                if type(data.get('revision')) is not int or data['revision'] != rule[0]:
+                    raise ValueError('通勤规则已有变化，请重新预览。')
+                if len(events) > 1000:
+                    raise ValueError('本月行程超过 1000 条，暂不支持历史重判。')
+                rows, candidates, counts = [], [], dict(add=0, remove=0, unchanged=0, excluded=0, insufficient=0)
+                for event in events:
+                    old = db.execute('SELECT result,excluded,rule_version FROM commute_decisions WHERE owner=? AND vehicle=? AND event_id=?',
+                                     (owner, vehicle, event['id'])).fetchone()
+                    result, evidence, signature = self._evaluate(vehicle, event, rule)
+                    excluded = bool(old and old[1])
+                    before, after = bool(old and old[0] == 'matched' and not excluded), result[0] == 'matched' and not excluded
+                    change = 'excluded' if excluded else 'add' if after and not before else 'remove' if before and not after else 'unchanged'
+                    counts[change] += 1
+                    if result[0] == 'insufficient': counts['insufficient'] += 1
+                    rows.append(dict(id=event['id'], start_time=event['start_time'], end_time=event['end_time'],
+                                     before=before, after=after, change=change, result=result[0], **evidence))
+                    candidates.append((event['id'], old, result, evidence, signature, excluded))
+                token = hashlib.sha256(json.dumps([owner, vehicle, data.get('date'), list(rule), candidates],
+                                        sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                if apply:
+                    if data.get('token') != token:
+                        raise ValueError('行程、采样或标注已有变化，请重新预览。')
+                    for event_id, old, result, evidence, signature, excluded in candidates:
+                        self._save(db, owner, vehicle, event_id, rule, result, evidence, signature, excluded)
+                    if guard: guard()
+                return dict(token=token, counts=counts, rows=rows, date=data.get('date'), rule_revision=rule[0], applied=apply)
+
+    def collect(self, owner, vehicle, now, guard=None):
+        """Bound collection to the latest 100 finished trips in the last 48 hours."""
+        if not self.rule(owner, vehicle)['revision']:
+            return
+        from .usage_events import UsageEvents, MAX_SUMMARY_BYTES, project
+        from .trip_visibility import visible_clause
+        source = UsageEvents(self.tracks.path)
+        with source.connect() as db:
+            if db is None: return
+            rows = db.execute('SELECT id,summary FROM monitor_events WHERE vehicle=? AND kind=? '
+                'AND created>=? AND created<=? AND length(CAST(summary AS BLOB))<=? AND ' + visible_clause(db) +
+                ' ORDER BY created DESC,rowid DESC LIMIT 100',
+                (vehicle, 'trip_end', now-48*3600000, now, MAX_SUMMARY_BYTES)).fetchall()
+        events = []
+        for identity, encoded in rows:
+            try:
+                event = project(identity, 'trip_end', json.loads(encoded))
+            except (ValueError, TypeError):
+                continue
+            if event and now-48*3600000 <= event['end_time'] <= now:
+                events.append(event)
+        self.decisions(owner, vehicle, events, guard=guard)

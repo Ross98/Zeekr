@@ -1,0 +1,49 @@
+const assert=require('node:assert/strict');
+const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+(async()=>{
+  const f=await fixture({initialResearch:false}),{page}=f;
+  try{
+    await page.route('https://wprd0*.is.autonavi.com/**',route=>route.fulfill({status:200,contentType:'image/png',body:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==','base64')}));
+    const reads=[];
+    page.on('request',r=>{if(r.method()==='GET')reads.push(new URL(r.url()).pathname);});
+    await page.getByRole('button',{name:'行程与轨迹',exact:true}).click();
+    await page.getByRole('button',{name:'行程标签',exact:true}).click();
+    await page.getByRole('button',{name:'重新读取通勤设置',exact:true}).waitFor();
+    await page.waitForFunction(()=>document.querySelector('[data-tag="commute-reload"]:not(:disabled)'));
+    assert.ok(reads.includes('/api/insights/commute-rule'));
+    assert.ok(!reads.includes('/api/insights/trip-tags'),'Settings must not require reading trips');
+    await page.getByRole('button',{name:'打开选点地图'}).click();
+    await page.locator('#commute-map').click({position:{x:250,y:160}});
+    await page.getByRole('button',{name:'选择公司地点'}).click();
+    await page.locator('#commute-map').click({position:{x:400,y:180}});
+    assert.equal(await page.getByRole('button',{name:'保存通勤规则'}).isEnabled(),true);
+    await page.getByRole('button',{name:'保存通勤规则'}).click();
+    await page.waitForFunction(()=>document.querySelector('#trip-tags-workspace')?.textContent.includes('运行中'));
+    assert.ok(!reads.includes('/api/insights/trip-tags'),'Saving settings must not fetch trips implicitly');
+    await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
+    await page.getByRole('button',{name:'预览本月历史重判'}).click();
+    await page.locator('#commute-preview').waitFor();
+    assert.match(await page.locator('#commute-preview').innerText(),/2026-09[\s\S]*新增[\s\S]*移除[\s\S]*手动排除/);
+    assert.equal(await page.getByRole('button',{name:'应用本月历史重判'}).isEnabled(),true);
+    await page.getByLabel('标签月份',{exact:true}).fill('2026-08');
+    assert.equal(await page.locator('#commute-preview').count(),0,'Changing month invalidates preview');
+    await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
+    await page.getByRole('button',{name:'预览本月历史重判'}).click();
+    await page.locator('#commute-preview').waitFor();
+    await page.getByRole('button',{name:'应用本月历史重判'}).click();
+    await page.waitForFunction(()=>document.querySelector('#trip-tags-workspace')?.textContent.includes('历史重判已应用'));
+    assert.ok(f.posts.filter(url=>url.endsWith('/api/insights/trip-tags')).length>=4);
+    await page.route('**/api/insights/trip-tags?**',async route=>{
+      const response=await route.fetch(),data=await response.json(),trip=data.events[0];
+      trip.automatic_commute=true;trip.tags=['通勤'];trip.partial=true;
+      trip.commute_evidence={direction:'outbound',partial:true,start_distance_m:35,end_distance_m:80,start_radius_m:300,end_radius_m:500,rule_revision:1};
+      await route.fulfill({response,json:data});
+    });
+    await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#tag-events')?.textContent.includes('起点距家中心 35'));
+    assert.match(await page.locator('#tag-events').innerText(),/去程[\s\S]*终点距公司中心 80[\s\S]*不能确认完整通勤/);
+    await layouts(page,'commute-reassessment');
+    assert.deepEqual(f.errors,[]);
+    console.log('UI_COMMUTE_REASSESSMENT_PASS: independent settings, save without month load, historical preview/apply, month invalidation, endpoint explanation, partial warning, desktop layouts');
+  }finally{await f.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});
