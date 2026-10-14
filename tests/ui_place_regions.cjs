@@ -72,6 +72,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   await page.getByRole('button',{name:'编辑区域 园区停车场',exact:true}).click();assert.equal(await page.getByLabel('地点名称',{exact:true}).inputValue(),'园区停车场');
   assert.equal(await page.locator('#tag-name-map .leaflet-marker-icon').count(),3);
   conflict='circle';await page.getByRole('button',{name:'预览影响行程',exact:true}).click();
+  await page.getByText(/与 相邻车库 的命名范围重叠/).waitFor();
+  await page.waitForFunction(()=>document.querySelector('[data-tag="place-name-preview"]')?.disabled===false);
   assert.equal(await page.getByRole('button',{name:'保存地点名称',exact:true}).isDisabled(),false,'Circle overlap allows precise polygon edits');
   conflict='polygon';await page.getByRole('button',{name:'预览影响行程',exact:true}).click();await page.getByText(/与 相邻车库 的命名范围重叠/).waitFor();
   assert.equal(await page.getByRole('button',{name:'保存地点名称',exact:true}).isDisabled(),true,'Overlapping polygons cannot save');
