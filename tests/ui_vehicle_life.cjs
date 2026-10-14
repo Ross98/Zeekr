@@ -5,6 +5,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   try{
     await page.getByRole('button',{name:'用车账本',exact:true}).click();
     await page.getByRole('button',{name:'生活账本',exact:true}).click();
+    await page.locator('[data-detail=life-range] > summary').click();
     await page.locator('#life-start').fill('2026-09-01');
     await page.locator('#life-end').fill('2026-09-30');
     await page.getByRole('button',{name:'查询生活账本',exact:true}).click();
@@ -76,7 +77,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'已核对列表，继续编辑',exact:true}).click();
     await page.getByRole('button',{name:'保存待办',exact:true}).click();
     await page.locator('[data-life-reminder]').filter({hasText:'保留本地草稿'}).waitFor();
-    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/life'));
+    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/life'||url.startsWith(f.origin+'/api/analysis/')&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(new URL(url).pathname)));
     assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
     console.log('UI_VEHICLE_LIFE_PASS: expense categories/cents/edit/undo/delete/restore, dated and mileage tasks/completion/undo/unknown mileage, persistence, XSS, poll preservation, desktop themes/zoom/contrast; local writes only');
   }finally{await f.close();}

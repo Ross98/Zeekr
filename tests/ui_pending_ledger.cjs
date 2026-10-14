@@ -42,7 +42,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     assert.equal(await page.getByLabel('账本月份',{exact:true}).inputValue(),'2026-09');
     assert.ok(Math.abs(await page.evaluate(()=>scrollY)-position)<2,'save returns to list position');
     assert.equal(await page.evaluate(()=>document.activeElement.id),'ledger-pending-count','keyboard focus returns to updated count');
-    assert.match(await page.locator('#ledger-actual-total').innerText(),/0\.00/);
+    await page.waitForFunction(()=>document.querySelectorAll('#books-totals strong')[1]?.textContent==='0.00 元');
+    assert.equal(await page.locator('#books-totals strong').nth(1).innerText(),'0.00 元');
     await page.getByRole('button',{name:'撤销上一步',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#ledger-pending')?.textContent.includes('21 次待记账'));
     assert.match(await page.locator('#ledger-pending .insight-pagination').innerText(),/2 \/ 3/,'undo keeps current page');
@@ -65,7 +66,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByText('本月没有结束充电记录',{exact:true}).waitFor();
     assert.equal(await page.locator('[data-ledger="pending-new"]').count(),0,'month change removes previous pending records');
     assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
-    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/ledger'));
+    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/ledger'||url.startsWith(f.origin+'/api/analysis/')&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(new URL(url).pathname)));
     console.log('UI_PENDING_LEDGER_PASS: partial/unknown records, paging, date prefill, real zero-cost save, page clamp, scroll return, undo, cancel, month isolation, layouts');
   }finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
