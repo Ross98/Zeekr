@@ -34,6 +34,7 @@
     let nameShape='circle',nameVertices=[],nameDrawing=false,nameMap=null,nameViewport=null,nameVertex=null,nameFreehand=true;
     let placesShown=false,placesMap=null,placePage=0,focusedPlace=null,focusedRegion=null,placesViewport=null;
     let placesPanelShown=false,placesPanelTab='places',placesPanelScroll=0,placesTableScroll=0;
+    let toolPanel=null,toolReturn='',toolScroll=0;
     let commuteDraft={home:null,work:null,homeRadius:300,workRadius:300},commuteDirty=false;
     let commuteMap=null,commuteShown=false,placeMode=null,commuteBusy=false;
     let commuteRule=null,ruleLoading=false,ruleSerial=0,commutePreview=null,previewPage=0;
@@ -74,7 +75,7 @@
       const items=region?data?.place_statistics?.name_regions:data?.place_statistics?.places;
       if(!items?.some(p=>p.id===id))return;
       if(namePlace&&(region?(namePlace.region_id||namePlace.manual_name_id)!==id:namePlace.id!==id))closeNameEditor();
-      selectMapPlace(id,region);paint();
+      toolPanel=null;selectMapPlace(id,region);paint();
       const map=node.querySelector('#tag-places-map');map?.focus({preventScroll:true});map?.scrollIntoView({block:'center'});
     }
     function regionLayer(map,region,color='#20776e'){
@@ -280,6 +281,37 @@
       if(!selected)return '';
       return `<div id="tag-route" class="tag-route"><div class="insight-actions">${routeShown?button('隐藏路线小地图','hide-route'):button('查看路线小地图','show-route')}</div>${routeShown?`${routeBusy?'<p role="status">正在读取本趟路线…</p>':''}${routeError?`<p role="alert" class="notice error">${esc(routeError)}</p>`:''}${routeData?'<div id="tag-route-map" aria-label="本趟采样路线小地图"></div><p class="insight-note">仅连接可信采样点；首末点不一定是真实出发地和目的地。稀疏连线不代表实际道路。</p>':''}`:'<p class="insight-note">位置默认隐藏。点击后才读取本趟采样并加载地图底图。</p>'}</div>`;
     }
+    function commuteSummaryView(){
+      const rule=commuteRule||data?.commute_rule||{};
+      const state=!commuteRule?'待读取':rule.deleted?'已删除':rule.enabled?'运行中':rule.revision?'已暂停':'未设置';
+      return `<section class="card insight-panel tag-module-summary"><div class="insight-heading"><h3>通勤自动标注</h3><span class="insight-badge">${state}</span></div><p class="insight-note">家：${commuteDraft.home?'已选点':'未选点'} · 公司：${commuteDraft.work?'已选点':'未选点'}${commuteDirty?' · 有未保存修改':''}</p>${button('通勤设置','tool-open',false,'data-id="commute" id="tag-commute-panel-open" aria-haspopup="dialog"')}</section>`;
+    }
+    function comparisonSummaryView(){
+      if(!data)return '';
+      return `<section class="card insight-panel tag-module-summary"><div class="insight-heading"><h3>同类比较</h3><span class="insight-badge">${data.groups.length} 类标签</span></div><p class="insight-note">按标签比较里程、时长与电量估算。</p>${button('打开同类比较','tool-open',false,'data-id="comparison" id="tag-comparison-panel-open" aria-haspopup="dialog"')}</section>`;
+    }
+    function editorView(){
+      return selected?`<section class="card insight-panel"><div class="insight-heading"><h3>标注这趟行程</h3>${button('取消标注','cancel')}</div><p>${esc(time(selected.start_time))} → ${esc(time(selected.end_time))}<br>${number(selected.distance_km)} km · ${number(selected.duration_seconds===null?null:selected.duration_seconds/60)} 分钟 · ${selected.partial?'观测片段':'完整记录'}</p>${selected.automatic_commute?`<p class="insight-note">本趟“通勤”为自动标注；手工标签可另行编辑。</p>${button('取消本趟自动通勤','commute-exclude',false,`data-id="${esc(selected.id)}"`)}`:selected.commute_excluded?button('恢复本趟自动通勤','commute-include',false,`data-id="${esc(selected.id)}"`):''}${routeView()}<form id="tag-form" class="ledger-form" novalidate><div class="ledger-wide"><strong>点选已有标签</strong><div class="tag-quick-list">${(data?.suggested_tags||[]).map(tag=>`<button type="button" class="tag-quick" data-tag="toggle-label" data-label="${esc(tag)}" aria-label="${labelList().includes(tag)?'取消':'选择'}标签 ${esc(tag)}" aria-pressed="${labelList().includes(tag)}" ${busy?'disabled':''}>${esc(tag)}</button>`).join('')||'<span class="insight-note">还没有已有标签，可在下方输入新标签。</span>'}</div></div><label class="ledger-wide">行程标签（逗号分隔）<input id="tag-labels" aria-label="行程标签（逗号分隔）" type="text" maxlength="300" value="${esc(tags)}" ${busy?'disabled':''}></label><label class="ledger-wide">行程备注<textarea id="tag-note" aria-label="行程备注" maxlength="1000" rows="3" ${busy?'disabled':''}>${esc(note)}</textarea></label></form><p class="insight-note">可用中文或英文逗号分隔，每趟最多 10 个标签，每个 24 字。留空可清除标签；备注单独保留。</p><div class="insight-actions">${button('保存行程标签','save',loading)}</div></section>`:'';
+    }
+    function comparisonView(){
+      return data?`<section class="card insight-panel"><div class="insight-heading"><h3>同类比较</h3><span class="insight-badge">${data.groups.length} 类标签</span></div>${data.groups.length?`<div class="ledger-form"><label>比较标签 A<select id="tag-group-a" aria-label="比较标签 A">${options(groupA)}</select></label><label>比较标签 B<select id="tag-group-b" aria-label="比较标签 B">${options(groupB)}</select></label></div>`:'<p class="insight-empty">从下方选择行程添加标签，即可比较。</p>'}<div id="tag-comparison"></div><p class="insight-note">完整与片段均按有效观测计入，每项单列样本数；均值表示每条记录的观测值，不代表完整行程均值。SOC 回升不算负耗电。百公里估算使用同一批至少 10 km、SOC 下降至少 3 个百分点且电量可估算的记录，按总估算电量 ÷ 总里程计算。SOC 电量不是电表计量。</p><p class="insight-note">距离、时长、样本量不同都可能影响结果。没有天气、路况或驾驶方式证据，不据此归因或排名。</p></section>`:'';
+    }
+    function toolsView(){
+      if(!toolPanel)return '';
+      const title={commute:'通勤设置',comparison:'标签比较',edit:'行程标注'}[toolPanel];
+      return `<dialog id="tag-tools-panel" class="tag-place-panel tag-tools-panel" aria-labelledby="tag-tools-title"><div class="tag-place-panel-header"><h3 id="tag-tools-title">${title}</h3>${button('关闭工具面板','tool-close',false,'id="tag-tools-close" autofocus')}</div><div class="tag-place-panel-body">${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${toolPanel==='commute'?`<label class="tag-tool-month">历史重判月份<input id="tag-tools-month" type="month" aria-label="历史重判月份" value="${esc(month)}" ${commuteBusy?'disabled':''}></label>${commuteView()}`:toolPanel==='comparison'?comparisonView():editorView()}</div></dialog>`;
+    }
+    function closeToolPanel(){
+      if(busy||commuteBusy)return;
+      if(node.querySelector('#tag-tools-panel')?.contains(document.activeElement))document.activeElement.blur();
+      toolPanel=null;paint();node.querySelector('#'+CSS.escape(toolReturn))?.focus({preventScroll:true});
+    }
+    function paintToolPanel(){
+      const panel=node.querySelector('#tag-tools-panel');if(!panel)return;
+      panel.showModal();panel.querySelector('.tag-place-panel-body').scrollTop=toolScroll;
+      panel.addEventListener('cancel',event=>{event.preventDefault();closeToolPanel();});
+      panel.addEventListener('keydown',event=>{if(event.key==='Escape'&&!event.defaultPrevented){event.preventDefault();closeToolPanel();}});
+    }
     function paint(){
       return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
     }
@@ -287,16 +319,18 @@
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
+      const oldTools=node.querySelector('#tag-tools-panel');
+      if(oldTools?.open){toolScroll=oldTools.querySelector('.tag-place-panel-body').scrollTop;oldTools.close();}
       const oldPanel=node.querySelector('#tag-place-panel');
       if(oldPanel?.open){placesPanelScroll=oldPanel.querySelector('.tag-place-panel-body').scrollTop;placesTableScroll=oldPanel.querySelector('.tag-place-table-scroll')?.scrollTop||0;oldPanel.close();}
       if(nameMap)nameViewport={center:nameMap.getCenter(),zoom:nameMap.getZoom()};nameMap?.remove();nameMap=null;
       routeMap?.remove();routeMap=null;commuteMap?.remove();commuteMap=null;if(placesMap)placesViewport={center:placesMap.getCenter(),zoom:placesMap.getZoom()};placesMap?.remove();placesMap=null;
-      node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">行程标签</span><h2>同类行程，放在一起看</h2><p>通勤、接娃、周末出游，让每趟记录有自己的分类。</p></div><span class="insight-source">自定义标签 · 同类比较</span></section>
-        ${commuteView()}<section class="card insight-panel"><div class="insight-toolbar"><label>标签月份<input id="tag-month" type="month" aria-label="标签月份" value="${esc(month)}" ${commuteBusy?'disabled':''}></label>${button('读取行程标签','load',!owner||!month||loading)}${button('撤销标签操作','undo',!data?.can_undo)}</div>${loading?'<p role="status">正在读取…</p>':''}${status&&!placesPanelShown?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error&&!placesPanelShown?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${data?`<p class="insight-note">${data.window.start_date} — ${data.window.end_date} · 按行程结束日期归期，${data.events.length} 条行程，${data.untagged_count} 条未贴标签。一趟可有多个标签，同组结果不能相加当总量。</p>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可管理标签。</p>':''}</section>
-        ${placesView()}${selected?`<section class="card insight-panel"><div class="insight-heading"><h3>标注这趟行程</h3>${button('取消标注','cancel')}</div><p>${esc(time(selected.start_time))} → ${esc(time(selected.end_time))}<br>${number(selected.distance_km)} km · ${number(selected.duration_seconds===null?null:selected.duration_seconds/60)} 分钟 · ${selected.partial?'观测片段':'完整记录'}</p>${selected.automatic_commute?`<p class="insight-note">本趟“通勤”为自动标注；手工标签可另行编辑。</p>${button('取消本趟自动通勤','commute-exclude',false,`data-id="${esc(selected.id)}"`)}`:selected.commute_excluded?button('恢复本趟自动通勤','commute-include',false,`data-id="${esc(selected.id)}"`):''}${routeView()}<form id="tag-form" class="ledger-form" novalidate><div class="ledger-wide"><strong>点选已有标签</strong><div class="tag-quick-list">${(data?.suggested_tags||[]).map(tag=>`<button type="button" class="tag-quick" data-tag="toggle-label" data-label="${esc(tag)}" aria-label="${labelList().includes(tag)?'取消':'选择'}标签 ${esc(tag)}" aria-pressed="${labelList().includes(tag)}" ${busy?'disabled':''}>${esc(tag)}</button>`).join('')||'<span class="insight-note">还没有已有标签，可在下方输入新标签。</span>'}</div></div><label class="ledger-wide">行程标签（逗号分隔）<input id="tag-labels" aria-label="行程标签（逗号分隔）" type="text" maxlength="300" value="${esc(tags)}" ${busy?'disabled':''}></label><label class="ledger-wide">行程备注<textarea id="tag-note" aria-label="行程备注" maxlength="1000" rows="3" ${busy?'disabled':''}>${esc(note)}</textarea></label></form><p class="insight-note">可用中文或英文逗号分隔，每趟最多 10 个标签，每个 24 字。留空可清除标签；备注单独保留。</p><div class="insight-actions">${button('保存行程标签','save',loading)}</div></section>`:''}
-        ${data?`<section class="card insight-panel"><div class="insight-heading"><h3>同类比较</h3><span class="insight-badge">${data.groups.length} 类标签</span></div>${data.groups.length?`<div class="ledger-form"><label>比较标签 A<select id="tag-group-a" aria-label="比较标签 A">${options(groupA)}</select></label><label>比较标签 B<select id="tag-group-b" aria-label="比较标签 B">${options(groupB)}</select></label></div>`:'<p class="insight-empty">从下方选择行程添加标签，即可比较。</p>'}<div id="tag-comparison"></div><p class="insight-note">完整与片段均按有效观测计入，每项单列样本数；均值表示每条记录的观测值，不代表完整行程均值。SOC 回升不算负耗电。百公里估算使用同一批至少 10 km、SOC 下降至少 3 个百分点且电量可估算的记录，按总估算电量 ÷ 总里程计算。SOC 电量不是电表计量。</p><p class="insight-note">距离、时长、样本量不同都可能影响结果。没有天气、路况或驾驶方式证据，不据此归因或排名。</p></section>
+      node.innerHTML=`<div class="tag-page-heading"><h2>行程标签</h2><p class="insight-note">通勤、接娃、周末出游，按标签查看同类行程。</p></div>
+        <section class="card insight-panel tag-month-panel"><div class="insight-toolbar"><label>标签月份<input id="tag-month" type="month" aria-label="标签月份" value="${esc(month)}" ${commuteBusy?'disabled':''}></label>${button('读取行程标签','load',!owner||!month||loading)}${button('撤销标签操作','undo',!data?.can_undo)}</div>${loading?'<p role="status">正在读取…</p>':''}${status&&!placesPanelShown&&!toolPanel?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error&&!placesPanelShown&&!toolPanel?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${data?`<p class="insight-note">${data.window.start_date} — ${data.window.end_date} · ${data.events.length} 条行程 · ${data.untagged_count} 条未贴标签。</p><details class="tag-month-notes"><summary>统计口径</summary><p class="insight-note">按行程结束日期归期。一趟可有多个标签，同组结果不能相加当总量。</p></details>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可管理标签。</p>':''}</section>
+        <div class="tag-module-grid">${commuteSummaryView()}${placesView()}${comparisonSummaryView()}</div>${toolsView()}
+        ${data?`
         <section class="card insight-panel"><div class="insight-heading"><h3>本月行程</h3><div class="insight-toolbar"><label>筛选标签<select id="tag-filter" aria-label="筛选标签"><option value="">全部标签与未标注</option><option value="untagged" ${filter==='untagged'?'selected':''}>未标注</option>${filterOptions()}</select></label><label>标签行程完整性<select id="tag-completeness" aria-label="标签行程完整性">${[['all','全部记录'],['complete','完整记录'],['partial','仅片段']].map(([key,label])=>`<option value="${key}" ${key===completeness?'selected':''}>${label}</option>`).join('')}</select></label></div></div><div id="tag-events"></div></section><div id="tag-trash"></div>`:''}`;
-      paintPlacesPanel();paintGroups();paintEvents();paintRoute();paintCommuteMap();paintPlacesMap();paintNameMap();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
+      paintPlacesPanel();paintToolPanel();paintGroups();paintEvents();paintRoute();paintCommuteMap();paintPlacesMap();paintNameMap();if(focus)document.getElementById(focus)?.focus({preventScroll:true});
     }
     function closePlacesPanel(){
       if(busy||commuteBusy)return;
@@ -348,18 +382,18 @@
       const el=node?.querySelector('#tag-events');if(!el||!data)return;
       const rows=data.events.filter(r=>(!filter||(filter==='untagged'?!r.tags.length:r.tags.includes(filter.slice(4))))&&(completeness==='all'||r.partial===(completeness==='partial')));
       const pages=Math.max(1,Math.ceil(rows.length/10));page=Math.max(0,Math.min(page,pages-1));
-      el.innerHTML=(rows.slice(page*10,page*10+10).map(r=>`<article class="rule-record" data-tag-event="${esc(r.id)}"><div class="insight-heading"><h4>${esc(time(r.end_time))}</h4><span class="insight-badge">${r.partial?'观测片段':'完整记录'}</span></div><div class="tag-trip-facts"><span>开始<strong>${esc(time(r.start_time))}</strong></span><span>结束<strong>${esc(time(r.end_time))}</strong></span><span>里程<strong>${number(r.distance_km)} km</strong></span><span>时长<strong>${number(r.duration_seconds===null?null:r.duration_seconds/60)} 分钟</strong></span></div><p class="insight-note">参考地点：${placeLink(r.start_place)} → ${placeLink(r.end_place)}</p><p>SOC ${number(r.start_soc)}% → ${number(r.end_soc)}% · 电量估算 ${number(r.estimated_kwh)} kWh</p><div class="insight-badges">${r.tags.map(tag=>`<span class="insight-badge">${esc(tag)}${tag==='通勤'&&r.automatic_commute?' · 自动':''}</span>`).join('')||'<span class="insight-note">未贴标签</span>'}</div>${commuteEvidence(r)}${r.note?`<p class="ledger-note">${esc(r.note)}</p>`:''}<div class="insight-actions">${button('标注这趟行程','edit',false,`data-id="${esc(r.id)}"`)}${r.annotation_id?button('删除行程标签','delete',false,`data-id="${esc(r.annotation_id)}"`):''}</div></article>`).join('')||'<p class="insight-empty">本月没有符合筛选的行程</p>')+`<div class="insight-pagination">${button('上一页标签行程','previous',page===0)}<span>${rows.length} 条 · ${page+1} / ${pages}</span>${button('下一页标签行程','next',page+1===pages)}</div>`;
+      el.innerHTML='<div class="tag-event-list" role="region" tabindex="0" aria-label="本月标签行程列表">'+(rows.slice(page*10,page*10+10).map(r=>`<article class="rule-record" data-tag-event="${esc(r.id)}"><div class="insight-heading"><h4>${esc(time(r.end_time))}</h4><span class="insight-badge">${r.partial?'观测片段':'完整记录'}</span></div><div class="tag-trip-facts"><span>开始<strong>${esc(time(r.start_time))}</strong></span><span>结束<strong>${esc(time(r.end_time))}</strong></span><span>里程<strong>${number(r.distance_km)} km</strong></span><span>时长<strong>${number(r.duration_seconds===null?null:r.duration_seconds/60)} 分钟</strong></span></div><p class="insight-note">参考地点：${placeLink(r.start_place)} → ${placeLink(r.end_place)}</p><p>SOC ${number(r.start_soc)}% → ${number(r.end_soc)}% · 电量估算 ${number(r.estimated_kwh)} kWh</p><div class="insight-badges">${r.tags.map(tag=>`<span class="insight-badge">${esc(tag)}${tag==='通勤'&&r.automatic_commute?' · 自动':''}</span>`).join('')||'<span class="insight-note">未贴标签</span>'}</div>${commuteEvidence(r)}${r.note?`<p class="ledger-note">${esc(r.note)}</p>`:''}<div class="insight-actions">${button('标注这趟行程','edit',false,`data-id="${esc(r.id)}" id="tag-edit-${esc(r.id)}"`)}${r.annotation_id?button('删除行程标签','delete',false,`data-id="${esc(r.annotation_id)}"`):''}</div></article>`).join('')||'<p class="insight-empty">本月没有符合筛选的行程</p>')+`</div><div class="insight-pagination">${button('上一页标签行程','previous',page===0)}<span>${rows.length} 条 · ${page+1} / ${pages}</span>${button('下一页标签行程','next',page+1===pages)}</div>`;
       const trashPages=Math.max(1,Math.ceil(data.trash.length/10));trashPage=Math.min(trashPage,trashPages-1);
-      node.querySelector('#tag-trash').innerHTML=data.trash.length?`<section class="card insight-panel"><h3>已删除的行程标签</h3><div class="ledger-trash-list">${data.trash.slice(trashPage*10,trashPage*10+10).map(r=>`<div><span>${esc(time(r.end_time))} · ${esc(r.tags.join('、')||'无标签')}</span>${button('恢复行程标签','restore',false,`data-id="${esc(r.id)}"`)}</div>`).join('')}</div><div class="insight-pagination">${button('上一页删除标签','trash-previous',trashPage===0)}<span>${trashPage+1} / ${trashPages}</span>${button('下一页删除标签','trash-next',trashPage+1===trashPages)}</div></section>`:'';
+      node.querySelector('#tag-trash').innerHTML=data.trash.length?`<details class="card insight-panel tag-trash-details"><summary>已删除的行程标签 · ${data.trash.length} 条</summary><div class="ledger-trash-list">${data.trash.slice(trashPage*10,trashPage*10+10).map(r=>`<div><span>${esc(time(r.end_time))} · ${esc(r.tags.join('、')||'无标签')}</span>${button('恢复行程标签','restore',false,`data-id="${esc(r.id)}"`)}</div>`).join('')}</div><div class="insight-pagination">${button('上一页删除标签','trash-previous',trashPage===0)}<span>${trashPage+1} / ${trashPages}</span>${button('下一页删除标签','trash-next',trashPage+1===trashPages)}</div></details>`:'';
     }
     async function load(preservePages=false){
       if(!owner||!month)return false;
-      const token=++serial,identity=owner;attempted=true;loading=true;error='';paint();
+      const token=++serial,identity=owner;attempted=true;loading=true;error='';if(status==='日期已修改，请重新读取行程标签。')status='';paint();
       try{const result=await request('/api/insights/trip-tags?date='+encodeURIComponent(month+'-01'));
         if(!valid(token,serial,identity))return false;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         data=result;commuteRule=result.commute_rule;if(!preservePages)page=trashPage=0;syncCommuteRule();
-        if(selected){selected=data.events.find(row=>row.id===selected.id)||null;if(!selected)closeRoute();}
+        if(selected){selected=data.events.find(row=>row.id===selected.id)||null;if(!selected){closeRoute();if(toolPanel==='edit')toolPanel=null;}}
         if(!data.groups.some(g=>g.tag===groupA))groupA=data.groups[0]?.tag||'';
         if(!data.groups.some(g=>g.tag===groupB))groupB=data.groups[1]?.tag||data.groups[0]?.tag||'';
         if(filter&&filter!=='untagged'&&!data.groups.some(g=>'tag:'+g.tag===filter))filter='';return true;
@@ -376,8 +410,9 @@
         data.revision=result.revision;data.can_undo=result.can_undo;status='行程标签操作已保存。';
         if(action==='delete'&&selected?.annotation_id===id){selected=null;tags=note='';closeRoute();}
         if(!await load()&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新读取核对。';
+        if(action==='save'){toolPanel=null;selected=null;tags=note='';closeRoute();}
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 填写内容保留；请重新读取核对后操作。';}
-      finally{if(valid(token,writeSerial,identity)){busy=false;paint();}}
+      finally{if(valid(token,writeSerial,identity)){busy=false;paint();if(action==='save'&&!toolPanel)node.querySelector('#'+CSS.escape(toolReturn))?.focus({preventScroll:true});}}
     }
     async function mutatePlaceName(action){
       if(busy||loading||!data||!namePlace&&action!=='place-name-undo')return;
@@ -428,7 +463,7 @@
       const contextChanged=owner!==context(),recordsChanged=!busy&&!commuteBusy&&tripRevision!==getState()?.trip_records_revision,remount=node!==container;node=container;
       if(contextChanged||recordsChanged)tripRevision=getState()?.trip_records_revision;
       if(recordsChanged){commutePreview=null;node.querySelector('#commute-preview')?.remove();}
-      if(contextChanged){ruleSerial++;ruleLoading=commuteBusy=false;commuteRule=commutePreview=null;owner=context();data=null;selected=null;tags=note='';attempted=false;loading=busy=false;serial++;writeSerial++;error=status='';filter=groupA=groupB='';closeRoute();closePlacesMap();closeCommuteMap();commuteDraft={home:null,work:null,homeRadius:300,workRadius:300};commuteDirty=false;}
+      if(contextChanged){toolPanel=null;toolScroll=0;ruleSerial++;ruleLoading=commuteBusy=false;commuteRule=commutePreview=null;owner=context();data=null;selected=null;tags=note='';attempted=false;loading=busy=false;serial++;writeSerial++;error=status='';filter=groupA=groupB='';closeRoute();closePlacesMap();closeCommuteMap();commuteDraft={home:null,work:null,homeRadius:300,workRadius:300};commuteDirty=false;}
       else if(recordsChanged&&attempted){
         if(selected||namePlace||commuteDirty){serial++;loading=false;status='行程记录已变化；填写内容保留，请重新读取核对后再保存。';}
         else load(true);
@@ -438,7 +473,7 @@
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;const el=event.target;
-      if((event.type==='input'||event.type==='change')&&el.id==='tag-month'){if(commuteBusy||month===el.value)return true;month=el.value;serial++;writeSerial++;commutePreview=null;node.querySelector('#commute-preview')?.remove();loading=busy=false;data=selected=null;tags=note=error='';status='日期已修改，请重新读取行程标签。';page=trashPage=0;filter=groupA=groupB='';closeRoute();closeCommuteMap();closePlacesMap();paint();return true;}
+      if((event.type==='input'||event.type==='change')&&['tag-month','tag-tools-month'].includes(el.id)){if(commuteBusy||month===el.value)return true;month=el.value;if(toolPanel!=='commute')toolPanel=null;serial++;writeSerial++;commutePreview=null;node.querySelector('#commute-preview')?.remove();loading=busy=false;data=selected=null;tags=note=error='';status='日期已修改，请重新读取行程标签。';page=trashPage=0;filter=groupA=groupB='';closeRoute();closeCommuteMap();closePlacesMap();paint();return true;}
       if(event.type==='input'&&el.id==='tag-place-name'){nameDraft=el.value;namePreview=null;node.querySelector('[data-tag="place-name-save"]')?.setAttribute('disabled','');node.querySelector('#tag-name-preview')?.remove();return true;}
       if(event.type==='input'&&el.id==='tag-labels'){tags=el.value;syncQuickLabels();return true;}
       if(event.type==='input'&&el.id==='tag-note'){note=el.value;return true;}
@@ -459,7 +494,9 @@
       if(event.type!=='click')return false;
       const target=el.closest('[data-tag]');if(!target||target.disabled)return false;
       const action=target.dataset.tag,id=target.dataset.id;
-      if(action==='places-panel-open'){placesPanelShown=true;paint();return true;}
+      if(action==='tool-open'){if(['commute','comparison'].includes(id)){closePlacesMap();toolPanel=id;toolReturn=target.id;toolScroll=0;paint();}return true;}
+      if(action==='tool-close'){closeToolPanel();return true;}
+      if(action==='places-panel-open'){toolPanel=null;placesPanelShown=true;paint();return true;}
       if(action==='places-panel-close'){closePlacesPanel();return true;}
       if(action==='places-panel-tab'){if(['places','regions','routes'].includes(id)){placesPanelTab=id;placesPanelScroll=0;paint();node.querySelector(`[data-tag="places-panel-tab"][data-id="${id}"]`)?.focus({preventScroll:true});}return true;}
       if(action==='place-name-edit'){openNameEditor(data.place_statistics.places.find(p=>p.id===id));return true;}
@@ -496,8 +533,8 @@
       }
       if(action.startsWith('commute-')){mutateCommute(action,id);return true;}
       if(action==='load')load();
-      else if(action==='edit'){closeRoute();selected=data.events.find(r=>r.id===id);tags=(selected.manual_tags||selected.tags).join(', ');note=selected.note;error='';paint();node.querySelector('#tag-form').scrollIntoView({block:'start'});}
-      else if(action==='cancel'){selected=null;tags=note='';closeRoute();paint();}
+      else if(action==='edit'){closePlacesMap();if(selected?.id!==id){closeRoute();selected=data.events.find(r=>r.id===id);tags=(selected.manual_tags||selected.tags).join(', ');note=selected.note;}toolPanel='edit';toolReturn=target.id;toolScroll=0;error='';paint();node.querySelector('#tag-labels')?.focus({preventScroll:true});}
+      else if(action==='cancel'){selected=null;tags=note='';closeRoute();closeToolPanel();}
       else if(action==='show-route')loadRoute();
       else if(action==='hide-route'){closeRoute();paint();}
       else if(action==='toggle-label'){
