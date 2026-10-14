@@ -15,6 +15,15 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     });
     const sections=['overview','calendar','report','car','energy','tracks','books','insights','settings'];
     const failures=[];
+    async function navigate(selector){
+      await page.evaluate(()=>document.activeElement?.blur());
+      await page.waitForFunction(selector=>{
+        const control=document.querySelector(selector);
+        return control&&!control.disabled&&!window.booksWritePending?.();
+      },selector);
+      // Some retained research controls are hidden; exercise their existing handler.
+      await page.locator(selector).first().evaluate(el=>el.click());
+    }
     async function loadResults(section,tool){
       const view=tool?.replace('source:','')||section;
       if(view==='calendar'){
@@ -93,8 +102,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     for(const width of [1440,1280]){
       await page.setViewportSize({width,height:600});
       for(const section of sections){
-        // app.js uses lexical state; drive the existing navigation control directly.
-        await page.locator(`[data-page="${section}"]`).first().evaluate(el=>{document.activeElement?.blur();el.click();});
+        await navigate(`[data-page="${section}"]`);
         const selector=section==='insights'?'#insights-workspace [data-insight-view]':'.task-navigation [data-section-task]';
         const tools=await page.locator(selector).evaluateAll(els=>els.map(el=>el.dataset.insightView||el.dataset.sectionTask).filter(Boolean));
         const variants=section==='car'?['parameters']:section==='energy'?['statistics']:section==='tracks'?['source:cloud','source:tags']:[];
@@ -102,7 +110,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
           if(tool){
             const selector=tool==='parameters'&&section==='car'?'[data-vehicle="parameters"]':tool==='statistics'?'[data-action="charging-tab"][data-tab="statistics"]':
               tool.startsWith('source:')?`[data-source="${tool.slice(7)}"]`:section==='insights'?`[data-insight-view="${tool}"]`:`[data-section-task="${tool}"]`;
-            await page.locator(selector).first().evaluate(el=>{document.activeElement?.blur();el.click();});
+            await navigate(selector);
           }
           console.log(`CHECK ${width} ${section}/${tool||'main'}`);
           await loadResults(section,tool);
