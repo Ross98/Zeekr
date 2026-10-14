@@ -20,7 +20,10 @@ const assert=require('node:assert/strict');
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
     await page.getByRole('button',{name:'能源与充电',exact:true}).click();
+    await page.getByRole('tab',{name:'充电记录',exact:true}).click();
+    await page.locator('[data-detail="energy-management"] summary').click();
     await page.getByRole('heading',{name:'管理充电记录',exact:true}).waitFor();
+    await page.getByRole('button',{name:'查询管理充电记录',exact:true}).click();
     const record=page.locator('[data-charge-record="fixture-charge"]');
     await record.waitFor();await record.check();
     await page.getByRole('button',{name:'预览移入回收区',exact:true}).click();
@@ -29,15 +32,18 @@ const assert=require('node:assert/strict');
     await page.waitForFunction(()=>document.querySelectorAll('[data-charge-record="fixture-charge"]').length===0);
     assert.equal(await page.locator('[data-event-id="fixture-charge"]').count(),0,'Deleted event leaves charging history');
     await page.getByLabel('记录状态').selectOption('trash');
+    await page.getByRole('button',{name:'查询管理充电记录',exact:true}).click();
     await record.waitFor();await record.check();
     await page.getByRole('button',{name:'预览恢复',exact:true}).click();
     await page.getByRole('button',{name:'确认恢复',exact:true}).click();
+    await record.waitFor();
+    await page.getByRole('button',{name:'查询充电记录',exact:true}).click();
     await page.locator('[data-event-id="fixture-charge"]').waitFor();
-    for(const width of [390,320]){
+    for(const width of (process.env.DESKTOP_ONLY ? [1440,1280,1024] : [390,320])){
       await page.setViewportSize({width,height:1000});
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,`No overflow at ${width}`);
     }
     assert.deepEqual(errors,[]);
-    console.log('Charge management browser: trash, exclusion, restore and mobile passed.');
+    console.log('Charge management browser: trash, exclusion, restore and target widths passed.');
   }finally{if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -46,7 +46,7 @@ const path = require('node:path');
     assert.match(await page.locator('main').innerText(), /尚未读取/);
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
-    await page.getByRole('tab',{name:'本次过程'}).waitFor();
+    await page.getByRole('tab',{name:'当前状态'}).waitFor();
     assert.match(await page.locator('.charging-tab-panel').innerText(),/本次观测.*观测功率.*有缺口.*动力电池 SOC/s);
     assert.match(await page.locator('.charging-chart').first().innerText(),/北京时间/,'chart axes must state time zone');
     const graph = page.locator('.charging-chart').first();
@@ -61,7 +61,7 @@ const path = require('node:path');
     assert.equal(analyticsQueries.length,queriesAfterFirstLoad,'unrelated page renders must reuse the loaded chart');
     await page.getByRole('button',{name:'电气细节'}).click();
     assert.match(await page.locator('.charging-tab-panel').innerText(),/电压.*电流/s);
-    await page.getByRole('tab',{name:'统计趋势'}).click();
+    await page.getByRole('tab',{name:'充电统计'}).click();
     assert.equal(statisticsQueries.length,0,'statistics must wait for explicit query');
     await page.getByRole('button',{name:'查询充电统计',exact:true}).click();
     await page.getByText('估算充入电量',{exact:true}).waitFor();
@@ -89,7 +89,7 @@ const path = require('node:path');
     assert.equal(await page.locator('.charging-stat-summary').count(),0,'old statistics response must not restore results after editing conditions');
     await page.unroute('**/api/charging/statistics?**',delayedStatistics);
     await page.locator('#charging-mode').selectOption('all');
-    await page.getByRole('tab',{name:'本次过程'}).click();
+    await page.getByRole('tab',{name:'充电记录'}).click();
     await page.locator('#charge-history').waitFor();
     assert.equal(chargeQueries.length,0,'opening and rendering energy must not query history');
     await page.getByLabel('充电记录日期').fill('2024-01-01');
@@ -101,13 +101,13 @@ const path = require('node:path');
     assert.match(await page.locator('#charge-history').innerText(), /充电记录.*20%.*80%.*完整记录/s);
     assert.match(await page.locator('#charge-detail').innerText(), /记录起点.*结束时间.*1 小时.*60 个百分点.*51\.6 kWh.*估算/s);
     assert.match(await page.locator('#charge-detail').innerText(), /未保存充电参数/);
-    await page.getByRole('tab',{name:'参数详情'}).click();
+    await page.getByRole('tab',{name:'能源参数'}).click();
     const parameterCard=page.locator('#charging-parameters');
     assert.equal(await parameterCard.locator('.charging-parameter').count(),27);
     assert.match(await parameterCard.innerText(), /高压充电相关状态码/);
     assert.match(await parameterCard.innerText(), /预约充电状态码/);
     assert.match(await parameterCard.innerText(), /充电限值.*未提供或未核验/s);
-    await page.getByRole('tab',{name:'本次过程'}).click();
+    await page.getByRole('tab',{name:'充电记录'}).click();
     await page.getByRole('button',{name:/查看充电记录 2/}).click();
     assert.equal(new URL(analyticsQueries.at(-1)).searchParams.get('id'),'charge-partial','an explicit history selection changes the process chart');
     assert.match(await page.locator('#charge-detail').innerText(), /部分记录.*起止时间.*不满足估算条件.*已有观测保留/s);
@@ -142,7 +142,7 @@ const path = require('node:path');
     await page.getByLabel('充电记录开始日期').fill('2024-01-01');
     await page.getByLabel('充电记录结束日期').fill('2024-01-03');
     assert.equal(chargeQueries.length,beforeRange,'range edits must not query');
-    for(const width of [390,320]){
+    for(const width of (process.env.DESKTOP_ONLY ? [1280,1024] : [390,320])){
       await page.setViewportSize({width,height:1050});
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`Range controls overflow at ${width}`);
     }
@@ -184,7 +184,7 @@ const path = require('node:path');
     await page.getByText('已保存充电参数',{exact:true}).waitFor();
     assert.equal(await page.locator('[data-detail="charge-saved-parameters"]').getAttribute('open'),'');
     // Background refresh must keep the reading position after restoring tall disclosures.
-    for (const width of [1440,390]) {
+    for (const width of (process.env.DESKTOP_ONLY ? [1440,1024] : [1440,390])) {
       await page.setViewportSize({width,height:700});
       const before=await page.evaluate(()=>{
         document.activeElement?.blur();
@@ -203,7 +203,7 @@ const path = require('node:path');
       assert.ok(Math.abs(await page.evaluate(()=>scrollY)-workspaceBefore)<2,`chart refresh moved reading position at ${width}`);
     }
 
-    for (const width of [1440,390,320]) {
+    for (const width of (process.env.DESKTOP_ONLY ? [1440,1280,1024] : [1440,390,320])) {
       await page.setViewportSize({width,height:1050});
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`Expanded history overflow at ${width}`);
     }
@@ -222,14 +222,16 @@ const path = require('node:path');
       await page.getByRole('button',{name:'刷新状态',exact:true}).click();
       await page.waitForFunction(() => !document.querySelector('[data-action="refresh"]').disabled);
     };
+    await page.getByRole('tab',{name:'当前状态'}).click();
     await refresh();
     assert.match(await page.locator('main').innerText(), /73\.3/,'80 km driven on 20 percentage points must use trip attainment');
     assert.match(await page.locator('.energy-achievement').innerText(), /片段/);
     assert.match(await page.locator('.energy-rating').innerText(), /546/);
     assert.match(await page.locator('.energy-rating').innerText(), /CLTC/);
     assert.match(await page.locator('.energy-charge').innerText(), /暂无有效时间估计/);
-    assert.match(await page.locator('#charge-history').innerText(), /充电记录/);
+    assert.equal(await page.locator('#charge-history').count(),0);
     assert.doesNotMatch(await page.locator('main').innerText(), /chargeUAct|mainBatteryStatus/);
+    await page.getByRole('tab',{name:'能源参数'}).click();
     const details = page.locator('details[data-detail="energy-electric"]');
     await details.locator('summary').focus();
     await page.keyboard.press('Enter');
@@ -237,7 +239,7 @@ const path = require('node:path');
     await refresh();
     assert.equal(await details.getAttribute('open'), '');
     await details.locator('summary').click();
-    for (const width of [1440,1024,390,320]) {
+    for (const width of (process.env.DESKTOP_ONLY ? [1440,1280,1024] : [1440,1024,390,320])) {
       await page.setViewportSize({width,height:1050});
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),true,`Overflow at ${width}`);
       await page.evaluate(()=>{document.querySelector('#toast').hidden=true; document.activeElement?.blur(); window.scrollTo(0,0);});
@@ -246,11 +248,13 @@ const path = require('node:path');
     await page.locator('details[data-detail="energy-low-voltage"] > summary').click();
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),true,'Expanded low-voltage fields fit mobile');
     await page.setViewportSize({width:1440,height:1050});
+    await page.getByRole('tab',{name:'当前状态'}).click();
     // Current snapshot changes must not change an already completed trip.
     data.model.metric_details.battery.value=0;
     data.model.metric_details.range.value=null;
     await refresh();
     assert.match(await page.locator('.energy-achievement').innerText(), /73\.3/);
+    await page.locator('.energy-achievement > summary').click();
     assert.match(await page.locator('.energy-achievement').innerText(), /80.*60/s);
     for (const status of ['no_trip','incomplete','invalid','no_consumption','no_rating','unavailable']) {
       data.range_attainment={status};

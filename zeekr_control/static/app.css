@@ -213,3 +213,19 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 
 /* Notification tables use the readable shared secondary token in both themes. */
 #notification-health .fields th{color:var(--night-secondary,#50656e);font-weight:500}
+
+/* Energy desktop workspace: current state and historical evidence stay separate. */
+.energy-top{gap:0;border:1px solid var(--night-line,#dce9e0);border-radius:16px;overflow:hidden;background:var(--night-paper,#fff)}
+.energy-top>.card{border:0;border-radius:0;margin:0;box-shadow:none}
+.energy-top .card-head{padding:20px 24px 12px}.energy-primary strong{font-size:42px}.energy-primary>div{gap:6px}
+.energy-battery-track{height:6px;margin:18px 24px}.energy-rating{margin-bottom:20px;padding-top:12px;flex-direction:row;justify-content:space-between;align-items:center;flex-wrap:wrap}.energy-rating>div{gap:10px}.energy-rating strong{font-size:17px}
+.energy-charge-grid{grid-template-columns:1fr;margin-top:0;gap:4px}.energy-charge-grid>div{border:0;background:none;display:flex;flex-direction:row;justify-content:space-between;padding:5px 0;border-radius:0}
+.energy-charge .card-body{padding-top:0}.energy-charge .energy-caption{font-size:12px;line-height:1.6}
+.charging-workspace{margin-top:18px}.charging-tabs{border-bottom:1px solid var(--line);padding:0 0 12px;margin-bottom:18px;background:none;border-radius:0;width:100%}.charging-tabs button.active{background:var(--accent);color:var(--night-on-accent,#fff);box-shadow:none}
+.energy-current-process .card-body{padding:20px 24px}.energy-idle{display:flex;align-items:center;gap:16px;padding:10px 0 14px}.energy-idle>.icon{width:40px;height:40px;padding:8px;border-radius:50%;background:var(--soft);color:var(--accent);flex-shrink:0}.energy-idle h2{font-size:16px}.energy-idle .energy-caption{margin-top:4px}.energy-recent{margin-top:12px;padding-top:18px;border-top:1px solid var(--line)}
+.energy-recent h2{font-size:16px;margin:0}.energy-recent-head,.energy-recent-footer{display:flex;justify-content:space-between;align-items:center;gap:16px}.energy-recent-head>span{font-size:12px;color:var(--night-secondary,#60776d)}
+.energy-recent-values{display:flex;align-items:center;gap:24px;flex-wrap:wrap;margin:14px 0;font-size:13px}.energy-recent-values strong{font-size:20px;font-variant-numeric:tabular-nums}.energy-recent-footer .energy-caption{margin:0}
+.energy-achievement{margin:16px 0;background:none}.energy-achievement>summary{display:flex;align-items:center;gap:16px;cursor:pointer;padding:12px 0;font-size:13px}.energy-achievement>summary:before{content:'›';font-size:20px;color:var(--muted)}.energy-achievement[open]>summary:before{content:'⌄'}.energy-achievement>summary>strong{font-size:23px;font-weight:600;color:var(--night-ink,#2c6254)}.energy-achievement>summary>.energy-caption{margin:0 0 0 auto}.energy-achievement>.card-body{padding:20px 24px;background:var(--night-paper,#fff);border:1px solid var(--line);border-radius:12px}
+.energy-tools{display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid var(--line);padding-top:16px;margin-top:22px}.energy-tools>span{font-size:13px;color:var(--muted)}.energy-tools>div{display:flex;gap:8px;flex-wrap:wrap}.energy-tools .button{font-size:13px}
+.energy-record-process{margin:20px 0;padding:20px 24px;border:1px solid var(--line);border-radius:12px;background:var(--night-paper,#fff)}.energy-record-process>h2{font-size:16px;margin:0 0 16px}.energy-management{margin:20px 0}.energy-management>summary{cursor:pointer;padding:14px 0;font-weight:600;font-size:15px}.energy-management #charge-management{margin-top:12px}
+.charging-tab-panel .energy-details{margin-top:18px}

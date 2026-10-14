@@ -20,14 +20,14 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     for (const [section, labels] of groups) {
       await page.getByRole('button', {name:section, exact:true}).first().click();
       const research=section==='用车研究';
-      const tools=research?page.locator('#insights-workspace [data-insight-view]'):page.locator('.task-navigation [data-section-task]').filter({hasText:new RegExp(labels.join('|')||'^$')});
+      const tools=research?page.locator('#insights-workspace [data-insight-view]'):page.locator(`${section==='能源与充电'?'.energy-tools':'.task-navigation'} [data-section-task]`).filter({hasText:new RegExp(labels.join('|')||'^$')});
       assert.deepEqual(await tools.allTextContents(),labels,`${section} tools`);
       if(!research&&labels.length){
         // The books workspace becomes visible after its lazy module is ready.
         await page.locator('#insights-workspace').waitFor({state:section==='用车账本'?'visible':'hidden'});
         assert.equal(await page.locator('#insights-workspace').isVisible(),section==='用车账本');
         await tools.first().click();
-        assert.equal(await tools.first().getAttribute('aria-pressed'),'true');
+        assert.equal(await page.locator(`.task-navigation [data-section-task]`).filter({hasText:labels[0]}).first().getAttribute('aria-pressed'),'true');
         await page.locator('#insights-workspace').waitFor({state:'visible'});
         assert.equal(await page.locator('#insights-workspace').isVisible(),true);
         assert.equal(await page.locator('#insights-workspace .insight-navigation').isVisible(),false);

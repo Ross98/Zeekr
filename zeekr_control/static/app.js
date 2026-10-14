@@ -57,7 +57,7 @@ let chargeDate = beijingDate(Date.now()), chargeDateInitialized = false;
 let chargeQueryMode='day', chargeEndDate=chargeDate, chargeQuery=null, chargeOwner=null;
 let chargeEvents = [], chargeSelected = null, chargeCursor = null, chargeCursorStack = [], chargeNextCursor = null, chargeBusy = false, chargeError = '', chargeRequest = 0;
 let chargingTab = 'process', chargingView = 'power-soc', chargingDays = 30, chargingMode = 'all';
-let chargingSelection = 'current';
+let chargingSelection = 'current', chargeManagementOpen = false;
 let chargingVisible = {power_kw:true,soc:true,voltage:true,current:true};
 let chargingSession = null, chargingSeries = null, chargingStats = null, chargingAnalyticsError = '', chargingAnalyticsBusy = false, chargingAnalyticsRequest = 0, chargingPoint = 0;
 let chargingAnalyticsLoadedKey = '', chargingAnalyticsLoadingKey = '';
@@ -69,7 +69,12 @@ const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unc
 const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,redraw:render,escape:esc,age,active:()=>page==='car'});
 
 let sectionTask='';
-function openSectionTask(task){if(page==='books')window.BookSession.write(state?.insights_context,'navigation',{task});sectionTask=task;render();if(task&&task!=='records')insightsPage.openTool(task);window.scrollTo({top:0,left:0,behavior:'instant'});focusPageHeading();}
+function openSectionTask(task){
+  if(page==='energy'&&(!task||task==='records')){sectionTask='';selectChargingTab(task==='records'?'records':'process');}
+  else {if(page==='books')window.BookSession.write(state?.insights_context,'navigation',{task});sectionTask=task;}
+  render();if(task&&task!=='records')insightsPage.openTool(task);
+  window.scrollTo({top:0,left:0,behavior:'instant'});focusPageHeading();
+}
 const insightSections = ['car','energy','books','tracks','insights','settings','calendar','report'];
 window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,trackSource].join('|');
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,study:setReviewStudy,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields,editing:()=>reviewEditing,edit:editReviewStep,canEdit:canEditReview,propose:proposeReview},
@@ -84,7 +89,7 @@ async function openOverviewRecord(record){
     if(page!=='tracks'||context!==state?.insights_context||localTrips!==h)return;
     clearLocalRoute();h.selection=record.id;h.selected=h.events?.find(e=>e.id===record.id)||{...record,status:'ended'};renderLocalTripList();renderLocalTripDetail();if(showPosition)loadLocalRoute();finish();
   }else{
-    page='energy';sectionTask='records';render();chargeDate=date;chargeQueryMode='day';chargeQuery={start:date};chargeCursor=null;chargeCursorStack=[];chargeSelected=record;render();const finish=window.RefreshView.guard(()=>window.scrollTo(0,0));await loadChargeEvents();finish();
+    page='energy';sectionTask='';render();chargeDate=date;chargeQueryMode='day';chargeQuery={start:date};chargeCursor=null;chargeCursorStack=[];chargeSelected=record;selectChargingTab('records');render();const finish=window.RefreshView.guard(()=>window.scrollTo(0,0));await loadChargeEvents();finish();
   }
 }
 const tripTagTime = value => Number.isFinite(value) ? new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date(value)) : '未知';
@@ -99,7 +104,7 @@ const tripManager = window.TripManagement.create({getState:()=>state,getDate:()=
     pollState(true);
   }});
 const chargeManager = window.ChargeManagement.create({getState:()=>state,getDate:()=>chargeDate,request:api,escape:esc,
-  active:()=>page==='energy'&&!!state?.model,
+  active:()=>page==='energy'&&!sectionTask&&chargingTab==='records'&&chargeManagementOpen&&!!state?.model,
   changed:revision=>{
     const refreshStatistics=page==='energy'&&chargingTab==='statistics'&&!!chargingStats;
     state.charge_records_revision=revision;
@@ -107,6 +112,7 @@ const chargeManager = window.ChargeManagement.create({getState:()=>state,getDate
     chargingAnalyticsRequest++;chargingAnalyticsBusy=false;chargingAnalyticsError='';
     chargeEvents=[];chargeSelected=null;chargeCursor=null;chargeCursorStack=[];chargeNextCursor=null;
     chargingSession=chargingSeries=chargingStats=null;
+    chargingSelection=chargingTab==='records'?'':'current';
     chargingAnalyticsLoadedKey=chargingAnalyticsLoadingKey='';
     render();
     if(page==='energy'){if(chargeQuery)loadChargeEvents();if(refreshStatistics)loadChargingAnalytics();}
@@ -431,11 +437,13 @@ function chargeHistoryPanel() {
 function chargingProcess() {
   if(chargingAnalyticsBusy&&!chargingSession) return `<div class="charge-loading" role="status">正在读取充电过程…</div>`;
   if(chargingAnalyticsError) return `${empty('充电过程读取失败',chargingAnalyticsError,'energy')}<div class="charge-empty-action"><button class="button secondary" data-action="analytics-retry">重试</button></div>`;
-  if(!chargingSession||chargingSession.status==='empty') return `${empty('暂无进行中的充电过程','已结束记录仍可从下方充电记录中选择；没有过程采样时保留事件摘要。','energy')}${chargeHistoryPanel()}`;
+  if(!chargingSession||chargingSession.status==='empty') return chargingTab==='records'
+    ? empty('该记录暂无充电过程采样','事件摘要与已保存参数仍可查看；不使用当前车辆状态补填。','energy')
+    : `<div class="energy-idle">${icon('energy')}<div><h2>暂无进行中的充电过程</h2><p class="energy-caption">确认充电后，在这里查看本次观测；历史过程从“充电记录”查看。</p></div></div>`;
   const historical=chargingSession.status==='ended', point=selectedChargingPoint(), points=chargingSeries?.points || [];
   const summary=`<div class="charging-process-summary"><div><span>${historical?'历史起点':'本次起点'}</span><strong>${Number.isFinite(chargingSession.start_soc)?chargingFormat(chargingSession.start_soc)+'%':'未知'}</strong></div><div><span>${historical?'历史终点':'当前 SOC'}</span><strong>${Number.isFinite(chargingSession.end_soc)?chargingFormat(chargingSession.end_soc)+'%':'未知'}</strong></div><div><span>观测功率</span><strong>${chargeNumber(chargingSession.power_kw,'kW')}</strong></div><div><span>采样覆盖</span><strong>${chargingSeries?.raw_count||0} 点${chargingSeries?.has_gaps?' · 有缺口':''}</strong></div></div>`;
   const selector=points.length?`<label class="charging-point-picker">时间选择器<input id="charging-point" type="range" min="0" max="${points.length-1}" value="${Math.min(chargingPoint,points.length-1)}"><span>${chargingPointText(point)}</span></label>`:'';
-  return `<div class="charging-process-title">${historical?pill('历史详情','warn'):pill('本次观测','good')}<span>${esc(eventTime(chargingSession.start_time))} 至 ${esc(eventTime(chargingSession.end_time))}</span></div>${summary}${startEvidenceView(chargingSession.start_evidence)}<div class="charging-view-switch"><button data-action="charging-view" data-view="power-soc" class="${chargingView==='power-soc'?'active':''}">功率与 SOC</button><button data-action="charging-view" data-view="electrical" class="${chargingView==='electrical'?'active':''}">电气细节</button></div><div class="charging-charts">${chargingView==='power-soc'?chargingCombinedChart():chargingCombinedChart(true)}</div>${selector}<p class="energy-caption">同一车辆状态时间轴；缺口断线，缺值不补零。停止只表示已观测停止，不解释为充满、达到目标或已拔枪。</p>${chargeHistoryPanel()}`;
+  return `<div class="charging-process-title">${historical?pill('历史详情','warn'):pill('本次观测','good')}<span>${esc(eventTime(chargingSession.start_time))} 至 ${esc(eventTime(chargingSession.end_time))}</span></div>${summary}${startEvidenceView(chargingSession.start_evidence)}<div class="charging-view-switch"><button data-action="charging-view" data-view="power-soc" class="${chargingView==='power-soc'?'active':''}">功率与 SOC</button><button data-action="charging-view" data-view="electrical" class="${chargingView==='electrical'?'active':''}">电气细节</button></div><div class="charging-charts">${chargingView==='power-soc'?chargingCombinedChart():chargingCombinedChart(true)}</div>${selector}<p class="energy-caption">同一车辆状态时间轴；缺口断线，缺值不补零。停止只表示已观测停止，不解释为充满、达到目标或已拔枪。</p>`;
 }
 
 function chargingStatistics() {
@@ -455,23 +463,52 @@ function clearChargingStatistics(){
   chargingAnalyticsRequest++;chargingStats=null;chargingAnalyticsError='';chargingAnalyticsBusy=false;chargingAnalyticsLoadedKey=chargingAnalyticsLoadingKey='';renderChargingWorkspace();
 }
 
+function energyTools() {
+  const item=(id,label)=>`<button class="button secondary" data-section-task="${id}">${label}</button>`;
+  return `<nav class="energy-tools" aria-label="能源相关工具"><span>相关工具</span><div>${window.InsightsPage.toolsFor('energy').map(tool=>item(tool.id,tool.label)).join('')}<button class="button secondary" data-action="energy-ledger">充电账本</button></div></nav>`;
+}
+
+function recentChargeSummary() {
+  const event=state?.recent_events?.charge_end;
+  if(!event)return `<section class="energy-recent"><h2>最近一次充电</h2><p class="energy-caption">${state?.recent_events?.error?'本地事件暂不可用，请稍后重试。':'暂无已结束记录；不代表车辆没有充电。'}</p><button class="button secondary" data-action="energy-records">查看充电记录</button></section>`;
+  return `<section class="energy-recent"><div class="energy-recent-head"><h2>最近一次充电</h2><span>${esc(eventTime(event.start_time))} 至 ${esc(eventTime(event.end_time))} · ${event.partial?'部分记录':'完整记录'}</span></div><div class="energy-recent-values"><strong>${chargeNumber(event.start_soc,'%')} 至 ${chargeNumber(event.end_soc,'%')}</strong><span>观测时段 ${eventDuration(event.duration_seconds)}</span><span>${Number.isFinite(event.estimated_kwh)?`估算 ${chargingFormat(event.estimated_kwh)} kWh`:'电量估算条件不足'}</span></div><div class="energy-recent-footer"><span class="energy-caption">SOC 估算，非桩端计量${event.partial?'；仅代表已观测片段':''}</span><button class="button secondary" data-action="energy-latest">查看记录</button></div></section>`;
+}
+
+function chargingRecords() {
+  const process=chargeSelected?`<section class="energy-record-process"><h2>所选记录的充电过程</h2>${chargingProcess()}</section>`:'';
+  return chargeHistoryPanel()+process+`<details class="energy-management" data-detail="energy-management" ${chargeManagementOpen?'open':''}><summary>管理充电记录</summary>${chargeManagementOpen?'<div id="charge-management"></div>':''}</details>`;
+}
+
 function chargingWorkspace(details) {
-  const tabs=[['process','本次过程'],['statistics','统计趋势'],['parameters','参数详情']];
-  const body=chargingTab==='process'?chargingProcess():chargingTab==='statistics'?chargingStatistics():chargingCurrent(details);
-  return `<section class="charging-workspace"><div class="charging-tabs" role="tablist">${tabs.map(([key,label])=>`<button role="tab" aria-selected="${chargingTab===key}" data-action="charging-tab" data-tab="${key}" class="${chargingTab===key?'active':''}">${label}</button>`).join('')}</div><div class="charging-tab-panel">${body}</div></section>`;
+  const tabs=[['process','当前状态'],['records','充电记录'],['statistics','充电统计'],['parameters','能源参数']];
+  const body=chargingTab==='process'?`<section class="card energy-current-process"><div class="card-body">${chargingProcess()}${chargingSession?.status==='active'?'':recentChargeSummary()}</div></section>${energyAttainment()}`:chargingTab==='records'?chargingRecords():chargingTab==='statistics'?chargingStatistics():energyParameters(details);
+  return `<section class="charging-workspace"><div class="charging-tabs" role="tablist" aria-label="能源内容">${tabs.map(([key,label])=>`<button id="charging-tab-${key}" role="tab" aria-controls="charging-tab-panel" aria-selected="${chargingTab===key}" data-action="charging-tab" data-tab="${key}" class="${chargingTab===key?'active':''}">${label}</button>`).join('')}</div><div id="charging-tab-panel" class="charging-tab-panel" role="tabpanel" aria-labelledby="charging-tab-${chargingTab}">${body}</div></section>`;
+}
+
+function selectChargingTab(tab) {
+  chargingTab=tab;
+  const selection=tab==='records'?chargeSelected?.id || '': 'current';
+  chargingAnalyticsRequest++;chargingAnalyticsBusy=false;chargingAnalyticsError='';
+  chargingAnalyticsLoadingKey='';
+  if(selection!==chargingSelection){chargingSession=chargingSeries=null;chargingAnalyticsLoadedKey='';chargingPoint=0;}
+  chargingSelection=selection;
+  if(tab!=='records')chargeManager.suspend();
+  renderChargingWorkspace();
+  ensureChargingAnalytics(selection);
+  queueMicrotask(persistNavigation);
 }
 
 function chargingAnalyticsKey(selected='current') {
   const vehicle=[state?.insights_context||'',state?.vehicle||''].join('|');
   if(chargingTab==='statistics') return `${vehicle}|statistics|${chargingDays}|${chargingMode}|${state?.charge_records_revision||0}`;
   const revision=selected==='current'?(state?.snapshot_revision||state?.model?.updated_time||''):'';
-  return `${vehicle}|process|${selected}|${chargingView}|${revision}`;
+  return `${vehicle}|${chargingTab}|${selected}|${chargingView}|${revision}`;
 }
 
 function ensureChargingAnalytics(selected='current') {
-  if(chargingTab!=='process') return;
+  if(!['process','records'].includes(chargingTab)||!selected) return;
   const key=chargingAnalyticsKey(selected);
-  if(key===chargingAnalyticsLoadedKey||key===chargingAnalyticsLoadingKey) return;
+  if(key===chargingAnalyticsLoadingKey||key===chargingAnalyticsLoadedKey&&chargingSession) return;
   loadChargingAnalytics(selected,key);
 }
 
@@ -486,9 +523,9 @@ async function loadChargingAnalytics(selected='current',key=chargingAnalyticsKey
       if(request!==chargingAnalyticsRequest||key!==chargingAnalyticsKey(selected)||page!=='energy'||chargingTab!=='statistics')return;
       chargingStats=result;
     }
-    else if(chargingTab==='process') {
+    else if(['process','records'].includes(chargingTab)) {
       const result=await api(`/api/charging/process?id=${encodeURIComponent(selected)}&view=${chargingView}`);
-      if(request!==chargingAnalyticsRequest||key!==chargingAnalyticsKey(selected)||page!=='energy') return;
+      if(request!==chargingAnalyticsRequest||key!==chargingAnalyticsKey(selected)||page!=='energy'||!['process','records'].includes(chargingTab)||selected!==chargingSelection||sectionTask) return;
       chargingSession=result.session;chargingSeries=result.series;
       chargingPoint=Math.min(chargingPoint,Math.max(0,(result.series.points||[]).length-1));
     }
@@ -503,13 +540,32 @@ function renderChargingWorkspace(){
 function renderChargingWorkspaceContent(){
   const target=$('.charging-workspace');
   if(target&&page==='energy') {
+    const manager=target.querySelector('#charge-management');
     const open=[...target.querySelectorAll('details[open][data-detail]')].map(item=>item.dataset.detail);
     const focused=document.activeElement?.closest('[data-detail]')?.dataset.detail;
     target.outerHTML=chargingWorkspace(state?.model?.charging_details);
+    if(manager&&$('#charge-management'))$('#charge-management').replaceWith(manager);
     open.forEach(key=>{const item=document.querySelector(`[data-detail="${CSS.escape(key)}"]`);if(item)item.open=true;});
     if(focused) document.querySelector(`[data-detail="${CSS.escape(focused)}"] summary`)?.focus({preventScroll:true});
+    mountChargeManagement();
   }
 }
+
+function mountChargeManagement() {
+  const container=$('#charge-management');
+  if(container&&page==='energy'&&!sectionTask&&chargingTab==='records'&&chargeManagementOpen&&state?.model)chargeManager.mount(container);
+}
+
+document.addEventListener('toggle',event=>{
+  if(event.target.dataset?.detail!=='energy-management'||!event.target.isConnected)return;
+  const open=event.target.open;
+  if(open===chargeManagementOpen)return;
+  chargeManagementOpen=open;
+  if(open){
+    const container=document.createElement('div');container.id='charge-management';
+    event.target.append(container);mountChargeManagement();
+  }else{chargeManager.suspend();$('#charge-management')?.remove();}
+},true);
 
 function chargeHistoricalParameters(details) {
   if (!details) return `<p class="charge-note">这条旧记录未保存充电参数；不使用当前车辆状态补填。</p>`;
@@ -571,7 +627,13 @@ async function loadChargeEvents() {
   if(!chargeQuery)return;
   const owner=state?.insights_context;
   const request=++chargeRequest;
-  chargeBusy=true;chargeError='';renderChargeHistory();const button=$('[data-action="charge-query"]');if(button){button.disabled=true;button.textContent='查询中…';}
+  chargeBusy=true;chargeError='';
+  if(chargingTab==='records'&&!chargeSelected){
+    chargingAnalyticsRequest++;chargingAnalyticsBusy=false;chargingAnalyticsError='';
+    chargingSelection='';chargingSession=chargingSeries=null;chargingAnalyticsLoadedKey=chargingAnalyticsLoadingKey='';
+    renderChargingWorkspace();
+  }else renderChargeHistory();
+  const button=$('[data-action="charge-query"]');if(button){button.disabled=true;button.textContent='查询中…';}
   try {
     const result=await api(`/api/events?date=${encodeURIComponent(chargeQuery.start)}&kind=charge_end${chargeQuery.end?'&end='+encodeURIComponent(chargeQuery.end):''}${chargeCursor?`&cursor=${encodeURIComponent(chargeCursor)}`:''}`);
     if(request!==chargeRequest||owner!==state?.insights_context) return;
@@ -583,7 +645,14 @@ async function loadChargeEvents() {
     if(request!==chargeRequest||owner!==state?.insights_context) return;
     chargeEvents=[];chargeNextCursor=null;chargeError=error.message;
   } finally {
-    if(request===chargeRequest&&owner===state?.insights_context){chargeBusy=false;renderChargeHistory();const button=$('[data-action="charge-query"]');if(button){button.disabled=false;button.textContent='查询充电记录';}}
+    if(request===chargeRequest&&owner===state?.insights_context){
+      chargeBusy=false;
+      if(chargingTab==='records'){
+        const selected=chargeSelected?.id || '';
+        if(selected!==chargingSelection){chargingSession=chargingSeries=null;chargingAnalyticsLoadedKey='';chargingPoint=0;}
+        chargingSelection=selected;renderChargingWorkspace();ensureChargingAnalytics(selected);
+      }else renderChargeHistory();
+    }
   }
 }
 
@@ -703,9 +772,40 @@ function carOverview() {
   </section>`;
 }
 
+function energyAttainment() {
+  const profile=state.profile || {};
+  const format=chargingFormat;
+  const trip = state.range_attainment || {status:'no_trip'};
+  const canCalculate = trip.status === 'available' && Number.isFinite(trip.ratio);
+  const reasons = {no_trip:'等待后台确认一条已结束记录。', incomplete:'最近记录缺少可比较的端点，无法计算。', invalid:'最近记录的里程、电量或时间无效，或存在充电混入与口径变化。', no_consumption:'最近行程耗电为零或电量回升，无法计算。', no_rating:'当前车型缺少有效标称续航。', unavailable:'行程记录暂不可用，请稍后重试。'};
+  return `<details class="energy-achievement" data-detail="energy-attainment"><summary><span>最近行程参考</span><strong>${canCalculate ? `${trip.ratio.toFixed(1)}%` : trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</strong>${pill(trip.partial?'最近已结束记录 · 片段':'最近已结束记录')}<span class="energy-caption">计算依据与详情</span></summary><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
+      <p class="energy-caption">${canCalculate ? `按已观测里程与 SOC 下降，对比 ${esc(trip.standard)} 标称续航${trip.partial?'；仅代表这个片段':''}` : esc(reasons[trip.status] || reasons.invalid)}</p>
+      ${canCalculate ? `<div class="energy-reference">${row('已观测里程',`${format(trip.distance_km)} km`)}${row('起止电量',`${format(trip.start_soc)}% 至 ${format(trip.end_soc)}%`)}${row('消耗电量',`${format(trip.used_soc)} 个百分点`)}${row('对应标称里程',`${format(trip.reference_km)} km`)}</div>` : ''}
+      ${trip.start_at && trip.end_at ? `<p class="energy-caption energy-trip-time">行程开始：${esc(trip.start_at)}<br>行程结束：${esc(trip.end_at)}</p>` : ''}
+      <p class="energy-caption">基于后台记录的里程与电量变化；下电确认 10 分钟后生成。电量取整及云端缓存延迟会影响精度。</p>
+    </div></details>`;
+}
+
+function energyParameters(details) {
+  const m=state.model, profile=state.profile || {};
+  const electric = m.fields.filter(f => f.group === '能源与充电' || f.path === 'additionalVehicleStatus.chargeHvSts');
+  const electricKeys = ['chargeUAct','chargeIAct','dcChargeSts','dcChargeIAct','dcChargePileUAct','dcChargePileIAct','chargeHvSts','hvTempLevel','ptReady'];
+  const strategyKeys = ['bookChargeSts','chargeLidAcStatus','chargeLidDcAcStatus','disChargeSts','disChargeConnectStatus','disChargeUAct','disChargeIAct','timeToTargetDisCharged'];
+  const primaryKeys = ['chargeLevel','distanceToEmptyOnBatteryOnly','chargeSts','chargerState','statusOfChargerConnection','timeToFullyCharged'];
+  const other = electric.filter(f => ![...electricKeys,...strategyKeys,...primaryKeys].includes(f.key));
+  return chargingCurrent(details) + `<section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
+    <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 实际行驶里程 ÷（标称续航 × 消耗电量百分点 ÷ 100）× 100%。消耗电量为同一行程起点电量减终点电量；里程为行程起止总里程之差。不使用当前剩余续航计算。</p><p>使用当前车辆最近一条已结束记录的有效端点，片段也可计算，仅代表已观测区间。充电混入、解码口径变化、电量未下降或数据无效时不计算；不回退展示更早记录。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值。</p><p>例如行驶 80 km，电量从 80% 降至 60%，标称 546 km，对应标称里程 109.2 km，达成率约 73.3%。短行程受电量取整影响较大，结果不用于判断电池健康。</p></div></details>
+    ${carDisclosure('energy-status','充电状态原值',electric.filter(f => primaryKeys.includes(f.key)))}
+    ${carDisclosure('energy-electric','电压、电流与高压参数',electric.filter(f => electricKeys.includes(f.key)))}
+    ${carDisclosure('energy-strategy','预约、充电口与对外放电',electric.filter(f => strategyKeys.includes(f.key)))}
+    ${carDisclosure('energy-other','电耗与其他能源参数',other)}
+    <details class="car-disclosure" data-detail="energy-low-voltage"><summary><span>低压电池</span><span class="car-detail-count">独立于动力电池</span></summary><p class="car-disclosure-note">低压电池电量与健康字段不代表动力电池状态；未验证电气单位保留原值。</p>${table(m.fields.filter(f => f.group === '低压电池'),true)}</details>
+  </section>`;
+}
+
 function energy() {
   if (!state?.model) return modelRequired() + '<div id="insights-workspace"></div>';
-  if(chargeOwner!==state.insights_context){chargeOwner=state.insights_context;chargeRequest++;chargeQuery=null;chargeBusy=false;chargeError='';chargeEvents=[];chargeSelected=null;chargeCursor=null;chargeCursorStack=[];chargeNextCursor=null;chargeDateInitialized=false;chargingAnalyticsRequest++;chargingSession=chargingSeries=chargingStats=null;chargingSelection='current';chargingAnalyticsBusy=false;chargingAnalyticsError='';chargingAnalyticsLoadedKey=chargingAnalyticsLoadingKey='';}
+  if(chargeOwner!==state.insights_context){chargeOwner=state.insights_context;chargeRequest++;chargeQuery=null;chargeBusy=false;chargeError='';chargeEvents=[];chargeSelected=null;chargeCursor=null;chargeCursorStack=[];chargeNextCursor=null;chargeDateInitialized=false;chargingAnalyticsRequest++;chargingSession=chargingSeries=chargingStats=null;chargingSelection=chargingTab==='records'?'':'current';chargeManagementOpen=false;chargingAnalyticsBusy=false;chargingAnalyticsError='';chargingAnalyticsLoadedKey=chargingAnalyticsLoadingKey='';}
   if (!chargeDateInitialized) {
     const latestEnd=state.recent_events?.charge_end?.end_time;
     chargeDate=beijingDate(Number.isFinite(latestEnd)?latestEnd:Date.now());
@@ -717,16 +817,8 @@ function energy() {
   const validRange = Number.isFinite(range) && range >= 0;
   const rated = profile.range_km;
   const validRated = Number.isFinite(rated) && rated > 0 && ['CLTC','WLTP','NEDC','EPA'].includes(profile.range_standard);
-  const trip = state.range_attainment || {status:'no_trip'};
-  const canCalculate = trip.status === 'available' && Number.isFinite(trip.ratio);
-  const reasons = {no_trip:'等待后台确认一条已结束记录。', incomplete:'最近记录缺少可比较的端点，无法计算。', invalid:'最近记录的里程、电量或时间无效，或存在充电混入与口径变化。', no_consumption:'最近行程耗电为零或电量回升，无法计算。', no_rating:'当前车型缺少有效标称续航。', unavailable:'行程记录暂不可用，请稍后重试。'};
-  const format = value => new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(value);
-  const electric = m.fields.filter(f => f.group === '能源与充电' || f.path === 'additionalVehicleStatus.chargeHvSts');
-  const remainingTime = m.charging.remaining_time || '未知';
-  const electricKeys = ['chargeUAct','chargeIAct','dcChargeSts','dcChargeIAct','dcChargePileUAct','dcChargePileIAct','chargeHvSts','hvTempLevel','ptReady'];
-  const strategyKeys = ['bookChargeSts','chargeLidAcStatus','chargeLidDcAcStatus','disChargeSts','disChargeConnectStatus','disChargeUAct','disChargeIAct','timeToTargetDisCharged'];
-  const primaryKeys = ['chargeLevel','distanceToEmptyOnBatteryOnly','chargeSts','chargerState','statusOfChargerConnection','timeToFullyCharged'];
-  const other = electric.filter(f => ![...electricKeys,...strategyKeys,...primaryKeys].includes(f.key));
+  const format=chargingFormat;
+  const remainingTime=m.charging.remaining_time || '未知';
   return `<section class="energy-freshness">${icon('clock')}<strong>${age(m.updated_time,'车辆数据更新于 ')}</strong><span>云端缓存 · 不代表实时状态</span></section>
   <div class="energy-top">
     <section class="card energy-battery"><div class="card-head"><h2>动力电池与续航</h2>${pill('动力电池','', 'battery')}</div>
@@ -734,25 +826,11 @@ function energy() {
       <div class="energy-battery-track" ${validBattery ? `role="meter" aria-label="动力电池电量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${battery}"` : 'aria-label="电量未知"'}><div style="width:${validBattery ? battery : 0}%"></div></div>
       <div class="energy-rating"><div><span>标称续航${validRated ? `（${esc(profile.range_standard)}）` : ''}</span><strong>${validRated ? `${format(rated)} <small>km</small>` : '待配置'}</strong></div><span>${esc(profile.variant || '车型资料待配置')}</span></div>
     </section>
-    <section class="card energy-charge"><div class="card-head"><h2>当前充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body"><div class="energy-current-soc"><span>当前电量</span><strong>${validBattery?`${format(battery)}%`:'未知'}</strong></div>
+    <section class="card energy-charge"><div class="card-head"><h2>充电状态</h2>${pill(m.charging.confirmed ? m.charging.value : '充电状态未知',m.charging.confirmed ? '' : 'warn','energy')}</div><div class="card-body">
       <div class="energy-charge-grid">${[['充电模式',m.charging.mode==='dc'?'直流充电':m.charging.mode==='ac'?'交流充电':'未知'],['预计剩余时间',remainingTime],['连接状态',m.charging.connection_state || '接口未提供有效连接判断']].map(([label,value]) => `<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div><p class="energy-caption">${esc(m.charging.detail || '证据不足，暂无法确认充电状态。')}</p><p class="energy-caption">状态来自车辆云端缓存；缺少会话起点时不推测充电开始时间。</p></div></section>
   </div>
   ${chargingWorkspace(m.charging_details)}
-  <div id="charge-management"></div>
-  <section class="card energy-achievement"><div class="card-head"><h2>续航与行程参考</h2>${pill(trip.partial?'最近已结束记录 · 片段':'最近已结束记录')}</div><div class="card-body"><div class="energy-ratio">${canCalculate ? `${trip.ratio.toFixed(1)}<small>%</small>` : `<span>${trip.status === 'no_trip' ? '暂无可计算行程' : '无法计算'}</span>`}</div>
-      <p class="energy-caption">${canCalculate ? `按已观测里程与 SOC 下降，对比 ${esc(trip.standard)} 标称续航${trip.partial?'；仅代表这个片段':''}` : esc(reasons[trip.status] || reasons.invalid)}</p>
-      ${canCalculate ? `<div class="energy-reference">${row('已观测里程',`${format(trip.distance_km)} km`)}${row('起止电量',`${format(trip.start_soc)}% 至 ${format(trip.end_soc)}%`)}${row('消耗电量',`${format(trip.used_soc)} 个百分点`)}${row('对应标称里程',`${format(trip.reference_km)} km`)}</div>` : ''}
-      ${trip.start_at && trip.end_at ? `<p class="energy-caption energy-trip-time">行程开始：${esc(trip.start_at)}<br>行程结束：${esc(trip.end_at)}</p>` : ''}
-      <p class="energy-caption">基于后台记录的里程与电量变化；下电确认 10 分钟后生成。电量取整及云端缓存延迟会影响精度。</p>
-    </div></section>
-  <section class="card car-data energy-details"><div class="card-head"><h2>能源详情</h2>${link('全部参数','fields')}</div><p class="card-meta">展开查看参数原值、单位验证情况与计算依据。</p>
-    <details class="car-disclosure" data-detail="energy-formula"><summary><span>续航计算依据</span></summary><div class="car-disclosure-note"><p>达成率 = 实际行驶里程 ÷（标称续航 × 消耗电量百分点 ÷ 100）× 100%。消耗电量为同一行程起点电量减终点电量；里程为行程起止总里程之差。不使用当前剩余续航计算。</p><p>使用当前车辆最近一条已结束记录的有效端点，片段也可计算，仅代表已观测区间。充电混入、解码口径变化、电量未下降或数据无效时不计算；不回退展示更早记录。结果可超过 100%。</p><p>标称值来源：${esc(profile.range_source || '暂无来源资料')}。标准工况续航是车型参考值。</p><p>例如行驶 80 km，电量从 80% 降至 60%，标称 546 km，对应标称里程 109.2 km，达成率约 73.3%。短行程受电量取整影响较大，结果不用于判断电池健康。</p></div></details>
-    ${carDisclosure('energy-status','充电状态原值',electric.filter(f => primaryKeys.includes(f.key)))}
-    ${carDisclosure('energy-electric','电压、电流与高压参数',electric.filter(f => electricKeys.includes(f.key)))}
-    ${carDisclosure('energy-strategy','预约、充电口与对外放电',electric.filter(f => strategyKeys.includes(f.key)))}
-    ${carDisclosure('energy-other','电耗与其他能源参数',other)}
-    <details class="car-disclosure" data-detail="energy-low-voltage"><summary><span>低压电池</span><span class="car-detail-count">独立于动力电池</span></summary><p class="car-disclosure-note">低压电池电量与健康字段不代表动力电池状态；未验证电气单位保留原值。</p>${table(m.fields.filter(f => f.group === '低压电池'),true)}</details>
-  </section><div id="insights-workspace"></div>`;
+  ${energyTools()}<div id="insights-workspace"></div>`;
 }
 
 function privacyGate(track = false) {
@@ -912,9 +990,10 @@ function more() {
 function relatedTools() {
   if(!['energy','books','tracks','settings'].includes(page))return '';
   if(page==='tracks')return `<nav class="related-tools task-navigation" aria-label="行程与轨迹子功能">${[['local','本地记录'],['cloud','云端历史'],['tags','行程标签']].map(([source,label])=>`<button class="button secondary" data-source="${source}" ${source==='tags'?'data-track-tags="true"':''} aria-pressed="${!sectionTask&&trackSource===source}">${label}</button>`).join('')}<button class="button secondary" data-section-task="routes" aria-pressed="${sectionTask==='routes'}">常走路线对比</button></nav>`;
+  if(page==='energy'&&!sectionTask)return '';
   const base={car:'车辆状态',energy:'充电状态',settings:'采集与设置'}[page];
   const item=(id,label)=>`<button class="button secondary" data-section-task="${id}" aria-pressed="${sectionTask===id}">${label}</button>`;
-  return `<nav class="related-tools task-navigation" aria-label="${pages[page]}子功能">${page==='books'?'':item('',base)}${page==='energy'?item('records','充电记录'):''}${window.InsightsPage.toolsFor(page).map(tool=>item(tool.id,tool.label)).join('')}</nav>`;
+  return `<nav class="related-tools task-navigation" aria-label="${pages[page]}子功能">${page==='books'?'':item('',base)}${window.InsightsPage.toolsFor(page).map(tool=>item(tool.id,tool.label)).join('')}</nav>`;
 }
 
 function render() {
@@ -928,7 +1007,7 @@ function renderContent() {
   if(!(page==='tracks'&&!sectionTask&&trackSource==='local'&&tripManagementOpen))tripManager.suspend();
   const chargeManagerNode=page==='energy'?$('#charge-management'):null;
   const chargeManagerFocus=chargeManagerNode?.contains(document.activeElement)?document.activeElement:null;
-  if(page!=='energy')chargeManager.suspend();
+  if(page!=='energy'||sectionTask||chargingTab!=='records'||!chargeManagementOpen)chargeManager.suspend();
   if(page!=='insights')insightsPage.suspend();
   const insightsNode = insightSections.includes(page) ? document.getElementById('insights-workspace') : null;
   const insightsFocus = insightsNode?.contains(document.activeElement) ? document.activeElement : null;
@@ -951,8 +1030,9 @@ function renderContent() {
   $('.breadcrumb').textContent = `我的车库 / ${state?.profile?.name || '我的车辆'}`;
   const error = transientError || state?.error;
   if(page==='books'&&!sectionTask){const last=window.BookSession.read(state?.insights_context,'navigation')?.task;sectionTask=['ledger','life','costs'].includes(last)?last:'ledger';}
+  if(page==='energy'&&sectionTask==='records'){sectionTask='';chargingTab='records';chargingSelection=chargeSelected?.id || '';}
   const taskPage=['car','energy','books','settings','tracks'].includes(page)&&sectionTask;
-  const body = taskPage?(sectionTask==='records'?chargingWorkspace(state?.model?.charging_details)+'<div id="charge-management"></div><div id="insights-workspace" hidden></div>':'<div id="insights-workspace"></div>'):{overview,car,energy,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',calendar:()=>'<div id="insights-workspace"></div>',report:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
+  const body = taskPage?'<div id="insights-workspace"></div>':{overview,car,energy,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',calendar:()=>'<div id="insights-workspace"></div>',report:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
   const retainedImages = [...$('#main').querySelectorAll('img')].filter(image=>!image.closest('#map'));
   const retainedMap = $('#map')?.dataset.owner===mapOwner() ? $('#map').querySelector('img') : null;
   const content = document.createElement('template');
@@ -991,7 +1071,7 @@ function renderContent() {
   if ($('#field-results')) {renderFields();reviewRestoreFocus(fieldFocus);}
   if (page === 'tracks' && !sectionTask && trackSource === 'cloud') renderCloudMap();
   if (page === 'overview' && showPosition && state?.model) loadLocation(generation);
-  if (page === 'energy' && (!sectionTask||sectionTask==='records') && state?.model) { chargeManager.mount($('#charge-management')); ensureChargingAnalytics(chargingSelection); }
+  if (page === 'energy' && (!sectionTask||sectionTask==='records') && state?.model) { mountChargeManagement(); ensureChargingAnalytics(chargingSelection); }
   if (page === 'tracks' && !sectionTask && trackSource === 'local'){mountLocalTrips();openDetails.filter(key=>key.startsWith('recall-')).forEach(key=>{const detail=$(`details[data-detail="${key}"]`);if(detail)detail.open=true;});if(focusedDetail?.startsWith('recall-'))$(`details[data-detail="${focusedDetail}"] > summary`)?.focus({preventScroll:true});}
   if(recallFocus){const field=document.getElementById(recallFocus.id);field?.focus({preventScroll:true});if(typeof recallFocus.start==='number')field?.setSelectionRange?.(recallFocus.start,recallFocus.end);}
   if(page==='overview')overviewDashboard.mount();else overviewDashboard.suspend();
@@ -1120,7 +1200,7 @@ async function updateRecording(saveInterval = false) {
     case 'location-zoom-in': locationZoom=Math.min(17,locationZoom+1);render();break;
     case 'location-zoom-out': locationZoom=Math.max(3,locationZoom-1);render();break;
     case 'reload-tracks': render();break;
-    case 'charge-select': chargeSelected=chargeEvents.find(item=>item.id===target.dataset.eventId)||chargeSelected;chargingSelection=chargeSelected.id;renderChargeHistory();if(chargingTab==='process')loadChargingAnalytics(chargingSelection);break;
+    case 'charge-select': chargeSelected=chargeEvents.find(item=>item.id===target.dataset.eventId)||chargeSelected;if(chargeSelected){chargingSelection=chargeSelected.id;chargingSession=chargingSeries=null;chargingPoint=0;renderChargingWorkspace();ensureChargingAnalytics(chargingSelection);}break;
     case 'charge-next': if(chargeNextCursor){chargeCursorStack.push(chargeCursor);chargeCursor=chargeNextCursor;chargeSelected=null;loadChargeEvents();}break;
     case 'charge-prev': if(chargeCursorStack.length){chargeCursor=chargeCursorStack.pop();chargeSelected=null;loadChargeEvents();}break;
     case 'charge-query':
@@ -1130,11 +1210,14 @@ async function updateRecording(saveInterval = false) {
       loadChargeEvents();break;
     case 'charge-retry': loadChargeEvents();break;
 
-    case 'charging-tab': chargingTab=target.dataset.tab;chargingAnalyticsError='';renderChargingWorkspace();ensureChargingAnalytics(chargingSelection);break;
+    case 'charging-tab': selectChargingTab(target.dataset.tab);break;
+    case 'energy-records': selectChargingTab('records');break;
+    case 'energy-latest': if(state?.recent_events?.charge_end)openOverviewRecord({...state.recent_events.charge_end,kind:'charge_end'});break;
+    case 'energy-ledger': enterBooks('ledger');break;
     case 'charging-view': chargingView=target.dataset.view;chargingPoint=0;loadChargingAnalytics(chargingSelection);break;
     case 'stats-days': chargingDays=Number(target.dataset.days);clearChargingStatistics();break;
     case 'stats-query': loadChargingAnalytics();break;
-    case 'stats-detail': chargingTab='process';chargeSelected={id:target.dataset.eventId};chargingSelection=target.dataset.eventId;chargingPoint=0;renderChargingWorkspace();loadChargingAnalytics(chargingSelection);break;
+    case 'stats-detail': chargeSelected=chargingStats?.records.find(record=>record.id===target.dataset.eventId)||null;selectChargingTab('records');break;
     case 'analytics-retry': loadChargingAnalytics(chargingSelection);break;
     case 'recording': updateRecording();break;
     case 'save-interval': updateRecording(true);break;
@@ -1212,6 +1295,7 @@ const navigationFields={
 function visibleNavigationField(selector){return [...document.querySelectorAll(selector)].find(el=>el.checkVisibility());}
 function navigationSnapshot(){
   const snapshot={p:page};
+  if(page==='energy'&&!sectionTask)snapshot.energyTab=chargingTab;
   if(sectionTask)snapshot.t=sectionTask;
   else if(['insights','calendar','report'].includes(page))snapshot.t=insightsPage.currentTool();
   if(page==='tracks'&&!sectionTask)snapshot.s=trackSource;
@@ -1248,6 +1332,12 @@ async function restoreNavigation(snapshot,position=0){
   if(snapshot.p==='fields')snapshot={...snapshot,p:'insights',t:'parameters'};
   if(snapshot.p==='energy'&&snapshot.t==='ledger'||snapshot.p==='car'&&snapshot.t==='life')snapshot={...snapshot,p:'books'};
   page=snapshot.p==='map'?'overview':snapshot.p||'overview';sectionTask='';
+  if(page==='energy'){
+    chargingTab=snapshot.t==='records'?'records':snapshot.energyTab||'process';
+    chargingSelection=chargingTab==='records'?chargeSelected?.id || '':'current';
+    chargingAnalyticsRequest++;chargingAnalyticsBusy=false;chargingAnalyticsLoadingKey='';
+    chargingSession=chargingSeries=null;chargingAnalyticsLoadedKey='';
+  }
   trackSource=snapshot.s||'local';
   if(page==='tracks'&&snapshot.date)trackDate=snapshot.date;
   if(['car','energy','books','settings','tracks'].includes(page)&&snapshot.t&&
