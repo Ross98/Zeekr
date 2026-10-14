@@ -23,8 +23,9 @@
     let drafts={expenses:blankExpense(dateAt(Date.now())),reminders:blankReminder()};
     let expenseState='active',expenseCategory='',historyQuery='',reminderFilter='all',page=0;
     let editorOpen={expenses:false,reminders:false};
+    let rangeMode='month',month=dateAt(Date.now()).slice(0,7);
     let attempted=false,lastLoaded=0,dirty={expenses:false,reminders:false},pendingAction=null;
-    const persist=()=>root.BookSession?.write(owner,'life',{mode,startDate,endDate,drafts,dirty,expenseState,expenseCategory,historyQuery,reminderFilter,page,attempted,editorOpen});
+    const persist=()=>root.BookSession?.write(owner,'life',{mode,startDate,endDate,rangeMode,drafts,dirty,expenseState,expenseCategory,historyQuery,reminderFilter,page,attempted,editorOpen});
     function protect(action){if(dirty[mode]){pendingAction=action;paint();return true;}return false;}
     const context=()=>getState()?.insights_context||'';
     const valid=(token,current,identity)=>token===current&&owner===identity&&context()===identity;
@@ -43,10 +44,10 @@
       if(root.deferDateRender?.(paint))return;
       if(!node?.isConnected||!active())return;
       persist();
+      root.updateBooksPeriod?.({id:'life-month',month,busy,customRange:rangeMode==='custom'?`自定义区间 ${startDate} 至 ${endDate}`:''});
       const focused=node.contains(document.activeElement)?document.activeElement:null;
       const focus=focused?{id:focused.id,start:focused.selectionStart,end:focused.selectionEnd}:null;
-      node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">车辆生活账本</span><h2>日常支出，下次要做的事</h2>${root.booksCanReturn?.()?'<button class="button secondary" data-books-return>返回来源页面</button>':''}<p>费用按实记，保养与到期事项留个提醒。</p></div><span class="insight-source">本机保存 · 站内待办</span></section>
-        <section class="card insight-panel"><div class="insight-toolbar"><label>开始日期<input id="life-start" type="date" value="${esc(startDate)}" ${busy?'disabled':''}></label><label>结束日期<input id="life-end" type="date" value="${esc(endDate)}" ${busy?'disabled':''}></label>${button('查询生活账本','load',!owner||!startDate||!endDate||loading)}</div>${mode==='expenses'?`<div class="insight-actions life-history-ranges">${button('本月','range-month',loading)}${button('今年','range-year',loading)}${button('全部历史','range-all',loading||!data?.expense_range?.start_date)}</div>`:''}${loading?'<p role="status">正在读取记录…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存后，可管理账本。</p>':''}<div class="insight-actions">${['expenses','reminders'].map(key=>`<button class="button secondary" data-life-mode="${key}" aria-pressed="${mode===key}" ${busy?'disabled':''}>${key==='expenses'?'日常支出':'保养与到期待办'}</button>`).join('')}</div><p class="insight-note">选择日期后点击查询，支出按填写日期归入区间，不摊销保险或保养成本；充电账本费用另计，避免重复录入。待办不限区间，仅在本站显示，不发送外部通知。</p></section>
+      node.innerHTML=`<section class="books-view-toolbar"><div class="insight-toolbar"><div class="insight-actions books-life-modes">${['expenses','reminders'].map(key=>`<button class="button secondary" data-life-mode="${key}" aria-pressed="${mode===key}" ${busy?'disabled':''}>${key==='expenses'?'日常支出':'保养与到期待办'}</button>`).join('')}</div>${button('查询生活账本','load',!owner||!startDate||!endDate||loading)}</div><details class="books-range-options" data-detail="life-range" ${rangeMode==='custom'?'open':''}><summary>自定义日期与历史范围</summary><div class="insight-toolbar"><label>开始日期<input id="life-start" type="date" value="${esc(startDate)}" ${busy?'disabled':''}></label><label>结束日期<input id="life-end" type="date" value="${esc(endDate)}" ${busy?'disabled':''}></label>${button('本月','range-month',loading)}${button('今年','range-year',loading)}${button('全部历史','range-all',loading||!data?.expense_range?.start_date)}</div></details>${loading?'<p role="status">正在读取记录…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${!owner?'<p>等待当前账号的车辆缓存后，可管理账本。</p>':''}<details class="books-data-notes" data-detail="life-notes"><summary>记账与待办说明</summary><p class="insight-note">支出按填写日期归期，不摊销保险或保养；充电费用另计。待办不限区间，仅站内显示，不发送外部通知。</p></details></section>
         ${pendingAction?`<div class="notice info" role="status"><p>当前有未保存草稿。放弃后才能继续此操作。</p>${button('继续编辑草稿','keep')}${button('放弃草稿，继续','discard')}</div>`:''}
         ${data?mode==='expenses'?expenseView():reminderView():''}`;
       paintRows();
@@ -99,7 +100,7 @@
       try{const result=await request('/api/insights/life?start='+encodeURIComponent(selectedStart)+'&end='+encodeURIComponent(selectedEnd));
         if(!valid(token,serial,identity)||selectedStart!==startDate||selectedEnd!==endDate)return false;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        data=result;lastLoaded=Date.now();return true;
+        data=result;lastLoaded=Date.now();root.updateBooksSummary?.();return true;
       }catch(failure){if(valid(token,serial,identity)&&selectedStart===startDate&&selectedEnd===endDate)error=failure.message;return false;}
       finally{if(valid(token,serial,identity)){loading=false;paint();}}
     }
@@ -114,7 +115,7 @@
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         status='生活账本操作已保存。';
         if(action==='save'&&collection==='expenses'&&(payload.date<startDate||payload.date>endDate)){
-          startDate=payload.date.slice(0,7)+'-01';endDate=payload.date.slice(0,7)+'-'+new Date(Date.UTC(Number(payload.date.slice(0,4)),Number(payload.date.slice(5,7)),0)).getUTCDate();
+          month=payload.date.slice(0,7);rangeMode='month';root.BookSession.setMonth(owner,month);startDate=payload.date.slice(0,7)+'-01';endDate=payload.date.slice(0,7)+'-'+new Date(Date.UTC(Number(payload.date.slice(0,4)),Number(payload.date.slice(5,7)),0)).getUTCDate();
           status+=' 已切换到支出所在月份。';
         }
         if(action==='save'){resetDraft(collection);editorOpen[collection]=false;}
@@ -132,20 +133,24 @@
     }
     function mount(container){
       const changed=owner!==context(),remount=node!==container;node=container;
-      if(changed){owner=context();data=null;mode='expenses';loading=busy=false;serial++;writeSerial++;error=status='';resetDraft('expenses');resetDraft('reminders');expenseState='active';expenseCategory='';historyQuery='';reminderFilter='all';page=0;}
+      if(changed){owner=context();month=root.BookSession.month(owner,dateAt(Date.now()).slice(0,7));rangeMode='month';data=null;mode='expenses';loading=busy=false;serial++;writeSerial++;error=status='';resetDraft('expenses');resetDraft('reminders');expenseState='active';expenseCategory='';historyQuery='';reminderFilter='all';page=0;}
       if(changed){
         attempted=true;lastLoaded=0;pendingAction=null;
         const saved=root.BookSession?.read(owner,'life');
-        if(saved){mode=saved.mode==='reminders'?'reminders':'expenses';startDate=saved.startDate||startDate;endDate=saved.endDate||endDate;drafts={expenses:{...blankExpense(defaultDate()),...saved.drafts?.expenses},reminders:{...blankReminder(),...saved.drafts?.reminders}};dirty={expenses:!!saved.dirty?.expenses,reminders:!!saved.dirty?.reminders};expenseState=saved.expenseState||'active';expenseCategory=saved.expenseCategory||'';historyQuery=typeof saved.historyQuery==='string'?saved.historyQuery:'';reminderFilter=saved.reminderFilter||'all';page=saved.page||0;attempted=true;editorOpen={expenses:!!saved.editorOpen?.expenses||dirty.expenses,reminders:!!saved.editorOpen?.reminders||dirty.reminders};}
+        if(saved){rangeMode=saved.rangeMode||(saved.startDate?.endsWith('-01')&&saved.startDate?.slice(0,7)===saved.endDate?.slice(0,7)?'month':'custom');mode=saved.mode==='reminders'?'reminders':'expenses';startDate=saved.startDate||startDate;endDate=saved.endDate||endDate;drafts={expenses:{...blankExpense(defaultDate()),...saved.drafts?.expenses},reminders:{...blankReminder(),...saved.drafts?.reminders}};dirty={expenses:!!saved.dirty?.expenses,reminders:!!saved.dirty?.reminders};expenseState=saved.expenseState||'active';expenseCategory=saved.expenseCategory||'';historyQuery=typeof saved.historyQuery==='string'?saved.historyQuery:'';reminderFilter=saved.reminderFilter||'all';page=saved.page||0;attempted=true;editorOpen={expenses:!!saved.editorOpen?.expenses||dirty.expenses,reminders:!!saved.editorOpen?.reminders||dirty.reminders};}
       }
+      const selectedMonth=root.BookSession.month(owner,dateAt(Date.now()).slice(0,7));
+      if(!busy&&(changed||month!==selectedMonth)){month=selectedMonth;if(rangeMode==='month'){const range=root.BookSession.monthRange(month);startDate=range.start;endDate=range.end;serial++;data=null;loading=false;page=0;lastLoaded=0;}}
       if(changed||remount)paint();
       if(attempted&&!loading&&!busy&&active()&&(changed||Date.now()-lastLoaded>=30000))load();
     }
     function handle(event){
-      if(!active()||!node?.contains(event.target))return false;const el=event.target;
+      if(!active()||(!node?.contains(event.target)&&!event.target.matches('#life-month[data-books-period],[data-books-month-range]')))return false;const el=event.target;
       if(event.type==='input'){
+        if(el.id==='life-month'){if(!busy&&root.BookSession.monthRange(el.value))openDate(el.value+'-01');return true;}
         if(el.id==='life-history-search'){historyQuery=el.value;page=0;paintRows();persist();return true;}
         if(el.id==='life-start'||el.id==='life-end'){
+          if(busy)return true;rangeMode='custom';
           if(el.id==='life-start')startDate=el.value;else endDate=el.value;
           serial++;loading=false;error='';data=null;page=0;paint();return true;
         }
@@ -161,8 +166,9 @@
       const target=el.closest('[data-life]');if(!target||target.disabled)return false;const action=target.dataset.life;
       if(action.startsWith('range-')){
         const today=defaultDate();
+        rangeMode=action==='range-month'?'month':'custom';
         if(action==='range-all'){if(!data?.expense_range?.start_date)return true;startDate=data.expense_range.start_date;endDate=data.expense_range.end_date;}
-        else{startDate=action==='range-year'?today.slice(0,4)+'-01-01':today.slice(0,7)+'-01';endDate=today;}
+        else if(action==='range-year'){startDate=today.slice(0,4)+'-01-01';endDate=today;}else{const range=root.BookSession.monthRange(month);startDate=range.start;endDate=range.end;}
         serial++;loading=false;data=null;page=0;load();return true;
       }
       if(['new','cancel'].includes(action)&&protect(()=>{dirty[mode]=false;const next=node.querySelector(`[data-life="${action}"]`);if(next)handle({type:'click',target:next});}))return true;
@@ -175,6 +181,8 @@
       else mutate(action,target.dataset.id);persist();return true;
     }
     async function openDate(date){
+      if(busy||!root.BookSession.monthRange(date.slice(0,7)))return;
+      month=date.slice(0,7);rangeMode='month';root.BookSession.setMonth(owner,month);root.updateBooksSummary?.();
       startDate=date.slice(0,7)+'-01';endDate=date.slice(0,7)+'-'+new Date(Date.UTC(Number(date.slice(0,4)),Number(date.slice(5,7)),0)).getUTCDate();
       serial++;loading=false;data=null;page=0;await load();
     }

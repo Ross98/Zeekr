@@ -65,7 +65,7 @@
       currentStage:()=>instance?.currentStage?.()||'overview'
     };
     page.suspend=()=>instance?.suspend?.();
-    for(const method of ['openField','openExperiment','openPart','openStage','returnTo','openDate','openEvent','setFilter'])page[method]=(...args)=>{
+    for(const method of ['openField','openExperiment','openPart','openStage','returnTo','openDate','openEvent','setFilter','refresh'])page[method]=(...args)=>{
       if(instance)return instance[method]?.(...args);
       commands.push({method,args,context:context()});ready();
     };
@@ -240,7 +240,8 @@
     const qualityPage=lazyPage([['DataQualityPage','data-quality.js']],()=>root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate}),{getState,active:()=>active()&&tab==='quality'});
     const routesPage=lazyPage([['TravelInsightsPage','travel-insights.js']],()=>root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate}),{getState,active:()=>active()&&tab==='routes'});
 
-    const costsPage=lazyPage([['BooksOverview','books-overview.js']],()=>root.BooksOverview.create({getState,request,escape:esc,active:()=>active()&&tab==='costs',navigate:(view,date,filter)=>{navigate('books',view,date);if(view==='ledger')ledgerPage.setFilter(filter);}}),{getState,active:()=>active()&&tab==='costs'});
+    const costsPage=lazyPage([['BooksOverview','books-overview.js']],()=>root.BooksOverview.create({getState,request,escape:esc,active:()=>active()&&section==='books',getView:()=>tab,navigate:(view,date,filter)=>{navigate('books',view,date);if(view==='ledger')ledgerPage.setFilter(filter);}}),{getState,active:()=>active()&&section==='books'});
+    root.updateBooksSummary=()=>{if(active()&&section==='books')costsPage.refresh();};
     const views={costs:costsPage,parameters:parameterPage,parking:parkingPage,routes:routesPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
@@ -330,8 +331,9 @@
       const content=node.querySelector('.insight-content');
       if(!tab){content.innerHTML='<section class="card insight-panel"><h2>选择子功能</h2><p>从上方快捷入口或这里的工具列表打开。</p></section>';return;}
       if(views[tab]){
-        content.innerHTML=`${['research','time'].includes(tab)&&researchReturn?'<div class="parameter-return"><button class="button secondary" data-insight="return-parameter">返回参数研究</button><span>查看完历史后，返回原参数与操作步骤。</span></div>':''}<div id="${tab}-workspace"></div>`;
-        views[tab].mount(node.querySelector(`#${tab}-workspace`));
+        content.innerHTML=`${section==='books'?'<div id="books-summary"></div>':''}${['research','time'].includes(tab)&&researchReturn?'<div class="parameter-return"><button class="button secondary" data-insight="return-parameter">返回参数研究</button><span>查看完历史后，返回原参数与操作步骤。</span></div>':''}<div id="${tab}-workspace"></div>`;
+        if(section==='books')costsPage.mount(node.querySelector('#books-summary'));
+        if(tab!=='costs')views[tab].mount(node.querySelector(`#${tab}-workspace`));
         restoreFocus(focus);
         return;
       }
@@ -447,9 +449,14 @@
       node.classList.toggle('standalone-task',true);
       if(sectionChanged)node.innerHTML='';
       if(changed || remount || sectionChanged)paint();
-      if(views[tab])views[tab].mount(node.querySelector(`#${tab}-workspace`));
+      if(section==='books')costsPage.mount(node.querySelector('#books-summary'));
+      if(views[tab]&&tab!=='costs')views[tab].mount(node.querySelector(`#${tab}-workspace`));
     }
     function handle(event) {
+      if(active()&&section==='books'){
+        if(event.target.matches('[data-books-period],[data-books-month-range]'))return views[tab]?.handle(event)||false;
+        if(costsPage.handle(event))return true;
+      }
       if(!active() || !node?.contains(event.target))return false;
       const el=event.target;
       const view=event.type==='click' && el.closest('[data-insight-view]');

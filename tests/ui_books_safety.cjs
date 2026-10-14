@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');
 const {fixture}=require('./ui_insight_helpers.cjs');
 (async()=>{const f=await fixture(),{page}=f;try{
-await page.getByRole('button',{name:'用车账本',exact:true}).click();await page.locator('#ledger-month').fill('2026-09');await page.getByRole('button',{name:'读取账本',exact:true}).click();await page.locator('#ledger-range').waitFor();
+await page.getByRole('button',{name:'用车账本',exact:true}).click();await page.getByRole('button',{name:'充电账本',exact:true}).click();await page.locator('#ledger-month').fill('2026-09');await page.getByRole('button',{name:'读取账本',exact:true}).click();await page.locator('#ledger-range').waitFor();
 await page.getByRole('button',{name:'新增账单',exact:true}).click();await page.locator('#ledger-date').fill('2026-09-20');await page.locator('#ledger-amount').fill('20');await page.locator('#ledger-note').fill('冲突测试原账单');await page.getByRole('button',{name:'保存账单',exact:true}).click();await page.getByText('账单已保存。',{exact:true}).waitFor();
 await page.locator('[data-ledger-entry]').filter({hasText:'冲突测试原账单'}).locator('[data-ledger=edit]').click();await page.locator('#ledger-note').fill('旧草稿');
 const other=await page.evaluate(async()=>{const book=await fetch('/api/insights/ledger?date=2026-09-01').then(r=>r.json());const row=book.entries.find(r=>r.note==='冲突测试原账单');const response=await fetch('/api/insights/ledger',{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':state.request_key},body:JSON.stringify({action:'save',context:book.context,revision:book.revision,id:row.id,event_id:'',date:row.date,source:row.source,amount:'40',note:'另一页面的新金额'})});return {status:response.status,body:await response.json()}});
