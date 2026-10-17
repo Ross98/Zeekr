@@ -231,8 +231,13 @@
 body:has(#tag-place-panel[open]){overflow:hidden}
 .tag-page-heading{margin-bottom:16px}.tag-page-heading h2{font-size:24px;margin:0}.tag-page-heading p{margin:6px 0 0}.tag-month-panel{padding:16px}
 .tag-month-notes{font-size:13px;color:var(--muted)}.tag-month-notes summary{cursor:pointer}
-.tag-module-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start;margin-bottom:20px}
-.tag-module-grid>.insight-panel{margin-bottom:0;padding:16px}.tag-module-grid .insight-heading{align-items:start;flex-wrap:wrap;gap:8px}
+.tag-module-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;margin-bottom:20px}
+.tag-module-grid>.insight-panel{display:flex;flex-direction:column;margin-bottom:0;padding:16px}
+.tag-module-grid>.insight-panel>.button,.tag-module-grid #tag-place-statistics>.tag-place-summary+.insight-heading{margin-top:auto;margin-bottom:0}
+.tag-module-grid>.insight-panel>.button{align-self:flex-start}
+.tag-module-grid>.insight-panel>.insight-heading:first-child{min-height:32px;align-items:flex-start}
+.tag-module-grid .insight-heading>.insight-note{margin:0}
+.tag-module-grid>.insight-panel>p{margin:8px 0 14px}.tag-module-grid .insight-heading{align-items:start;flex-wrap:wrap;gap:8px}
 .tag-module-grid h3{font-size:16px}.tag-module-grid .tag-place-summary,.tag-module-grid .insight-note{font-size:13px}
 .tag-module-grid .tag-place-summary{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .tag-event-list{max-height:420px;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-right:8px}
