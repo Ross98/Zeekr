@@ -46,6 +46,12 @@ def parking_origin(db, vehicle, event):
     to automatic commute matching. A missing/invalid newest record is a stop.
     """
     start = number(event.get('start_time'), 1, 32503680000000)
+    if event.get('partial') is True and event.get('kind') == 'trip_end':
+        from .reviewed_parking_origin import reviewed_parking_origin
+        row = db.execute('SELECT summary FROM monitor_events WHERE vehicle=? AND id=? '
+                         'AND length(CAST(summary AS BLOB))<=?',
+                         (vehicle,event['id'],MAX_SUMMARY_BYTES)).fetchone()
+        return reviewed_parking_origin(db,vehicle,event,_summary(row[0])) if row else None
     if start is None or event.get('partial') is not False:
         return None
     current = db.execute('SELECT summary FROM monitor_events WHERE vehicle=? AND id=? '
