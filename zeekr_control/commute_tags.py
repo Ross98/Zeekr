@@ -107,15 +107,32 @@ class CommuteTags:
         valid = type(start) in (int, float) and type(end) in (int, float) and end > start
         first = self._endpoint(vehicle, start, end, True) if valid else None
         last = self._endpoint(vehicle, start, end, False) if valid else None
+        parking = {}
+        # Revalidate from the vehicle database, never trust caller-supplied place
+        # labels/evidence. Keep these estimates distinct from trusted GPS samples.
+        if valid and event.get('partial') is False and (first is None or last is None) and self.tracks.path.exists():
+            from .parking_origin import parking_origin
+            from .parking_destination import parking_destination
+            with self.tracks.connect() as db:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='observations'").fetchone():
+                    for side, sample, infer in (('start', first, parking_origin), ('end', last, parking_destination)):
+                        if sample is not None:
+                            continue
+                        estimate = infer(db, vehicle, event)
+                        if estimate:
+                            parking[side + '_place_evidence'] = {k: v for k, v in estimate.items() if k != 'point'}
+                            sample = estimate['sample_time'], estimate['point']
+                            if side == 'start': first = sample
+                            else: last = sample
         signature = hashlib.sha256(json.dumps(
-            [start, end, event.get('partial'), first, last, list(rule)],
+            [start, end, event.get('partial'), first, last, parking, list(rule)],
             separators=(',', ':')).encode()).hexdigest()
         evidence = dict(direction=None, partial=bool(event.get('partial')), rule_revision=rule[0],
                         start_distance_m=None, end_distance_m=None,
                         start_radius_m=rule[6], end_radius_m=rule[9],
                         start_sample_time=first[0] if first else None,
-                        end_sample_time=last[0] if last else None)
-        if first is None or last is None or first[0] == last[0]:
+                        end_sample_time=last[0] if last else None, **parking)
+        if event.get('partial') is not False or first is None or last is None or first[0] == last[0]:
             return ('insufficient', evidence['start_sample_time'], evidence['end_sample_time'], None, None), evidence, signature
         a_home, a_work = _distance(first[1], rule[4:6]), _distance(first[1], rule[7:9])
         b_home, b_work = _distance(last[1], rule[4:6]), _distance(last[1], rule[7:9])

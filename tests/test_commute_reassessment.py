@@ -29,7 +29,7 @@ class CommuteReassessmentTests(fixtures.CommuteTagTests):
             self.tags.query('owner', 'car', '2026-09-28')
         self.assertFalse(any(call.kwargs.get('write') for call in connect.call_args_list))
 
-    def test_partial_match_has_explicit_evidence_warning(self):
+    def test_partial_match_requires_manual_review(self):
         effective = self.save_rule()['effective_at']
         self.trip('partial', effective + 1000, (31.21, 121.41), (31.2, 121.4))
         with sqlite3.connect(self.db) as db:
@@ -37,9 +37,9 @@ class CommuteReassessmentTests(fixtures.CommuteTagTests):
             data['partial'] = True
             db.execute('UPDATE monitor_events SET summary=?', (json.dumps(data),))
         row = self.tags.query('owner', 'car', '2026-09-28')['events'][0]
-        self.assertTrue(row['automatic_commute'])
+        self.assertFalse(row['automatic_commute'])
         self.assertTrue(row['commute_evidence']['partial'])
-        self.assertEqual(row['commute_evidence']['direction'], 'backward')
+        self.assertEqual(row['commute_reason'], 'insufficient')
 
     def preview(self):
         return self.tags.update('owner', 'car', dict(action='commute-preview', date='2026-09-28', revision=1))

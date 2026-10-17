@@ -42,8 +42,9 @@ def parking_origin(db, vehicle, event):
     """Corroborate a fresh predeparture coordinate with a parked previous arrival.
 
     An equal odometer is supporting evidence, not proof of continuous parking.
-    Keep provenance explicit, retain original coordinates, and never feed estimates
-    to automatic commute matching. A missing/invalid newest record is a stop.
+    Keep provenance explicit and retain original coordinates. Commute matching
+    may use this corroborated estimate without promoting it to trusted GPS.
+    A missing/invalid newest record is a stop.
     """
     start = number(event.get('start_time'), 1, 32503680000000)
     if event.get('partial') is True and event.get('kind') == 'trip_end':

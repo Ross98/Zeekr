@@ -27,7 +27,7 @@ def _continuous(stamps, start, end):
 
 
 def parking_destination(db, vehicle, event):
-    """Estimate only the displayed place; preserve raw GPS and commute evidence.
+    """Estimate a place for display and commute matching; preserve raw GPS.
 
     Repeated coordinates alone cannot establish parking. Both telemetry streams
     must advance through the same stopped interval with unchanged mileage. The
