@@ -27,6 +27,27 @@
     const area=Math.abs(ring.reduce((sum,a,i)=>{const b=ring[(i+1)%ring.length];return sum+a.x*b.y-b.x*a.y;},0))/2;
     return ring.length>=3&&area>=20?ring.map(p=>[p.lat,p.lng]):[];
   }
+  function placePairGroups(places){
+    const groups=new Map();
+    for(const place of places){
+      const key=place.statistics_key||place.id;
+      if(!groups.has(key))groups.set(key,{key,label:place.label,alias:place.commute_alias||'',ids:[]});
+      groups.get(key).ids.push(place.id);
+    }
+    return [...groups.values()].sort((a,b)=>a.label.localeCompare(b.label,'zh-CN')||a.key.localeCompare(b.key));
+  }
+  function placePairStatistics(events,places,a,b,direction='both',tag=''){
+    const groups=placePairGroups(places),keys=new Map(groups.flatMap(g=>g.ids.map(id=>[id,g.key])));
+    const valid=!!a&&!!b&&a!==b&&groups.some(g=>g.key===a)&&groups.some(g=>g.key===b);
+    const selected=valid?events.filter(e=>tag==='untagged'?!(e.tags||[]).length:!tag||(e.tags||[]).includes(tag.slice(4))):[];
+    const forward=selected.filter(e=>keys.get(e.start_place)===a&&keys.get(e.end_place)===b);
+    const backward=selected.filter(e=>keys.get(e.start_place)===b&&keys.get(e.end_place)===a);
+    const summarize=rows=>{
+      const metric=key=>{const values=rows.map(e=>e[key]).filter(v=>Number.isFinite(v)&&v>=0);return {total:values.length?values.reduce((a,b)=>a+b,0):null,samples:values.length};};
+      return {count:rows.length,partial:rows.filter(e=>e.partial).length,start_inferred:rows.filter(e=>e.start_place_evidence?.source==='parking_inferred').length,end_inferred:rows.filter(e=>e.end_place_evidence?.source==='parking_inferred').length,distance:metric('distance_km'),duration:metric('duration_seconds'),energy:metric('estimated_kwh')};
+    };
+    return {valid,forward:summarize(forward),backward:summarize(backward),total:summarize(direction==='forward'?forward:direction==='backward'?backward:[...forward,...backward])};
+  }
   function create({getState,request,escape:esc,active,time}){
     let node=null,owner='',month=monthNow(),data=null,selected=null,tags='',note='',attempted=false,loading=false,busy=false;
     let serial=0,writeSerial=0,error='',status='',filter='',completeness='all',groupA='',groupB='',page=0,trashPage=0;
@@ -35,6 +56,7 @@
     let nameShape='circle',nameVertices=[],nameDrawing=false,nameMap=null,nameViewport=null,nameVertex=null,nameFreehand=true;
     let placesShown=false,placesMap=null,placePage=0,focusedPlace=null,focusedRegion=null,placesViewport=null;
     let placesPanelShown=false,placesPanelTab='places',placesPanelScroll=0,placesTableScroll=0;
+    let pairA='',pairB='',pairDirection='both',pairTag='';
     let toolPanel=null,toolReturn='',toolScroll=0;
     let commuteDraft={home:null,work:null,homeRadius:300,workRadius:300},commuteDirty=false;
     let commuteMap=null,commuteShown=false,placeMode=null,commuteBusy=false;
@@ -61,13 +83,13 @@
       const rule=commuteRule||data?.commute_rule;
       commuteDraft={home:rule?.home?{latitude:rule.home.latitude,longitude:rule.home.longitude}:null,
         work:rule?.work?{latitude:rule.work.latitude,longitude:rule.work.longitude}:null,
-        homeRadius:rule?.home?.radius_m||300,workRadius:rule?.work?.radius_m||300};
+        homeRadius:rule?.home?.radius_m||300,workRadius:rule?.work?.radius_m||300,homeRegion:data?.place_statistics?.commute_place_regions?.home||'',workRegion:data?.place_statistics?.commute_place_regions?.work||''};
     }
     const regionName=r=>r.display_name||r.name;
     const placeLabel=id=>data?.place_statistics?.places.find(p=>p.id===id)?.label||'未知';
     const placeLink=id=>data?.place_statistics?.places.some(p=>p.id===id)?`<button type="button" class="tag-place-link" data-tag="place-focus" data-id="${esc(id)}" aria-label="在地图定位 ${esc(placeLabel(id))}" ${busy?'disabled':''}>${esc(placeLabel(id))}</button>`:esc(placeLabel(id));
     function closeNameEditor(){nameMap?.remove();nameMap=null;namePlace=null;nameDraft='';namePreview=null;nameVertices=[];nameDrawing=false;nameVertex=null;nameViewport=null;}
-    function closePlacesMap(){placesPanelShown=false;placesPanelTab='places';placesPanelScroll=placesTableScroll=0;closeNameEditor();placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=focusedRegion=placesViewport=null;namePlace=null;nameDraft='';namePreview=null;}
+    function closePlacesMap(){pairA=pairB=pairTag='';pairDirection='both';placesPanelShown=false;placesPanelTab='places';placesPanelScroll=placesTableScroll=0;closeNameEditor();placesMap?.remove();placesMap=null;placesShown=false;placePage=0;focusedPlace=focusedRegion=placesViewport=null;namePlace=null;nameDraft='';namePreview=null;}
     function selectMapPlace(id,region=false){
       focusedPlace=region?null:id;focusedRegion=region?id:null;placesViewport=null;
       placesPanelShown=placesShown=true;placesMap?.remove();placesMap=null;
@@ -106,7 +128,7 @@
         <div class="tag-place-panel-header"><div><h3 id="tag-place-panel-title">地点统计与管理</h3><p class="insight-note">${esc(month)} · ${places.length} 个参考地点</p></div>${button('关闭地点面板','places-panel-close',false,'id="tag-places-panel-close" autofocus')}</div>
         <div class="tag-place-panel-body">
         ${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}
-        <div class="insight-actions tag-place-panel-tabs" role="group" aria-label="地点分类">${[['places','本月地点'],['regions','已保存区域'],['routes','常见方向']].map(([key,label])=>button(label,'places-panel-tab',false,`data-id="${key}" aria-pressed="${placesPanelTab===key}"`)).join('')}</div>
+        <div class="insight-actions tag-place-panel-tabs" role="group" aria-label="地点分类">${[['places','本月地点'],['regions','已保存区域'],['routes','常见方向'],['pair','两地点统计']].map(([key,label])=>button(label,'places-panel-tab',false,`data-id="${key}" aria-pressed="${placesPanelTab===key}"`)).join('')}</div>
         <details class="tag-place-statistics-notes"><summary>统计说明 · 未知出发 ${stats.unknown_departures} 次 / 到达 ${stats.unknown_arrivals} 次</summary>
         <p class="insight-note">已命名区域内的起止点共用地点标签，历史与后续月份自动匹配；按点位圆心判断区域归属，圆心在多边形边界上也算范围内；圆心在外仅圆边重叠不归入。未命名点仍按固定中心 ${stats.radius_m} 米分组，不沿相邻点串联合并。使用起止三分钟内的可信采样，原始坐标保留。</p>
         <p class="insight-note">名称优先使用手动命名，其次按当前设置匹配家／公司，再采用已有可信地址。地址带“附近”，无法确认时保留编号；读取统计不会额外查询地址。</p>
@@ -117,9 +139,26 @@
         <div class="tag-region-list">${labels.map(r=>`<div><button type="button" class="tag-place-link" data-tag="region-focus" data-id="${esc(r.id)}" aria-label="在地图定位 ${esc(regionName(r))}">${esc(regionName(r))}</button><span>${r.inherited_region_id?'归属自定义区域 · ':''}${r.shape==='polygon'?`多边形 · ${r.vertices.length} 个顶点`:`圆形 · ${r.radius_m||150} 米`}${children.has(r.id)?` · 已归入 ${children.get(r.id)} 个点位`:''}</span>${button(r.inherited_region_id?'编辑归属区域':'编辑区域','region-edit',false,`data-id="${esc(r.id)}" aria-label="编辑区域 ${esc(regionName(r))}"`)}</div>`).join('')||'<p class="insight-note">暂无已保存区域。</p>'}</div>
         <div class="insight-actions">${button('新建多边形地点','region-new')}${button('撤销地点操作','place-name-undo',!stats.name_can_undo)}</div></div>
         <div ${placesPanelTab!=='routes'?'hidden':''}><h4>常见方向</h4>${stats.routes.length?`<div class="tag-place-routes">${stats.routes.slice(0,10).map(r=>`<p><span>${placeLink(r.start_place)} → ${placeLink(r.end_place)}</span><strong>${r.count} 趟</strong></p>`).join('')}</div><p class="insight-note">按方向分别统计，仅列次数最多的前 10 组；缺少任一端点不计入方向。同地点往返也保留。</p>`:'<p class="insight-note">尚无两端都能归类的行程。</p>'}</div>
+        <div ${placesPanelTab!=='pair'?'hidden':''}>${pairStatisticsView()}</div>
         ${namePlace?nameEditor():''}
         <div class="insight-actions">${button(placesShown?'隐藏地点地图':'查看地点地图','places-map',!places.length&&!regions.length)}${placesShown?button('查看全部地点','places-all'):''}</div>${placesShown?'<p class="insight-note">点地点名称可放大定位；点编号查看详情和地图网站跳转。小点为本月实际起止观测。</p><div id="tag-places-map" role="region" tabindex="0" aria-label="本月地点地图"></div>':''}
         </div></dialog></section>`;
+    }
+    function pairStatisticsView(){
+      const places=data?.place_statistics?.places||[],groups=placePairGroups(places),keys=new Set(groups.map(g=>g.key));
+      if(!keys.has(pairA))pairA='';if(!keys.has(pairB))pairB='';
+      if(pairTag&&pairTag!=='untagged'&&!data.groups.some(g=>'tag:'+g.tag===pairTag))pairTag='';
+      const optionList=value=>'<option value="">选择地点标签</option>'+groups.map(g=>`<option value="${esc(g.key)}" ${value===g.key?'selected':''}>${esc(g.label)}${g.alias&&g.label!==g.alias?`（${esc(g.alias)}）`:''}${groups.filter(other=>other.label===g.label).length>1?` · 地点 ${groups.indexOf(g)+1}`:''}</option>`).join('');
+      const stats=placePairStatistics(data.events,places,pairA,pairB,pairDirection,pairTag);
+      const name=key=>{const group=groups.find(g=>g.key===key);return group?group.label+(group.alias&&group.label!==group.alias?'（'+group.alias+'）':''):'未选择';};
+      const metric=(value,unit,divisor=1)=>`${number(value.total===null?null:value.total/divisor)} ${unit}<small>${value.samples} 趟有效样本</small>`;
+      const row=(label,summary)=>`<tr><th scope="row">${esc(label)}</th><td>${summary.count}<small>${summary.partial} 趟片段</small></td><td>${metric(summary.distance,'km')}</td><td>${metric(summary.duration,'分钟',60)}</td><td>${metric(summary.energy,'kWh')}</td></tr>`;
+      return `<section id="tag-pair-statistics" aria-label="两地点统计"><h4>两地点统计</h4><p class="insight-note">${esc(month)} · 选择两个地点标签，查看往返或单向的已记录行程。</p><div class="ledger-form"><label>地点 A<select id="tag-pair-a" aria-label="统计地点 A">${optionList(pairA)}</select></label><label>地点 B<select id="tag-pair-b" aria-label="统计地点 B">${optionList(pairB)}</select></label><label>统计方向<select id="tag-pair-direction" aria-label="两地点统计方向"><option value="both" ${pairDirection==='both'?'selected':''}>双向合计</option><option value="forward" ${pairDirection==='forward'?'selected':''}>A → B</option><option value="backward" ${pairDirection==='backward'?'selected':''}>B → A</option></select></label><label>行程标签<select id="tag-pair-tag" aria-label="两地点行程标签"><option value="">全部标签与未标注</option><option value="untagged" ${pairTag==='untagged'?'selected':''}>未标注</option>${data.groups.map(g=>`<option value="${esc('tag:'+g.tag)}" ${pairTag==='tag:'+g.tag?'selected':''}>${esc(g.tag)}</option>`).join('')}</select></label></div>${!stats.valid?'<p class="insight-note">请选择两个不同地点。</p>':`<div class="insight-table-scroll"><table class="tag-place-table tag-pair-table"><thead><tr><th scope="col">方向</th><th scope="col">趟数</th><th scope="col">已记录里程</th><th scope="col">已记录时长</th><th scope="col">电量估算</th></tr></thead><tbody>${row(pairDirection==='both'?'双向合计':pairDirection==='forward'?name(pairA)+' → '+name(pairB):name(pairB)+' → '+name(pairA),stats.total)}${pairDirection==='both'?row(name(pairA)+' → '+name(pairB),stats.forward)+row(name(pairB)+' → '+name(pairA),stats.backward):''}</tbody></table></div><p class="insight-note" role="status">共 ${stats.total.count} 趟，其中 ${stats.total.partial} 趟观测片段；${stats.total.start_inferred} 处起点、${stats.total.end_inferred} 处终点为停车位置推定。</p>${!stats.total.count?'<p class="insight-note">本月没有符合所选地点、方向和标签的行程。</p>':''}`}<p class="insight-note">按结束日期归入本月。片段只累计已观测有效值；每项单列有效样本，— 表示无有效样本。推定位置仍是推定，不补原始定位或缺失指标。电量由 SOC 与容量估算，不是电表计量。</p></section>`;
+    }
+    function commuteLabelOptions(role){
+      const regions=(data?.place_statistics?.name_regions||[]).filter(r=>!r.inherited_region_id);
+      const selected=commuteDraft[role+'Region']||'';
+      return '<option value="">保留当前地图选点</option>'+regions.map(r=>`<option value="${esc(r.id)}" ${selected===r.id?'selected':''}>${esc(regionName(r))}${regions.filter(other=>regionName(other)===regionName(r)).length>1?` · ${r.shape==='polygon'?'区域':number(r.radius_m||150)+' 米'} · 地点 ${regions.indexOf(r)+1}`:''}</option>`).join('');
     }
     function nameEditor(){
       const polygon=nameShape==='polygon',ready=!polygon||nameVertices.length>=3&&!nameDrawing;
@@ -238,8 +277,9 @@
     function commuteView(){
       const rule=commuteRule||data?.commute_rule||{},ready=!!commuteRule;
       return `<section class="card insight-panel"><div class="insight-heading"><h3>通勤自动标注</h3><span class="insight-badge">${!ready?'待读取':rule.deleted?'已删除':rule.enabled?'运行中':rule.revision?'已暂停':'未设置'}</span></div>
-        <p class="insight-note">在地图上选家和公司。采集后台对近期结束行程匹配可信起止位置，两个方向都可自动标“通勤”；证据不足时等待采样后重试。位置匹配不代表已确认完整通勤。</p>
+        <p class="insight-note">可从已保存地点标签选择家和公司，也可在地图上选点。采集后台对近期结束行程匹配可信起止位置，两个方向都可自动标“通勤”；证据不足时等待采样后重试。位置匹配不代表已确认完整通勤。</p>
         <div class="insight-actions">${button('重新读取通勤设置','commute-reload',!owner||ruleLoading||commuteBusy)}${ruleLoading?'<span role="status">正在读取通勤设置…</span>':''}</div>
+        <div class="ledger-form"><label>家地点标签<select id="commute-home-label" aria-label="家地点标签" ${!ready||commuteBusy?'disabled':''}>${commuteLabelOptions('home')}</select></label><label>公司地点标签<select id="commute-work-label" aria-label="公司地点标签" ${!ready||commuteBusy?'disabled':''}>${commuteLabelOptions('work')}</select></label></div><p class="insight-note">选择标签先更新选点草稿，保存后才生效；匹配范围仍使用下方半径。重新选择当前标签时保留原中心。</p>
         <div class="ledger-form"><label>家范围半径（米）<input id="commute-home-radius" aria-label="家范围半径" type="number" min="100" max="1000" step="50" value="${esc(commuteDraft.homeRadius)}" ${commuteBusy?'disabled':''}></label><label>公司范围半径（米）<input id="commute-work-radius" aria-label="公司范围半径" type="number" min="100" max="1000" step="50" value="${esc(commuteDraft.workRadius)}" ${commuteBusy?'disabled':''}></label></div>
         <p class="insight-note">家：${commuteDraft.home?'已选点':'未选点'} · 公司：${commuteDraft.work?'已选点':'未选点'}。${commuteDirty?'设置有未保存修改。':'范围可在地图上查看后调整。'}</p>
         <div class="insight-actions">${button(commuteShown?'隐藏选点地图':'打开选点地图','commute-map',commuteBusy)}${button('保存通勤规则','commute-save',!owner||!ready||!commuteDraft.home||!commuteDraft.work||commuteBusy||ruleLoading)}${rule.revision&&!rule.deleted?button(rule.enabled?'暂停自动标注':'恢复自动标注',rule.enabled?'commute-pause':'commute-resume',commuteBusy):''}${rule.revision&&!rule.deleted?button('删除通勤规则','commute-delete',commuteBusy):''}</div>
@@ -273,10 +313,10 @@
         L.circle(center,{radius:commuteDraft[key+'Radius'],color,fillOpacity:.12}).addTo(commuteMap);
         const icon=L.divIcon({className:`commute-pin commute-pin-${key}`,html:`<span>${key==='home'?'家':'公司'}</span>`,iconSize:[38,38],iconAnchor:[19,19]});
         L.marker(center,{draggable:!commuteBusy,icon,title:key==='home'?'家地点':'公司地点'}).addTo(commuteMap).bindTooltip(key==='home'?'家':'公司').on('dragend',event=>{
-          if(commuteBusy)return;const where=event.target.getLatLng();commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;commutePreview=null;placeMode=null;commuteMap.remove();commuteMap=null;paint();
+          if(commuteBusy)return;const where=event.target.getLatLng();commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDraft[key+'Region']='';commuteDirty=true;commutePreview=null;placeMode=null;commuteMap.remove();commuteMap=null;paint();
         });
       }
-      commuteMap.on('click',event=>{if(commuteBusy||!placeMode)return;commuteDraft[placeMode]={latitude:event.latlng.lat,longitude:event.latlng.lng};commuteDirty=true;commutePreview=null;placeMode=null;commuteMap.remove();commuteMap=null;paint();});
+      commuteMap.on('click',event=>{if(commuteBusy||!placeMode)return;commuteDraft[placeMode]={latitude:event.latlng.lat,longitude:event.latlng.lng};commuteDraft[placeMode+'Region']='';commuteDirty=true;commutePreview=null;placeMode=null;commuteMap.remove();commuteMap=null;paint();});
     }
     function routeView(){
       if(!selected)return '';
@@ -285,7 +325,7 @@
     function commuteSummaryView(){
       const rule=commuteRule||data?.commute_rule||{};
       const state=!commuteRule?'待读取':rule.deleted?'已删除':rule.enabled?'运行中':rule.revision?'已暂停':'未设置';
-      return `<section class="card insight-panel tag-module-summary"><div class="insight-heading"><h3>通勤自动标注</h3><span class="insight-badge">${state}</span></div><p class="insight-note">家：${commuteDraft.home?'已选点':'未选点'} · 公司：${commuteDraft.work?'已选点':'未选点'}${commuteDirty?' · 有未保存修改':''}</p>${button('通勤设置','tool-open',false,'data-id="commute" id="tag-commute-panel-open" aria-haspopup="dialog"')}</section>`;
+      return `<section class="card insight-panel tag-module-summary"><div class="insight-heading"><h3>通勤自动标注</h3><span class="insight-badge">${state}</span></div><p class="insight-note">家：${data?.place_statistics?.commute_place_names?.home?esc(data.place_statistics.commute_place_names.home):commuteDraft.home?'已选点':'未选点'} · 公司：${data?.place_statistics?.commute_place_names?.work?esc(data.place_statistics.commute_place_names.work):commuteDraft.work?'已选点':'未选点'}${commuteDirty?' · 有未保存修改':''}</p>${button('通勤设置','tool-open',false,'data-id="commute" id="tag-commute-panel-open" aria-haspopup="dialog"')}</section>`;
     }
     function comparisonSummaryView(){
       if(!data)return '';
@@ -483,6 +523,17 @@
         node.querySelector('#commute-preview')?.remove();paint();return true;
       }
       if(event.type==='change'){
+        if(['tag-pair-a','tag-pair-b','tag-pair-direction','tag-pair-tag'].includes(el.id)){
+          if(el.id==='tag-pair-a')pairA=el.value;if(el.id==='tag-pair-b')pairB=el.value;if(el.id==='tag-pair-direction')pairDirection=el.value;if(el.id==='tag-pair-tag')pairTag=el.value;paint();return true;
+        }
+        if(['commute-home-label','commute-work-label'].includes(el.id)){
+          const role=el.id==='commute-home-label'?'home':'work';
+          const region=data?.place_statistics?.name_regions.find(r=>r.id===el.value);
+          if(!region)return true;
+          if(commuteDraft[role+'Region']!==region.id)commuteDraft[role]={latitude:region.latitude,longitude:region.longitude};
+          commuteDraft[role+'Region']=region.id;commuteDirty=true;commutePreview=null;placeMode=null;closeCommuteMap();paint();return true;
+        }
+
         if(el.id==='tag-name-shape'){nameShape=el.value;nameDrawing=nameShape==='polygon'&&nameVertices.length<3;invalidateName();paint();return true;}
         if(el.id==='tag-region-method'){nameFreehand=el.value==='freehand';nameDrawing=nameFreehand||nameVertices.length<3;invalidateName();paint();return true;}
         if(el.id==='tag-region-vertex'){nameVertex=el.value===''?null:Number(el.value);paint();return true;}
@@ -499,7 +550,7 @@
       if(action==='tool-close'){closeToolPanel();return true;}
       if(action==='places-panel-open'){toolPanel=null;placesPanelShown=true;paint();return true;}
       if(action==='places-panel-close'){closePlacesPanel();return true;}
-      if(action==='places-panel-tab'){if(['places','regions','routes'].includes(id)){placesPanelTab=id;placesPanelScroll=0;paint();node.querySelector(`[data-tag="places-panel-tab"][data-id="${id}"]`)?.focus({preventScroll:true});}return true;}
+      if(action==='places-panel-tab'){if(['places','regions','routes','pair'].includes(id)){placesPanelTab=id;placesPanelScroll=0;paint();node.querySelector(`[data-tag="places-panel-tab"][data-id="${id}"]`)?.focus({preventScroll:true});}return true;}
       if(action==='place-name-edit'){openNameEditor(data.place_statistics.places.find(p=>p.id===id));return true;}
       if(action==='region-edit'){
         const regions=data.place_statistics.name_regions;
@@ -527,10 +578,10 @@
       if(action==='commute-preview-cancel'){commutePreview=null;paint();return true;}
       if(action==='commute-preview-previous'||action==='commute-preview-next'){previewPage+=action==='commute-preview-next'?1:-1;paint();return true;}
       if(action==='commute-map'){commuteShown=!commuteShown;placeMode=commuteShown&&!commuteDraft.home?'home':null;paint();return true;}
-      if(action==='commute-place-home'||action==='commute-place-work'){const key=action.endsWith('home')?'home':'work';placeMode=placeMode===key?null:key;paint();return true;}
+      if(action==='commute-place-home'||action==='commute-place-work'){const key=action.endsWith('home')?'home':'work';commuteDraft[key+'Region']='';placeMode=placeMode===key?null:key;paint();return true;}
       if(action==='commute-center-home'||action==='commute-center-work'){
         const where=commuteMap?.getCenter(),key=action.endsWith('home')?'home':'work';
-        if(where){commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDirty=true;commutePreview=null;placeMode=null;paint();}return true;
+        if(where){commuteDraft[key]={latitude:where.lat,longitude:where.lng};commuteDraft[key+'Region']='';commuteDirty=true;commutePreview=null;placeMode=null;paint();}return true;
       }
       if(action.startsWith('commute-')){mutateCommute(action,id);return true;}
       if(action==='load')load();
@@ -549,5 +600,5 @@
     }
     return {mount,handle};
   }
-  root.TripTagsPage={create,freehandVertices};
+  root.TripTagsPage={create,freehandVertices,placePairGroups,placePairStatistics};
 })(window);

@@ -56,6 +56,14 @@ class TripPlaceNames:
         records=[r for r in saved['records'] if not r['deleted']]
         index=RegionIndex(records)
         by_id={r['id']:r for r in records}
+        aliases={}
+        if not rule.get('deleted'):
+            for role in ('home','work'):
+                configured=rule.get(role)
+                matches=index.matches((configured['latitude'],configured['longitude'])) if configured else []
+                if len(matches)==1:aliases[role]=matches[0]
+        # A shared naming region cannot unambiguously identify both roles.
+        if len(aliases)==2 and aliases['home']['id']==aliases['work']['id']:aliases={}
         for place in stats['places']:
             point=(place['latitude'],place['longitude'])
             place.update(name_key=anchor_key(place),name_source='reference',manual_name_id=None)
@@ -80,7 +88,18 @@ class TripPlaceNames:
             if len(matches)==1:place.update(label=matches[0],name_source='commute');continue
             label=place.pop('address_label',None)
             if label:place.update(label=label,name_source='address')
-        for place in stats['places']:place.pop('address_label',None)
+        for place in stats['places']:
+            place.pop('address_label',None)
+            place.pop('commute_alias',None)
+            identity=place.get('manual_name_id')
+            place['statistics_key']='region:'+identity if identity else place['id']
+            for role,record in aliases.items():
+                label='家' if role=='home' else '公司'
+                if identity==record['id'] or (place['name_source']=='commute' and place['label']==label):
+                    place.update(label=record['body']['name'],commute_alias=label,statistics_key='region:'+record['id'])
+        stats['commute_place_names']={role:record['body']['name'] for role,record in aliases.items()}
+        stats['commute_place_regions']={role:record['id'] for role,record in aliases.items()}
+
         regions=[]
         for record in records:
             region=dict(id=record['id'],**record['body'])

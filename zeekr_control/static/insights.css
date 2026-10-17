@@ -331,3 +331,7 @@ body:has(#tag-tools-panel[open]){overflow:hidden}
 .parameter-transition-list small { display: block; margin-top: 4px; }
 #parameter-flow .insight-actions { margin: 12px 0; }
 #report-automatic summary { cursor: pointer; font-weight: 700; }
+
+#tag-pair-statistics .ledger-form{margin:16px 0}
+.tag-pair-table small{display:block;color:var(--muted);font-size:12px;font-weight:400;margin-top:4px}
+.tag-pair-table th:first-child{min-width:180px}.tag-pair-table td{font-variant-numeric:tabular-nums}

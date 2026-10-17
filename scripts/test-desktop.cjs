@@ -7,10 +7,10 @@ const groups={
   unit:['test_overview_dashboard','books_overview','navigation_state','theme','vehicle',
     'chart','route_quality','road_matching_display','amap_maps','charge_ledger_preview',
     'parking_calendar','parking_calendar_model','parking_manual_start','vehicle_life_history',
-    'usage_report_analysis','test_freehand_regions','ui_field_review_rules','parameter_research_focus'],
+    'usage_report_analysis','test_freehand_regions','test_place_pair_statistics','ui_field_review_rules','parameter_research_focus'],
   smoke:['ui_smoke','ui_status_summary','ui_overview_dashboard'],
   review:['ui_energy_workspace','ui_energy','ui_charge_management','ui_research_serial','ui_research_simplification','ui_review_fixes','ui_lazy_tools','ui_async_analysis','ui_analysis_cancel','ui_overview_dashboard','ui_books_overview',
-    'ui_books_navigation','ui_books_safety','ui_books_period','ui_tool_navigation','ui_insights_navigation','ui_commute_reassessment','ui_trip_tags','ui_parking_origin','ui_trip_place_panel','ui_trip_tags_compact',
+    'ui_books_navigation','ui_books_safety','ui_books_period','ui_tool_navigation','ui_insights_navigation','ui_commute_reassessment','ui_trip_tags','ui_parking_origin','ui_trip_place_panel','ui_trip_tags_compact','ui_place_pair_statistics',
     'ui_parameter_flow','ui_parameter_workspace','ui_refresh_view','ui_refresh_scroll']
 };
 const group=process.argv[2]||'review';
