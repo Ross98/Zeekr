@@ -1,10 +1,11 @@
-"""Monthly reference places from trusted observations; no event/location writes."""
+"""Monthly reference places with explicit parking estimates; no event/location writes."""
 from collections import Counter, defaultdict
 
 from .commute_tags import _distance
 from .tracks import TrackStore
 from .trip_endpoints import endpoint
 from .trip_place_names import cached_names
+from .parking_origin import parking_origin
 
 from .trip_place_geometry import RADIUS_M, cell, NEIGHBOURS
 from .place_regions import RegionIndex, circle_anchors
@@ -83,6 +84,11 @@ class TripPlaces:
                         ordered = start is not None and end > start
                         first = endpoint(db,vehicle,start,min(start+180000,end),True) if ordered else None
                         last = endpoint(db,vehicle,max(start if ordered else 0,end-180000),end,False) if start is None or ordered else None
+                        if first is None and ordered:
+                            estimate = parking_origin(db, vehicle, event)
+                            if estimate:
+                                first = estimate['sample_time'], estimate['point']
+                                event['start_place_evidence'] = {k: v for k, v in estimate.items() if k != 'point'}
                         # A single shared sample cannot establish both boundaries.
                         if first and last and first[0] == last[0]:
                             first = last = None
