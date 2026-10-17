@@ -106,4 +106,5 @@ def parking_origin(db, vehicle, event):
         return None
     return dict(source='parking_inferred', point=point, sample_time=stamp,
                 previous_event_id=previous_id, previous_end_time=end,
+                sampling_gap_seconds=round((start-stamp)/1000, 3),
                 arrival_distance_m=round(_distance(point, anchor), 1))

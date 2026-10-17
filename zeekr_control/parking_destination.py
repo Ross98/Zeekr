@@ -90,6 +90,10 @@ def parking_destination(db, vehicle, event):
         locations.append(time)
     if not _continuous(locations, end, stamp):
         return None
+    # Report the largest actual location interval, not the whole parking duration.
+    location_times = sorted(set(locations))
+    gap = max(b-a for a,b in zip(location_times,location_times[1:]))
     return dict(source='parking_inferred', point=point, sample_time=stamp,
+                sampling_gap_seconds=round(gap/1000, 3),
                 parking_seconds=round((stamp-end)/1000, 3),
                 stationary_samples=len(set(times)), location_samples=len(set(locations)))

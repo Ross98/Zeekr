@@ -44,10 +44,19 @@ class ParkingDestinationTests(unittest.TestCase):
         self.assertEqual(result['point'],(31.21,121.41))
         self.assertEqual(result['sample_time'],self.park)
         self.assertEqual(result['source'],'parking_inferred')
+        self.assertEqual(result['sampling_gap_seconds'],30)
+        self.assertEqual(result['parking_seconds'],90)
         self.assertGreaterEqual(result['stationary_samples'],2)
         self.assertEqual(self.db.read_bytes(),before)
         self.assertIsNone(self.infer(partial=True))
         with sqlite3.connect(self.db) as db:self.assertIsNone(parking_destination(db,'other',self.event))
+
+    def test_gap_uses_largest_distinct_location_interval_not_telemetry_or_parking_duration(self):
+        self.seed()
+        with sqlite3.connect(self.db) as db:
+            db.execute('DELETE FROM observations WHERE state_time=?',(self.end+30000,))
+        self.assertEqual(self.infer()['sampling_gap_seconds'],60)
+        self.assertEqual(self.infer()['parking_seconds'],90)
 
     def test_invalid_summary_or_moving_parking_is_rejected(self):
         self.seed()
@@ -120,6 +129,7 @@ class ParkingDestinationTests(unittest.TestCase):
         self.seed();result=self.tags.query('owner','car','2026-09-28');row=result['events'][0]
         self.assertIsNotNone(row['end_place'])
         self.assertEqual(row['end_place_evidence']['source'],'parking_inferred')
+        self.assertEqual(row['end_place_evidence']['sampling_gap_seconds'],30)
         self.assertIsNone(self.tags.commute._endpoint('car',self.start,self.end,False))
 
     def test_trusted_arrival_takes_priority(self):

@@ -3,7 +3,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture({initialResearch:false}),{page}=f;
   try{
-    let inferred=true;
+    let inferred=true,automatic=false;
     await page.route('**/api/insights/trip-tags*',async route=>{
       if(route.request().method()!=='GET')return route.continue();
       const response=await route.fetch(),data=await response.json();
@@ -11,10 +11,10 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       if(!row)return route.fulfill({json:data});
       if(inferred){
         row.start_place='synthetic-parking';
-        row.start_place_evidence={source:'parking_inferred',sample_time:row.start_time,sampling_gap_seconds:16437.121,reviewed:true};
+        row.start_place_evidence={source:'parking_inferred',sample_time:row.start_time,sampling_gap_seconds:automatic?34:16437.121,reviewed:!automatic};
         row.end_place='synthetic-parking';
-        row.end_place_evidence={source:'parking_inferred',sample_time:row.end_time+90000,sampling_gap_seconds:1190.103,reviewed:true};
-        row.partial=true;
+        row.end_place_evidence={source:'parking_inferred',sample_time:row.end_time+90000,sampling_gap_seconds:automatic?30:1190.103,reviewed:!automatic};
+        row.partial=!automatic;
         data.place_statistics.places.push({id:'synthetic-parking',label:'合成停车地点',latitude:31.2,longitude:121.4,departures:1,arrivals:0});
       }
       await route.fulfill({json:data});
@@ -33,6 +33,14 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     assert.match(await card.innerText(),/参考地点：合成停车地点/);
     assert.match(await card.innerText(),/观测片段/);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    automatic=true;
+    await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
+    await page.locator('#tag-events').getByText('定位采样缺口约 0.57 分钟，间隔内移动情况未知。',{exact:true}).waitFor();
+    await page.locator('#tag-events').getByText('采样缺口约 0.5 分钟，间隔内移动情况未知。',{exact:true}).waitFor();
+    assert.match(await card.innerText(),/完整记录/);
+    assert.doesNotMatch(await card.innerText(),/观测片段/);
+    assert.equal(await note.count(),1);
+    assert.equal(await endNote.count(),1);
     inferred=false;
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
     await page.locator('[data-tag="load"]:not(:disabled)').waitFor();

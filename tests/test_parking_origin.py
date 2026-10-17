@@ -49,6 +49,7 @@ class ParkingOriginTests(unittest.TestCase):
         self.assertEqual(result['source'],'parking_inferred')
         self.assertEqual(result['sample_time'],self.current-34000)
         self.assertEqual(result['previous_event_id'],'previous')
+        self.assertEqual(result['sampling_gap_seconds'],34)
         self.assertEqual(self.db.read_bytes(),before)
         self.assertIsNone(self.infer(dict(self.event,partial=True)))
         with sqlite3.connect(self.db) as db:self.assertIsNone(parking_origin(db,'foreign',self.event))
@@ -121,6 +122,7 @@ class ParkingOriginTests(unittest.TestCase):
         row=next(r for r in result['events'] if r['id']=='current')
         self.assertIsNotNone(row['start_place'])
         self.assertEqual(row['start_place_evidence']['source'],'parking_inferred')
+        self.assertEqual(row['start_place_evidence']['sampling_gap_seconds'],34)
         self.assertIsNone(self.tags.commute._endpoint('car',self.current,self.current+1200000,True))
 
     def test_trusted_trip_origin_takes_priority(self):
