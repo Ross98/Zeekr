@@ -13,7 +13,8 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         row.start_place='synthetic-parking';
         row.start_place_evidence={source:'parking_inferred',sample_time:row.start_time-34000};
         row.end_place='synthetic-parking';
-        row.end_place_evidence={source:'parking_inferred',sample_time:row.end_time+90000};
+        row.end_place_evidence={source:'parking_inferred',sample_time:row.end_time+90000,sampling_gap_seconds:1190.103,reviewed:true};
+        row.partial=true;
         data.place_statistics.places.push({id:'synthetic-parking',label:'合成停车地点',latitude:31.2,longitude:121.4,departures:1,arrivals:0});
       }
       await route.fulfill({json:data});
@@ -26,14 +27,17 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     await note.waitFor();
     const endNote=page.locator('#tag-events').getByText('终点由到达后停车位置推定，非可信 GPS 定位。',{exact:true});
     await endNote.waitFor();
+    await page.locator('#tag-events').getByText('采样缺口约 19.84 分钟，间隔内移动情况未知。',{exact:true}).waitFor();
     const card=note.locator('xpath=..');
     assert.match(await card.innerText(),/参考地点：合成停车地点/);
+    assert.match(await card.innerText(),/观测片段/);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     inferred=false;
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
     await page.locator('[data-tag="load"]:not(:disabled)').waitFor();
     assert.equal(await note.count(),0);
     assert.equal(await endNote.count(),0);
+    assert.equal(await page.locator('#tag-events').getByText(/采样缺口约/).count(),0);
     assert.deepEqual(f.errors,[]);
     console.log('UI_PARKING_ORIGIN_DESKTOP_PASS');
   }finally{await f.close();}

@@ -2,6 +2,7 @@
 from .commute_tags import _distance
 from .parking_origin import _point, _summary, _telemetry
 from .usage_events import MAX_SUMMARY_BYTES, number
+from .reviewed_parking_destination import reviewed_parking_destination
 
 
 MIN_PARKING_MS = 60000
@@ -33,6 +34,11 @@ def parking_destination(db, vehicle, event):
     location remains an estimate even when these independent state checks pass.
     """
     end = number(event.get('end_time'), 1, 32503680000000)
+    if event.get('partial') is True and event.get('kind') == 'trip_end':
+        row = db.execute('SELECT summary FROM monitor_events WHERE vehicle=? AND id=? '
+                         'AND length(CAST(summary AS BLOB))<=?',
+                         (vehicle, event['id'], MAX_SUMMARY_BYTES)).fetchone()
+        return reviewed_parking_destination(db, vehicle, event, _summary(row[0])) if row else None
     if end is None or event.get('partial') is not False or event.get('kind') != 'trip_end':
         return None
     if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_observations'").fetchone():
