@@ -6,6 +6,7 @@ from .tracks import TrackStore
 from .trip_endpoints import endpoint
 from .trip_place_names import cached_names
 from .parking_origin import parking_origin
+from .parking_destination import parking_destination
 
 from .trip_place_geometry import RADIUS_M, cell, NEIGHBOURS
 from .place_regions import RegionIndex, circle_anchors
@@ -89,6 +90,11 @@ class TripPlaces:
                             if estimate:
                                 first = estimate['sample_time'], estimate['point']
                                 event['start_place_evidence'] = {k: v for k, v in estimate.items() if k != 'point'}
+                        if last is None:
+                            estimate = parking_destination(db, vehicle, event)
+                            if estimate:
+                                last = estimate['sample_time'], estimate['point']
+                                event['end_place_evidence'] = {k: v for k, v in estimate.items() if k != 'point'}
                         # A single shared sample cannot establish both boundaries.
                         if first and last and first[0] == last[0]:
                             first = last = None
