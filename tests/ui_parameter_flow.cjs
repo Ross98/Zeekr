@@ -1,15 +1,33 @@
 // Real disposable API and synthetic archive: exercise the user's ordered workflow.
 const assert=require('node:assert/strict'),fs=require('node:fs');
 const {fixture,contrast,parameterStage}=require('./ui_insight_helpers.cjs');
-async function reviewSaveRaces(page,path){
-  const original=await page.evaluate(()=>{window.reviewRaceOriginalApi=api;return {context:state.insights_context,vehicle:state.field_reviews.vehicle};});
+async function reviewSaveRaces(browser,path,field){
+  // Keep the real manual-review renderer and input handlers, with no unrelated
+  // parameter-catalog requests or status remounts racing the controlled saves.
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.addScriptTag({path:require('node:path').join(__dirname,'../zeekr_control/static/field-reviews.js')});
+  await page.evaluate(field=>{
+    document.body.innerHTML='<div id="field-results"></div><div class="review-workspace"><section id="review-panel"></section></div>';
+    window.state={insights_context:'account-a:car-a',model:{fields:[field],updated_time:1},field_reviews:{vehicle:'car-a',revision:10,records:[]}};
+    window.search=window.groupFilter='';window.unknownOnly=false;
+    window.$=selector=>document.querySelector(selector);
+    window.esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    window.empty=(title,note)=>esc(title)+' '+esc(note);window.toast=()=>{};
+    window.renderFields=()=>{reviewSync();renderReviewPanel();};
+    window.api=async url=>{throw Error('Unexpected review request '+url);};
+    window.reviewRaceOriginalApi=api;
+    document.addEventListener('click',event=>handleReviewAction(event.target));
+    reviewSync();setReviewCatalog([field]);
+  },field);
+  const original={context:'account-a:car-a',vehicle:'car-a'};
   try{
     for(const boundary of ['account','vehicle','return-to-owner','normal'])for(const phase of boundary==='normal'?['save','conflict-refresh','failed-refresh']:['save','failed-save','conflict-refresh','failed-refresh']){
       await page.evaluate(({original,path,phase})=>{
         const catalog=[...reviewCatalog];
         state.insights_context=original.context;state.field_reviews={vehicle:original.vehicle,revision:10,records:[]};reviewSync();
         setReviewCatalog(catalog);selectReviewField(path);editReviewStep(true);
-        const race={phase,catalog,writes:[],oldRelease:null,newRelease:null,holdState:false};window.reviewRace=race;
+        const race={phase,catalog,writes:[],reads:[],oldRelease:null,newRelease:null,holdState:false};window.reviewRace=race;
         api=async(url,payload)=>{
           if(url==='/api/field-reviews'){
             race.writes.push(structuredClone(payload));
@@ -21,6 +39,7 @@ async function reviewSaveRaces(page,path){
             return new Promise(resolve=>race.newRelease=()=>resolve({vehicle:payload.vehicle,revision:21,records:[payload]}));
           }
           if(url==='/api/state'){
+            race.reads.push(url);
             if(race.holdState){race.holdState=false;return new Promise((resolve,reject)=>race.oldRelease=()=>phase==='failed-refresh'?reject(Error('old refresh failed')):resolve({insights_context:race.oldContext,field_reviews:{vehicle:race.oldVehicle,revision:11,records:[]}}));}
             return structuredClone(state);
           }
@@ -37,7 +56,8 @@ async function reviewSaveRaces(page,path){
         if(phase==='save'){assert.equal(await page.evaluate(()=>state.field_reviews.records[0].meaning),'旧结论');assert.equal(await page.evaluate(()=>state.field_reviews.records[0].note),'旧备注');}
         else{assert.equal(await page.evaluate(()=>reviewDraft().meaning),'旧结论');assert.equal(await page.evaluate(()=>reviewDraft().note),'旧备注');}
         if(phase!=='save')assert.match(await page.locator('#review-error').innerText(),/old save conflict/);
-        assert.equal(await page.evaluate(()=>reviewRace.writes.length),1);continue;
+        assert.equal(await page.evaluate(()=>reviewRace.writes.length),1);
+        assert.equal(await page.evaluate(()=>reviewRace.reads.length),phase==='save'?0:1);continue;
       }
       await page.evaluate(({original,path,boundary})=>{
         const switchTo=(context,vehicle)=>{state.insights_context=context;state.field_reviews={vehicle,revision:20,records:[]};reviewSync();setReviewCatalog(reviewRace.catalog);selectReviewField(path);editReviewStep(true);};
@@ -56,6 +76,7 @@ async function reviewSaveRaces(page,path){
       assert.equal(await page.evaluate(()=>reviewDraft().dirty),true,'new pending draft remains dirty');
       assert.equal(await page.evaluate(()=>reviewUndo),null,'old completion cannot create undo in the new context');
       assert.equal(await page.evaluate(()=>reviewRace.writes.length),2,'exactly the two explicit saves');
+      assert.equal(await page.evaluate(()=>reviewRace.reads.length),['save','failed-save'].includes(phase)?0:1,'stale failures cannot start new metadata refreshes');
       assert.doesNotMatch(await page.locator('#review-error').innerText(),/old save conflict|old save failed|old refresh failed/);
       await page.evaluate(async()=>{reviewRace.newRelease();await new Promise(resolve=>setTimeout(resolve,0));});
       assert.equal(await page.evaluate(()=>reviewSaving),false);
@@ -63,7 +84,8 @@ async function reviewSaveRaces(page,path){
       assert.equal(await page.evaluate(()=>state.field_reviews.records[0].meaning),'新结论');
     }
     console.log('FIELD_REVIEW_SAVE_CONTEXT_PASS: 15 strict delayed save/conflict cases, account/vehicle/return, new drafts and newer write lock');
-  }finally{await page.evaluate(()=>{api=reviewRaceOriginalApi;delete window.reviewRaceOriginalApi;});}
+    assert.deepEqual(errors,[]);
+  }finally{await page.close();}
 }
 
 (async()=>{const f=await fixture(),{page}=f;page.setDefaultTimeout(10000);try{
@@ -139,7 +161,8 @@ async function reviewSaveRaces(page,path){
   await parameterStage(page,'overview');
   await page.evaluate(()=>{document.activeElement?.blur();scrollTo({top:0,behavior:'instant'});});
   await page.screenshot({path:'/tmp/zeekr-parameter-flow-qa/overview.png',fullPage:true});
-  await reviewSaveRaces(page,path);
+  const raceField=await page.evaluate(path=>reviewCatalog.find(field=>field.path===path),path);
+  assert.ok(raceField);await reviewSaveRaces(f.browser,path,raceField);
   await page.evaluate(()=>{state.insights_context='other-car';render();});
   assert.equal(await page.locator('#review-form').count(),0);
   assert.equal(await page.locator('#lab-title').isVisible(),false);
