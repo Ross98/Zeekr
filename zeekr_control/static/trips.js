@@ -288,7 +288,8 @@ function renderLocalRouteContent() {
   }
   $('#map').classList.remove('map-empty-state');
   if(!map)$('#map').innerHTML='';
-  if (!map) createMap([playback[0].latitude,playback[0].longitude],13);
+  // Keep every sample layer and tooltip without a DOM node per observation.
+  if (!map) createMap([playback[0].latitude,playback[0].longitude],13,{preferCanvas:true});
   if (h.layers) h.layers.remove();
   h.layers=L.layerGroup().addTo(map);
   const routeDisplay=RouteQuality.display(result,density);
