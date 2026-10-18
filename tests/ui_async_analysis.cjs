@@ -1,6 +1,18 @@
 const assert=require('node:assert/strict');
 const {fixture}=require('./ui_insight_helpers.cjs');
-(async()=>{const f=await fixture({initialResearch:false}),{page}=f;try{
+(async()=>{
+ let initialReport,initialReports=0;
+ const f=await fixture({initialResearch:false,beforeGoto:async page=>{
+   // Install before navigation: the overview's real asynchronous report must not
+   // overlap the account-switch cancellation scenario under test.
+   initialReport=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/insights/report'&&response.status()===200);
+   await page.route('**/api/insights/report?*',async route=>{
+     initialReports++;
+     const context=await page.evaluate(()=>state.insights_context);
+     return route.fulfill({json:{context,current:{days:[],events:[]},previous:{days:[],events:[]}}});
+   });
+ }}),{page}=f;try{
+  await (await initialReport).finished();assert.equal(initialReports,1);
   await page.waitForFunction(()=>Boolean(state?.insights_context));
   const job='/api/analysis/'+'a'.repeat(32);let starts=0,polls=0,prefer;
   await page.route('**/api/insights/calendar?*',route=>{starts++;prefer=route.request().headers().prefer;return route.fulfill({status:202,json:{analysis_job_url:job,retry_after_ms:1}});});
@@ -36,12 +48,14 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   });
   assert.match(cancelled,/取消/);
   assert.equal(cancellations,1);
+  assert.deepEqual(f.posts,[f.origin+job+'/cancel',f.origin+cancelJob+'/cancel']);
   const timeoutJob='/api/analysis/'+'e'.repeat(32);let timeoutCancels=0;
   await page.route('**/api/insights/calendar?timeout=1',route=>route.fulfill({status:202,json:{analysis_job_url:timeoutJob,retry_after_ms:50}}));
   await page.route('**'+timeoutJob,async route=>{await new Promise(resolve=>setTimeout(resolve,400));try{await route.fulfill({status:202,json:{analysis_job_url:timeoutJob,retry_after_ms:50}});}catch{}});
   await page.route('**'+timeoutJob+'/cancel',route=>{timeoutCancels++;return route.fulfill({json:{cancelled:true}});});
   assert.match(await page.evaluate(()=>api('/api/insights/calendar?timeout=1',undefined,150).catch(e=>e.message)),/超时/);
   assert.equal(timeoutCancels,1,'poll timeout cancels backend subscription');
+  assert.deepEqual(f.posts,[f.origin+job+'/cancel',f.origin+cancelJob+'/cancel',f.origin+timeoutJob+'/cancel']);
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   console.log('ASYNC_ANALYSIS_PASS: Prefer, short polling, same-origin guard, capacity error, account cancellation');
 }finally{await f.close();}})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1,6 +1,9 @@
 const assert=require('node:assert/strict'),fs=require('node:fs');
+const path=require('node:path'),os=require('node:os');
 const {fixture}=require('./ui_insight_helpers.cjs');
 (async()=>{
+ const screenshotDir=path.resolve(process.env.ZEEKR_TEST_ARTIFACT_DIR||path.join(os.tmpdir(),'zeekr-place-pair-statistics'));
+ fs.mkdirSync(screenshotDir,{recursive:true});
  const f=await fixture({initialResearch:false}),{page}=f;
  try{
   let rule,base,posted;
@@ -34,13 +37,13 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.evaluate(()=>render());assert.equal(await page.getByLabel('统计地点 A',{exact:true}).inputValue(),'region:home');
   for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1280,1024]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));}}
   await page.setViewportSize({width:1440,height:1000});await page.getByLabel('外观',{exact:true}).selectOption('dark');
-  await page.screenshot({path:'/Users/xinyi/.codex/visualizations/2026/10/17/01a1486c-3290-7443-9cda-7d16c17ecae2/place-pair-statistics-preview.png'});
+  await page.screenshot({path:path.join(screenshotDir,'place-pair-statistics-preview.png')});
   await page.getByRole('button',{name:'关闭地点面板',exact:true}).click();await page.getByRole('button',{name:'通勤设置',exact:true}).click();
   assert.equal(await page.getByLabel('家地点标签',{exact:true}).inputValue(),'home');assert.equal(await page.getByLabel('公司地点标签',{exact:true}).inputValue(),'work');
   await page.getByLabel('家地点标签',{exact:true}).selectOption('home');assert.equal(posted,undefined);
   await page.getByLabel('公司地点标签',{exact:true}).selectOption('third');assert.equal(posted,undefined);assert.match(await page.locator('#tag-tools-panel').innerText(),/设置有未保存修改/);
   await page.evaluate(()=>render());assert.equal(await page.getByLabel('公司地点标签',{exact:true}).inputValue(),'third');
-  await page.screenshot({path:'/Users/xinyi/.codex/visualizations/2026/10/17/01a1486c-3290-7443-9cda-7d16c17ecae2/commute-label-choice-preview.png'});
+  await page.screenshot({path:path.join(screenshotDir,'commute-label-choice-preview.png')});
   await page.getByRole('button',{name:'保存通勤规则',exact:true}).click();await page.locator('[data-tag="commute-save"]:not(:disabled)').waitFor();
   assert.equal(posted.home.latitude,31.2,'Selecting current home label preserves centre');assert.equal(posted.home.radius_m,300);assert.equal(posted.work.latitude,31.23);assert.equal(posted.work.radius_m,300);
   await page.getByRole('button',{name:'关闭工具面板',exact:true}).click();await page.getByLabel('标签月份',{exact:true}).fill('2026-10');await page.getByRole('button',{name:'读取行程标签',exact:true}).click();await page.getByRole('button',{name:'查看与管理地点',exact:true}).click();await page.getByRole('button',{name:'两地点统计',exact:true}).click();assert.equal(await page.getByLabel('统计地点 A',{exact:true}).inputValue(),'');assert.equal(await page.getByLabel('统计地点 B',{exact:true}).inputValue(),'');
