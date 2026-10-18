@@ -329,12 +329,13 @@ function chargingParameterGroups(start, end=null) {
   return [...new Set(rows.map(item=>item.group))].map(group=>`<section class="charging-parameter-group"><h3>${esc(group)}</h3><div class="charging-parameter-grid">${rows.filter(item=>item.group===group).map(item=>`<div class="charging-parameter"><span>${esc(item.label)}</span>${end?`<small>起点：${esc(display(item))}</small><small>终点：${esc(display(endRows.get(item.key)))}</small>`:`<strong>${esc(chargeNumber(item.value,item.unit))}</strong>${item.note?`<small>${esc(item.note)}</small>`:''}`}</div>`).join('')}</div></section>`).join('');
 }
 
-function startEvidenceView(value) {
+function startEvidenceView(value, compact = false) {
   const stamp = time => Number.isFinite(time) && time > 0 && time <= 32503680000000;
   const clock = time => stamp(time) ? new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(time) : '未知';
   const known = value && ['bounded','first_observation'].includes(value.basis) && stamp(value.first_state_time) && stamp(value.detected_at);
-  if (!known) return '<div class="start-evidence"><strong>起点证据：历史证据缺失</strong><p>实际开始时间未知；原记录起点保留，无法据此补算真实开始。</p></div>';
+  if (!known) return compact?'<p class="charge-start-caption">起点证据缺失 · 实际开始时间未知，原记录起点保留。</p>':'<div class="start-evidence"><strong>起点证据：历史证据缺失</strong><p>实际开始时间未知；原记录起点保留，无法据此补算真实开始。</p></div>';
   const bounded = value.basis === 'bounded' && stamp(value.earliest_time) && stamp(value.latest_time) && value.earliest_time < value.latest_time;
+  if (compact) return `<p class="charge-start-caption">${bounded?'起点由相邻观测圈定，实际开始时间未精确记录。':'首次看到时已开始 · 实际开始时间未知，开头可能缺失。'}</p>`;
   const seconds = v => Number.isFinite(v) && v >= 0 ? new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(v) + ' 秒' : '未知';
   const delay = Number.isFinite(value.delay_min_seconds) && value.delay_min_seconds >= 0
     ? bounded && Number.isFinite(value.delay_max_seconds) ? `${seconds(value.delay_min_seconds)} ～ ${seconds(value.delay_max_seconds)}` : `至少 ${seconds(value.delay_min_seconds)}，上限未知` : '时钟差异，待核验';
@@ -455,10 +456,10 @@ function selectedChargingPoint() {
 }
 
 function chargeHistoryPanel() {
-  return `<section class="charge-history-section" id="charge-history"><div class="charge-history-head"><div><h2>充电记录</h2><p>按结束时间归入北京时间日期，每页显示 20 条。</p></div><div class="charge-query-controls"><label>查询方式<select id="charge-query-mode" aria-label="充电记录查询方式"><option value="day" ${chargeQueryMode==='day'?'selected':''}>单日</option><option value="range" ${chargeQueryMode==='range'?'selected':''}>日期区间</option></select></label><label>${chargeQueryMode==='day'?'充电记录日期':'充电记录开始日期'}<input type="date" id="charge-date" value="${esc(chargeDate)}"></label>${chargeQueryMode==='range'?`<label>充电记录结束日期<input type="date" id="charge-end-date" value="${esc(chargeEndDate)}"></label>`:''}<button class="button" data-action="charge-query" ${chargeBusy?'disabled':''}>${chargeBusy?'查询中…':'查询充电记录'}</button></div></div><div class="charge-history-layout"><section class="card charge-list-card"><div id="charge-list">${chargeHistoryBody()}</div></section></div></section>`;
+  return `<section class="charge-history-section" id="charge-history"><div class="charge-history-head"><div><h2>充电记录</h2><p>按结束时间归入北京时间日期，每页显示 20 条。</p></div><div class="charge-query-controls"><label>查询方式<select id="charge-query-mode" aria-label="充电记录查询方式"><option value="day" ${chargeQueryMode==='day'?'selected':''}>单日</option><option value="range" ${chargeQueryMode==='range'?'selected':''}>日期区间</option></select></label><label>${chargeQueryMode==='day'?'充电记录日期':'充电记录开始日期'}<input type="date" id="charge-date" value="${esc(chargeDate)}"></label>${chargeQueryMode==='range'?`<label>充电记录结束日期<input type="date" id="charge-end-date" value="${esc(chargeEndDate)}"></label>`:''}<button class="button" data-action="charge-query" ${chargeBusy?'disabled':''}>${chargeBusy?'查询中…':'查询充电记录'}</button></div></div><div class="charge-history-layout ${chargeSelected?'has-selection':''}"><section class="card charge-list-card"><div id="charge-list">${chargeHistoryBody()}</div></section><div id="charge-record-view" ${chargeSelected?'':'hidden'}>${chargeSelected?chargeDetail(chargeSelected):''}</div></div></section>`;
 }
 
-function chargingProcess() {
+function chargingProcess(compact = false) {
   if(chargingAnalyticsBusy&&!chargingSession) return `<div class="charge-loading" role="status">正在读取充电过程…</div>`;
   if(chargingAnalyticsError) return `${empty('充电过程读取失败',chargingAnalyticsError,'energy')}<div class="charge-empty-action"><button class="button secondary" data-action="analytics-retry">重试</button></div>`;
   if(!chargingSession||chargingSession.status==='empty') return chargingTab==='records'
@@ -467,7 +468,7 @@ function chargingProcess() {
   const historical=chargingSession.status==='ended', point=selectedChargingPoint(), points=chargingSeries?.points || [];
   const summary=`<div class="charging-process-summary"><div><span>${historical?'历史起点':'本次起点'}</span><strong>${Number.isFinite(chargingSession.start_soc)?chargingFormat(chargingSession.start_soc)+'%':'未知'}</strong></div><div><span>${historical?'历史终点':'当前 SOC'}</span><strong>${Number.isFinite(chargingSession.end_soc)?chargingFormat(chargingSession.end_soc)+'%':'未知'}</strong></div><div><span>观测功率</span><strong>${chargeNumber(chargingSession.power_kw,'kW')}</strong></div><div><span>采样覆盖</span><strong>${chargingSeries?.raw_count||0} 点${chargingSeries?.has_gaps?' · 有缺口':''}</strong></div></div>`;
   const selector=points.length?`<label class="charging-point-picker">时间选择器<input id="charging-point" type="range" min="0" max="${points.length-1}" value="${Math.min(chargingPoint,points.length-1)}"><span>${chargingPointText(point)}</span></label>`:'';
-  return `<div class="charging-process-title">${historical?pill('历史详情','warn'):pill('本次观测','good')}<span>${esc(eventTime(chargingSession.start_time))} 至 ${esc(eventTime(chargingSession.end_time))}</span></div>${summary}${startEvidenceView(chargingSession.start_evidence)}<div class="charging-view-switch"><button data-action="charging-view" data-view="power-soc" class="${chargingView==='power-soc'?'active':''}">功率与 SOC</button><button data-action="charging-view" data-view="electrical" class="${chargingView==='electrical'?'active':''}">电气细节</button></div><div class="charging-charts">${chargingView==='power-soc'?chargingCombinedChart():chargingCombinedChart(true)}</div>${selector}<p class="energy-caption">同一车辆状态时间轴；缺口断线，缺值不补零。停止只表示已观测停止，不解释为充满、达到目标或已拔枪。</p>`;
+  return `<div class="charging-process-title">${historical?pill('历史详情','warn'):pill('本次观测','good')}${compact?'':`<span>${esc(eventTime(chargingSession.start_time))} 至 ${esc(eventTime(chargingSession.end_time))}</span>`}</div>${compact?`<div class="charge-sampling-meta"><span>采样覆盖 ${chargingSeries?.raw_count||0} 点${chargingSeries?.has_gaps?' · 有缺口':''}</span><span>观测功率 ${chargeNumber(chargingSession.power_kw,'kW')}</span></div>`:summary+startEvidenceView(chargingSession.start_evidence)}<div class="charging-view-switch"><button data-action="charging-view" data-view="power-soc" class="${chargingView==='power-soc'?'active':''}">功率与 SOC</button><button data-action="charging-view" data-view="electrical" class="${chargingView==='electrical'?'active':''}">电气细节</button></div><div class="charging-charts">${chargingView==='power-soc'?chargingCombinedChart():chargingCombinedChart(true)}</div>${selector}<p class="energy-caption">同一车辆状态时间轴；缺口断线，缺值不补零。停止只表示已观测停止，不解释为充满、达到目标或已拔枪。</p>`;
 }
 
 function chargingStatistics() {
@@ -499,8 +500,7 @@ function recentChargeSummary() {
 }
 
 function chargingRecords() {
-  const process=chargeSelected?`<section class="energy-record-process"><h2>所选记录的充电过程</h2>${chargingProcess()}</section>`:'';
-  return chargeHistoryPanel()+process+`<details class="energy-management" data-detail="energy-management" ${chargeManagementOpen?'open':''}><summary>管理充电记录</summary>${chargeManagementOpen?'<div id="charge-management"></div>':''}</details>`;
+  return chargeHistoryPanel()+`<details class="energy-management" data-detail="energy-management" ${chargeManagementOpen?'open':''}><summary>管理充电记录</summary>${chargeManagementOpen?'<div id="charge-management"></div>':''}</details>`;
 }
 
 function chargingWorkspace(details) {
@@ -606,11 +606,11 @@ function chargeDetail(event) {
   const validDelta=Number.isFinite(event.start_soc)&&Number.isFinite(event.end_soc)&&event.end_soc>=event.start_soc;
   const delta=validDelta?event.end_soc-event.start_soc:null;
   const estimated=event.estimated_kwh;
-  const estimate=Number.isFinite(estimated)?`${format(estimated)} kWh（估算）`:'充入电量无法估算';
   const note=Number.isFinite(estimated)
     ? `${event.partial?'部分记录的已观测电量已计入统计，未观测部分不补算。':''}估算使用该事件保存的电池容量与 SOC 变化，不代表充电桩结算电量。`
     : '该记录的起止时间、SOC 端点、容量或数据口径不满足估算条件，已有观测保留；未使用当前车型配置补算。';
-  return `<section class="card charge-detail" id="charge-detail"><div class="card-head"><div><h2>充电详情</h2><p class="card-meta">${esc(eventTime(event.end_time))}</p></div>${pill(event.partial?'部分记录':'完整记录',event.partial?'warn':'good')}</div><div class="charge-soc"><div><span>起始 SOC</span><strong>${format(event.start_soc)}${Number.isFinite(event.start_soc)?'<small>%</small>':''}</strong></div><div class="charge-soc-line" aria-hidden="true"><i></i></div><div><span>结束 SOC</span><strong>${format(event.end_soc)}${Number.isFinite(event.end_soc)?'<small>%</small>':''}</strong></div></div><div class="card-body charge-facts">${row('记录起点',eventTime(event.start_time))}${row('结束时间',eventTime(event.end_time))}${row('记录时长',eventDuration(event.duration_seconds))}${row('电量增加',Number.isFinite(delta)?`${format(delta)} 个百分点`:'未知')}${row('估算充入电量',estimate)}</div><div class="charge-note ${event.partial?'warning':''}">${esc(note)}</div>${startEvidenceView(event.start_evidence)}${chargeHistoricalParameters(event.charging_details)}</section>`;
+  const value=Number.isFinite(estimated)?`${format(estimated)}<small> kWh（估算）</small>`:'充入电量无法估算';
+  return `<section class="card charge-detail" id="charge-detail"><div class="card-head"><h2>充电详情</h2>${pill(event.partial?'部分记录':'完整记录',event.partial?'warn':'good')}</div><p class="charge-record-period">记录起点 ${esc(eventTime(event.start_time))}<span>结束时间 ${esc(eventTime(event.end_time))}</span></p><div class="charge-key-facts"><div class="charge-soc"><div><span>起始 SOC</span><strong>${format(event.start_soc)}${Number.isFinite(event.start_soc)?'<small>%</small>':''}</strong></div><span class="charge-soc-arrow" aria-hidden="true">→</span><div><span>结束 SOC</span><strong>${format(event.end_soc)}${Number.isFinite(event.end_soc)?'<small>%</small>':''}</strong></div><p>${Number.isFinite(delta)?`增加 ${format(delta)} 个百分点`:'电量增加未知'}</p></div><div class="charge-key-value"><span>估算充入电量</span><strong>${value}</strong></div><div class="charge-key-value"><span>记录时长</span><strong>${esc(eventDuration(event.duration_seconds))}</strong></div></div><p class="charge-estimate-caption ${event.partial?'warning':''}">${Number.isFinite(estimated)?`${event.partial?'部分记录 · 未观测部分不补算。':''}SOC 电量估算，非充电桩结算电量。`:esc(note)}</p>${startEvidenceView(event.start_evidence,true)}<section class="energy-record-process"><h2>所选记录的充电过程</h2>${chargingProcess(true)}</section><details class="charge-record-disclosure" data-detail="charge-record-evidence"><summary>起点证据与估算说明</summary><div>${startEvidenceView(event.start_evidence)}<p class="charge-note ${event.partial?'warning':''}">${esc(note)}</p></div></details><details class="charge-record-disclosure" data-detail="charge-record-parameters"><summary>已保存充电参数与采样质量</summary><div>${chargeHistoricalParameters(event.charging_details)}</div></details></section>`;
 }
 
 function chargeRecord(event,index) {
@@ -619,7 +619,7 @@ function chargeRecord(event,index) {
   const modeLabel=mode==='ac'?'AC · 交流':mode==='dc'?'DC · 直流':'充电方式未知';
   const soc=value=>Number.isFinite(value)?`${value}%`:'未知';
   const energy=Number.isFinite(event.estimated_kwh)?`${new Intl.NumberFormat('zh-CN',{maximumFractionDigits:1}).format(event.estimated_kwh)} kWh（估算）`:'电量未知';
-  return `<article class="charge-record-item"><button class="charge-record ${selected?'selected':''}" data-action="charge-select" data-event-id="${esc(event.id)}" aria-label="查看充电记录 ${index+1}" aria-expanded="${selected}" ${selected?'aria-controls="charge-detail" aria-current="true"':''}><div><strong>${esc(eventTime(event.start_time))} 至 ${esc(eventTime(event.end_time))}</strong><span>${modeLabel} · ${event.partial?'部分记录':'完整记录'}</span></div><div><b>${soc(event.start_soc)} 至 ${soc(event.end_soc)}</b><span>${esc(eventDuration(event.duration_seconds))}</span></div><div><b>${esc(energy)}</b><span>${selected?'详情已展开':'查看详情'}</span></div></button>${selected?chargeDetail(chargeSelected):''}</article>`;
+  return `<article class="charge-record-item"><button class="charge-record ${selected?'selected':''}" data-action="charge-select" data-event-id="${esc(event.id)}" aria-label="查看充电记录 ${index+1}" aria-expanded="${selected}" ${selected?'aria-controls="charge-detail" aria-current="true"':''}><div><strong>${esc(eventTime(event.start_time))} 至 ${esc(eventTime(event.end_time))}</strong><span>${modeLabel} · ${event.partial?'部分记录':'完整记录'}</span></div><div><b>${soc(event.start_soc)} 至 ${soc(event.end_soc)}</b><span>${esc(eventDuration(event.duration_seconds))}</span></div><div><b>${esc(energy)}</b><span>${selected?'详情已展开':'查看详情'}</span></div></button></article>`;
 }
 
 function chargeHistoryBody() {
@@ -628,9 +628,7 @@ function chargeHistoryBody() {
   else if (chargeError) body=`${empty('充电记录读取失败',chargeError,'energy')}<div class="charge-empty-action"><button class="button secondary" data-action="charge-retry">重试</button></div>`;
   else if (!chargeQuery) body=empty('尚未查询充电记录','选择单日或日期区间，点击“查询充电记录”。','energy');
   else if (!chargeEvents.length) body=`${empty('该日期暂无充电记录','已结束的本地充电记录会显示在这里；尚未确认结束的会话不会列入。','energy')}<div class="charge-empty-action"><button class="button secondary" data-action="charge-query">重新查询</button></div>`;
-  else body=`<div class="charge-records">${chargeEvents.map(chargeRecord).join('')}</div><div class="event-pagination"><button class="button secondary" data-action="charge-prev" ${chargeCursorStack.length?'':'disabled'}>上一页</button><button class="button secondary" data-action="charge-next" ${chargeNextCursor?'':'disabled'}>下一页</button></div>`;
-  // Keep the selected record available when a refresh changes the current page.
-  if(chargeSelected&&!chargeEvents.some(event=>event.id===chargeSelected.id))body+=chargeDetail(chargeSelected);
+  else body=`<div class="charge-records" role="region" aria-label="充电记录列表" tabindex="0">${chargeEvents.map(chargeRecord).join('')}</div><div class="event-pagination"><button class="button secondary" data-action="charge-prev" ${chargeCursorStack.length?'':'disabled'}>上一页</button><button class="button secondary" data-action="charge-next" ${chargeNextCursor?'':'disabled'}>下一页</button></div>`;
   return body;
 }
 
@@ -640,10 +638,12 @@ function renderChargeHistory(){
 function renderChargeHistoryContent(){
   const list=$('#charge-list');
   if (!list) return;
-  const opened=[...list.querySelectorAll('details[open][data-detail]')].map(el=>el.dataset.detail);
+  const layout=list.closest('.charge-history-layout');
+  const opened=[...layout.querySelectorAll('details[open][data-detail]')].map(el=>el.dataset.detail);
   const focusId=document.activeElement?.dataset.eventId;
   list.innerHTML=chargeHistoryBody();
-  opened.forEach(key=>{const detail=list.querySelector(`details[data-detail="${CSS.escape(key)}"]`);if(detail)detail.open=true;});
+  const view=layout.querySelector('#charge-record-view');view.hidden=!chargeSelected;view.innerHTML=chargeSelected?chargeDetail(chargeSelected):'';layout.classList.toggle('has-selection',!!chargeSelected);
+  opened.forEach(key=>{const detail=layout.querySelector(`details[data-detail="${CSS.escape(key)}"]`);if(detail)detail.open=true;});
   if(focusId)[...list.querySelectorAll('[data-event-id]')].find(el=>el.dataset.eventId===focusId)?.focus({preventScroll:true});
 }
 

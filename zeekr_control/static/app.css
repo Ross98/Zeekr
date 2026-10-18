@@ -229,3 +229,80 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 .energy-tools{display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid var(--line);padding-top:16px;margin-top:22px}.energy-tools>span{font-size:13px;color:var(--muted)}.energy-tools>div{display:flex;gap:8px;flex-wrap:wrap}.energy-tools .button{font-size:13px}
 .energy-record-process{margin:20px 0;padding:20px 24px;border:1px solid var(--line);border-radius:12px;background:var(--night-paper,#fff)}.energy-record-process>h2{font-size:16px;margin:0 0 16px}.energy-management{margin:20px 0}.energy-management>summary{cursor:pointer;padding:14px 0;font-weight:600;font-size:15px}.energy-management #charge-management{margin-top:12px}
 .charging-tab-panel .energy-details{margin-top:18px}
+
+/* Energy desktop reading order: status, selected session, curve, then evidence. */
+@media(min-width:960px){
+  .energy-freshness{margin-bottom:10px}
+  .energy-top{margin-bottom:12px;border-radius:12px}
+  .energy-top .card-head{padding:12px 20px 8px}
+  .energy-top .card-head h2{font-size:14px}
+  .energy-battery{background:var(--night-raised,#f3f8f5)}
+  .energy-primary{padding:0 20px;gap:16px}
+  .energy-primary>div{gap:4px}.energy-primary strong{font-size:32px;letter-spacing:-.5px}
+  .energy-primary small{font-size:15px}
+  .energy-battery-track{margin:10px 20px;height:4px}
+  .energy-rating{margin:0 20px 12px;padding-top:8px}
+  .energy-rating strong{font-size:14px}
+  .energy-charge .card-body{padding:0 20px 12px}
+  .energy-charge-grid{gap:0}.energy-charge-grid>div{padding:3px 0}
+  .energy-charge .energy-caption{margin:4px 0 0;font-size:13px;line-height:1.5}
+  .charging-workspace{margin:12px 0}
+  .charging-tabs{gap:4px;padding-bottom:8px;margin-bottom:12px}
+  .charging-tabs button{min-height:36px;padding:8px 14px}
+  .charging-tab-panel{margin-top:12px}
+  .charge-history-section{margin:0}
+  .charge-history-head{gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .charge-history-head h2{font-size:16px}.charge-history-head p{margin-top:4px}
+  .charge-history-head label{gap:6px}
+  .charge-query-controls{gap:8px;flex-wrap:wrap}
+  .charge-history-head input{padding:8px}
+  .charge-history-layout{grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+  .charge-history-layout.has-selection{grid-template-columns:minmax(200px,240px) minmax(0,1fr)}
+  .charge-list-card{border-radius:12px;overflow:hidden}
+  .has-selection .charge-list-card{position:sticky;top:16px}
+  .charge-list-card .charge-records{max-height:520px;overflow-y:auto;scrollbar-gutter:stable}
+  .charge-record{padding:14px 16px;gap:8px;border-top:0;grid-template-columns:minmax(0,1fr);box-shadow:none}
+  .charge-record>div{gap:4px}.charge-record>div:nth-child(2){display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+  .charge-record>div:last-child{display:flex;justify-content:space-between;text-align:left;gap:8px}
+  .charge-record.selected{background:var(--night-raised,#e9f3ef);box-shadow:none;outline:2px solid var(--accent);outline-offset:-2px}
+  .charge-record b{font-size:15px}.charge-record strong{font-weight:550;line-height:1.6}
+  .charge-record-item+.charge-record-item{border-top:1px solid var(--line)}
+  .charge-list-card .event-pagination{padding:10px;gap:8px}
+  .charge-list-card .event-pagination .button{padding:7px 12px;min-height:34px}
+  #charge-record-view{min-width:0}
+  .charge-detail{border-radius:12px;overflow:hidden}
+  .charge-detail>.card-head{padding:16px 20px 8px}
+  .charge-detail>.card-head h2{font-size:16px}
+  .charge-record-period{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0 20px 16px;color:var(--night-secondary,#50656e);font-size:13px;font-variant-numeric:tabular-nums}
+  .charge-key-facts{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,.8fr);gap:16px;padding:0 20px}
+  .charge-key-facts .charge-soc{grid-template-columns:auto auto auto;gap:4px 10px;padding:0;justify-content:start}
+  .charge-key-facts .charge-soc>div{gap:4px;text-align:left}
+  .charge-key-facts .charge-soc strong{font-size:27px;line-height:1.2}
+  .charge-key-facts .charge-soc p{grid-column:1/-1;margin:0;font-size:13px;color:var(--night-secondary,#50656e)}
+  .charge-soc-arrow{align-self:center;color:var(--muted)}
+  .charge-key-value{display:flex;flex-direction:column;gap:4px;padding-left:16px;border-left:1px solid var(--line);min-width:0}
+  .charge-key-value>span{font-size:13px;color:var(--night-secondary,#50656e)}
+  .charge-key-value strong{font-size:24px;line-height:1.35;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .charge-key-value strong small{display:block;font-size:13px;font-weight:400;color:var(--night-secondary,#50656e)}
+  .charge-estimate-caption,.charge-start-caption{font-size:13px;line-height:1.6;color:var(--night-secondary,#50656e);margin:8px 20px 0}
+  .charge-estimate-caption.warning{color:var(--night-warning,#86531f)}
+  .charge-start-caption{margin-top:4px}
+  .charge-detail .energy-record-process{margin:12px 0 0;padding:12px 20px;border:0;border-top:1px solid var(--line);border-radius:0;background:none}
+  .charge-detail .energy-record-process>h2{font-size:14px;margin:0 0 8px}
+  .charge-detail .charging-process-title{display:inline-flex;margin-right:8px}
+  .charge-sampling-meta{display:inline-flex;gap:12px;flex-wrap:wrap;font-size:13px;line-height:1.6;color:var(--night-secondary,#50656e)}
+  .charge-detail .charging-view-switch{margin:10px 0;padding:2px}
+  .charge-detail .charging-view-switch button{min-height:34px;padding:6px 12px}
+  .charge-detail .charging-chart{border:0;border-radius:0;padding:0;background:none}
+  .charge-detail .charging-chart svg{min-width:0}
+  .charge-detail .charging-chart-head{gap:8px;flex-wrap:wrap}
+  .charge-detail .charging-point-picker{margin:8px 0;padding:8px 12px}
+  .charge-detail .energy-record-process>.energy-caption{margin-bottom:0}
+  .charge-record-disclosure{border-top:1px solid var(--line)}
+  .charge-record-disclosure>summary{cursor:pointer;padding:12px 20px;font-size:13px;font-weight:550;color:var(--ink)}
+  .charge-record-disclosure>div{padding:0 20px 16px}
+  .charge-record-disclosure .start-evidence{margin:0 0 12px;border:0;border-radius:0;padding:8px 0}
+  .charge-record-disclosure .charge-note{margin:0}
+  .charge-record-disclosure .charge-saved-details{margin:0;padding:0;border:0}
+  .energy-tools{margin-top:16px;padding-top:12px}
+}

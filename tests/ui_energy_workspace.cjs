@@ -39,9 +39,28 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await page.getByRole('heading',{name:'充电详情',exact:true}).waitFor();
     assert.equal(await page.getByRole('tab',{name:'充电记录',exact:true}).getAttribute('aria-selected'),'true');
     assert.match(await page.locator('#charge-detail').innerText(),/40.*64/s);
+    assert.equal(await page.locator('#charge-record-view #charge-detail').count(),1,'selected detail has one stable reading pane');
+    const layout=await page.evaluate(()=>{const list=document.querySelector('.charge-list-card').getBoundingClientRect(),detail=document.querySelector('#charge-detail').getBoundingClientRect(),chart=document.querySelector('.energy-record-process').getBoundingClientRect(),evidence=document.querySelector('[data-detail="charge-record-evidence"]').getBoundingClientRect();return {sideBySide:list.right<=detail.left,chartFirst:chart.top<evidence.top};});
+    assert.ok(layout.sideBySide,'desktop records sit beside the selected detail');assert.ok(layout.chartFirst,'curve precedes full evidence and parameters');
+    assert.equal(await page.locator('[data-detail="charge-record-evidence"]').getAttribute('open'),null,'evidence defaults collapsed');
+    assert.equal(await page.locator('#charge-detail .start-evidence').count(),1,'full start evidence is not duplicated');
+    await page.locator('[data-detail="charge-record-evidence"] > summary').click();
+    await page.evaluate(()=>render());assert.equal(await page.locator('[data-detail="charge-record-evidence"]').getAttribute('open'),'','refresh preserves evidence disclosure');
+    await page.locator('[data-detail="charge-record-evidence"] > summary').click();
+
     await page.locator('.charging-process-title').getByText('历史详情',{exact:true}).waitFor();
     await page.locator('[data-action="charge-select"]').first().click();
     await page.locator('.charging-charts').waitFor();
+    for(const theme of ['light','dark']) {
+      await page.getByLabel('外观',{exact:true}).selectOption(theme);
+      for(const width of [1440,1280,1024]) {
+        await page.setViewportSize({width,height:900});
+        await page.evaluate(()=>{document.activeElement?.blur();scrollTo(0,0);});
+        assert.ok(await page.locator('.charging-chart svg').evaluate(el=>el.getBoundingClientRect().width<=el.parentElement.clientWidth+1),'both chart axes fit the selected reading pane');
+        await page.screenshot({path:`/tmp/zeekr-energy-workspace/records-${theme}-${width}.png`,fullPage:true});
+      }
+    }
+    await page.getByLabel('外观',{exact:true}).selectOption('light');
     let releaseList;
     const heldList=async route=>{await new Promise(resolve=>{releaseList=resolve;});await route.fallback();};
     await page.route('**/api/events?**',heldList);
