@@ -1,5 +1,63 @@
 const assert=require('node:assert/strict');
 const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+// Exercise the real controller while a post-save list refresh is held.
+async function saveRefreshRace(browser,seed){
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});
+  try{
+    await page.addScriptTag({path:require('node:path').join(__dirname,'../zeekr_control/static/trip-tags.js')});
+    for(const scenario of ['account','vehicle','return-to-owner','refresh-failure','normal']){
+      await page.evaluate(({seed,scenario})=>{
+        document.body.innerHTML='<main id="race-root"></main>';
+        const root=document.querySelector('main'),state={insights_context:'account-a:vehicle-a'};
+        const race={state,reads:0,writes:[],release:null};
+        const request=async(url,payload)=>{
+          if(url==='/api/insights/commute-rule')return {context:state.insights_context,commute_rule:seed.commute_rule};
+          if(payload){race.writes.push(payload);return {context:state.insights_context,revision:seed.revision+1,can_undo:true};}
+          race.reads++;
+          const result={...structuredClone(seed),context:state.insights_context};
+          if(race.reads===2)return new Promise((resolve,reject)=>{race.release=()=>scenario==='refresh-failure'?reject(Error('synthetic refresh failed')):resolve(result);});
+          return result;
+        };
+        const ui=TripTagsPage.create({getState:()=>state,request,escape:s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),active:()=>true,time:String});
+        for(const type of ['input','change','click'])document['on'+type]=e=>ui.handle(e);
+        race.mount=()=>ui.mount(root);window.race=race;race.mount();
+      },{seed,scenario});
+      await page.locator('[data-tag="load"]').click();
+      await page.locator('[data-tag="load"]:not(:disabled)').waitFor();
+      await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
+      await page.locator('#tag-labels').fill('旧账号标签');await page.locator('#tag-note').fill('旧账号备注');
+      await page.locator('[data-tag="save"]').click();
+      await page.waitForFunction(()=>!!race.release);
+      assert.equal(await page.evaluate(()=>race.writes.length),1,'one save followed by a held list refresh');
+      if(!['normal','refresh-failure'].includes(scenario)){
+        await page.evaluate(scenario=>{
+          race.state.insights_context=scenario==='vehicle'?'account-a:vehicle-b':'account-b:vehicle-a';race.mount();
+          if(scenario==='return-to-owner'){race.state.insights_context='account-a:vehicle-a';race.mount();}
+        },scenario);
+        await page.locator('[data-tag="load"]').click();
+        await page.locator('[data-tag="load"]:not(:disabled)').waitFor();
+        await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
+        await page.locator('#tag-labels').fill('新草稿标签');await page.locator('#tag-note').fill('新草稿备注');
+      }
+      // Drain the resolved promise's continuations without guessing network latency.
+      await page.evaluate(async()=>{race.release();await new Promise(resolve=>setTimeout(resolve,0));});
+      if(['normal','refresh-failure'].includes(scenario)){
+        await page.locator('[data-tag="load"]:not(:disabled)').waitFor();
+        assert.equal(await page.locator('#tag-labels').count(),0,scenario+' closes the completed save editor');
+        if(scenario==='refresh-failure')assert.match(await page.locator('main').innerText(),/列表尚未刷新/);
+      }else{
+        // Reopen to expose internal draft loss even when stale DOM stayed visible.
+        await page.getByRole('button',{name:'关闭工具面板',exact:true}).click();
+        await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
+        assert.equal(await page.locator('#tag-labels').inputValue(),'新草稿标签',scenario+' preserves tags after old refresh');
+        assert.equal(await page.locator('#tag-note').inputValue(),'新草稿备注',scenario+' preserves note after old refresh');
+        assert.equal(await page.locator('[data-tag="save"]').isEnabled(),true,scenario+' keeps new editor usable');
+      }
+      assert.equal(await page.evaluate(()=>race.writes.length),1,'old save never submits new draft');
+    }
+  }finally{await page.close();}
+}
+
 (async()=>{
   const f=await fixture({initialResearch:false}),{page}=f;
   try{
@@ -144,11 +202,13 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
     assert.equal(await page.getByLabel('行程标签（逗号分隔）',{exact:true}).inputValue(),'接娃');
     assert.equal(await page.getByRole('button',{name:'取消本趟自动通勤'}).count(),1);
+    const seed=await (await page.request.get(f.origin+'/api/insights/trip-tags?date=2026-09-01')).json();
+    await saveRefreshRace(f.browser,seed);
     // Reload may leave a read-only research job; navigation cancels that job.
     assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/trip-tags'||
       /^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(new URL(url).pathname)));
     assert.ok(f.external.every(url=>/^https:\/\/wprd0[1-4]\.is\.autonavi\.com\//.test(url)));
     assert.deepEqual(f.errors,[]);
-    console.log('UI_TRIP_TAGS_PASS: custom/multiple tags, notes escaping/preservation, group comparison and denominators, filters, delete/restore, persistence, desktop themes/zoom/contrast');
+    console.log('UI_TRIP_TAGS_PASS: custom/multiple tags, notes escaping/preservation, group comparison and denominators, filters, delete/restore, persistence, desktop themes/zoom/contrast, deferred save refresh context and serial isolation');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

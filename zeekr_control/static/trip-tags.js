@@ -450,7 +450,9 @@
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         data.revision=result.revision;data.can_undo=result.can_undo;status='行程标签操作已保存。';
         if(action==='delete'&&selected?.annotation_id===id){selected=null;tags=note='';closeRoute();}
-        if(!await load()&&valid(token,writeSerial,identity))status+=' 列表尚未刷新，请重新读取核对。';
+        const refreshed=await load();
+        if(!valid(token,writeSerial,identity))return;
+        if(!refreshed)status+=' 列表尚未刷新，请重新读取核对。';
         if(action==='save'){toolPanel=null;selected=null;tags=note='';closeRoute();}
       }catch(failure){if(valid(token,writeSerial,identity))error=failure.message+' 填写内容保留；请重新读取核对后操作。';}
       finally{if(valid(token,writeSerial,identity)){busy=false;paint();if(action==='save'&&!toolPanel)node.querySelector('#'+CSS.escape(toolReturn))?.focus({preventScroll:true});}}
