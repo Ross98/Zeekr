@@ -2,7 +2,7 @@
 const reviewLabels = {pending:'待核实', partial:'部分确认', confirmed:'已确认', question:'有疑问', na:'不适用'};
 let reviewFilter = '', reviewSelected = '', reviewVehicle = null, reviewSaving = false, reviewUndo = null;
 let reviewEditing = false;
-let reviewExternal=null, reviewExternalContext='', reviewContext='';
+let reviewExternal=null, reviewExternalContext='', reviewContext='', reviewWriteSerial=0;
 const reviewDrafts = new Map();
 let reviewCatalog = [], reviewPanelMount = null, reviewRequested = '';
 let reviewFocus='pending', reviewStudy=null;
@@ -68,6 +68,7 @@ function reviewDraft() { return reviewDrafts.get(reviewDraftKey(reviewSelected))
 function reviewSync() {
   if (reviewVehicle !== reviewData().vehicle || reviewContext !== state?.insights_context) {
     reviewContext=state?.insights_context;
+    reviewWriteSerial++;reviewSaving=false;
     reviewDrafts.clear();
     reviewVehicle = reviewData().vehicle;
     reviewSelected = '';
@@ -301,11 +302,14 @@ async function saveReview(action = 'save', next = false, override = null) {
   if (payload.action === 'save' && payload.status === 'confirmed' && !payload.meaning.trim()) {
     $('#review-error').textContent = '请填写确认含义，再保存。'; $('#review-meaning').focus(); return;
   }
+  const identity=state?.insights_context,token=++reviewWriteSerial;
+  const valid=()=>token===reviewWriteSerial&&identity===state?.insights_context&&identity===reviewContext&&vehicle===reviewVehicle&&vehicle===reviewData().vehicle;
   const previous = reviewRecords(payload.path).find(r => r.scope===payload.scope && (r.scope==='field'||r.raw===payload.raw));
   reviewSaving = true; renderReviewPanel();
   try {
     const result = await api('/api/field-reviews',payload);
-    if (reviewData().vehicle !== vehicle) return;
+    if (!valid()) return;
+    if (result.vehicle !== vehicle) throw Error('账号或车辆已切换，请重新读取。');
     state.field_reviews = result;
     reviewUndo = override ? null : {vehicle,revision:result.revision,action:previous?'save':'delete',...(previous || payload)};
     if (reviewUndo) {reviewUndo.action=previous?'save':'delete';reviewUndo.revision=result.revision;}
@@ -322,23 +326,28 @@ async function saveReview(action = 'save', next = false, override = null) {
     if (next) reviewNext(items,payload.path);
     renderFields();
   } catch (error) {
+    if (!valid()) return;
     // Reload metadata after a conflict without discarding the user's input.
     try {
       const latest = await api('/api/state',undefined,8000);
-      if (latest.field_reviews?.vehicle === vehicle) {
+      if (!valid()) return;
+      if (latest.insights_context===identity && latest.field_reviews?.vehicle === vehicle) {
         state.field_reviews=latest.field_reviews;
         draft.revision=latest.field_reviews.revision;
       }
     } catch { /* Keep the old revision and draft; another save remains guarded. */ }
+    if (!valid()) return;
     renderFields();
     if ($('#review-error')) $('#review-error').textContent=error.message;
     toast(error.message);
   } finally {
-    reviewSaving=false;
-    // Enable controls without replacing error text or the edited draft.
-    const error = $('#review-error')?.textContent;
-    renderReviewPanel();
-    if(error && $('#review-error')) $('#review-error').textContent=error;
+    if (valid()) {
+      reviewSaving=false;
+      // Enable controls without replacing error text or the edited draft.
+      const error = $('#review-error')?.textContent;
+      renderReviewPanel();
+      if(error && $('#review-error')) $('#review-error').textContent=error;
+    }
   }
 }
 function handleReviewAction(target) {

@@ -1,5 +1,56 @@
 const assert=require('node:assert/strict');
 const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+async function calendarSaveRaces(browser,seed){
+ // Give the isolated controller a pending bill, independent of the demo ledger.
+ const charge=seed.events.find(event=>event.id==='report-charge');assert.ok(charge);charge.bill=null;charge.needs_bill=true;
+ const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ try{
+  await page.addScriptTag({path:require('node:path').join(__dirname,'../zeekr_control/static/usage-calendar.js')});
+  for(const boundary of ['account','vehicle','return-to-owner','normal'])for(const phase of boundary==='normal'?['refresh','failed-refresh']:['save','refresh','failed-refresh']){
+   await page.evaluate(({seed,phase})=>{
+    document.body.innerHTML='<main></main>';const root=document.querySelector('main'),state={insights_context:'account-a:car-a'};
+    const race={state,reads:0,writes:[],release:null};window.calendarRace=race;
+    const request=async(url,payload)=>{
+     if(payload){race.writes.push(structuredClone(payload));const result={context:state.insights_context,revision:11};if(phase==='save')return new Promise(resolve=>race.release=()=>resolve(result));return result;}
+     race.reads++;const result={...structuredClone(seed),context:state.insights_context,ledger_revision:20};
+     if(race.reads===2&&phase!=='save')return new Promise((resolve,reject)=>race.release=()=>phase==='failed-refresh'?reject(Error('old refresh failed')):resolve(result));
+     if(race.reads===4)throw Error('new account list failed');
+     return result;
+    };
+    const ui=UsageCalendarPage.create({getState:()=>state,request,escape:s=>String(s??''),active:()=>true,time:String,navigate(){}});
+    for(const type of ['click','input','change'])document['on'+type]=e=>ui.handle(e);
+    race.mount=(container=root)=>ui.mount(container);race.mount();
+   },{seed,phase});
+   await page.locator('#calendar-month').fill('2026-09');await page.locator('[data-calendar="load"]').click();
+   await page.locator('[data-calendar-day="2026-09-19"]').click();await page.locator('[data-calendar-bill="report-charge"]').click();
+   await page.locator('#calendar-bill-amount').fill('25');await page.locator('[data-calendar="bill-save"]').click();
+   await page.waitForFunction(()=>!!calendarRace.release);
+   if(boundary!=='normal'){
+    await page.evaluate(boundary=>{calendarRace.state.insights_context=boundary==='vehicle'?'account-a:car-b':'account-b:car-a';calendarRace.mount();if(boundary==='return-to-owner'){calendarRace.state.insights_context='account-a:car-a';calendarRace.mount();}},boundary);
+    await page.locator('[data-calendar="load"]').click();await page.locator('[data-calendar-day="2026-09-19"]').click();await page.locator('[data-calendar-bill="report-charge"]').click();
+    await page.locator('#calendar-bill-amount').fill('99');
+    // A new-context read error must not become the old save's refresh status.
+    if(phase!=='save'){await page.locator('[data-calendar="load"]').click();await page.getByRole('alert').waitFor();}
+   }
+   await page.evaluate(async()=>{calendarRace.release();await new Promise(resolve=>setTimeout(resolve,0));const old=document.querySelector('main'),fresh=old.cloneNode(false);old.replaceWith(fresh);calendarRace.mount(fresh);});
+   assert.equal(await page.evaluate(()=>calendarRace.writes.length),1,'only one explicitly submitted bill');
+   assert.equal(await page.evaluate(()=>calendarRace.writes[0].amount),'25','old save keeps its original payload');
+   if(boundary==='normal'){
+    assert.match(await page.locator('main').innerText(),/金额已保存/);
+    assert.equal(await page.locator('#calendar-bill-amount').count(),0,'completed save closes the old editor');
+    if(phase==='failed-refresh')assert.match(await page.locator('main').innerText(),/日历尚未刷新/);
+   }else{
+    assert.equal(await page.locator('#calendar-bill-amount').inputValue(),'99',boundary+' '+phase+' preserves new amount');
+    assert.equal(await page.locator('[data-calendar="bill-save"]').isEnabled(),true,'new draft stays usable');
+    assert.doesNotMatch(await page.locator('main').innerText(),/金额已保存|日历尚未刷新|old refresh failed/,boundary+' '+phase+' excludes old operation status');
+   }
+  }
+  assert.deepEqual(errors,[]);
+  console.log('CALENDAR_SAVE_CONTEXT_PASS: 11 strict delayed save/refresh cases, account/vehicle/return, amount drafts and status isolation');
+ }finally{await page.close();}
+}
+
 (async()=>{const f=await fixture({demo:true,initialResearch:false}),{page}=f;try{
   await page.getByRole('button',{name:'用车账本',exact:true}).click();
   await page.getByRole('button',{name:'充电账本',exact:true}).click();
@@ -64,6 +115,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   releaseWrite();
   await page.waitForFunction(()=>document.querySelector('#books-totals strong')?.textContent==='3,684.10 元');
   assert.equal(await page.getByLabel('账本月份',{exact:true}).isDisabled(),false);
+  const calendarSeed=await(await page.request.get(f.origin+'/api/insights/calendar?date=2026-09-01')).json();
+  await calendarSaveRaces(f.browser,calendarSeed);
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
-  console.log('BOOKS_PERIOD_PASS: shared month, real merged records, totals, retained drafts, reload and desktop layouts');
+  console.log('BOOKS_PERIOD_PASS: shared month, real merged records, totals, retained drafts, reload, desktop layouts and delayed calendar save/refresh context isolation');
 }finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});

@@ -131,6 +131,7 @@
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
         data.ledger_revision=result.revision;billEvent='';billAmount='';billStatus='金额已保存。';
         await load();
+        if(token!==writeSerial||owner!==identity||context()!==identity)return;
         if(error)billStatus+=' 日历尚未刷新，请重新读取核对。';
       }catch(failure){if(token===writeSerial&&owner===identity&&context()===identity)billError=failure.message+' 填写内容保留；请重新读取核对。';}
       finally{if(token===writeSerial&&owner===identity&&context()===identity){saving=false;paint();}}
