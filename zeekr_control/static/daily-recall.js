@@ -8,8 +8,23 @@ function recallSummary(){
   const s=d.summary,c=d.coverage;
   return `<div class="recall-summary" aria-label="当天摘要"><span>结束行程里程 <strong>${esc(tripNumber(s.distance_km,' km'))}</strong></span><span>观测驾驶时长 <strong>${esc(tripDuration(s.duration_seconds))}</strong></span><span>充电 <strong>${s.charge_count} 次</strong></span><span>已填账单 <strong>${esc(tripNumber(s.actual_cents===null?null:s.actual_cents/100,' 元'))}</strong></span><span>待补账 <strong>${s.pending_count} 次</strong></span>${d.records.some(recallNeedsReview)?`<button class="button quiet" data-recall-review>地点待核对 ${d.records.filter(recallNeedsReview).length} 条</button>`:''}</div><p class="section-note">${{missing:'无归档观测；不代表当天没用车。',limited:'仅重复或异常观测，覆盖受限。',observed:'有有效车辆时刻；不表示全天覆盖。',future:'未来日期。'}[c.coverage]||'覆盖未知。'}跨日里程归结束日；费用按账单日。</p>`;
 }
+// Place names and coordinate provenance are separate: a confirmed name can
+// still refer to an endpoint inferred from parking evidence.
+const recallParkingGapNumber=new Intl.NumberFormat('zh-CN',{maximumFractionDigits:2});
+function recallParkingGapDuration(seconds){
+  if(seconds<60)return `${recallParkingGapNumber.format(seconds)} 秒`;
+  const minutes=Math.round(seconds/60);
+  return minutes>=60?`${Math.floor(minutes/60)} 小时 ${minutes%60} 分钟`:`${recallParkingGapNumber.format(seconds/60)} 分钟`;
+}
+function recallParkingEvidence(row,side){
+  const evidence=row[side+'_place_evidence'];
+  if(evidence?.source!=='parking_inferred')return '';
+  const label=side==='start'?'起点':'终点',when=side==='start'?'出发前':'到达后';
+  const gap=evidence.sampling_gap_seconds;
+  return `<div data-recall-place-evidence="${side}"><p class="subtle">${label}由${when}停车位置推定，非可信 GPS 定位。</p>${Number.isFinite(gap)&&gap>0?`<p class="subtle">${label}定位采样缺口约 ${esc(recallParkingGapDuration(gap))}，间隔内移动情况未知。</p>`:''}</div>`;
+}
 function recallFacts(row){
-  const place=side=>{const p=row[side+'_place'];if(!p)return '';return `<div class="recall-place"><span>${side==='start'?'起点':'终点'} ${esc(p.label)} · ${recallSources[p.source]||'未知'}${p.decision==='rejected'?' · 已拒绝匹配':''}${p.issues?.some(i=>['adjacent_conflict','candidate_conflict','missing_position'].includes(i))?' · 待核对':''}</span>${p.key?`<button class="button quiet" data-recall-correct="${side}">修正地点</button><button class="button quiet" data-recall-history="${side}">地点历史</button>`:'<span class="subtle">缺少可信位置</span>'}</div>`;};
+  const place=side=>{const p=row[side+'_place'];if(!p)return '';return `<div class="recall-place"><span>${side==='start'?'起点':'终点'} ${esc(p.label)} · ${recallSources[p.source]||'未知'}${p.decision==='rejected'?' · 已拒绝匹配':''}${p.issues?.some(i=>['adjacent_conflict','candidate_conflict','missing_position'].includes(i))?' · 待核对':''}</span>${p.key?`<button class="button quiet" data-recall-correct="${side}">修正地点</button><button class="button quiet" data-recall-history="${side}">地点历史</button>`:'<span class="subtle">缺少可信位置</span>'}</div>${recallParkingEvidence(row,side)}`;};
   return `<div class="local-trip-intro"><h2>${recallTypes[row.type]||'行程'}${row.cross_midnight?' · 跨午夜':''}</h2><p>记录起点 ${esc(tripTime(row.start_time))}<br>记录终点 ${esc(tripTime(row.end_time))}</p>${place('start')}${place('end')}<p>观测时长 ${esc(tripDuration(row.duration_seconds))}${row.type==='trip'?` · 里程 ${esc(tripNumber(row.distance_km,' km'))}`:''}</p>${row.partial?'<p class="subtle">部分记录；缺失范围不推断。</p>':''}${row.reason_labels?`<p class="subtle">${row.reason_labels.map(esc).join('；')}</p>`:''}${row.type==='charge'?`<p>账单金额 ${esc(tripNumber(row.bill?.actual_cents==null?null:row.bill.actual_cents/100,' 元'))}</p><button class="button secondary" data-recall-ledger>打开账本编辑</button>`:''}<div id="recall-correction"></div><div id="recall-history"></div><button class="button secondary recall-map-jump" data-recall-map>查看地图</button></div>`;
 }
 function recallContext(){return [state?.insights_context,trackDate,localTrips?.selection].join('|');}
