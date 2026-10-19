@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const {fixture}=require('./ui_insight_helpers.cjs');
 (async()=>{
  let snapshot;
- const f=await fixture({initialResearch:false,beforeGoto:async page=>{
+ const f=await fixture({evidenceTestId:'ui_status_summary',initialResearch:false,beforeGoto:async page=>{
   await page.route('**/api/state',async route=>{const response=await route.fetch();await route.fulfill({response,json:snapshot||await response.json()});});
  }}),{page}=f;
  try{
@@ -140,5 +140,5 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   assert.match(await page.locator('.hero .freshness').innerText(),/更新时间未知/);
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   console.log('DESKTOP_STATUS_SUMMARY_PASS: 15 states/all unknown, official photo decode, independent freshness, semantic colors/positions, PM2.5 zero/missing, contextual/reset navigation, polling/owner isolation, failed refresh retention, 8 desktop layouts');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

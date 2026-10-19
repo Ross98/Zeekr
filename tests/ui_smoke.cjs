@@ -1,3 +1,4 @@
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 // Run with NODE_PATH pointing at a Playwright installation. Uses synthetic data only.
 const { chromium } = require('playwright');
 const { spawn } = require('node:child_process');
@@ -7,7 +8,7 @@ const path = require('node:path');
 
 (async () => {
   const server = spawn('python3', [path.join(__dirname, 'web_fixture.py')]);
-  let browser;
+  let browser,evidence;
   try {
     const port = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(Error('Fixture did not start')), 10000);
@@ -16,6 +17,7 @@ const path = require('node:path');
     });
     browser = await chromium.launch({ headless: true, ...(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE } : {}) });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+    evidence=await startEvidence(page,{testId:'ui_smoke',synthetic:true});
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     const external = [];
@@ -131,7 +133,8 @@ const path = require('node:path');
     }
     assert.deepEqual(errors, []);
     console.log(`Browser smoke passed: desktop${process.env.DESKTOP_ONLY?'':', mobile'}, refresh, details, privacy, map, history, recording, errors.`);
-  } finally {
+  } catch(error) {if(evidence)await evidence.fail(error);throw error;} finally {
+    if(evidence)await evidence.finish();
     if (browser) await browser.close();
     server.kill('SIGTERM');
   }

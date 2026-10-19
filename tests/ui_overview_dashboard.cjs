@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict');
 const {fixture}=require('./ui_insight_helpers.cjs');
-(async()=>{const f=await fixture({demo:true,partialCharge:true}),{page}=f;try{
+(async()=>{const f=await fixture({evidenceTestId:'ui_overview_dashboard',demo:true,partialCharge:true}),{page}=f;try{
 const context=await page.evaluate(()=>state.insights_context);
 const date=await page.evaluate(()=>beijingDate(Date.now()));
 const original=await page.evaluate(date=>fetch('/api/insights/report?period=month&date='+date).then(r=>r.json()),date);
@@ -85,4 +85,4 @@ for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}
 await page.setViewportSize({width:1440,height:1000});await page.locator('#overview-record-filter').selectOption('all');await page.getByLabel('外观',{exact:true}).selectOption('light');await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'/tmp/zeekr-overview-production-desktop.png',fullPage:true});
 report={...report,context:'other-vehicle'};ledger={...ledger,context:'other-vehicle'};await page.getByRole('button',{name:'重新读取记录汇总',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#overview-today-value').textContent==='未知');assert.equal(await page.locator('#overview-cost-value').innerText(),'未知');assert.match(await page.locator('#overview-records').innerText(),/读取失败/);
 assert.deepEqual(f.errors,[]);assert.equal(f.external.length,0);console.log('PASS overview actual-only zero, partial distance, calendar return, door selection/context reset, unknown battery, return/filter/scroll, context rejection, 8 desktop viewport/theme checks');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exit(1)});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exit(1)});

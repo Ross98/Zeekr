@@ -25,7 +25,8 @@
     "smoke": [
       "tests/ui_smoke.cjs",
       "tests/ui_status_summary.cjs",
-      "tests/ui_overview_dashboard.cjs"
+      "tests/ui_overview_dashboard.cjs",
+      "tests/browser_failure_evidence.cjs"
     ],
     "review": [
       "tests/ui_vehicle_parameters.cjs",
@@ -282,6 +283,10 @@
     {
       "path": "tests/ui_vehicle_research.cjs",
       "reason": "Legacy vehicle research suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+    },
+    {
+      "path": "tests/fixtures/browser_failure_probe.cjs",
+      "reason": "Synthetic intentional-failure child process invoked serially by browser_failure_evidence; standalone fail mode must exit nonzero, so exclude duplicate routine invocation."
     }
   ]
 }

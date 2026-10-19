@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const {fixture} = require('./ui_insight_helpers.cjs');
 (async () => {
   let pinnedState=null;
-  const f = await fixture({initialResearch:false,beforeGoto:async page=>{
+  const f = await fixture({evidenceTestId:'ui_tyre_layout',initialResearch:false,beforeGoto:async page=>{
     await page.route('**/api/state',async route=>{
       const response=await route.fetch();
       await route.fulfill({response,json:pinnedState || await response.json()});
@@ -72,5 +72,5 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     }
     assert.deepEqual(f.errors,[]);
     console.log('PASS tyre layout: consolidated overview, 4 desktop widths, light/dark');
-  } finally {await f.close();}
+  } catch(error) {await f.fail(error);throw error;} finally {await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

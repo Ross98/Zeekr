@@ -54,3 +54,21 @@ npm run test:desktop   # smoke + review，按需运行
 当前工作写入本机 `handoff.md`，只保留当前分支／工作副本、改动、验证证据和下一步。长历史另存被忽略的 `private/handoffs/`。凭据只引用本机私有配置路径，不抄到文档、测试输出或聊天；从其他 Mac 接手时先核对当前路径是否存在。
 
 代码、提交、候选发布、活动发布、实车验收分别记录。工作副本里的代码不能标为“已上线”。
+
+### 浏览器失败证据（Z03）
+
+`startEvidence(page, {testId, synthetic:true})` 是显式接入的 CJS 采集器。测试必须在 `catch` 中先 `await evidence.fail(error)`，再重新抛出原异常；在 `finally` 中 `await evidence.finish()`，然后关闭页面/浏览器。不要等进程退出才截图：此时现有测试的 `finally` 已关闭浏览器。共享 fixture 用 `evidenceTestId` 接入，并提供 `f.fail(error)`；fixture 初始化失败也在关闭浏览器前采集。
+
+当前接入五个桌面套件：`ui_smoke`、`ui_status_summary`、`ui_overview_dashboard`、`ui_vehicle_parameters`、`ui_tyre_layout`。覆盖它们的页面创建后、关闭前抛出的断言与浏览器错误；共享 fixture 的初始化错误也覆盖。其余历史脚本没有自动接入，启动浏览器前失败、浏览器崩溃后无法截图、硬超时/强杀/取消不保证完整证据。诊断会标明截图失败。单套件内用测试文件及断言行号定位用例，不为每条旧断言改写测试结构。
+
+默认目录是仓库 `test-results/browser-failures/`，可用 `BROWSER_ARTIFACT_DIR` 或 API 的 `outputDir` 指定。仅失败创建目录，子目录名包含安全化 `testId`、时间、随机运行 UUID 和唯一后缀；不会清空已有目录。每次失败最多保存一张桌面视口 `page.png`（8 MiB）、`diagnostic.json`，可选 `trace.zip`（16 MiB）。超限仅删除本次新目录中对应的新文件并写明原因。截图超时 5 秒。成功路径不保存本采集器的大产物，trace 无路径停止并丢弃；现有套件原有的 `/tmp` 截图行为不在本次迁移范围。
+
+JSON 仅含测试标识、运行标识、时间、错误类别、仓库内测试文件与行列、视口及 console/pageerror/requestfailed 计数、采集错误类别。不保存错误文本、断言 actual/expected、console 文本、URL、响应正文、请求头、cookies、凭据或账号数据。截图只允许显式声明的合成 fixture；不能对真实账户页面使用此 API。现有 `web_fixture.py` 和 `insights_fixture.py` 使用临时合成账号、位置与数据库，不打开用户会话。
+
+默认关闭 trace。Playwright trace 可能含 DOM、网络及响应正文，不能仅凭 `synthetic:true` 开启；还需 `trace:true, reviewedTrace:true`，且调用方必须先审核全部页面与响应。当前只有 `tests/fixtures/browser_failure_probe.cjs` 的静态合成页启用：页面仅有合成标题，网络全部拦截中止，无账户、位置、凭据或响应正文。五个应用套件均不保存 trace。
+
+`tests/browser_failure_evidence.cjs` 在 smoke 组运行，串行启动成功/故意断言失败的子进程；失败子进程必须退出 1，且 PNG/ZIP/JSON 可读。验证正常路径无目录、缺失/自定义输出、原文件保留、路径安全化、采集失败不改原文件、大小限制与隐私门禁。故意失败探针在清单逐项排除，理由为父回归已经运行，不能作为独立成功套件。
+
+CI 只上传上述统一目录内允许的文件名，不上传 stdout/stderr 或历史 `/tmp` 截图。上传步骤使用 `if: ${{ !cancelled() }}`，前置测试失败仍执行；未发现文件时忽略，保留 7 天，artifact 名含 GitHub run ID 和 attempt。未使用 `continue-on-error`，不会把测试失败变成成功。取消任务及服务端上传效果仍需实际 Actions 运行确认；本地检查不能替代远端验证。
+
+官方依据：[状态检查表达式](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions)、[upload-artifact 配置](https://github.com/actions/upload-artifact/tree/v4.6.2#usage)。

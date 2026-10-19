@@ -34,6 +34,8 @@ jobs:
   desktop:
     name: Desktop tests
     runs-on: ubuntu-24.04
+    env:
+      BROWSER_ARTIFACT_DIR: test-results/browser-failures
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -58,3 +60,15 @@ jobs:
         run: npm run test:unit
       - name: Run desktop browser checks
         run: npm run test:desktop
+      - name: Upload browser failure evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-browser-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/browser-failures/*/page.png
+            test-results/browser-failures/*/diagnostic.json
+            test-results/browser-failures/*/trace.zip
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0

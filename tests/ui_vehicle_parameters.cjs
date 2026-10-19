@@ -1,13 +1,15 @@
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 // Real local projection and UI, synthetic fixture only; no owner session or cloud.
 const {chromium}=require('playwright');
 const {spawn}=require('node:child_process');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 (async()=>{
- const server=spawn('python3',[path.join(__dirname,'web_fixture.py')]);let browser;
+ const server=spawn('python3',[path.join(__dirname,'web_fixture.py')]);let browser,evidence;
  try{
   const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('fixture timeout')),10000);server.stdout.once('data',d=>{clearTimeout(timer);resolve(Number(String(d).trim()))});server.once('error',reject)});
   browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})});
   const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],external=[],posts=[];
+  evidence=await startEvidence(page,{testId:'ui_vehicle_parameters',synthetic:true});
   const origin=`http://127.0.0.1:${port}`;
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(!r.url().startsWith(origin))external.push(r.url());if(r.method()==='POST')posts.push(r.url())});
   await page.goto(origin);await page.getByRole('button',{name:'车辆',exact:true}).first().click();
@@ -102,5 +104,5 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   assert.equal(await page.locator('.vehicle-table').innerText(),before);assert.equal(await page.locator('#vehicle-search').inputValue(),'engineHood');
   assert.equal(posts.length,3,'Only the initial, evidence-preservation and failed explicit refreshes post');assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
   console.log('UI_VEHICLE_PARAMETERS_PASS: all 217 rows, 14 groups, filters, five-row scrolling, focus/details, 6 desktop theme/width layouts, source semantics, failed refresh, no unsolicited cloud requests');
- }finally{if(browser)await browser.close();server.kill()}
+ }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();server.kill()}
 })().catch(e=>{console.error(e);process.exitCode=1});
