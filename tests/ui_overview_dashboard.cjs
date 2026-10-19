@@ -34,6 +34,10 @@ assert.match(await page.locator('.overview-collection-state').innerText(),/采�
 assert.equal(await page.locator('.overview-collection-error').innerText(),'合成采集失败');
 await page.evaluate(()=>{state.recording.error='';updateHeartbeat();});
 assert.equal(await page.locator('.overview-collection-error').isVisible(),false);
+await page.locator('#overview-attention [data-attention-target]').last().focus();
+await page.evaluate(()=>updateHeartbeat());
+assert.ok(await page.evaluate(()=>!!document.activeElement.closest('#overview-attention')),'heartbeat retains focus on inline recovery control');
+await page.evaluate(()=>document.activeElement.blur());
 await page.locator('[data-overview-tool="settings"]').click();await page.waitForFunction(()=>page==='settings');
 assert.equal(await page.locator('#interval').count(),1);
 await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();
@@ -69,6 +73,11 @@ for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}
   assert.ok(columns,`${theme} ${width}: identity, power and image stay separate`);
   const compact=await page.evaluate(()=>{const power=document.querySelector('.overview-power-values'),battery=power.querySelector('.metric-value').getBoundingClientRect(),range=power.querySelector('.overview-range').getBoundingClientRect();const hero=document.querySelector('.hero').getBoundingClientRect(),metrics=document.querySelector('.overview-metrics').getBoundingClientRect();const rows=[...document.querySelectorAll('.overview-metrics>.metric')].map(el=>{const label=el.querySelector('.metric-label').getBoundingClientRect(),value=el.querySelector('.metric-value').getBoundingClientRect();return Math.abs(label.left-value.left)<=1&&value.top>=label.bottom;});return {adjacent:range.left-battery.right<=32,inside:metrics.top>=hero.top&&metrics.bottom<=hero.bottom,rows:rows.every(Boolean),aligned:Math.abs(document.querySelector('#overview-today-value').getBoundingClientRect().top-document.querySelector('#overview-cost-value').getBoundingClientRect().top)<=1};});
   assert.ok(compact.adjacent&&compact.inside&&compact.rows&&compact.aligned,`${theme} ${width}: compact hero summaries ${JSON.stringify(compact)}`);
+  const hintInStatus=await page.locator('#overview-attention').evaluate(el=>{
+   const hint=el.getBoundingClientRect(),status=document.querySelector('.overview-collection-row').getBoundingClientRect();
+   return hint.top>=status.top&&hint.bottom<=status.bottom&&hint.left>=status.left&&hint.right<=status.right+1;
+  });
+  assert.ok(hintInStatus,`${theme} ${width}: cache hint shares collection status flow`);
   const bounds=await page.evaluate(()=>{const box=s=>document.querySelector(s).getBoundingClientRect();const [map,vehicle]=[...document.querySelector('.overview-health').children].map(e=>e.getBoundingClientRect());const [records,tasks]=[...document.querySelector('.overview-work-grid').children].map(e=>e.getBoundingClientRect());return {collectionAbove:box('.overview-collection').bottom<=map.top,cardTop:Math.abs(map.top-vehicle.top),cardBottom:Math.abs(map.bottom-vehicle.bottom),recordWidth:Math.abs(records.width-tasks.width)};});
   assert.ok(bounds.collectionAbove&&bounds.cardTop<=1&&bounds.cardBottom<=1&&bounds.recordWidth<=1,JSON.stringify(bounds));
  }

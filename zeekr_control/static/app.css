@@ -341,7 +341,12 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
  .overview-collection-info{min-width:0}.overview-collection-state{display:flex;align-items:center;flex-wrap:wrap;gap:4px 18px;font-size:12px;color:var(--muted)}.overview-collection-state strong{color:var(--ink);font-weight:550;margin-left:5px}
  .overview-collection-meta{display:flex;flex-wrap:wrap;gap:2px 16px;font-size:11px;color:var(--muted);margin-top:4px}.overview-collection-info>p{margin:5px 0 0;font-size:12px}
  .overview-collection>.button{font-size:12px;padding:7px 11px}.overview-collection .data-explanation{font-size:12px;max-width:none}.overview-collection .data-explanation>summary{min-height:34px;padding-top:5px}
- main[data-page="overview"] .overview-collection .overview-attention{margin:7px 0 0;padding:5px 8px;gap:6px}.overview-collection .attention-items .text-link{font-size:12px;min-height:30px}.overview-collection .overview-attention>.button{font-size:12px;padding:5px 7px}
+ .overview-collection-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px 18px}
+ main[data-page="overview"] .overview-collection .overview-attention{align-items:center;margin:0;padding:0;gap:6px;border:0;border-radius:0;background:transparent;flex-wrap:wrap;max-width:100%;font-size:12px}
+ .overview-collection .overview-attention>.icon{width:15px;height:15px;margin:0}
+ .overview-collection .attention-items{flex:initial;gap:3px 6px}
+ .overview-collection .attention-items .text-link{font-size:12px;min-height:24px}
+ .overview-collection .overview-attention>.button{font-size:12px;padding:0;min-height:24px;border:0;background:transparent;color:var(--accent)}
  .overview-health{gap:16px;margin-bottom:16px}.overview-health .location-heading{padding:18px 20px 12px}.overview-health>.card>.card-head{padding:18px 20px 12px}.overview-health .location-heading p{font-size:12px;margin-top:6px}.overview-health .location-actions{gap:8px}.overview-health .location-actions .button{padding:8px 11px;font-size:12px}
  .overview-health .overview-vehicle-diagram{display:block;width:auto;margin:0 20px;min-height:0}
  .overview-vehicle-alerts{display:flex;flex-wrap:wrap;gap:7px;padding:0 20px 8px}.overview-vehicle-alerts:empty{display:none}
