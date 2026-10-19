@@ -11,7 +11,7 @@ const groups={
   smoke:['ui_smoke','ui_status_summary','ui_overview_dashboard'],
   review:['ui_vehicle_parameters','ui_location_marker','ui_tyre_layout','ui_energy_workspace','ui_energy','ui_charge_management','ui_research_serial','ui_research_simplification','ui_review_fixes','ui_lazy_tools','ui_async_analysis','ui_analysis_cancel','ui_overview_dashboard','ui_overview_benchmark','ui_local_route_canvas','ui_books_overview',
     'ui_books_navigation','ui_books_safety','ui_books_period','ui_tool_navigation','ui_insights_navigation','ui_commute_reassessment','ui_trip_tags','ui_parking_origin','ui_trip_place_panel','ui_trip_tags_compact','ui_place_pair_statistics',
-    'ui_parameter_flow','ui_parameter_workspace','ui_refresh_view','ui_refresh_scroll']
+    'ui_parameter_flow','ui_parameter_workspace','ui_custom_reminders','ui_parameter_experiments','ui_refresh_view','ui_refresh_scroll']
 };
 const group=process.argv[2]||'review';
 if(group==='desktop')groups.desktop=[...new Set([...groups.smoke,...groups.review])];
