@@ -34,6 +34,27 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   }
   await page.locator('[data-overview-status="unknown"]').click();
   assert.equal(await page.locator('.overview-status-list:not([hidden]) button').count(),3);
+  async function pollSnapshot(){
+   await page.waitForFunction(()=>!polling&&!busy);
+   const before=await page.evaluate(()=>generation);
+   snapshot.read_time++;
+   await page.evaluate(async()=>{await pollState(true);});
+   await page.waitForFunction(expected=>state.read_time===expected&&!polling,snapshot.read_time);
+   assert.ok(await page.evaluate(()=>generation)>before,'state polling actually redraws the overview');
+  }
+  await pollSnapshot();
+  assert.equal(await page.locator('[data-overview-status="unknown"]').getAttribute('aria-expanded'),'true','polling preserves expanded unknown list');
+  assert.equal(await page.locator('[data-status-list="unknown"]').isVisible(),true);
+  await page.locator('[data-overview-status="attention"]').click();
+  await pollSnapshot();
+  assert.equal(await page.locator('[data-overview-status="attention"]').getAttribute('aria-expanded'),'true','polling preserves expanded attention list');
+  assert.equal(await page.locator('[data-status-list="attention"]').isVisible(),true);
+  assert.equal(await page.locator('[data-status-list="unknown"]').isVisible(),false,'only the selected list stays open');
+  await page.locator('[data-overview-status="attention"]').click();
+  await pollSnapshot();
+  assert.equal(await page.locator('[data-overview-status="attention"]').getAttribute('aria-expanded'),'false','polling preserves manual collapse');
+  assert.equal(await page.locator('.overview-status-list:not([hidden])').count(),0);
+  await page.locator('[data-overview-status="unknown"]').click();
   await page.locator('.overview-status-list [data-overview-part="rr"]').first().click();
   assert.match(await page.locator('#overview-part-detail').innerText(),/右后门.*门锁 未知.*车窗 未知/s);
   await page.locator('#overview-part-detail [data-overview-parameters]').click();
@@ -56,11 +77,17 @@ const {fixture}=require('./ui_insight_helpers.cjs');
    await page.evaluate(value=>{state.model.fields.find(f=>f.key==='interiorPM25').value=value;render();},value);
    assert.match(await page.locator('.overview-pm25').innerText(),value===0||value==='0'?/PM2.5.*0/s:/暂无数据/);
   }
+  for(const change of [{request_key:'another-service'},{insights_context:'another-account'},{vehicle:'another-vehicle'}]){
+   if(await page.locator('[data-overview-status="unknown"]').getAttribute('aria-expanded')!=='true')await page.locator('[data-overview-status="unknown"]').click();
+   snapshot={...snapshot,...change};await pollSnapshot();
+   assert.equal(await page.locator('.overview-status-list:not([hidden])').count(),0,'owner change clears expansion: '+Object.keys(change)[0]);
+   assert.equal(await page.locator('[data-overview-status="unknown"]').getAttribute('aria-expanded'),'false');
+  }
   await page.evaluate(()=>{state.vehicle='another';state.model.doors.forEach(d=>{d.door='关闭';d.window='关闭';d.lock='已锁';});state.model.lock={confirmed:true,value:'已锁'};render();});
   assert.match(await page.locator('.overview-status-counts').innerText(),/需关注 0 项.*未知 0 项/s);
   assert.equal(await page.locator('.overview-part-rf').getAttribute('aria-pressed'),'true');
   assert.equal(await page.locator('.overview-status-list button').count(),0,'vehicle switch clears previous issues');
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
-  console.log('DESKTOP_STATUS_SUMMARY_PASS: 15 states, 7 diagram targets, PM2.5 zero/missing, contextual/reset navigation, vehicle switch, 8 desktop layouts');
+  console.log('DESKTOP_STATUS_SUMMARY_PASS: 15 states, 7 diagram targets, PM2.5 zero/missing, contextual/reset navigation, vehicle switch, polling expansion/collapse and owner isolation, 8 desktop layouts');
  }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});
