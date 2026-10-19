@@ -16,12 +16,13 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   assert.match(await marker().getAttribute('aria-label'),/候选位置/);
   for(const theme of ['light','dark']){
    await page.getByLabel('外观',{exact:true}).selectOption(theme);
-   for(const width of [1440,1280,1024]){
+   for(const width of [1920,1440,1280,1024]){
     await page.setViewportSize({width,height:1000});
     const geometry=await page.locator('#map').evaluate(el=>{
      const image=el.querySelector('img').getBoundingClientRect(),dot=el.querySelector('.location-marker-dot').getBoundingClientRect(),mark=el.querySelector('.location-position-marker').getBoundingClientRect(),bounds=el.getBoundingClientRect();
-     return {markerHeight:mark.height,mapHeight:bounds.height,topInset:mark.top-bounds.top,dx:Math.abs(dot.x+dot.width/2-image.x-image.width/2),dy:Math.abs(dot.y+dot.height/2-image.y-image.height/2),clipped:mark.top<bounds.top||mark.left<bounds.left||mark.right>bounds.right||mark.bottom>bounds.bottom};
+     return {blankHeight:bounds.height-image.height,blankWidth:bounds.width-image.width,markerHeight:mark.height,mapHeight:bounds.height,topInset:mark.top-bounds.top,dx:Math.abs(dot.x+dot.width/2-image.x-image.width/2),dy:Math.abs(dot.y+dot.height/2-image.y-image.height/2),clipped:mark.top<bounds.top||mark.left<bounds.left||mark.right>bounds.right||mark.bottom>bounds.bottom};
     });
+    assert.ok(Math.abs(geometry.blankHeight)<=1&&Math.abs(geometry.blankWidth)<=1,`${theme} ${width} map fills the equal-height card: ${JSON.stringify(geometry)}`);
     assert.ok(geometry.dx<1&&geometry.dy<1&&!geometry.clipped,`${theme} ${width} vehicle anchor at displayed image center: ${JSON.stringify(geometry)}`);
     if(width===1440)await page.locator('#map').screenshot({path:`/tmp/zeekr-location-marker-${theme}.png`});
    }
@@ -45,6 +46,6 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   valid=false;await page.evaluate(()=>render());await page.waitForFunction(()=>document.querySelector('#map-status').textContent==='未绘制位置');assert.equal(await marker().count(),0,'invalid location has no marker');
   await page.getByRole('button',{name:'隐藏位置',exact:true}).click();assert.equal(await marker().count(),0,'hide position hides marker');
   valid=true;mode='ok';revision='visible-again';await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).click();await marker().waitFor();
-  assert.deepEqual(f.errors,[]);console.log('PASS vehicle marker: center/contain, six desktop themes/widths, unchanged nodes, pending/error retention, vehicle switch, invalid coordinates');
+  assert.deepEqual(f.errors,[]);console.log('PASS vehicle marker: centered cover without blank bands, eight desktop themes/widths, unchanged nodes, pending/error retention, vehicle switch, invalid coordinates');
  }finally{release?.();await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

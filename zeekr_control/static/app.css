@@ -361,3 +361,7 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
  .overview-record-row{gap:12px;padding:10px 0;align-items:center;font-size:13px}.overview-record-row strong{font-size:13px;overflow-wrap:anywhere}.overview-record-row small{font-size:11px;margin-top:3px}.overview-record-row>span:first-child{min-width:0}.overview-record-row>span:last-child{font-variant-numeric:tabular-nums}.recent-events [data-overview-reload]{display:flex;margin:10px 0 0 auto;padding:6px 9px;font-size:11px}
  .overview-task{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;padding:10px 0}.overview-task:first-child{padding-top:0}.overview-task p{grid-column:1;margin:0;font-size:11px}.overview-task button{grid-column:2;grid-row:1/3;align-self:center;padding:6px 9px;font-size:11px}.overview-task h3{font-size:13px}
 }
+/* Center-crop the cached basemap to fill its card; the cached coordinate stays at center. */
+@media(min-width:851px){
+ .overview-health #map:not(.map-empty-state) .amap-position-image{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;object-position:center}
+}
