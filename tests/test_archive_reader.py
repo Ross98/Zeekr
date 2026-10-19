@@ -81,6 +81,41 @@ class ArchiveReaderTests(unittest.TestCase):
         self.writer.append(scope, vehicle, json.dumps(raw), raw.get('updateTime'), now, now, 'monitor')
         return raw
 
+    def test_observed_dates_are_exact_scoped_and_beijing_end_exclusive(self):
+        self.append(0)
+        self.append(10000)
+        self.append(86400000)
+        self.append(2*86400000,scope='other')
+        self.append(2*86400000,vehicle='other')
+        self.assertEqual(self.reader.observed_dates('owner','car',self.start,self.start+2*86400000),
+                         {'2026-09-20','2026-09-21'})
+        self.assertEqual(self.reader.observed_dates('owner','car',self.start+86400000,self.start+2*86400000),
+                         {'2026-09-21'})
+        self.assertEqual(self.reader.observed_dates('empty','car',self.start,self.start+2*86400000),set())
+        for lower,upper in ((-1,self.start),(self.start,self.start),(self.start,self.start+34*86400000)):
+            with self.assertRaises(ValueError):self.reader.observed_dates('owner','car',lower,upper)
+
+    def test_observed_dates_preserve_frozen_watermarks_and_cross_months(self):
+        first,last=day_bounds('2026-09-30')[0],day_bounds('2026-10-02')[0]
+        self.append(10*86400000)
+        self.append(11*86400000)
+        frozen=self.reader.frozen('owner','car',last)
+        self.append(11*86400000+1000)
+        self.assertEqual(frozen.observed_dates('owner','car',first,last),{'2026-09-30','2026-10-01'})
+        with self.assertRaises(ValueError):frozen.observed_dates('other','car',first,last)
+        from zeekr_control.archive_reader import ArchiveChanged
+        source=self.root/'2026'/'10.sqlite3'
+        source.rename(source.with_suffix('.old'))
+        with self.assertRaises(ArchiveChanged):frozen.observed_dates('owner','car',first,last)
+
+    def test_observed_dates_do_not_accept_late_new_days_into_a_frozen_month(self):
+        self.append(0)
+        frozen=self.reader.frozen('owner','car',self.start+3*86400000)
+        self.append(86400000)
+        self.assertEqual(frozen.observed_dates('owner','car',self.start,self.start+3*86400000),{'2026-09-20'})
+        self.assertEqual(self.reader.observed_dates('owner','car',self.start,self.start+3*86400000),
+                         {'2026-09-20','2026-09-21'})
+
     def test_time_bounds_are_scoped_and_span_months(self):
         self.append(-40*86400000)
         self.append(40*86400000)

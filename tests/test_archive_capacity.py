@@ -67,6 +67,26 @@ class ArchiveCapacityTests(unittest.TestCase):
         # Repeated prefix scans consume over 3 million for this fixture.
         self.assertLess(steps[0], 1000000)
 
+    def test_observed_days_seek_dense_full_month_without_scanning_all_reads(self):
+        self.populate(267840, step=10000)
+        connect = self.reader.connect
+        steps = [0]
+
+        @contextmanager
+        def measured(month):
+            with connect(month) as db:
+                def progress():
+                    steps[0] += 100
+                    return 0
+                db.set_progress_handler(progress, 100)
+                yield db
+
+        self.reader.connect = measured
+        dates = self.reader.observed_dates('owner', 'car', self.start, self.end)
+        self.assertEqual(dates, {'2026-10-%02d' % day for day in range(1, 32)})
+        # Counting dates must depend on days, not all 267840 archived samples.
+        self.assertLess(steps[0], 10000)
+
     def test_new_rows_between_pages_are_excluded_even_when_backdated(self):
         self.populate(1025)
         stream = self.reader.iter_metadata('owner', 'car', self.start, self.end, limit=None)

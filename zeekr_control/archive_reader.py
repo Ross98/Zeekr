@@ -273,22 +273,24 @@ class ArchiveReader:
         except FileNotFoundError:
             raise ArchiveChanged('归档在读取期间发生变化，请重新读取。') from None
 
-    def _freeze(self, scope, vehicle, end_month):
+    def _freeze(self, scope, vehicle, end_month, start_month=None):
         if self._frozen is not None:
             owner, car, frozen = self._frozen
             if (scope, vehicle) != (owner, car):
                 raise ValueError('归档读取作用域已变化。')
-            return {month: value for month, value in frozen.items() if month <= end_month}
+            return {month: value for month, value in frozen.items()
+                    if month <= end_month and (start_month is None or month >= start_month)}
         frozen = {}
         for month in self._months():
-            if month > end_month:
+            if month > end_month or start_month is not None and month < start_month:
                 continue
             identity = self._identity(month)
             with self.connect(month) as db:
                 if db is None:
                     raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
-                high = db.execute('SELECT MAX(id) FROM reads WHERE scope_key=? AND vehicle_key=?',
-                                  (scope, vehicle)).fetchone()[0] or 0
+                # Append ids are global. A global ceiling freezes the same scope
+                # without scanning its whole covering index to find a maximum.
+                high = db.execute('SELECT MAX(id) FROM reads').fetchone()[0] or 0
             if self._identity(month) != identity:
                 raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
             frozen[month] = identity, high
@@ -352,6 +354,36 @@ class ArchiveReader:
         for month, (identity, _) in frozen.items():
             if self._identity(month) != identity:
                 raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+
+    def observed_dates(self, scope, vehicle, lower, upper):
+        """Exact observed Beijing dates via bounded index seeks, never payload scans."""
+        _context(scope, vehicle)
+        if (type(lower) is not int or type(upper) is not int or lower < 0
+                or not 0 < upper-lower <= 33*86400000):
+            raise ValueError('归档分析范围无效。')
+        start_month=datetime.fromtimestamp(lower/1000,BEIJING).strftime('%Y%m')
+        end_month=datetime.fromtimestamp((upper-1)/1000,BEIJING).strftime('%Y%m')
+        frozen=self._freeze(scope,vehicle,end_month,start_month)
+        observed=set()
+        for month,(identity,high) in frozen.items():
+            with self.connect(month) as db:
+                if db is None:raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+                cursor=lower
+                while cursor<upper:
+                    check_cancelled()
+                    if self._identity(month)!=identity:
+                        raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+                    row=db.execute('SELECT observed_at FROM reads WHERE scope_key=? AND vehicle_key=? '
+                        'AND observed_at>=? AND observed_at<? AND id<=? '
+                        'ORDER BY observed_at,id LIMIT 1',(scope,vehicle,cursor,upper,high)).fetchone()
+                    if row is None:break
+                    date=datetime.fromtimestamp(row[0]/1000,BEIJING).strftime('%Y-%m-%d')
+                    observed.add(date)
+                    cursor=day_bounds(date)[1]
+        for month,(identity,_) in frozen.items():
+            if self._identity(month)!=identity:
+                raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
+        return observed
 
     def iter_metadata(self, scope, vehicle, lower, upper, limit=50000):
         for _, _, record in self._iter_rows(scope, vehicle, lower, upper, limit):

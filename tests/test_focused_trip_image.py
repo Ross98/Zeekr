@@ -117,3 +117,19 @@ class FocusedTripTests(unittest.TestCase):
   route=self.route();route['segments'].insert(1,[dict(route['segments'][0][-1])]);before=copy.deepcopy(route)
   g=build_geometry(route);self.assertEqual([len(s) for s in g['segments']],[3,1,2]);self.assertEqual(route,before)
   png=render_focused_trip_png({'metrics':{}},route,g,None);self.assertTrue(png.startswith(b'\x89PNG'))
+
+
+class SurfaceRasterTests(unittest.TestCase):
+ def test_circle_matches_legacy_pixels_at_edges_and_fractional_centres(self):
+  from zeekr_control.focused_trip_image import Surface
+  def legacy(surface,x,y,r,color):
+   for yy in range(max(0,int(y-r-1)),min(surface.height,int(y+r+2))):
+    half=math.sqrt(max(0,(r+.5)**2-(yy-y)**2))
+    for xx in range(max(0,int(x-half-1)),min(surface.width,int(x+half+2))):
+     alpha=max(0,min(1,r+.5-math.hypot(xx-x,yy-y)))
+     if alpha:surface.blend(xx,yy,color,alpha)
+  old=Surface(40,30,(123,72,19));new=Surface(40,30,(123,72,19))
+  for x,y in ((0,0),(-2.4,15),(39.9,29.9),(15.25,16.75),(20,15)):
+   for radius in (.1,.5,1,1.5,2,2.5,4.5,11,14):
+    legacy(old,x,y,radius,(0,102,80));new.circle(x,y,radius,(0,102,80))
+    self.assertEqual(new.data,old.data)

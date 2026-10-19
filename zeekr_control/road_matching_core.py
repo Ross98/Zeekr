@@ -87,26 +87,27 @@ class RoadGraph:
         if start == target:
             return (0.0, [])
         if start in self.route_cache:
-            distances, parents = self.route_cache.pop(start)
-            self.route_cache[start] = (distances, parents)
+            distances, parents, queue, settled = self.route_cache.pop(start)
         else:
-            distances = {start: 0.0}
-            parents = {}
-            queue = [(0.0, start)]
-            while queue:
-                cost, node = heapq.heappop(queue)
-                if cost != distances[node]:
-                    continue
-                for nxt, length, edge, rev in self.adj.get(node, []):
-                    new = cost + length
-                    if new <= 10000 and new < distances.get(nxt, float('inf')):
-                        distances[nxt] = new
-                        parents[nxt] = (node, edge, rev)
-                        heapq.heappush(queue, (new, nxt))
-            self.route_cache[start] = (distances, parents)
-            if len(self.route_cache) > self.cache_limit:
-                del self.route_cache[next(iter(self.route_cache))]
-        if target not in distances:
+            distances, parents = {start: 0.0}, {}
+            queue, settled = [(0.0, start)], set()
+        # Nearby transitions need only a small settled prefix. Retain the
+        # frontier so later targets resume exactly the same Dijkstra search.
+        while queue and target not in settled:
+            cost, node = heapq.heappop(queue)
+            if cost != distances[node]:
+                continue
+            for nxt, length, edge, rev in self.adj.get(node, []):
+                new = cost + length
+                if new <= 10000 and new < distances.get(nxt, float('inf')):
+                    distances[nxt] = new
+                    parents[nxt] = (node, edge, rev)
+                    heapq.heappush(queue, (new, nxt))
+            settled.add(node)
+        self.route_cache[start] = (distances, parents, queue, settled)
+        if len(self.route_cache) > self.cache_limit:
+            del self.route_cache[next(iter(self.route_cache))]
+        if target not in settled:
             return (float('inf'), [])
         path = []
         node = target

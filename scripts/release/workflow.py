@@ -22,7 +22,7 @@ def allowed(name):
         (name.startswith('zeekr_control/') and path.suffix in {'.py', '.js', '.css', '.html', '.svg', '.png', '.webp', '.woff2', '.gz', '.zlib', '.txt', '.md'})
         or (name.startswith('tests/') and path.suffix in {'.py', '.cjs', '.js'})
         or (name.startswith('tests/fixtures/') and path.suffix == '.json')
-        or name in {'AGENTS.md', 'zeekr_control/parameter_dictionary.json', 'zeekr_control/vehicle_profiles.example.json'}
+        or name in {'AGENTS.md', 'scripts/capacity_acceptance.py', 'zeekr_control/parameter_dictionary.json', 'zeekr_control/vehicle_profiles.example.json'}
         or name in {'deploy/zeekr-reports.service', 'zeekr_control/assets/periodic-report/manifest.json'}
         or (name.startswith('scripts/release/') and path.suffix == '.py')
         or (name.startswith('docs/') and path.suffix == '.md')
@@ -99,7 +99,7 @@ def validate(root, files, commands, report, context='local'):
 def inputs(root):
     """All executable candidate inputs, not only changed files. No private data."""
     result = []
-    for folder in ('zeekr_control', 'tests', 'scripts/release', 'deploy'):
+    for folder in ('zeekr_control', 'tests', 'scripts', 'deploy'):
         for path in (root/folder).rglob('*'):
             if not path.is_file() or '__pycache__' in path.parts:
                 continue

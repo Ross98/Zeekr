@@ -52,6 +52,30 @@ class CapacityWorkloadTests(unittest.TestCase):
             self.assertFalse(result['archive_limited'])
             self.assertGreater(result['png_bytes'], 1000)
 
+    def test_complex_fixture_contains_dense_roads_trips_bills_and_both_report_themes(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'private'
+            seed_archive(root,31,scenario='complex')
+            fixture=json.loads((root/'fixture.json').read_text())
+            self.assertEqual(fixture['road_edges'],9940)
+            with sqlite3.connect(root/'synthetic-roads'/'region.sqlite3') as db:
+                self.assertEqual(db.execute('SELECT COUNT(*) FROM roads').fetchone()[0],9940)
+            result=monthly_report(root)
+            self.assertEqual(result['trip_count'],8)
+            self.assertEqual(result['charge_count'],1)
+            self.assertEqual(result['themes'],['light','dark'])
+            self.assertEqual(len(result['png_sizes']),2)
+            self.assertTrue(all(size>1000 for size in result['png_sizes']))
+
+    def test_complex_web_checks_all_reads_and_eight_trip_bounded_parking_windows(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'private'
+            seed_archive(root,8640,scenario='complex')
+            result=web_work(root)
+            self.assertEqual(result['records'],8640)
+            self.assertEqual(result['parking_count'],8)
+
     def test_collection_summary_requires_progress_during_image_work(self):
         result = summarize_collection([0.05, 0.2, 0.1], 3, 2, 1234)
         self.assertEqual(result['ticks'], 3)

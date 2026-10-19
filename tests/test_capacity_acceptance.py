@@ -18,9 +18,20 @@ class CapacityAcceptanceTests(unittest.TestCase):
 
     def test_completed_workload_requires_a_finite_limit_and_no_oom(self):
         row = dict(state=dict(Result='success', ExecMainStatus='0', MemoryMax='4096'),
-                   memory=dict(oom=0, oom_kill=0, peak_bytes=2048), workload=dict(records=31))
+                   memory=dict(oom=0, oom_kill=0, peak_bytes=2048, max=0), workload=dict(records=31))
         self.assertTrue(acceptance.workload_passed(row))
         row['memory']['oom'] = 1
+        self.assertFalse(acceptance.workload_passed(row))
+
+    def test_no_oom_is_insufficient_at_the_hard_limit_or_with_reclaim_events(self):
+        row=dict(state=dict(Result='success',ExecMainStatus='0',MemoryMax='10000'),
+                 memory=dict(oom=0,oom_kill=0,peak_bytes=10000,max=0),workload=dict(records=31))
+        self.assertFalse(acceptance.workload_passed(row))
+        row['memory']['peak_bytes']=8001
+        self.assertFalse(acceptance.workload_passed(row))
+        row['memory']['peak_bytes']=8000
+        self.assertTrue(acceptance.workload_passed(row))
+        row['memory']['max']=1
         self.assertFalse(acceptance.workload_passed(row))
 
     def test_memory_sampling_retains_peak_components_and_high_events(self):

@@ -31,20 +31,28 @@ def choose_network(paths, points):
 
 def process(payload):
     lines,spans,matched,issues,total = [],[],[],0,0
-    for fragment in payload['fragments']:
-        points,indices = fragment['points'],fragment['indices']
-        total += len(points)
-        path = choose_network(payload['networks'],points)
-        if path is None:
-            continue
-        graph = RoadGraph(path)
-        try:
+    graph,graph_path = None,None
+    try:
+        for fragment in payload['fragments']:
+            points,indices = fragment['points'],fragment['indices']
+            total += len(points)
+            path = choose_network(payload['networks'],points)
+            if path is None:
+                continue
+            if path != graph_path:
+                if graph is not None:
+                    graph.db.close()
+                    graph.edge.cache_clear()
+                    graph = None
+                graph = RoadGraph(path)
+                graph_path = path
             result = match(graph,points)
             lines.extend(result['lines'])
             spans.extend([[indices[a],indices[b]] for a,b in result['spans']])
             matched.extend(indices[i] for i in result['matched_seq'])
             issues += result['issues']
-        finally:
+    finally:
+        if graph is not None:
             graph.db.close()
             graph.edge.cache_clear()
     count = sum(len(line) for line in lines)

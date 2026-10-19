@@ -29,6 +29,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
             root=Path(folder);unit=root/'deploy/zeekr-reports.service';unit.parent.mkdir();unit.write_text('unit')
             self.assertIn('deploy/zeekr-reports.service',w.inputs(root))
 
+    def test_capacity_harness_is_an_exact_public_test_dependency(self):
+        self.assertEqual(w.allowed('scripts/capacity_acceptance.py'),'scripts/capacity_acceptance.py')
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'scripts/capacity_acceptance.py'
+            source.parent.mkdir();source.write_text('public capacity harness')
+            self.assertEqual(w.inputs(root),['scripts/capacity_acceptance.py'])
+        with self.assertRaises(ValueError):w.allowed('scripts/private_capacity.py')
+
     def test_optional_report_service_starts_only_on_supported_release(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)

@@ -43,12 +43,21 @@ def sample_memory(group, sample):
         pass
 
 
-def workload_passed(row):
+def workload_passed(row, minimum_headroom_percent=20):
     limit = row['state']['MemoryMax']
     return (row['state']['Result'] == 'success' and row['state']['ExecMainStatus'] == '0'
             and row['workload'] is not None and limit.isdigit()
             and row['memory']['oom'] == 0 and row['memory']['oom_kill'] == 0
-            and 0 < row['memory']['peak_bytes'] <= int(limit))
+            and row['memory'].get('max') == 0
+            and 0 < row['memory']['peak_bytes']*100 <= int(limit)*(100-minimum_headroom_percent))
+
+
+def source_hashes(source):
+    """Use the release public-input allowlist; never hash/export runtime secrets."""
+    import runpy
+    workflow=runpy.run_path(str(source/'scripts/release/workflow.py'))
+    return {name:hashlib.sha256((source/name).read_bytes()).hexdigest()
+            for name in workflow['inputs'](source)}
 
 
 def main():
@@ -57,13 +66,18 @@ def main():
     parser.add_argument('--worker', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--records', type=int, default=267840)
+    parser.add_argument('--tasks',nargs='+',choices=['monitor','month','web'],default=['monitor','month','web'])
+    parser.add_argument('--scenario',choices=['standard','complex'],default='standard')
+    parser.add_argument('--minimum-headroom-percent',type=int,default=20)
     args = parser.parse_args()
+    if not 1<=args.minimum_headroom_percent<=90:raise ValueError('Headroom must be 1..90 percent')
     if os.geteuid() != 0:
         raise ValueError('Run as root to create isolated systemd units')
     source, worker, output = args.source.resolve(), args.worker.resolve(), args.output.resolve()
     output.mkdir(mode=0o700)
     owner = pwd.getpwnam('zeekr-control')
     os.chown(output, owner.pw_uid, owner.pw_gid)
+    initial_inputs=source_hashes(source)
     root = output / 'synthetic'
     env = dict(os.environ, PYTHONPATH=str(source)+':'+str(source/'tests'), PYTHONDONTWRITEBYTECODE='1')
     production = ['zeekr-control', 'zeekr-monitor', 'zeekr-reports']
@@ -71,7 +85,7 @@ def main():
     with (output / 'prepare.json').open('w') as log:
         subprocess.run(['sudo', '-u', 'zeekr-control', 'env', 'PYTHONPATH='+env['PYTHONPATH'],
             'PYTHONDONTWRITEBYTECODE=1', 'python3', str(worker), '--task', 'prepare',
-            '--root', str(root), '--records', str(args.records)], stdout=log, check=True)
+            '--root', str(root), '--records', str(args.records),'--scenario',args.scenario], stdout=log, check=True)
     # Evict only synthetic fixture pages, never global production caches.
     for path in root.rglob('*.sqlite3'):
         with path.open('rb') as stream:
@@ -80,6 +94,7 @@ def main():
     prefix = 'zeekr-capacity-'+str(os.getpid())
     units, samples, final = {}, {}, {}
     specs = {'monitor': 'zeekr-monitor', 'month': 'zeekr-reports', 'web': 'zeekr-control'}
+    specs={task:specs[task] for task in dict.fromkeys(args.tasks)}
     barrier = root / 'start'
     try:
         for task, service in specs.items():
@@ -127,6 +142,8 @@ def main():
                 if peak.isdigit():
                     samples[task]['peak_bytes'] = max(samples[task]['peak_bytes'], int(peak))
                 if state['SubState'] == 'exited' or state['ActiveState'] in ('failed', 'inactive'):
+                    if state['MemoryMax'].isdigit():
+                        samples[task]['headroom_bytes']=int(state['MemoryMax'])-samples[task]['peak_bytes']
                     final[task] = dict(state=state, memory=samples[task])
                     path = output / (task+'.json')
                     try:
@@ -146,12 +163,24 @@ def main():
         stable = all(before[u]['MainPID']==after[u]['MainPID'] and
             before[u]['NRestarts']==after[u]['NRestarts'] and after[u]['ActiveState']=='active'
             for u in production)
-        passed = stable and all(workload_passed(row) for row in final.values())
+        source_stable=initial_inputs==source_hashes(source)
+        passed = stable and source_stable and all(workload_passed(row,args.minimum_headroom_percent) for row in final.values())
         evidence = dict(passed=passed, production_stable=stable, source=str(source),
             records=args.records, source_commit=json.loads((source/'release-manifest.json').read_text())['base_version'],
             units=final, production_before=before, production_after=after,
             network_disabled=True, production_data_used=False, swap_disabled=True)
+        origin=source/'.capacity-origin.json'
+        revision=json.loads(origin.read_text()) if origin.exists() else {}
+        evidence['source_base_commit']=evidence['source_commit']
+        evidence['source_commit']=revision.get('commit',evidence['source_commit'])
+        evidence['source_input_hashes']=initial_inputs
+        evidence['source_inputs_stable']=source_stable
         evidence['workload_budget_seconds'] = 600
+        evidence['minimum_headroom_percent']=args.minimum_headroom_percent
+        evidence['scenario']=args.scenario
+        evidence['tasks']=list(specs)
+        evidence['production_cache_purged']=False
+        evidence['synthetic_cache_policy']='only newly generated fixture SQLite files'
         evidence['source_archive_reader_sha256'] = hashlib.sha256(
             (source/'zeekr_control/archive_reader.py').read_bytes()).hexdigest()
         evidence['harness_sha256'] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()

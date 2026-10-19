@@ -32,8 +32,7 @@ class PeriodicSummary:
         charges = [e for e in row['events'] if e['kind']=='charge_end']
         observed, limited = set(), False
         try:
-            for record in self.archive.iter_metadata(scope,vehicle,window['start'],window['end'],limit=None):
-                observed.add(date_label(record['observed_at']))
+            observed=self.archive.observed_dates(scope,vehicle,window['start'],window['end'])
         except (ArchiveChanged, AnalysisCapacity):
             raise
         except ValueError:

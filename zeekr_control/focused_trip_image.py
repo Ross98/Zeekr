@@ -138,13 +138,38 @@ class Surface:
         x,y=int(x),int(y)
         if not 0<=x<self.width or not 0<=y<self.height:return
         i=(y*self.width+x)*3
-        for j in range(3):self.data[i+j]=round(self.data[i+j]*(1-alpha)+color[j]*alpha)
+        data=self.data
+        if data[i]==color[0] and data[i+1]==color[1] and data[i+2]==color[2]:return
+        if alpha==1:
+            data[i:i+3]=bytes(color)
+            return
+        inverse=1-alpha
+        data[i]=round(data[i]*inverse+color[0]*alpha)
+        data[i+1]=round(data[i+1]*inverse+color[1]*alpha)
+        data[i+2]=round(data[i+2]*inverse+color[2]*alpha)
     def circle(self,x,y,r,color):
+        solid=bytes(color)
         for yy in range(max(0,int(y-r-1)),min(self.height,int(y+r+2))):
-            half=math.sqrt(max(0,(r+.5)**2-(yy-y)**2))
-            for xx in range(max(0,int(x-half-1)),min(self.width,int(x+half+2))):
-                a=max(0,min(1,r+.5-math.hypot(xx-x,yy-y)))
-                if a:self.blend(xx,yy,color,a)
+            dy=yy-y
+            if abs(dy)>=r+.5:continue
+            half=math.sqrt((r+.5)**2-dy**2)
+            lo,hi=max(0,math.ceil(x-half)),min(self.width,math.floor(x+half)+1)
+            if lo>=hi:continue
+            inner=(r-.5)**2-dy**2 if r>=.5 else -1
+            if inner>=0:
+                span=math.sqrt(inner)
+                left,right=max(lo,math.ceil(x-span)),min(hi,math.floor(x+span)+1)
+            else:left=right=lo
+            if left>=right:left=right=lo
+            if left<right:
+                offset=(yy*self.width+left)*3
+                self.data[offset:offset+(right-left)*3]=solid*(right-left)
+            for begin,end in ((lo,left),(right,hi)):
+                for xx in range(begin,end):
+                    offset=(yy*self.width+xx)*3
+                    if self.data[offset:offset+3]==solid:continue
+                    alpha=r+.5-math.hypot(xx-x,dy)
+                    if alpha>0:self.blend(xx,yy,color,min(1,alpha))
     def line(self,a,b,color,width=1):
         # Clip before stepping: long routes/region edges must not cause unbounded loops.
         x,y=a;dx,dy=b[0]-x,b[1]-y;low,high=0.,1.;pad=width
@@ -202,14 +227,18 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
             aa,bb=fitted['transform'](a),fitted['transform'](b)
             context.line((aa[0]/2,aa[1]/2),(bb[0]/2,bb[1]/2),(205,213,208))
     map_surface=Surface(956,520,PAPER)
+    # The scale is exactly 2:1. Integer sums retain identical bilinear pixels
+    # while avoiding float transforms and repeated coordinate work per channel.
+    samples=[((x//2)*3+j,min(477,x//2+x%2)*3+j)
+             for x in range(956) for j in range(3)]
     for y in range(520):
-        sy=y/2;y0=int(sy);y1=min(259,y0+1);fy=sy-y0
-        for x in range(956):
-            sx=x/2;x0=int(sx);x1=min(477,x0+1);fx=sx-x0;target=(y*956+x)*3
-            for j in range(3):
-                top=context.data[(y0*478+x0)*3+j]*(1-fx)+context.data[(y0*478+x1)*3+j]*fx
-                bottom=context.data[(y1*478+x0)*3+j]*(1-fx)+context.data[(y1*478+x1)*3+j]*fx
-                map_surface.data[target+j]=round(top*(1-fy)+bottom*fy)
+        first=(y//2)*478*3;last=min(259,y//2+1)*478*3
+        top=context.data[first:first+478*3]
+        if y%2:
+            values=[a+b for a,b in zip(top,context.data[last:last+478*3])]
+        else:values=[2*a for a in top]
+        map_surface.data[y*956*3:(y+1)*956*3]=bytes(
+            round((values[a]+values[b])/4) for a,b in samples)
     road_lines=[[fitted['transform'](p) for p in line] for line in geometry.get('matched',[])]
     for color,width in (((255,255,255),9),((0,102,80),5)):
         for segment in road_lines:

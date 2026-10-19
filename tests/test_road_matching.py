@@ -33,6 +33,31 @@ class RoadMatchTests(unittest.TestCase):
         self.directory=Path(self.tmp.name)/'roads';self.directory.mkdir()
         self.db=self.directory/'region.sqlite3';build_network(osm(),self.db)
         self.matcher=RoadMatcher(self.directory)
+    def test_fragments_reuse_one_road_graph_without_joining_their_spans(self):
+        from zeekr_control import road_match_worker as worker
+        payload=dict(networks=[str(self.db)],fragments=[
+            dict(points=[[BASE,121.0001,31],[BASE+60000,121.0004,31]],indices=[0,1]),
+            dict(points=[[BASE+120000,121.001,31.0002],[BASE+180000,121.001,31.0008]],indices=[2,3])])
+        with patch.object(worker,'RoadGraph',wraps=worker.RoadGraph) as graphs:
+            result=worker.process(payload)
+        self.assertEqual(result['spans'],[[0,1],[2,3]])
+        self.assertEqual(result['status'],'matched')
+        self.assertEqual(graphs.call_count,1)
+
+    def test_reused_road_graph_closes_if_a_later_fragment_fails(self):
+        import sqlite3
+        from zeekr_control import road_match_worker as worker
+        original=worker.RoadGraph;created=[]
+        def create(path):
+            graph=original(path);created.append(graph);return graph
+        payload=dict(networks=[str(self.db)],fragments=[
+            dict(points=[[BASE,121.0001,31],[BASE+60000,121.0004,31]],indices=[0,1])]*2)
+        first=dict(lines=[],spans=[],matched_seq=[],issues=0)
+        with patch.object(worker,'RoadGraph',side_effect=create),patch.object(worker,'match',side_effect=[first,RuntimeError('interrupted')]):
+            with self.assertRaisesRegex(RuntimeError,'interrupted'):worker.process(payload)
+        self.assertEqual(len(created),1)
+        with self.assertRaises(sqlite3.ProgrammingError):created[0].db.execute('SELECT 1')
+
     def test_actual_worker_keeps_road_corner_and_original_observations(self):
         original=route([point(0,121.0002,31),point(1,121.001,31.0008)])
         before=copy.deepcopy(original);result=self.matcher.enrich(original)
@@ -104,6 +129,38 @@ class RoadMatchTests(unittest.TestCase):
         data=osm();data['elements'].append(dict(type='way',id=2,nodes=[3,1],tags={'highway':'footway'}));build_network(data,self.db)
         with sqlite3.connect(self.db) as db:self.assertEqual(db.execute('select count(*) from roads').fetchone()[0],1)
         before=self.db.read_bytes();self.matcher.enrich(route([point(0),point(1,121.001,31.0008)]));self.assertEqual(self.db.read_bytes(),before)
+
+
+class RoadGraphSearchTests(unittest.TestCase):
+    def graph(self,adjacency):
+        from zeekr_control.road_matching_core import RoadGraph
+        graph=RoadGraph.__new__(RoadGraph)
+        graph.adj=adjacency;graph.route_cache={};graph.cache_limit=24
+        return graph
+
+    def test_nearby_targets_do_not_expand_the_entire_region_and_search_resumes(self):
+        visited=[]
+        class Adjacency(dict):
+            def get(self,node,default=None):
+                visited.append(node)
+                return super().get(node,default)
+        adjacency=Adjacency({i:[(i+1,1.,i,False)] for i in range(1,5000)})
+        graph=self.graph(adjacency)
+        self.assertEqual(graph.route(1,2),(1.,[(1,False)]))
+        self.assertLessEqual(len(visited),2)
+        self.assertEqual(graph.route(1,4),(3.,[(1,False),(2,False),(3,False)]))
+        self.assertEqual(graph.route(1,2),(1.,[(1,False)]))
+        self.assertLessEqual(len(visited),4)
+
+    def test_tentative_routes_are_not_used_before_the_shortest_path_is_settled(self):
+        graph=self.graph({1:[(2,10.,12,False),(3,1.,13,False)],
+                          3:[(2,1.,32,False),(4,1.,34,False)],2:[(5,1.,25,False)]})
+        self.assertEqual(graph.route(1,3),(1.,[(13,False)]))
+        self.assertEqual(graph.route(1,2),(2.,[(13,False),(32,False)]))
+        self.assertEqual(graph.route(1,5),(3.,[(13,False),(32,False),(25,False)]))
+        self.assertEqual(graph.route(1,4),(2.,[(13,False),(34,False)]))
+        import math
+        self.assertTrue(math.isinf(graph.route(1,99)[0]))
 
 
 class RoadMatchApiTests(unittest.TestCase):
