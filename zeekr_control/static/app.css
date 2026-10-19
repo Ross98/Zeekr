@@ -391,3 +391,21 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
  .hero>.overview-power .metric-foot{font-size:11px;line-height:1.6}
  .overview-compact-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
+
+/* Approved parameter glyphs: local, decorative and consistent in both themes. */
+@media(min-width:851px){
+ .overview-vehicle .status-parameter-icon{width:16px;height:16px;stroke-width:1.6;flex:none;color:var(--muted)}
+ .overview-vehicle .overview-param-label{display:inline-flex;align-items:center;gap:5px;min-width:0}
+ .overview-part>.overview-param-label{display:flex}
+ .overview-part small{display:flex;flex-wrap:wrap;gap:3px 8px}
+ .overview-part small .status-parameter-icon,.car-tyre-temp .status-parameter-icon{width:12px;height:12px}
+ .overview-part-detail>strong.overview-param-label{display:flex;flex-wrap:wrap}
+ .overview-part-detail>.overview-part-facts{display:flex;flex-wrap:wrap;gap:4px 12px}
+ .overview-environment-values>.overview-environment-reading{display:flex;align-items:center;flex-wrap:wrap;gap:3px 5px;white-space:normal}
+ .overview-environment-reading strong{white-space:nowrap}
+ .overview-pm25>.overview-param-label{display:flex;flex-wrap:wrap}
+}
+
+@media(min-width:851px){
+ .overview-part-hood>.overview-param-label,.overview-part-trunk>.overview-param-label{flex-direction:column;align-items:flex-start;gap:3px;white-space:nowrap}
+}

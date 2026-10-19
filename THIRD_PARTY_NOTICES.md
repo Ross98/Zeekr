@@ -58,3 +58,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Vehicle status parameter icons
+
+The local SVG registry includes a subset of Lucide parameter icons, styled at
+1.6 px stroke width. The full Lucide ISC license and the upstream Feather MIT
+notice are retained above the SVG registry in `zeekr_control/static/app.js`.
+Source: https://github.com/lucide-icons/lucide

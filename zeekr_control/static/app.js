@@ -21,7 +21,66 @@ document.addEventListener('focusout', event => {
   }, 0);
 });
 
+/*
+Local vehicle-status glyph subset from https://github.com/lucide-icons/lucide
+Full upstream notice retained with the bundled SVG paths:
+
+ISC License
+
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+---
+
+The following Lucide icons are derived from the Feather project:
+
+airplay, alert-circle, alert-octagon, alert-triangle, aperture, arrow-down-circle, arrow-down-left, arrow-down-right, arrow-down, arrow-left-circle, arrow-left, arrow-right-circle, arrow-right, arrow-up-circle, arrow-up-left, arrow-up-right, arrow-up, at-sign, calendar, cast, check, chevron-down, chevron-left, chevron-right, chevron-up, chevrons-down, chevrons-left, chevrons-right, chevrons-up, circle, clipboard, clock, code, columns, command, compass, corner-down-left, corner-down-right, corner-left-down, corner-left-up, corner-right-down, corner-right-up, corner-up-left, corner-up-right, crosshair, database, divide-circle, divide-square, dollar-sign, download, external-link, feather, frown, hash, headphones, help-circle, info, italic, key, layout, life-buoy, link-2, link, loader, lock, log-in, log-out, maximize, meh, minimize, minimize-2, minus-circle, minus-square, minus, monitor, moon, more-horizontal, more-vertical, move, music, navigation-2, navigation, octagon, pause-circle, percent, plus-circle, plus-square, plus, power, radio, rss, search, server, share, shopping-bag, sidebar, smartphone, smile, square, table-2, tablet, target, terminal, trash-2, trash, triangle, tv, type, upload, x-circle, x-octagon, x-square, x, zoom-in, zoom-out
+
+The MIT License (MIT) (for the icons listed above)
+
+Copyright (c) 2013-present Cole Bemis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
 const icons = {
+  statusDoor: '<path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.646 5H8.4a2 2 0 0 0-1.903 1.257L5 10 3 8"></path><path d="M7 14h.01"></path><path d="M17 14h.01"></path><rect width="18" height="8" x="3" y="10" rx="2"></rect><path d="M5 18v2"></path><path d="M19 18v2"></path>',
+  statusWindow: '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path><path d="M9 21V9"></path>',
+  statusLock: '<circle cx="12" cy="16" r="1"></circle><rect x="3" y="10" width="18" height="12" rx="2"></rect><path d="M7 10V7a5 5 0 0 1 10 0v3"></path>',
+  statusCentral: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>',
+  statusHood: '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path>',
+  statusTrunk: '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 15h18"></path>',
+  statusPressure: '<path d="m12 14 4-4"></path><path d="M3.34 19a10 10 0 1 1 17.32 0"></path>',
+  statusTemperature: '<path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"></path>',
+  statusAir: '<path d="M12.8 19.6A2 2 0 1 0 14 16H2"></path><path d="M17.5 8a2.5 2.5 0 1 1 2 4H2"></path><path d="M9.8 4.4A2 2 0 1 1 11 8H2"></path>',
+  statusCharge: '<path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="m2 22 3-3"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m18 3-4 4h6l-4 4"></path>',
   overview: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2m4 0h2"/>',
   report: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5"/>',
@@ -47,6 +106,8 @@ const descriptions = { overview: '', calendar: '按日期回看行程、充电�
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.info}</svg>`;
+// Decorative parameter glyphs use the same local SVG registry as navigation.
+const statusIcon = name => icon('status'+name).replace('class="icon"','class="icon status-parameter-icon"');
 let state = null, page = 'overview', busy = false, transientError = '', showPosition = true, showCoordinates = false;
 let locationZoom=15;
 let map = null, mapMarker = null, generation = 0, toastTimer;
@@ -696,14 +757,14 @@ function mapOwner() {
 let overviewPartOwner='',overviewPart='rf',overviewStatus='';
 function overviewParts(){
   const m=state.model;
-  return [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']].map(([key,name])=>({key,query:name,...(m.doors.find(door=>door.name===name)||{door:'未知',lock:'未知',window:'未知'}),name:name+'门'}))
-    .concat([{key:'hood',name:'前舱盖',query:'engineHood',door:m.hood},{key:'trunk',name:'尾门',query:'trunk',door:m.trunk},{key:'central',name:'中控锁',query:'centralLocking',door:m.lock.confirmed?m.lock.value:'未知'}]);
+  return [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']].map(([key,name])=>({key,query:name,...(m.doors.find(door=>door.name===name)||{door:'未知',lock:'未知',window:'未知'}),name:name+'门',glyph:'Door'}))
+    .concat([{key:'hood',glyph:'Hood',name:'前舱盖',query:'engineHood',door:m.hood},{key:'trunk',glyph:'Trunk',name:'尾门',query:'trunk',door:m.trunk},{key:'central',glyph:'Central',name:'中控锁',query:'centralLocking',door:m.lock.confirmed?m.lock.value:'未知'}]);
 }
 function overviewStatuses(parts){
   return parts.flatMap(part=>part.window!==undefined?['door','window','lock'].map((key,i)=>({part:part.key,name:part.name.replace(/门$/,'')+['车门','车窗','门锁'][i],value:part[key]})):[{part:part.key,name:part.name,value:part.door}]);
 }
 function overviewPartDetail(part){
-  return `<strong>${esc(part.name)} · ${esc(part.door)}</strong>${part.window!==undefined?`<span>门锁 ${esc(part.lock)} · 车窗 ${esc(part.window)}</span>`:''}<p>${age(state.model.updated_time,'车辆缓存 ')} · 不代表实时状态</p><button class="text-link" data-overview-parameters="${esc(part.query)}" data-parameter-group="门窗与安全">查看参数${icon('arrow')}</button>`;
+  return `<strong class="overview-param-label">${statusIcon(part.glyph)}${esc(part.name)} · ${esc(part.door)}</strong>${part.window!==undefined?`<span class="overview-part-facts"><span class="overview-param-label">${statusIcon('Lock')}门锁 ${esc(part.lock)}</span><span class="overview-param-label">${statusIcon('Window')}车窗 ${esc(part.window)}</span></span>`:''}<p>${age(state.model.updated_time,'车辆缓存 ')} · 不代表实时状态</p><button class="text-link" data-overview-parameters="${esc(part.query)}" data-parameter-group="门窗与安全">查看参数${icon('arrow')}</button>`;
 }
 function overviewVehicle(){
   const m=state.model,parts=overviewParts(),statuses=overviewStatuses(parts),owner=mapOwner();
@@ -714,14 +775,14 @@ function overviewVehicle(){
   const art=state.profile?.image==='/car.svg'?`<div class="car-tyre-art">${carImage('top','极氪 001 俯视图，车头朝左')}</div>`:'<div class="car-tyre-no-art">车型图片待配置</div>';
   const readings=['左前','右前','左后','右后'].map(name=>{
     const tyre=m.tyres.find(tyre=>tyre.name===name),pressure=tyre?.pressure??'未知',hasUnit=/ kPa$/.test(pressure);
-    return `<div class="car-tyre-reading" data-position="${name}"><span class="car-tyre-name">${name}</span><div><strong>${esc(hasUnit?pressure.slice(0,-4):pressure)}</strong>${hasUnit?'<span class="car-tyre-unit">kPa</span>':''}</div><span class="car-tyre-temp">胎温 ${esc(tyre?.temperature??'未知')}</span></div>`;
+    return `<div class="car-tyre-reading" data-position="${name}"><span class="car-tyre-name overview-param-label">${statusIcon('Pressure')}${name}</span><div><strong>${esc(hasUnit?pressure.slice(0,-4):pressure)}</strong>${hasUnit?'<span class="car-tyre-unit">kPa</span>':''}</div><span class="car-tyre-temp overview-param-label">${statusIcon('Temperature')}胎温 ${esc(tyre?.temperature??'未知')}</span></div>`;
   }).join('');
   const pm25=m.fields.find(field=>field.group==='空气质量'&&field.key==='interiorPM25')?.value;
   const hasPm25=(typeof pm25==='number'||typeof pm25==='string'&&pm25.trim()!=='')&&Number.isFinite(Number(pm25))&&Number(pm25)>=0;
   return `<section class="card overview-vehicle"><div class="card-head"><h2>车辆状态</h2><button class="text-link" data-overview-tool="parameters">完整参数${icon('arrow')}</button></div>
-  <div class="overview-vehicle-alerts"><div class="overview-status-counts"><button class="pill ${attention.length?'warn':''}" data-overview-status="attention" aria-expanded="${overviewStatus==='attention'}">需关注 ${attention.length} 项</button><button class="pill ${unknown.length?'warn':''}" data-overview-status="unknown" aria-expanded="${overviewStatus==='unknown'}">未知 ${unknown.length} 项</button><span>门窗与锁止 · 15 项</span></div>${!m.charging.confirmed?'<button class="pill warn" data-overview-tool="parameters">充电状态待确认</button>':''}<div class="overview-status-list" data-status-list="attention" ${overviewStatus==='attention'?'':'hidden'}>${list(attention)}</div><div class="overview-status-list" data-status-list="unknown" ${overviewStatus==='unknown'?'':'hidden'}>${list(unknown)}</div></div>
-  <div class="car-tyre-diagram overview-vehicle-diagram"><div class="overview-vehicle-stage">${art}${parts.map(part=>{const kinds=[part.door,...(part.window!==undefined?[part.window,part.lock]:[])].map(carStateKind),kind=kinds.includes('attention')?'attention':kinds.includes('unknown')?'unknown':'safe';return `<button id="overview-part-${part.key}" class="overview-part overview-part-${part.key} state-${kind}" data-overview-part="${part.key}" aria-label="${esc(part.name)} ${esc(part.door)}${part.window!==undefined?` 车窗${esc(part.window)} 门锁${esc(part.lock)}`:''}" aria-pressed="${part.key===selected.key}"><span>${esc(part.name)}</span><strong>${esc(part.door)}</strong>${part.window!==undefined?`<small>车窗${esc(part.window)} · 门锁${esc(part.lock)}</small>`:''}</button>`;}).join('')}</div><div id="overview-part-detail" class="overview-part-detail" aria-live="polite">${overviewPartDetail(selected)}</div><div class="overview-tyre-heading"><h3>四轮胎压与胎温</h3><span>保留原始精度</span></div><div class="overview-tyre-readings">${readings}</div></div>
-  <div class="overview-cabin"><div class="overview-environment-values"><span>车内 <strong>${esc(m.metrics.inside)}</strong></span><span>车外 <strong>${esc(m.metrics.outside)}</strong></span><button class="text-link overview-pm25" data-overview-parameters="interiorPM25" data-parameter-group="空气质量"><span>PM2.5 <strong>${hasPm25?esc(pm25):'暂无数据'}</strong></span><small>${hasPm25?'单位待核实':'未返回有效读数'}</small></button></div><p>${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</p><p>PM2.5 独立更新时间未提供</p></div></section>`;
+  <div class="overview-vehicle-alerts"><div class="overview-status-counts"><button class="pill ${attention.length?'warn':''}" data-overview-status="attention" aria-expanded="${overviewStatus==='attention'}">需关注 ${attention.length} 项</button><button class="pill ${unknown.length?'warn':''}" data-overview-status="unknown" aria-expanded="${overviewStatus==='unknown'}">未知 ${unknown.length} 项</button><span>门窗与锁止 · 15 项</span></div>${!m.charging.confirmed?`<button class="pill warn" data-overview-tool="parameters">${statusIcon('Charge')}充电状态待确认</button>`:''}<div class="overview-status-list" data-status-list="attention" ${overviewStatus==='attention'?'':'hidden'}>${list(attention)}</div><div class="overview-status-list" data-status-list="unknown" ${overviewStatus==='unknown'?'':'hidden'}>${list(unknown)}</div></div>
+  <div class="car-tyre-diagram overview-vehicle-diagram"><div class="overview-vehicle-stage">${art}${parts.map(part=>{const kinds=[part.door,...(part.window!==undefined?[part.window,part.lock]:[])].map(carStateKind),kind=kinds.includes('attention')?'attention':kinds.includes('unknown')?'unknown':'safe';return `<button id="overview-part-${part.key}" class="overview-part overview-part-${part.key} state-${kind}" data-overview-part="${part.key}" aria-label="${esc(part.name)} ${esc(part.door)}${part.window!==undefined?` 车窗${esc(part.window)} 门锁${esc(part.lock)}`:''}" aria-pressed="${part.key===selected.key}"><span class="overview-param-label">${statusIcon(part.glyph)}${esc(part.name)}</span><strong>${esc(part.door)}</strong>${part.window!==undefined?`<small><span class="overview-param-label">${statusIcon('Window')}车窗${esc(part.window)}</span><span class="overview-param-label">${statusIcon('Lock')}门锁${esc(part.lock)}</span></small>`:''}</button>`;}).join('')}</div><div id="overview-part-detail" class="overview-part-detail" aria-live="polite">${overviewPartDetail(selected)}</div><div class="overview-tyre-heading"><h3>四轮胎压与胎温</h3><span>保留原始精度</span></div><div class="overview-tyre-readings">${readings}</div></div>
+  <div class="overview-cabin"><div class="overview-environment-values"><span class="overview-environment-reading"><span class="overview-param-label">${statusIcon('Temperature')}车内</span><strong>${esc(m.metrics.inside)}</strong></span><span class="overview-environment-reading"><span class="overview-param-label">${statusIcon('Temperature')}车外</span><strong>${esc(m.metrics.outside)}</strong></span><button class="text-link overview-pm25" data-overview-parameters="interiorPM25" data-parameter-group="空气质量"><span class="overview-param-label">${statusIcon('Air')}PM2.5 <strong>${hasPm25?esc(pm25):'暂无数据'}</strong></span><small>${hasPm25?'单位待核实':'未返回有效读数'}</small></button></div><p>${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</p><p>PM2.5 独立更新时间未提供</p></div></section>`;
 }
 function openVehicleParameters(options={}){
   vehiclePage.openParameters(options);page='car';sectionTask='';render();window.scrollTo(0,0);focusPageHeading();
