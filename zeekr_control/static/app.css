@@ -305,5 +305,12 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
   .energy-tools{margin-top:16px;padding-top:12px}
 }
 
-/* Desktop overview cards keep their own content height. */
-@media(min-width:851px){.overview-health{align-items:start}.overview-health .map-layout{height:360px}}
+/* Equal desktop card edges; the map uses available height without a blank footer. */
+@media(min-width:851px){
+ .overview-health{align-items:stretch}
+ .overview-health>.card{display:flex;flex-direction:column}
+ .overview-health>.card>.card-head{align-items:flex-start}
+ .overview-health .map-layout{height:auto;min-height:280px;flex:1}
+ .overview-health>.card>.card-body{flex:1;display:flex;align-items:center}
+ .overview-health .car-tyre-diagram{width:100%}
+}

@@ -6,7 +6,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
   const {page} = f;
   try {
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
-    await page.waitForFunction(()=>state?.model);
+    await page.waitForFunction(()=>state?.model&&!busy);
     await page.evaluate(()=>{
       state.profile.image='/car.svg';
       state.model.tyres=['右前','右后','左前','左后'].map(name=>({name,pressure:'256.751 kPa',temperature:'22°C'}));
@@ -35,6 +35,18 @@ const {fixture} = require('./ui_insight_helpers.cjs');
           assert.ok(metrics.fontSize>=28&&metrics.weight>=700,`${view} pressure must be large and bold: ${JSON.stringify(metrics)}`);
           assert.ok(metrics.height<=470,`${view} compact diagram: ${metrics.height}px`);
           assert.deepEqual(failures,[],`${view} ${theme} ${width}: wheel labels clear of image and within diagram`);
+          if(view==='总览') {
+            const edges=await page.locator('.overview-health').evaluate(el=>{
+              const [map,tyre]=[...el.children].map(node=>node.getBoundingClientRect());
+              const status=el.querySelector('#map-status').getBoundingClientRect();
+              const headings=[el.querySelector('.location-heading h2'),el.querySelector(':scope>.card>.card-head h2')].map(node=>node.getBoundingClientRect());
+              return {headingTop:Math.abs(headings[0].top-headings[1].top),top:Math.abs(map.top-tyre.top),bottom:Math.abs(map.bottom-tyre.bottom),mapFooterGap:map.bottom-status.bottom};
+            });
+            assert.ok(edges.headingTop<=1,`desktop card headings align: ${JSON.stringify(edges)}`);
+            assert.ok(edges.top<=1&&edges.bottom<=1,`desktop cards share top and bottom edges: ${JSON.stringify(edges)}`);
+            assert.ok(edges.mapFooterGap<=2,`map fills card without blank footer: ${JSON.stringify(edges)}`);
+            if(width===1440&&theme==='light')await page.locator('.overview-health').screenshot({path:'/tmp/zeekr-tyre-aligned-cards.png'});
+          }
           if(width===1440&&theme==='light')await diagram.screenshot({path:`/tmp/zeekr-tyre-${view==='总览'?'overview':'vehicle'}.png`});
         }
       }
