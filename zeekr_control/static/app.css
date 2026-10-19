@@ -409,3 +409,13 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 @media(min-width:851px){
  .overview-part-hood>.overview-param-label,.overview-part-trunk>.overview-param-label{flex-direction:column;align-items:flex-start;gap:3px;white-space:nowrap}
 }
+/* Keep the two desktop summaries compact after power moved into the hero. */
+@media(min-width:851px){
+ .overview-compact-metrics>.metric{display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-rows:auto auto;gap:1px 12px;align-items:center;padding:10px 16px}
+ .overview-compact-metrics>.metric:last-child{grid-template-columns:minmax(0,1fr) auto}
+ .overview-compact-metrics .metric-label{grid-column:1;grid-row:1;min-width:0;min-height:44px;align-items:center}
+ .overview-compact-metrics .metric-label .text-link{max-width:100%;text-align:left;white-space:normal}
+ .overview-compact-metrics .metric-value{grid-column:2;grid-row:1;margin:0;white-space:nowrap}
+ .overview-compact-metrics .metric-foot{grid-column:1/-1;grid-row:2;min-width:0;overflow-wrap:anywhere;align-self:start}
+ .overview-compact-metrics .overview-calendar-link{grid-column:3;grid-row:1;margin:0;justify-self:end}
+}
