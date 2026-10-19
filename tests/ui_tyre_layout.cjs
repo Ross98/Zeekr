@@ -31,9 +31,9 @@ const {fixture} = require('./ui_insight_helpers.cjs');
               return overlap||outside?[{wheel:reading.dataset.position,overlap,outside}]:[];
             });
           });
-          const metrics=await diagram.evaluate(el=>({height:el.getBoundingClientRect().height,fontSize:parseFloat(getComputedStyle(el.querySelector('strong')).fontSize),weight:Number(getComputedStyle(el.querySelector('strong')).fontWeight)}));
+          const metrics=await diagram.evaluate(el=>({height:el.getBoundingClientRect().height,fontSize:parseFloat(getComputedStyle(el.querySelector('.car-tyre-reading strong')).fontSize),weight:Number(getComputedStyle(el.querySelector('.car-tyre-reading strong')).fontWeight)}));
           assert.ok(metrics.fontSize>=28&&metrics.weight>=700,`${view} pressure must be large and bold: ${JSON.stringify(metrics)}`);
-          assert.ok(metrics.height<=470,`${view} compact diagram: ${metrics.height}px`);
+          assert.ok(metrics.height<=(view==='总览'?680:470),`${view} compact diagram: ${metrics.height}px`);
           assert.deepEqual(failures,[],`${view} ${theme} ${width}: wheel labels clear of image and within diagram`);
           if(view==='总览') {
             const edges=await page.locator('.overview-health').evaluate(el=>{

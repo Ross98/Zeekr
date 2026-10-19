@@ -19,14 +19,48 @@ if(trip){await page.locator(`[data-overview-record="${trip.id}"]`).click();await
 const charge=original.current.events.concat(original.previous.events).find(e=>e.kind==='charge_end');
 if(charge){await page.locator(`[data-overview-record="${charge.id}"]`).click();await page.waitForFunction(id=>chargeSelected?.id===id,charge.id);await page.locator('#charge-detail').waitFor();await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();}
 await page.locator('#overview-record-filter').selectOption('charge_end');
-await page.getByRole('button',{name:'30 天',exact:true}).click();assert.equal(await page.locator('.overview-day').count(),30);assert.ok(await page.locator('.overview-gap').count());
-await page.evaluate(()=>scrollTo(0,700));
+// Catch lost calendar navigation, stale door selection and duplicated homepage sections.
+assert.equal(await page.locator('.overview-power').count(),1,'battery and estimated range share one card');
+assert.equal(await page.locator('.overview-metrics>.metric').count(),3);
+assert.equal(await page.locator('.overview-trend-panel,.overview-activity,main>.status-footer').count(),0);
+assert.match(await page.locator('.hero-odometer').innerText(),/累计里程/);
+assert.equal(await page.locator('.overview-power .battery-track').evaluate(el=>el.getBoundingClientRect().height),6);
+await page.evaluate(()=>{state.recording.last_sample='合成最新采集';state.recording.status='failed';state.recording.error='合成采集失败';updateHeartbeat();});
+assert.match(await page.locator('.overview-collection').innerText(),/合成最新采集/);
+assert.match(await page.locator('.overview-collection-state').innerText(),/采集失败/);
+assert.equal(await page.locator('.overview-collection-error').innerText(),'合成采集失败');
+await page.evaluate(()=>{state.recording.error='';updateHeartbeat();});
+assert.equal(await page.locator('.overview-collection-error').isVisible(),false);
+await page.locator('[data-overview-tool="settings"]').click();await page.waitForFunction(()=>page==='settings');
+assert.equal(await page.locator('#interval').count(),1);
+await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();
+await page.locator('[data-overview-tool="parameters"]').first().click();
+await page.locator('#vehicle-search').waitFor();
+await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();
+await page.locator('[data-overview-tool="calendar"]').click();
+await page.waitForFunction(()=>page==='calendar');
+await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();
+assert.equal(await page.locator('#overview-record-filter').inputValue(),'charge_end');
+await page.evaluate(()=>{window.__overviewOriginal={model:structuredClone(state.model),profile:structuredClone(state.profile),vehicle:state.vehicle};state.model.doors.find(d=>d.name==='左后').door='打开';render();});
+await page.locator('.overview-vehicle-alerts [data-overview-part="lr"]').click();
+assert.match(await page.locator('#overview-part-detail').innerText(),/左后门.*打开/s);
+await page.evaluate(()=>render());
+assert.equal(await page.locator('.overview-part[data-overview-part="lr"]').getAttribute('aria-pressed'),'true','refresh preserves selected part');
+await page.locator('.overview-part[data-overview-part="lr"]').focus();
+await page.evaluate(()=>{state.model.doors.find(d=>d.name==='左后').door='关闭';render();});
+assert.equal(await page.evaluate(()=>document.activeElement?.dataset.overviewPart),'lr','updated door state preserves keyboard focus');
+await page.evaluate(()=>{state.vehicle='other-synthetic';state.model.doors.forEach(d=>d.door='关闭');render();});
+assert.equal(await page.locator('.overview-part[data-overview-part="rf"]').getAttribute('aria-pressed'),'true','vehicle identity resets selected part');
+await page.evaluate(()=>{state.profile.image='';state.model.metric_details={battery:{value:null,unit:'%'},range:{value:null,unit:'km'}};render();});
+assert.equal(await page.locator('.overview-power .battery-track').count(),0,'unknown battery never becomes zero');
+assert.equal(await page.locator('.overview-vehicle-diagram img').count(),0,'unconfigured vehicle has no official car image');
+await page.evaluate(()=>{Object.assign(state,window.__overviewOriginal);render();scrollTo(0,700);});
 // Save the actual click position after the approved map/records group swap.
 await page.getByRole('button',{name:'去补账',exact:true}).scrollIntoViewIfNeeded();
 const scroll=await page.evaluate(()=>scrollY);
 await page.getByRole('button',{name:'去补账',exact:true}).click();await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();assert.equal(await page.locator('#overview-record-filter').inputValue(),'charge_end');assert.ok(Math.abs(await page.evaluate(()=>scrollY)-scroll)<2);
-for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1280,1024]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${theme} ${width} overflow`);}}
+for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1280,1024]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${theme} ${width} overflow`);const bounds=await page.evaluate(()=>{const box=s=>document.querySelector(s).getBoundingClientRect();const [map,vehicle]=[...document.querySelector('.overview-health').children].map(e=>e.getBoundingClientRect());const [records,tasks]=[...document.querySelector('.overview-work-grid').children].map(e=>e.getBoundingClientRect());return {collectionAbove:box('.overview-collection').bottom<=map.top,cardTop:Math.abs(map.top-vehicle.top),cardBottom:Math.abs(map.bottom-vehicle.bottom),recordWidth:Math.abs(records.width-tasks.width)};});assert.ok(bounds.collectionAbove&&bounds.cardTop<=1&&bounds.cardBottom<=1&&bounds.recordWidth<=1,JSON.stringify(bounds));}}
 await page.setViewportSize({width:1440,height:1000});await page.locator('#overview-record-filter').selectOption('all');await page.getByLabel('外观',{exact:true}).selectOption('light');await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'/tmp/zeekr-overview-production-desktop.png',fullPage:true});
 report={...report,context:'other-vehicle'};ledger={...ledger,context:'other-vehicle'};await page.getByRole('button',{name:'重新读取记录汇总',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#overview-today-value').textContent==='未知');assert.equal(await page.locator('#overview-cost-value').innerText(),'未知');assert.match(await page.locator('#overview-records').innerText(),/读取失败/);
-assert.deepEqual(f.errors,[]);assert.equal(f.external.length,0);console.log('PASS overview actual-only zero, partial distance, 30-day missing samples, return/filter/scroll, context rejection, 6 desktop viewport/theme checks');
+assert.deepEqual(f.errors,[]);assert.equal(f.external.length,0);console.log('PASS overview actual-only zero, partial distance, calendar return, door selection/context reset, unknown battery, return/filter/scroll, context rejection, 6 desktop viewport/theme checks');
 }finally{await f.close();}})().catch(e=>{console.error(e);process.exit(1)});

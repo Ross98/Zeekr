@@ -80,7 +80,7 @@ window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,tra
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,study:setReviewStudy,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields,editing:()=>reviewEditing,edit:editReviewStep,canEdit:canEditReview,propose:proposeReview},
   navigate:(section,view,date,eventId)=>{if(['ledger','life','costs'].includes(view)){enterBooks(view,date,eventId);return;}page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
-  openTool:(tool,date)=>{if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{if(tool==='ledger'||tool==='costs'){enterBooks(tool,date);return;}page='settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
+  openTool:(tool,date)=>{if(tool==='calendar'){page='calendar';sectionTask='';render();insightsPage.openDate('calendar',date);}else if(tool==='parameters'){page='car';sectionTask='';render();vehiclePage.handle({type:'click',target:document.querySelector('[data-vehicle=parameters]')});}else if(tool==='settings'){page='settings';sectionTask='';render();}else if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{if(tool==='ledger'||tool==='costs'){enterBooks(tool,date);return;}page='settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
 async function openOverviewRecord(record){
   const context=state?.insights_context,date=beijingDate(record.end_time);
   if(record.kind==='trip_end'){
@@ -693,25 +693,48 @@ function mapOwner() {
   return JSON.stringify([state?.request_key,state?.insights_context,state?.vehicle]);
 }
 
+let overviewPartOwner='',overviewPart='rf';
+function overviewParts(){
+  return [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']].map(([key,name])=>({key,name,...(state.model.doors.find(door=>door.name===name)||{door:'未知',lock:'未知',window:'未知'})}));
+}
+function overviewPartDetail(part){
+  return `<strong>${esc(part.name)}门 · ${esc(part.door)}</strong><span>门锁 ${esc(part.lock)} · 车窗 ${esc(part.window)}</span><p>${age(state.model.updated_time,'车辆缓存 ')} · 不代表实时状态</p>`;
+}
+function overviewVehicle(){
+  const m=state.model,parts=overviewParts(),owner=mapOwner();
+  if(owner!==overviewPartOwner){overviewPartOwner=owner;overviewPart=(parts.find(part=>carStateKind(part.door)==='attention')||parts[0]).key;}
+  const selected=parts.find(part=>part.key===overviewPart)||parts[0];
+  const alert=parts.filter(part=>carStateKind(part.door)==='attention').map(part=>`<button class="pill warn" data-overview-part="${part.key}">${esc(part.name)}门${esc(part.door)}</button>`).join('');
+  const art=state.profile?.image==='/car.svg'?`<div class="car-tyre-art">${carImage('top','极氪 001 俯视图，车头朝左')}</div>`:'<div class="car-tyre-no-art">车型图片待配置</div>';
+  const readings=['左前','右前','左后','右后'].map(name=>{
+    const tyre=m.tyres.find(tyre=>tyre.name===name),pressure=tyre?.pressure??'未知',hasUnit=/ kPa$/.test(pressure);
+    return `<div class="car-tyre-reading" data-position="${name}"><span class="car-tyre-name">${name}</span><div><strong>${esc(hasUnit?pressure.slice(0,-4):pressure)}</strong>${hasUnit?'<span class="car-tyre-unit">kPa</span>':''}</div><span class="car-tyre-temp">胎温 ${esc(tyre?.temperature??'未知')}</span></div>`;
+  }).join('');
+  return `<section class="card overview-vehicle"><div class="card-head"><h2>车辆状态</h2><button class="text-link" data-overview-tool="parameters">完整参数${icon('arrow')}</button></div><div class="overview-vehicle-alerts">${alert}${!m.charging.confirmed?'<button class="pill warn" data-overview-tool="parameters">充电状态待确认</button>':''}</div><div class="car-tyre-diagram overview-vehicle-diagram"><div class="overview-vehicle-stage">${art}${parts.map(part=>`<button id="overview-part-${part.key}" class="overview-part overview-part-${part.key} state-${carStateKind(part.door)}" data-overview-part="${part.key}" aria-label="${part.name}门 ${esc(part.door)}" aria-pressed="${part.key===selected.key}"><span>${part.name}门</span><strong>${esc(part.door)}</strong></button>`).join('')}</div><div id="overview-part-detail" class="overview-part-detail" aria-live="polite">${overviewPartDetail(selected)}</div><button class="closure-summary" data-page="car" aria-label="查看门窗详情"><span>前舱盖${esc(m.hood)} · 尾门${esc(m.trunk)} · 车窗${esc(m.closure?.windows??'未知')}</span>${icon('arrow')}</button><div class="overview-tyre-heading"><h3>四轮胎压与胎温</h3><span>保留原始精度</span></div><div class="overview-tyre-readings">${readings}</div></div><div class="overview-cabin"><span>车内 <strong>${esc(m.metrics.inside)}</strong></span><span>车外 <strong>${esc(m.metrics.outside)}</strong></span><span>${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</span></div></section>`;
+}
+function overviewPower(){
+  const m=state.model;
+  const parts=(detail,fallback)=>{
+    const text=detail&&typeof detail==='object'?(Number.isFinite(detail.value)?`${new Intl.NumberFormat('zh-CN',{maximumFractionDigits:3}).format(detail.value)}${detail.unit==='%'?'%':` ${detail.unit}`}`:'未知'):(detail||fallback||'未知');
+    const match=text.match(/^(.*?)(%| km)$/);return {number:match?match[1]:text,unit:match?match[2].trim():'',percent:text.endsWith('%')?Math.max(0,Math.min(100,parseFloat(text))):null};
+  };
+  const battery=parts(m.metric_details?.battery,m.metrics.battery),range=parts(m.metric_details?.range,m.metrics.range);
+  return `<div class="metric overview-power"><div class="metric-label">${icon('battery')}电量与续航</div><div class="overview-power-values"><div class="metric-value">${esc(battery.number)}${battery.unit?`<span class="metric-unit">${esc(battery.unit)}</span>`:''}</div><div class="overview-range"><span>预估</span><strong>${esc(range.number)}</strong>${range.unit?`<span>${esc(range.unit)}</span>`:''}</div></div>${Number.isFinite(battery.percent)?`<div class="battery-track" role="meter" aria-label="动力电池电量" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${battery.percent}"><div class="battery-fill" style="width:${battery.percent}%"></div></div>`:''}<div class="metric-foot">${age(m.updated_time,'车辆缓存 ')} · 续航以车辆实际表现为准</div></div>`;
+}
+function overviewCollection(){
+  const recording=state.recording||{},monitor=state.monitoring||{};
+  const label={never:'尚未开启',paused:'已暂停',active:monitor.online===true?'在线运行':monitor.online===false?'后台未在线':'状态待确认',failed:'采集失败',offline:'后台未在线'}[recording.status]||(recording.active?'状态待确认':'已暂停');
+  const activity=monitor.charge==='charging'?'充电记录中':monitor.trip==='driving'?'行程记录中':monitor.trip==='waiting'?'等待行程结束确认':'没有进行中活动的证据';
+  return `<div class="overview-collection overview-secondary"><div class="overview-collection-info"><div class="overview-collection-state"><span>后台采集 <strong>${esc(label)}</strong></span><span>采样间隔 <strong>${esc(recording.interval??'未知')} 秒</strong></span><span>最近检查 <strong data-overview-last-sample>${esc(recording.last_sample||'未知')}</strong></span></div><div class="overview-collection-meta"><span>${esc(activity)} · 非实时状态</span><span>本次读取 ${esc(state.read_at)} · 车辆缓存 ${esc(state.model.updated_at)}</span></div><p class="unknown overview-collection-error" ${recording.error?'':'hidden'}>${esc(recording.error||'')}</p><section id="overview-attention" class="overview-attention" aria-label="需要留意" hidden></section></div><button class="button secondary" data-overview-tool="settings">采集设置</button><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用专用字段，与低压电池分开；续航为车辆返回的估计。</p><p>胎压保留接口精度，不设置未经核对的报警阈值。未知不代表正常或异常；车型图片仅供参考。</p>${row('车辆状态时间',state.model.updated_at)}${row('温度状态时间',state.model.temperature_updated_at)}${row('最近云端读取',state.read_at)}<p>温度与整车可能不同步；云端读取不等于车辆产生新数据。定位时间和可信度见地图说明。</p></div></details></div>`;
+}
 function overview() {
-  const attention='<section id="overview-attention" class="overview-attention" aria-label="需要留意" hidden></section>';
-  if (!state?.model) return attention+modelRequired();
-  const m = state.model, profile=state.profile || {name:'我的车辆',variant:'',image:''};
-  const closure=m.closure || {doors:'未知',windows:'未知',trunk:'未知'};
-  const recording=state.recording;
-  const recent=state.recent_events || {};
-  const activity=state.monitoring?.charge==='charging'?'充电记录中':state.monitoring?.trip==='driving'?'行程记录中':state.monitoring?.trip==='waiting'?'等待行程结束确认':'没有进行中活动的证据';
-  const recordingLabel={never:'尚未开启',paused:'已暂停',active:'正在记录',failed:'采集失败',offline:'后台未在线'}[recording.status] || (recording.active?'正在记录':'已暂停');
-  return `<section class="hero"><div class="hero-copy"><div class="hero-title">${esc(profile.name)}</div><div class="hero-state">${pill(m.lock.confirmed?m.lock.value:'锁车状态未知',m.lock.confirmed?'good':'warn',m.lock.confirmed?'lock':'info')}${pill(m.charging.confirmed?m.charging.value:'充电状态未知',m.charging.confirmed?'':'warn','energy')}</div><div class="freshness">${icon('clock')}<div>${age(m.updated_time,'车辆数据更新于 ')}<span class="subtle">云端缓存 · 不代表实时状态</span></div></div><button class="closure-summary" data-page="car" aria-label="查看门窗详情">${[['doors','车门'],['windows','车窗'],['trunk','尾门']].map(([key,label])=>`<span class="${closure[key]==='未知'?'unknown':''}">${label}${esc(closure[key])}</span>`).join('')}<span class="${m.hood==='未知'?'unknown':''}">前舱盖${esc(m.hood)}</span>${icon('arrow')}</button></div><div class="hero-car">${profile.image==='/car.svg'?carImage('hero',profile.image_alt,true):profile.image?`<img src="${esc(profile.image)}" alt="${esc(profile.image_alt)}">`:icon('car')}</div></section>
-  ${attention}
-  <section class="card overview-temperature"><h2>座舱与环境</h2><div class="overview-temperature-values"><span>车内温度 <strong>${esc(m.metrics.inside)}</strong></span><span>车外温度 <strong>${esc(m.metrics.outside)}</strong></span></div>${link('车辆详情','car')}<p class="subtle">${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</p></section>
-  <section class="metric-grid overview-metrics overview-four">${metric('动力电池',m.metric_details?.battery || m.metrics.battery,'battery','',true)}${metric('预估续航',m.metric_details?.range || m.metrics.range,'range','以车辆实际表现为准')}<div class="metric"><div class="metric-label">今日已记录里程</div><div class="metric-value"><span id="overview-today-value">未知</span><span class="metric-unit">km</span></div><div class="metric-foot" id="overview-today-note">正在读取已保存记录…</div></div><div class="metric"><div class="metric-label"><button class="text-link" data-overview-tool="costs">本月已录实际费用</button></div><div class="metric-value"><span id="overview-cost-value">未知</span><span class="metric-unit">元</span></div><div class="metric-foot" id="overview-cost-note">含充电、充电停车费与日常支出</div></div></section>
-  <div class="overview-secondary"><span>累计里程 <strong>${esc(m.metrics.odometer)}</strong></span><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用动力电池专用字段，与低压电池分开。续航是车辆返回的估计。</p><p>胎压轮位及单位已核对；总览与车辆详情均保留接口精度。未设置未经核对的胎压报警阈值。</p><p>门窗及锁车仅解释本车已验证的组合；未知不代表正常，也不代表异常。车型图片仅供参考。</p>${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}</div></details></div>
-
-  <div class="grid-two grid-equal overview-health">${overviewLocation()}<section class="card"><div class="card-head"><h2>轮胎状态</h2>${link('查看详情','car')}</div><div class="card-body">${carTyreDiagram(m)}</div></section></div>
-  <div class="overview-work-grid"><section class="card recent-events"><div class="card-head"><h2>最近行程与充电</h2><select class="select" id="overview-record-filter" aria-label="总览记录类型"><option value="all">全部记录</option><option value="trip_end">行程</option><option value="charge_end">充电</option></select></div><div class="card-body"><details data-detail="overview-latest"><summary>最近完成行程与充电摘要</summary><h3>最近完成行程</h3>${eventSummary(recent.trip_end,'trip_end')}<h3>最近完成充电</h3>${eventSummary(recent.charge_end,'charge_end')}</details><div id="overview-records"></div><button class="button secondary" data-overview-reload>重新读取记录汇总</button></div></section><aside class="card"><div class="card-head"><h2>待处理</h2></div><div class="card-body" id="overview-tasks"></div></aside></div>
-  <section class="card overview-activity"><div class="card-head"><h2>最近观测活动</h2>${link('采集详情','settings')}</div><div class="card-body">${row('当前活动',activity)}${row('本地采集',recordingLabel)}${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}<p class="subtle">活动来自后台最近观测，不代表实时状态。</p></div></section>
-  <section class="card overview-trend-panel"><div class="card-head"><h2>每日已记录里程</h2><div class="overview-span"><button class="button secondary" data-overview-span="7" aria-pressed="true">7 天</button><button class="button secondary" data-overview-span="30" aria-pressed="false">30 天</button></div></div><div class="card-body"><p class="subtle" id="overview-trend-range"></p><div class="overview-trend" id="overview-trend" tabindex="0" role="group" aria-label="每日里程趋势"></div><p class="subtle">片段按有效指标计入。— 表示无有效里程观测，不视为零；没有记录不证明没有用车。</p></div></section>`;
+  if(!state?.model)return '<section id="overview-attention" class="overview-attention" aria-label="需要留意" hidden></section>'+modelRequired();
+  const m=state.model,profile=state.profile||{name:'我的车辆',image:''};
+  return `<section class="hero"><div class="hero-copy"><div class="hero-title">${esc(profile.name)}</div><div class="hero-state">${pill(m.lock.confirmed?m.lock.value:'锁车状态未知',m.lock.confirmed?'good':'warn',m.lock.confirmed?'lock':'info')}${pill(m.charging.confirmed?m.charging.value:'充电状态未知',m.charging.confirmed?'':'warn','energy')}</div><div class="freshness">${icon('clock')}<div>${age(m.updated_time,'车辆数据更新于 ')}<span class="subtle">云端缓存 · 不代表实时状态</span></div></div><div class="hero-odometer">累计里程 <strong>${esc(m.metrics.odometer)}</strong></div></div><div class="hero-car">${profile.image==='/car.svg'?carImage('hero',profile.image_alt,true):profile.image?`<img src="${esc(profile.image)}" alt="${esc(profile.image_alt)}">`:icon('car')}</div></section>
+  <section class="metric-grid overview-metrics overview-compact-metrics">${overviewPower()}<div class="metric"><div class="metric-label">今日已记录里程</div><div class="metric-value"><span id="overview-today-value">未知</span><span class="metric-unit">km</span></div><div class="metric-foot" id="overview-today-note">正在读取已保存记录…</div><button class="text-link overview-calendar-link" data-overview-tool="calendar">用车日历${icon('arrow')}</button></div><div class="metric"><div class="metric-label"><button class="text-link" data-overview-tool="costs">本月已录实际费用</button></div><div class="metric-value"><span id="overview-cost-value">未知</span><span class="metric-unit">元</span></div><div class="metric-foot" id="overview-cost-note">含充电、充电停车费与日常支出</div></div></section>
+  ${overviewCollection()}
+  <div class="grid-two grid-equal overview-health">${overviewLocation()}${overviewVehicle()}</div>
+  <div class="overview-work-grid"><section class="card recent-events"><div class="card-head"><h2>最近行程与充电</h2><select class="select" id="overview-record-filter" aria-label="总览记录类型"><option value="all">全部记录</option><option value="trip_end">行程</option><option value="charge_end">充电</option></select></div><div class="card-body"><div id="overview-records"></div><button class="button secondary" data-overview-reload>重新读取记录汇总</button></div></section><aside class="card"><div class="card-head"><h2>待处理事项</h2></div><div class="card-body" id="overview-tasks"></div></aside></div>`;
 }
 
 function table(fields, paths = false) {
@@ -997,6 +1020,11 @@ function settings() {
 }
 
 function updateHeartbeat() {
+  if(page==='overview'&&state?.model){
+    const latest=overviewCollection(),template=document.createElement('template');template.innerHTML=latest;
+    const source=template.content.querySelector('.overview-collection-info'),target=$('.overview-collection-info');
+    if(target){const error=target.querySelector('.overview-collection-error');if(error){error.hidden=!state.recording?.error;error.textContent=state.recording?.error||'';}for(const selector of ['.overview-collection-state','.overview-collection-meta']){const before=target.querySelector(selector),after=source.querySelector(selector);if(before&&after&&before.innerHTML!==after.innerHTML)before.innerHTML=after.innerHTML;}}
+  }
   document.querySelectorAll('.inline-row').forEach(row => {
     const label=row.querySelector('span')?.textContent, value=row.querySelector('strong');
     if(label==='最近采样检查'&&value)value.textContent=state?.recording?.last_sample || '未知';
@@ -1061,7 +1089,7 @@ function renderContent() {
   const retainedMap = $('#map')?.dataset.owner===mapOwner() ? $('#map').querySelector('img') : null;
   const retainedMarker = retainedMap ? $('#map').querySelector('.location-position-marker') : null;
   const content = document.createElement('template');
-  content.innerHTML = head() + (page!=='overview'?overviewDashboard.backButton():'') + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
+  content.innerHTML = head() + (page!=='overview'?overviewDashboard.backButton():'') + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model && page!=='overview' ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
   // Adopt the inert fragment before moving loaded images into it. Moving them
   // to the template's separate document would restart no-store image requests.
   const fragment=document.adoptNode(content.content);
@@ -1199,6 +1227,12 @@ async function updateRecording(saveInterval = false) {
   if(window.booksWritePending()&&event.target.closest('[data-page],[data-section-task],[data-costs],[data-books-return],[data-overview-back]')){event.preventDefault();return;}
   if(event.target.closest('[data-overview-back]')){page='overview';sectionTask='';render();overviewDashboard.restore();return;}
   if(overviewDashboard.handle(event))return;
+  const partButton=event.target.closest('[data-overview-part]');
+  if(partButton&&page==='overview'&&state?.model){
+    const part=overviewParts().find(part=>part.key===partButton.dataset.overviewPart);
+    if(part){overviewPart=part.key;document.querySelectorAll('.overview-part').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.overviewPart===part.key)));$('#overview-part-detail').innerHTML=overviewPartDetail(part);}
+    return;
+  }
   const attentionLink=event.target.closest('[data-attention-target]');
   if(attentionLink){openAttention(attentionLink.dataset.attentionTarget);return;}
   if(event.target.closest('[data-collection-diagnosis]')){page='settings';openSectionTask('quality');return;}

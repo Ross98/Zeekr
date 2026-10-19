@@ -7,3 +7,19 @@ assert.equal(result.today.distance_km,8.4);assert.equal(result.today.partial_tri
 assert.equal(summarize(null,null,'2026-10-03',30).actual,null);assert.equal(summarize(null,null,'2026-10-03',30).today.distance_km,null);assert.equal(summarize(null,null,'2026-10-03',30).pending,null);
 assert.equal(summarize(null,{totals:{actual_cents:0,unknown_charge_count:0,unlinked_charge_count:0}},'2026-10-03',7).actual,0);
 console.log('PASS trailing periods, fragments, missing/zero, pending unpriced bills, actual-only cost');
+// The last completed session must remain available even outside the report window.
+const latest={trip_end:{id:'a',kind:'trip_end',end_time:2,distance_km:99},charge_end:{id:'old-charge',end_time:-20,partial:true}};
+const withLatest=summarize(report,ledger,'2026-10-03',7,latest);
+assert.deepEqual(withLatest.events.map(e=>e.id),['a','b','old-charge']);
+assert.equal(withLatest.events[0].distance_km,undefined,'report wins over a duplicate latest summary');
+assert.equal(withLatest.events.at(-1).kind,'charge_end');
+assert.equal(summarize(null,null,'2026-10-03',7,latest).events.length,2);
+console.log('PASS latest sessions outside report window, kind normalization, deduplication');
+// A busy day must not push the latest charge out of the compact mixed list.
+const {selectRecords}=require('../zeekr_control/static/overview-dashboard.js');
+const mixed=[{id:'t1',kind:'trip_end',end_time:6},{id:'t2',kind:'trip_end',end_time:5},{id:'t3',kind:'trip_end',end_time:4},{id:'c1',kind:'charge_end',end_time:1}];
+assert.deepEqual(selectRecords(mixed,'all').map(e=>e.id),['t1','t2','c1']);
+assert.deepEqual(selectRecords(mixed,'charge_end').map(e=>e.id),['c1']);
+assert.deepEqual(selectRecords(mixed,'trip_end').map(e=>e.id),['t1','t2','t3']);
+assert.deepEqual(selectRecords([],'all'),[]);
+console.log('PASS compact mixed list retains the latest charge and trip');
