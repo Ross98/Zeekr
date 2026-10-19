@@ -73,20 +73,9 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
     const position=await scroll.evaluate(el=>el.scrollTop);await page.evaluate(()=>render());
     assert.ok(Math.abs(await scroll.evaluate(el=>el.scrollTop)-position)<1,'Background render preserves scroll');
     await scroll.evaluate(el=>el.scrollTop=0);
-    await page.locator('#vehicle-overview').click();
-    if(width===1440)await contrast();
-    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${theme} overview overflow at ${width}`);
-
-    if(width===1440)await page.screenshot({path:`/tmp/zeekr-vehicle-qa/overview-${theme}-${width}.png`,fullPage:true});
-    await page.locator('#vehicle-parameters').click();
    }
   }
-  await page.locator('#vehicle-overview').click();
-  assert.match(await page.locator('#car-hood').innerText(),/关闭/);
-  await page.evaluate(()=>{state.model.hood='未知';render();});
-  await page.locator('.car-pending summary').click();await page.getByRole('button',{name:'前舱盖 · 未知',exact:true}).click();
-  assert.equal(await page.evaluate(()=>document.activeElement.id),'car-hood');
-  await page.locator('#vehicle-parameters').click();
+  assert.equal(await page.locator('.vehicle-tabs').count(),0);
   // Refresh failure retains exact readings and times; filters survive application renders.
   await page.locator('#vehicle-search').fill('engineHood');
   const before=await page.locator('.vehicle-table').innerText();
@@ -94,6 +83,6 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.getByRole('button',{name:'刷新状态',exact:true}).click();await page.getByText(/合成刷新失败/).first().waitFor();
   assert.equal(await page.locator('.vehicle-table').innerText(),before);assert.equal(await page.locator('#vehicle-search').inputValue(),'engineHood');
   assert.equal(posts.length,2,'Only the two explicit refresh clicks post');assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-  console.log('UI_VEHICLE_PARAMETERS_PASS: all 217 rows, 14 groups, filters, five-row scrolling, focus/details, 12 desktop theme/view/width layouts, source semantics, failed refresh, no unsolicited cloud requests');
+  console.log('UI_VEHICLE_PARAMETERS_PASS: all 217 rows, 14 groups, filters, five-row scrolling, focus/details, 6 desktop theme/width layouts, source semantics, failed refresh, no unsolicited cloud requests');
  }finally{if(browser)await browser.close();server.kill()}
 })().catch(e=>{console.error(e);process.exitCode=1});

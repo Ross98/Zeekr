@@ -42,6 +42,7 @@ await page.waitForFunction(()=>page==='calendar');
 await page.getByRole('button',{name:'← 返回总览原位置',exact:true}).click();
 assert.equal(await page.locator('#overview-record-filter').inputValue(),'charge_end');
 await page.evaluate(()=>{window.__overviewOriginal={model:structuredClone(state.model),profile:structuredClone(state.profile),vehicle:state.vehicle};state.model.doors.find(d=>d.name==='左后').door='打开';render();});
+await page.locator('[data-overview-status="attention"]').click();
 await page.locator('.overview-vehicle-alerts [data-overview-part="lr"]').click();
 assert.match(await page.locator('#overview-part-detail').innerText(),/左后门.*打开/s);
 await page.evaluate(()=>render());

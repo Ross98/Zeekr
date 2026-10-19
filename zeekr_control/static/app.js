@@ -80,7 +80,7 @@ window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,tra
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,study:setReviewStudy,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields,editing:()=>reviewEditing,edit:editReviewStep,canEdit:canEditReview,propose:proposeReview},
   navigate:(section,view,date,eventId)=>{if(['ledger','life','costs'].includes(view)){enterBooks(view,date,eventId);return;}page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
-  openTool:(tool,date)=>{if(tool==='calendar'){page='calendar';sectionTask='';render();insightsPage.openDate('calendar',date);}else if(tool==='parameters'){page='car';sectionTask='';render();vehiclePage.handle({type:'click',target:document.querySelector('[data-vehicle=parameters]')});}else if(tool==='settings'){page='settings';sectionTask='';render();}else if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{if(tool==='ledger'||tool==='costs'){enterBooks(tool,date);return;}page='settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
+  openTool:(tool,date)=>{if(tool==='calendar'){page='calendar';sectionTask='';render();insightsPage.openDate('calendar',date);}else if(tool==='parameters'){openVehicleParameters();}else if(tool==='settings'){page='settings';sectionTask='';render();}else if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{if(tool==='ledger'||tool==='costs'){enterBooks(tool,date);return;}page='settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
 async function openOverviewRecord(record){
   const context=state?.insights_context,date=beijingDate(record.end_time);
   if(record.kind==='trip_end'){
@@ -695,22 +695,36 @@ function mapOwner() {
 
 let overviewPartOwner='',overviewPart='rf';
 function overviewParts(){
-  return [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']].map(([key,name])=>({key,name,...(state.model.doors.find(door=>door.name===name)||{door:'未知',lock:'未知',window:'未知'})}));
+  const m=state.model;
+  return [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']].map(([key,name])=>({key,query:name,...(m.doors.find(door=>door.name===name)||{door:'未知',lock:'未知',window:'未知'}),name:name+'门'}))
+    .concat([{key:'hood',name:'前舱盖',query:'engineHood',door:m.hood},{key:'trunk',name:'尾门',query:'trunk',door:m.trunk},{key:'central',name:'中控锁',query:'centralLocking',door:m.lock.confirmed?m.lock.value:'未知'}]);
+}
+function overviewStatuses(parts){
+  return parts.flatMap(part=>part.window!==undefined?['door','window','lock'].map((key,i)=>({part:part.key,name:part.name.replace(/门$/,'')+['车门','车窗','门锁'][i],value:part[key]})):[{part:part.key,name:part.name,value:part.door}]);
 }
 function overviewPartDetail(part){
-  return `<strong>${esc(part.name)}门 · ${esc(part.door)}</strong><span>门锁 ${esc(part.lock)} · 车窗 ${esc(part.window)}</span><p>${age(state.model.updated_time,'车辆缓存 ')} · 不代表实时状态</p>`;
+  return `<strong>${esc(part.name)} · ${esc(part.door)}</strong>${part.window!==undefined?`<span>门锁 ${esc(part.lock)} · 车窗 ${esc(part.window)}</span>`:''}<p>${age(state.model.updated_time,'车辆缓存 ')} · 不代表实时状态</p><button class="text-link" data-overview-parameters="${esc(part.query)}" data-parameter-group="门窗与安全">查看参数${icon('arrow')}</button>`;
 }
 function overviewVehicle(){
-  const m=state.model,parts=overviewParts(),owner=mapOwner();
-  if(owner!==overviewPartOwner){overviewPartOwner=owner;overviewPart=(parts.find(part=>carStateKind(part.door)==='attention')||parts[0]).key;}
+  const m=state.model,parts=overviewParts(),statuses=overviewStatuses(parts),owner=mapOwner();
+  if(owner!==overviewPartOwner){overviewPartOwner=owner;overviewPart=statuses.find(item=>carStateKind(item.value)==='attention')?.part||'rf';}
   const selected=parts.find(part=>part.key===overviewPart)||parts[0];
-  const alert=parts.filter(part=>carStateKind(part.door)==='attention').map(part=>`<button class="pill warn" data-overview-part="${part.key}">${esc(part.name)}门${esc(part.door)}</button>`).join('');
+  const attention=statuses.filter(item=>carStateKind(item.value)==='attention'),unknown=statuses.filter(item=>carStateKind(item.value)==='unknown');
+  const list=(items)=>items.map(item=>`<button class="pill warn" data-overview-part="${item.part}">${esc(item.name)} · ${esc(item.value)}</button>`).join('');
   const art=state.profile?.image==='/car.svg'?`<div class="car-tyre-art">${carImage('top','极氪 001 俯视图，车头朝左')}</div>`:'<div class="car-tyre-no-art">车型图片待配置</div>';
   const readings=['左前','右前','左后','右后'].map(name=>{
     const tyre=m.tyres.find(tyre=>tyre.name===name),pressure=tyre?.pressure??'未知',hasUnit=/ kPa$/.test(pressure);
     return `<div class="car-tyre-reading" data-position="${name}"><span class="car-tyre-name">${name}</span><div><strong>${esc(hasUnit?pressure.slice(0,-4):pressure)}</strong>${hasUnit?'<span class="car-tyre-unit">kPa</span>':''}</div><span class="car-tyre-temp">胎温 ${esc(tyre?.temperature??'未知')}</span></div>`;
   }).join('');
-  return `<section class="card overview-vehicle"><div class="card-head"><h2>车辆状态</h2><button class="text-link" data-overview-tool="parameters">完整参数${icon('arrow')}</button></div><div class="overview-vehicle-alerts">${alert}${!m.charging.confirmed?'<button class="pill warn" data-overview-tool="parameters">充电状态待确认</button>':''}</div><div class="car-tyre-diagram overview-vehicle-diagram"><div class="overview-vehicle-stage">${art}${parts.map(part=>`<button id="overview-part-${part.key}" class="overview-part overview-part-${part.key} state-${carStateKind(part.door)}" data-overview-part="${part.key}" aria-label="${part.name}门 ${esc(part.door)}" aria-pressed="${part.key===selected.key}"><span>${part.name}门</span><strong>${esc(part.door)}</strong></button>`).join('')}</div><div id="overview-part-detail" class="overview-part-detail" aria-live="polite">${overviewPartDetail(selected)}</div><button class="closure-summary" data-page="car" aria-label="查看门窗详情"><span>前舱盖${esc(m.hood)} · 尾门${esc(m.trunk)} · 车窗${esc(m.closure?.windows??'未知')}</span>${icon('arrow')}</button><div class="overview-tyre-heading"><h3>四轮胎压与胎温</h3><span>保留原始精度</span></div><div class="overview-tyre-readings">${readings}</div></div><div class="overview-cabin"><span>车内 <strong>${esc(m.metrics.inside)}</strong></span><span>车外 <strong>${esc(m.metrics.outside)}</strong></span><span>${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</span></div></section>`;
+  const pm25=m.fields.find(field=>field.group==='空气质量'&&field.key==='interiorPM25')?.value;
+  const hasPm25=(typeof pm25==='number'||typeof pm25==='string'&&pm25.trim()!=='')&&Number.isFinite(Number(pm25))&&Number(pm25)>=0;
+  return `<section class="card overview-vehicle"><div class="card-head"><h2>车辆状态</h2><button class="text-link" data-overview-tool="parameters">完整参数${icon('arrow')}</button></div>
+  <div class="overview-vehicle-alerts"><div class="overview-status-counts"><button class="pill ${attention.length?'warn':''}" data-overview-status="attention" aria-expanded="false">需关注 ${attention.length} 项</button><button class="pill ${unknown.length?'warn':''}" data-overview-status="unknown" aria-expanded="false">未知 ${unknown.length} 项</button><span>门窗与锁止 · 15 项</span></div>${!m.charging.confirmed?'<button class="pill warn" data-overview-tool="parameters">充电状态待确认</button>':''}<div class="overview-status-list" data-status-list="attention" hidden>${list(attention)}</div><div class="overview-status-list" data-status-list="unknown" hidden>${list(unknown)}</div></div>
+  <div class="car-tyre-diagram overview-vehicle-diagram"><div class="overview-vehicle-stage">${art}${parts.map(part=>{const kinds=[part.door,...(part.window!==undefined?[part.window,part.lock]:[])].map(carStateKind),kind=kinds.includes('attention')?'attention':kinds.includes('unknown')?'unknown':'safe';return `<button id="overview-part-${part.key}" class="overview-part overview-part-${part.key} state-${kind}" data-overview-part="${part.key}" aria-label="${esc(part.name)} ${esc(part.door)}${part.window!==undefined?` 车窗${esc(part.window)} 门锁${esc(part.lock)}`:''}" aria-pressed="${part.key===selected.key}"><span>${esc(part.name)}</span><strong>${esc(part.door)}</strong>${part.window!==undefined?`<small>车窗${esc(part.window)} · 门锁${esc(part.lock)}</small>`:''}</button>`;}).join('')}</div><div id="overview-part-detail" class="overview-part-detail" aria-live="polite">${overviewPartDetail(selected)}</div><div class="overview-tyre-heading"><h3>四轮胎压与胎温</h3><span>保留原始精度</span></div><div class="overview-tyre-readings">${readings}</div></div>
+  <div class="overview-cabin"><div class="overview-environment-values"><span>车内 <strong>${esc(m.metrics.inside)}</strong></span><span>车外 <strong>${esc(m.metrics.outside)}</strong></span><button class="text-link overview-pm25" data-overview-parameters="interiorPM25" data-parameter-group="空气质量"><span>PM2.5 <strong>${hasPm25?esc(pm25):'暂无数据'}</strong></span><small>${hasPm25?'单位待核实':'未返回有效读数'}</small></button></div><p>${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</p><p>PM2.5 独立更新时间未提供</p></div></section>`;
+}
+function openVehicleParameters(options={}){
+  vehiclePage.openParameters(options);page='car';sectionTask='';render();window.scrollTo(0,0);focusPageHeading();
 }
 function overviewPower(){
   const m=state.model;
@@ -748,76 +762,11 @@ function carStateKind(value) {
   if (['打开','开启','未锁','未锁车'].includes(value)) return 'attention';
   return 'unknown';
 }
-function carState(value) {
-  const kind = carStateKind(value);
-  return `<span class="car-state state-${kind}">${esc(kind === 'unknown' ? '未知' : value)}</span>`;
-}
-function carPhoto() {
-  // The configured overview SVG wraps this exact official PNG. Keep the
-  // existing profile association so an unconfigured vehicle gets no wrong model.
-  const profile = state.profile;
-  if (profile?.image !== '/car.svg') return '<div class="car-photo-empty">车型图片待配置</div>';
-  return `<figure class="car-photo">${carImage('photo',profile.image_alt || profile.name)}</figure>`;
-}
 function carDisclosure(key, label, fields) {
   const uncertain = fields.filter(f => ['未知','待核实'].includes(f.evidence)).length;
   return `<details class="car-disclosure" data-detail="${key}"><summary><span>${label}</span><span class="car-detail-count">${fields.length ? `${fields.length} 项${uncertain ? ` · ${uncertain} 项待核实 / 未知` : ''}` : '暂无返回数据'}</span></summary>${table(fields,true)}</details>`;
 }
-function car() { return vehiclePage.render(carOverview,modelRequired) + '<div id="insights-workspace"></div>'; }
-function carTyreDiagram(model) {
-  const wheels = [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']];
-  const artwork = state.profile?.image === '/car.svg'
-    ? `<div class="car-tyre-art">${carImage('top','极氪 001 俯视图，车头朝左')}</div>`
-    : '<span class="car-tyre-no-art">车型图片待配置</span>';
-  return `<div class="car-tyre-diagram" aria-label="四轮胎压与胎温，车头朝左">${artwork}${wheels.map(([position,name]) => {
-    const tyre = model.tyres.find(item => item.name === name);
-    const pressure = tyre?.pressure ?? '未知';
-    const hasUnit = / kPa$/.test(pressure);
-    return `<div class="car-tyre-reading car-tyre-${position}" data-position="${name}"><span class="car-tyre-name">${name}</span><strong>${esc(hasUnit ? pressure.slice(0,-4) : pressure)}</strong>${hasUnit ? '<span class="car-tyre-unit">kPa</span>' : ''}<span class="car-tyre-temp">胎温 ${esc(tyre?.temperature ?? '未知')}</span></div>`;
-  }).join('')}</div>`;
-}
-function carOverview() {
-  if (!state?.model) return modelRequired();
-  const m = state.model;
-  const pm25 = m.fields.find(field => field.group === '空气质量' && field.key === 'interiorPM25')?.value;
-  const hasPm25 = (typeof pm25 === 'number' || (typeof pm25 === 'string' && pm25.trim() !== '')) && Number.isFinite(Number(pm25)) && Number(pm25) >= 0;
-  const positions = ['左前','右前','左后','右后'];
-  const doors = positions.map(name => m.doors.find(d => d.name === name) || {name,door:'未知',lock:'未知',window:'未知',raw:{}});
-  const labels = [['door','车门'],['lock','门锁'],['window','车窗']];
-  const lock = m.lock.confirmed ? m.lock.value : '未知';
-  const statuses = doors.flatMap((d,i) => labels.map(([key,label]) => ({name:d.name+label,value:d[key],target:'car-door-'+i})))
-    .concat([{name:'中控锁',value:lock,target:'car-center-lock'},{name:'尾门',value:m.trunk,target:'car-trunk'},{name:'前舱盖',value:m.hood,target:'car-hood'}]);
-  const attention = statuses.filter(item => carStateKind(item.value) === 'attention');
-  const unknown = statuses.filter(item => carStateKind(item.value) === 'unknown');
-  const doorCards = doors.map((d,i) => `<article id="car-door-${i}" tabindex="-1" class="car-door car-door-${i}" data-position="${d.name}"><h3>${d.name}<span>${['主驾','副驾','后排','后排'][i]}</span></h3>${labels.map(([key,label]) => `<div class="inline-row"><span>${label}</span>${carState(d[key])}</div>`).join('')}</article>`).join('');
-  const doorFields = doors.flatMap(d => labels.map(([key,label]) => ({name:d.name+label,value:d.raw?.[key] ?? '未知',evidence:carStateKind(d[key]) === 'unknown' ? '待核实' : '本车已核对'})));
-  const climateFields = m.fields.filter(f => f.group === '空调与舒适' && !/^(winPos|winStatus)/.test(f.key) && !['interiorTemp','exteriorTemp','temperatureUpdateTime'].includes(f.key));
-  const equipment = f => /sunroof|curtain/i.test(f.key) || /^(rl|rr)Vent/.test(f.key);
-  const seat = f => /^(drv|pass|rl|rr|steerWhl)/.test(f.key);
-  return `<section class="car-summary" aria-label="车辆状态摘要">
-    <div class="car-summary-heading"><div><h2>门窗与锁止状态</h2><p class="car-caption">以下计数仅含门窗与锁止，共 15 项</p></div><div class="car-art">${carPhoto()}</div></div>
-    <div class="car-summary-top"><div class="car-freshness">${icon('clock')}<strong>${age(m.updated_time,'车辆数据更新于 ')}</strong><span>云端缓存 · 不代表实时状态</span></div><div class="car-summary-counts"><span class="car-state state-${attention.length ? 'attention' : 'neutral'}">需关注 ${attention.length} 项</span><span class="car-state state-${unknown.length ? 'unknown' : 'neutral'}">未知 ${unknown.length} 项</span></div></div>
-    <div class="car-summary-stats">${labels.map(([key,label]) => { const safe = doors.filter(d => carStateKind(d[key]) === 'safe').length; const opened=doors.filter(d=>carStateKind(d[key])==='attention').length; const missing=4-safe-opened; const verdict=safe===4?(key==='lock'?'全部锁止':'全部关闭'):[safe?`${safe} 项${key==='lock'?'锁止':'关闭'}`:'',opened?`${opened} 项${key==='lock'?'未锁':'打开'}`:'',missing?`${missing} 项未知`:''].filter(Boolean).join(' · '); return `<div><span>${label}</span><strong class="state-${opened?'attention':missing?'unknown':'safe'}">${esc(verdict)}</strong></div>`; }).join('')}${[['前舱盖',m.hood],['尾门',m.trunk],['中控锁',lock]].map(([label,value])=>`<div><span>${label}</span><strong class="state-${carStateKind(value)}">${esc(value)}</strong></div>`).join('')}</div>
-    ${attention.length ? `<div class="car-attention-list">${attention.map(item => `<span>${esc(item.name)} · ${esc(item.value)}</span>`).join('')}</div>` : ''}
-    ${unknown.length || attention.length ? `<details class="car-pending" data-detail="car-pending"><summary>定位未知与需关注项 · ${unknown.length+attention.length} 项</summary><div class="car-pending-list">${[...attention,...unknown].map(item=>`<button data-vehicle="locate" data-target="${item.target}">${esc(item.name)} · ${carStateKind(item.value)==='unknown'?'未知':esc(item.value)}</button>`).join('')}</div></details>` : ''}
-    <p class="car-summary-note">${unknown.length ? '未知项请在下方逐项查看；未知不代表正常或异常。' : '以上为缓存快照中的门窗状态。'}</p>
-  </section>
-  <div class="car-main-grid"><section class="card car-closures"><div class="card-head"><h2>门锁、车门与车窗</h2><span class="car-caption">左舵车辆 · 只读状态</span></div><div class="card-body">
-    <div class="car-vehicle-grid"><div id="car-hood" tabindex="-1" class="car-end car-hood"><span>车头 · 前舱盖</span>${carState(m.hood)}</div>${doorCards}<div id="car-trunk" tabindex="-1" class="car-end car-trunk"><span>车尾 · 尾门</span>${carState(m.trunk)}</div></div>
-    <div id="car-center-lock" tabindex="-1" class="car-lock-row"><span>${icon('lock')}中控锁</span>${carState(lock)}</div>
-    <p class="car-caption car-legend"><span class="state-safe">关闭 / 锁止</span><span class="state-attention">打开 / 未锁</span><span class="state-unknown">未知</span><span>状态以文字为准</span></p>
-  </div></section>
-  <div class="car-secondary"><section class="card car-tyres"><div class="card-head"><h2>四轮胎压与胎温</h2><span class="car-caption">车头朝左</span></div><div class="card-body">${carTyreDiagram(m)}</div></section>
-  <section class="card car-cabin"><div class="card-head"><h2>座舱与环境</h2></div><div class="card-body"><div class="temperature"><div><div class="small-label">车内温度</div><div class="temp-value">${esc(m.metrics.inside)}</div></div><div><div class="small-label">车外温度</div><div class="temp-value">${esc(m.metrics.outside)}</div></div></div><div class="car-cabin-freshness"><div class="car-temperature-time">${icon('clock')}${age(m.temperature_updated_time,'温度更新于 ')}</div><p class="car-caption">温度与整车状态可能不同步</p></div><div class="car-pm25"><div class="car-pm25-reading"><span class="small-label">车内 PM2.5</span><strong class="car-pm25-value">${hasPm25 ? esc(pm25) : '暂无数据'}</strong></div><p class="car-caption">${hasPm25 ? '单位待核实 · 独立更新时间未提供' : '未返回有效读数'}</p></div></div></section></div></div>
-  <section class="card car-data"><div class="card-head"><h2>参数与数据详情</h2><button class="text-link" data-vehicle="parameters">全部参数${icon('arrow')}</button></div><p class="card-meta">按需展开查看。待核实参数不代表本车配备或正在运行该设备。</p>
-    <details class="car-disclosure" data-detail="closures"><summary><span>门窗数据与解释依据</span><span class="car-detail-count">四门 / 中控锁 / 尾门 / 前舱盖</span></summary><p class="car-disclosure-note">原值仅用于核对。只解释本车已核对组合；其他值显示未知，不从单个编码推测开闭或锁止。</p>${table(doorFields)}${table(m.fields.filter(f => /^(winStatus|doorPos)/.test(f.key) || ['centralLockingStatus','trunkOpenStatus','trunkLockStatus','engineHoodOpenStatus'].includes(f.key)),true)}</details>
-    ${carDisclosure('climate','空调相关参数',climateFields.filter(f => !equipment(f) && !seat(f)))}
-    ${carDisclosure('seats','座椅与方向盘',climateFields.filter(f => !equipment(f) && seat(f)))}
-    ${carDisclosure('air','空气质量',m.fields.filter(f => f.group === '空气质量'))}
-    ${carDisclosure('equipment','待核实设备',climateFields.filter(equipment))}
-    <details class="car-disclosure" data-detail="times"><summary><span>完整时间与数据说明</span></summary><div class="car-disclosure-note">${row('车辆状态时间',m.updated_at)}${row('温度状态时间',m.temperature_updated_at)}${row('最近云端读取',state.read_at)}<p>刷新会重新读取云端缓存，不保证车辆产生新数据。胎压与胎温按左舵车辆轮位展示；不使用未经核对的报警阈值。</p></div></details>
-  </section>`;
-}
+function car() { return vehiclePage.render(modelRequired) + '<div id="insights-workspace"></div>'; }
 
 function energyAttainment() {
   const profile=state.profile || {};
@@ -1227,6 +1176,14 @@ async function updateRecording(saveInterval = false) {
   if(window.booksWritePending()&&event.target.closest('[data-page],[data-section-task],[data-costs],[data-books-return],[data-overview-back]')){event.preventDefault();return;}
   if(event.target.closest('[data-overview-back]')){page='overview';sectionTask='';render();overviewDashboard.restore();return;}
   if(overviewDashboard.handle(event))return;
+  const parameterLink=event.target.closest('[data-overview-parameters]');
+  if(parameterLink&&page==='overview'){openVehicleParameters({query:parameterLink.dataset.overviewParameters,group:parameterLink.dataset.parameterGroup});return;}
+  const statusButton=event.target.closest('[data-overview-status]');
+  if(statusButton&&page==='overview'){
+    const expanded=statusButton.getAttribute('aria-expanded')==='true';
+    document.querySelectorAll('[data-overview-status]').forEach(button=>button.setAttribute('aria-expanded',String(button===statusButton&&!expanded)));
+    document.querySelectorAll('[data-status-list]').forEach(list=>list.hidden=expanded||list.dataset.statusList!==statusButton.dataset.overviewStatus);return;
+  }
   const partButton=event.target.closest('[data-overview-part]');
   if(partButton&&page==='overview'&&state?.model){
     const part=overviewParts().find(part=>part.key===partButton.dataset.overviewPart);

@@ -35,3 +35,14 @@ console.log('VEHICLE_SELECTION_PASS');
   assert.doesNotMatch(view.render(()=>'',()=>''),/WRONG/);
   console.log('VEHICLE_REQUEST_ISOLATION_PASS');
 })().catch(error=>{console.error(error);process.exitCode=1});
+// Context links reset stale status filters; changing vehicle clears those links.
+(async()=>{
+ let state={vehicle:1,request_key:'one',field_reviews:{vehicle:'a'}};
+ const view=require('../zeekr_control/static/vehicle.js').create({getState:()=>state,request:async()=>({vehicle:state.vehicle,vehicle_key:state.field_reviews.vehicle,counts:{total:0,returned:0},groups:[],fields:[]}),redraw:()=>{},escape:String,age:()=>'',active:()=>true});
+ await view.ensure();view.openParameters({query:'右后',group:'门窗与安全'});
+ assert.match(view.render(),/value="右后"/);
+ view.openParameters();assert.doesNotMatch(view.render(),/value="右后"/);
+ view.openParameters({query:'右后'});state={...state,vehicle:2,field_reviews:{vehicle:'b'}};
+ view.render();await view.ensure();assert.doesNotMatch(view.render(),/value="右后"/);
+ console.log('VEHICLE_CONTEXT_RESET_PASS');
+})().catch(e=>{console.error(e);process.exitCode=1});

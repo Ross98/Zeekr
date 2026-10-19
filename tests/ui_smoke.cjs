@@ -35,7 +35,9 @@ const path = require('node:path');
     await page.evaluate(() => { document.querySelector('.breadcrumb').textContent = '界面验收 · 合成数据'; document.querySelector('#toast').hidden=true; });
     await page.screenshot({ path: '/tmp/zeekr-web-qa/desktop.png', fullPage: true });
     await page.getByRole('button', { name: '车辆', exact: true }).first().click();
-    await page.getByRole('button', { name: '状态总览', exact: true }).click();
+    await page.locator('.vehicle-table').waitFor();
+    assert.equal(await page.locator('[data-parameter]').count(),217);
+    assert.equal(await page.getByRole('button',{name:'状态总览',exact:true}).count(),0);
     for (const side of ['左前', '右前', '左后', '右后']) {
       assert.match(await page.locator('main').innerText(), new RegExp(side));
     }

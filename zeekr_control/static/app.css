@@ -365,3 +365,19 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 @media(min-width:851px){
  .overview-health #map:not(.map-empty-state) .amap-position-image{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;object-position:center}
 }
+/* Shared status diagram and environmental readings, desktop. */
+@media(min-width:851px){
+ .overview-vehicle-stage{grid-template-columns:52px minmax(0,1fr) minmax(0,1fr) 52px;grid-template-rows:auto auto auto auto;gap:8px 6px}
+ .overview-vehicle-stage .car-tyre-art,.overview-vehicle-stage .car-tyre-no-art{width:100%;grid-area:2/2/3/4}
+ .overview-part-rf{grid-area:1/1/2/3}.overview-part-rr{grid-area:1/3/2/5}.overview-part-lf{grid-area:3/1/4/3}.overview-part-lr{grid-area:3/3/4/5}
+ .overview-part-hood{grid-area:2/1;padding:5px}.overview-part-trunk{grid-area:2/4;justify-self:end;padding:5px}.overview-part-central{grid-area:4/1/5/5;justify-self:center;display:flex;gap:8px}
+ .overview-part small{display:block;color:var(--muted);font-size:11px}.overview-part.state-unknown{border-style:dashed;background:var(--night-raised,#fff5e6);color:var(--night-warning,#86531f)}
+ .overview-status-counts{display:flex;align-items:center;flex-wrap:wrap;gap:7px}.overview-status-counts>span{color:var(--muted);font-size:11px}
+ .overview-status-list{display:flex;flex-wrap:wrap;gap:5px;width:100%}.overview-status-list[hidden]{display:none}
+ .overview-part-detail{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px}.overview-part-detail>strong,.overview-part-detail>span{grid-column:1}.overview-part-detail p{grid-column:1/-1;grid-row:3}.overview-part-detail>.text-link{grid-column:2;grid-row:1/3;align-self:center;font-size:12px;white-space:nowrap}
+ .overview-cabin{display:block}.overview-environment-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:baseline}.overview-environment-values>span{white-space:nowrap}.overview-cabin .overview-pm25{font-size:12px;text-align:left;color:var(--ink);padding:0}.overview-pm25 small{display:block;color:var(--muted);font-size:11px;margin-top:3px}.overview-cabin p{font-size:11px;color:var(--muted);margin:5px 0 0}
+}
+@media(min-width:851px){
+ .overview-vehicle-stage .car-tyre-art{max-width:310px;justify-self:center}
+ .overview-cabin .overview-pm25{display:block;min-width:0}.overview-pm25>span{display:block}.overview-pm25 small{overflow-wrap:anywhere}
+}

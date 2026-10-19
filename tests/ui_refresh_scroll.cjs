@@ -58,7 +58,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       }else if(view==='parameters'){
         await page.waitForSelector(section==='car'?'.vehicle-table':'#field-results');
       }else if(view==='car'){
-        await page.locator('[data-vehicle="overview"]').click();
+        await page.locator('.vehicle-table').waitFor();
       }else if(view==='energy'){
         await page.locator('[data-action="charging-tab"][data-tab="process"]').click();
       }else if(view==='statistics'){
@@ -105,7 +105,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         await navigate(`[data-page="${section}"]`);
         const selector=section==='insights'?'#insights-workspace [data-insight-view]':'.task-navigation [data-section-task]';
         const tools=await page.locator(selector).evaluateAll(els=>els.map(el=>el.dataset.insightView||el.dataset.sectionTask).filter(Boolean));
-        const variants=section==='car'?['parameters']:section==='energy'?['statistics']:section==='tracks'?['source:cloud','source:tags']:[];
+        const variants=section==='car'?[]:section==='energy'?['statistics']:section==='tracks'?['source:cloud','source:tags']:[];
         for(const tool of [null,...variants,...tools]){
           if(tool){
             const selector=tool==='parameters'&&section==='car'?'[data-vehicle="parameters"]':tool==='statistics'?'[data-action="charging-tab"][data-tab="statistics"]':

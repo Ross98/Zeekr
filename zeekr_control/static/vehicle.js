@@ -16,16 +16,16 @@
     return {fields,total:fields.length};
   }
   function create({getState,request,redraw,escape:esc,age,active}) {
-    let tab = 'parameters', data = null, error = '', owner = '', attempted = '', loading = '', serial = 0;
+    let data = null, error = '', owner = '', attempted = '', loading = '', serial = 0;
     const filters = {query:'',group:'all',status:'all'};
     let tableObserver;
     function sync() {
       const next = identity(getState());
-      if (next !== owner) { owner=next;data=null;error='';attempted='';loading='';serial++; }
+      if (next !== owner) { owner=next;data=null;error='';attempted='';loading='';serial++;Object.assign(filters,{query:'',group:'all',status:'all'}); }
     }
     async function ensure(force = false) {
       sync();
-      if (!active() || tab !== 'parameters') return;
+      if (!active()) return;
       const key = stateKey(getState());
       if (loading === key || (!force && attempted === key)) return;
       const token = ++serial;
@@ -86,9 +86,11 @@
         <p class="vehicle-footnote">“全部”指当前安全字段目录，已排除身份、坐标、凭据等私密字段；不是车辆全部 ECU / CAN 信号。</p>
       </section>`;
     }
-    function render(overview,missing) {
-      sync();
-      return `<div class="vehicle-tabs" aria-label="车辆视图"><button id="vehicle-overview" data-vehicle="overview" aria-pressed="${tab==='overview'}">状态总览</button><button id="vehicle-parameters" data-vehicle="parameters" aria-pressed="${tab==='parameters'}">全部参数${data ? ' '+data.counts.total : ''}</button></div>${tab==='overview' ? overview() : missing()+parametersView()}`;
+    function openParameters(options={}) {
+      sync();Object.assign(filters,{query:options.query||'',group:options.group||'all',status:'all'});
+    }
+    function render(missing=()=> '') {
+      sync();return missing()+parametersView();
     }
     function handle(event) {
       const el = event.target;
@@ -99,7 +101,6 @@
       const button = el.closest('button[data-vehicle]');
       if (!button || button.disabled) return false;
       switch (button.dataset.vehicle) {
-        case 'overview': case 'parameters': tab=button.dataset.vehicle;break;
         case 'status': filters.status=filters.status===button.dataset.value?'all':button.dataset.value;break;
         case 'reset': Object.assign(filters,{query:'',group:'all',status:'all'});break;
         case 'retry': ensure(true);return true;
@@ -111,7 +112,7 @@
       }
       resetScroll();redraw();return true;
     }
-    return {render,ensure,handle,focusSnapshot,restoreFocus};
+    return {render,ensure,handle,focusSnapshot,restoreFocus,openParameters};
   }
   const exports = {selectFields,stateKey,create};
   if (typeof module !== 'undefined' && module.exports) module.exports=exports;

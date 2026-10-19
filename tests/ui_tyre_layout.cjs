@@ -24,9 +24,8 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     await page.waitForFunction(()=>!polling&&!busy);
     await page.evaluate(async()=>{await pollState(true);render();});
     assert.deepEqual(await page.evaluate(()=>state.model.tyres.map(t=>t.pressure)),Array(4).fill('256.751 kPa'),'polling retains the tyre layout fixture');
-    for (const view of ['总览','车辆']) {
+    for (const view of ['总览']) {
       await page.getByRole('button',{name:view,exact:true}).first().click();
-      if(view==='车辆') await page.getByRole('button',{name:'状态总览',exact:true}).click();
       for (const theme of ['light','dark']) {
         await page.getByLabel('外观',{exact:true}).selectOption(theme);
         for (const width of [1024,1280,1440,1920]) {
@@ -64,6 +63,6 @@ const {fixture} = require('./ui_insight_helpers.cjs');
       }
     }
     assert.deepEqual(f.errors,[]);
-    console.log('PASS tyre layout: both views, 4 desktop widths, light/dark');
+    console.log('PASS tyre layout: consolidated overview, 4 desktop widths, light/dark');
   } finally {await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
