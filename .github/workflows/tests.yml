@@ -46,6 +46,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Validate desktop test inventory
+        run: npm run check:desktop-manifest
       - name: Install Chromium and system dependencies
         run: npx playwright install --with-deps chromium
       - name: Use the locked Chromium in every browser check

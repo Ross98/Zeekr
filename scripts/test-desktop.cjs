@@ -3,22 +3,16 @@
 const {spawnSync}=require('node:child_process');
 const fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'..');
-const groups={
-  unit:['test_overview_dashboard','books_overview','navigation_state','theme','vehicle',
-    'chart','route_quality','road_matching_display','amap_maps','charge_ledger_preview',
-    'parking_calendar','parking_calendar_model','parking_manual_start','vehicle_life_history',
-    'usage_report_analysis','test_freehand_regions','test_place_pair_statistics','ui_field_review_rules','parameter_research_focus'],
-  smoke:['ui_smoke','ui_status_summary','ui_overview_dashboard'],
-  review:['ui_vehicle_parameters','ui_location_marker','ui_tyre_layout','ui_energy_workspace','ui_energy','ui_charge_management','ui_research_serial','ui_research_simplification','ui_review_fixes','ui_lazy_tools','ui_async_analysis','ui_analysis_cancel','ui_overview_dashboard','ui_overview_benchmark','ui_local_route_canvas','ui_books_overview',
-    'ui_books_navigation','ui_books_safety','ui_books_period','ui_tool_navigation','ui_insights_navigation','ui_commute_reassessment','ui_trip_tags','ui_parking_origin','ui_trip_place_panel','ui_trip_tags_compact','ui_place_pair_statistics',
-    'ui_parameter_flow','ui_parameter_workspace','ui_custom_reminders','ui_parameter_experiments','ui_refresh_view','ui_refresh_scroll']
-};
+const {loadAndValidate}=require('./check-desktop-manifest.cjs');
+let groups;
+try{({manifest:{groups}}=loadAndValidate());}
+catch(error){console.error(error.message);process.exit(1);}
 const group=process.argv[2]||'review';
-if(group==='desktop')groups.desktop=[...new Set([...groups.smoke,...groups.review])];
+if(group==='desktop')groups.desktop=[...groups.smoke,...groups.review];
 const syntax=group==='syntax';
 const files=syntax?fs.readdirSync(path.join(root,'zeekr_control/static'))
   .filter(name=>name.endsWith('.js')).map(name=>path.join('zeekr_control/static',name))
-  :groups[group]?.map(name=>`tests/${name}.cjs`);
+  :Object.hasOwn(groups,group)?groups[group]:undefined;
 if(!files){console.error('Choose unit, smoke, review, desktop or syntax.');process.exit(2);}
 const started=Date.now();
 for(const file of files){
