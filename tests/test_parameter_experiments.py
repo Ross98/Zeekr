@@ -20,7 +20,7 @@ class ExperimentTests(unittest.TestCase):
             raw={'updateTime':self.start+offset,'vin':'SECRET-VIN','accessToken':'SECRET-TOKEN',
                  'position':{'latitude':123,'longitude':456},
                  'additionalVehicleStatus':{'electricVehicleStatus':{'chargeLevel':soc},
-                                            'climateStatus':{'interiorTemp':25+offset/60000}}}
+                                            'climateStatus':{'interiorTemp':25+offset/60000,'winPosDriver':0}}}
             writer.append('scope','car',json.dumps(raw),self.start+offset,self.start+offset,self.start+offset,'monitor')
         keys=self.archive.timeline('scope','car','2026-09-20')['items']
         self.before,self.after=[r['key'] for r in keys]
@@ -43,13 +43,41 @@ class ExperimentTests(unittest.TestCase):
         self.assertNotIn('SECRET',json.dumps(row))
         self.assertFalse((self.root/'field-reviews.sqlite3').exists())
 
+    def test_unchanged_window_can_be_saved_as_counter_evidence(self):
+        path='additionalVehicleStatus.climateStatus.winPosDriver'
+        saved=self.save(paths=[path],action_text='实际打开左前窗，但位置字段未变')
+        row=self.api.detail('owner','car',saved['id'])
+        field=row['body']['changes'][0]
+        self.assertEqual((field['before']['raw'],field['after']['raw']),('0','0'))
+        self.assertIs(field['changed'],False)
+        self.assertEqual(row['body']['status'],'research_only')
+        self.assertNotIn('SECRET',json.dumps(row))
+        evidence=self.api.review_evidence('owner','car',dict(
+            experiment_id=saved['id'],experiment_side='after',path=path,raw='0'))
+        self.assertIs(evidence['changed'],False)
+        self.assertIn('未变',evidence['action_text'])
+        for source in (self.root/'archive').glob('*/*.sqlite3'):source.unlink()
+        self.save(id=saved['id'],revision=1,paths=[path],note='保留反证')
+        self.assertIs(self.api.detail('owner','car',saved['id'])['body']['changes'][0]['changed'],False)
+
+    def test_compare_exposes_unchanged_only_when_requested(self):
+        basic=self.archive.compare('scope','car',self.before,self.after)
+        self.assertNotIn('unchanged',basic)
+        compared=self.archive.compare('scope','car',self.before,self.after,include_unchanged=True)
+        fields={f['path']:f for f in compared['unchanged']}
+        self.assertIn('additionalVehicleStatus.climateStatus.winPosDriver',fields)
+        self.assertNotIn(self.path,fields)
+        self.assertNotIn('vin',fields)
+        self.assertNotIn('additionalVehicleStatus.climateStatus.winPosPassenger',fields)
+        self.assertNotIn('SECRET',json.dumps(compared))
+
     def test_list_is_summary_only_and_read_does_not_create_database(self):
         self.assertEqual(self.api.query('owner','car')['records'],[])
         self.assertFalse(self.store.path.exists())
         self.save();row=self.api.query('owner','car')['records'][0]
         self.assertNotIn('changes',row['body']);self.assertEqual(row['body']['change_count'],1)
 
-    def test_private_or_unchanged_paths_and_foreign_samples_rejected(self):
+    def test_private_missing_paths_and_foreign_samples_rejected(self):
         for paths in (['vin'],['position.latitude'],['missing.field'],[1],['a']*41):
             with self.assertRaises(ValueError):self.save(paths=paths)
         with self.assertRaises(ValueError):

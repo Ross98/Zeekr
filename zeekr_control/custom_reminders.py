@@ -5,13 +5,14 @@ import uuid
 
 from .notifications import DeliveryError
 from .delivery_state import delivery_lock
-from .summary import updated_at
+from .summary import updated_at, number, section, SIDES
 from .vehicle_state import decode
 
 MAX_AGE=180000
 MAX_GAP=600000
+WINDOW_MAPPING='2026-10-19-v1'  # Owner-tested endpoints; intermediate openings use the agreed range inference.
 KINDS={'low_soc':'电量低于阈值','high_soc':'电量达到阈值','parked_charging':'停车充电持续中',
-       'parked_windows':'停车后车窗未关（待核验）'}
+       'parked_windows':'停车下电后车窗未关'}
 
 
 def definition(data):
@@ -24,8 +25,6 @@ def definition(data):
     recovery=data.get('recovery')
     if type(enabled) is not bool or type(recovery) is not bool:
         raise ValueError('启停及恢复提醒须为开关值。')
-    if kind=='parked_windows' and enabled:
-        raise ValueError('车窗仅核验关闭组合，打开枚举尚未核验，此条件暂不能启用。')
     threshold=data.get('threshold',25)
     if type(threshold) is not int or not 1<=threshold<=99:
         raise ValueError('电量阈值须为 1–99 的整数。')
@@ -36,8 +35,26 @@ def definition(data):
         raise ValueError('冷却时间须为 1–43200 分钟。')
     delivery=data.get('delivery')
     if delivery not in ('in_app','wecom'):raise ValueError('提醒方式无效。')
-    return dict(name=name.strip(),kind=kind,threshold=threshold,enabled=enabled,recovery=recovery,
-                confirm_seconds=confirm,cooldown_minutes=cooldown,delivery=delivery)
+    rule=dict(name=name.strip(),kind=kind,threshold=threshold,enabled=enabled,recovery=recovery,
+              confirm_seconds=confirm,cooldown_minutes=cooldown,delivery=delivery)
+    if kind=='parked_windows':rule['window_mapping']=WINDOW_MAPPING
+    return rule
+
+
+def windows_open(raw):
+    """Owner-tested endpoints and range inference; unknown windows block decisions.
+
+    Evidence: docs/window-evidence-2026-10-19.md. Intermediate values are
+    inferred, not individually tested. Position units remain unverified.
+    """
+    climate=section(section(raw.get('additionalVehicleStatus')).get('climateStatus'))
+    states=[]
+    for side in SIDES:
+        position,status=number(climate.get('winPos'+side)),number(climate.get('winStatus'+side))
+        if (position,status)==(0,2):states.append(False)
+        elif position is not None and 0<position<=100 and status==1:states.append(True)
+        else:return None
+    return any(states)
 
 
 def preview(rule,raw,now):
@@ -46,7 +63,12 @@ def preview(rule,raw,now):
     reason='unknown_time' if timestamp is None else 'future' if timestamp>now+30000 else 'stale' if now-timestamp>MAX_AGE else None
     matches=None
     if not reason:
-        if rule['kind']=='parked_windows':reason='unverified'
+        if rule['kind']=='parked_windows':
+            if rule.get('window_mapping')!=WINDOW_MAPPING:reason='unverified'
+            elif point['off'] is not True or point['speed']!=0:reason='not_parked'
+            else:
+                matches=windows_open(raw or {})
+                if matches is None:reason='unknown_value'
         elif rule['kind'] in ('low_soc','high_soc'):
             if point['soc'] is None:reason='unknown_value'
             else:matches=point['soc']<rule['threshold'] if rule['kind']=='low_soc' else point['soc']>=rule['threshold']
@@ -109,7 +131,7 @@ class Reminders:
                         result['states'][identity]={key:state.get(key) for key in
                             ('active','count','candidate','first_time','last_time','last_observed','last_raised','reason')}
             result['history_limit']=100
-            result['capabilities']={key:key!='parked_windows' for key in KINDS}
+            result['capabilities']=dict.fromkeys(KINDS,True)
             return result
 
     def recover(self):
@@ -174,8 +196,9 @@ class Reminders:
                 if reset:
                     state.update(count=0,candidate=None,first_time=None,first_observed=None)
                 elif not duplicate:
-                    continuous=(previous is not None and 0<timestamp-previous<=MAX_GAP
-                                and 0<=now-state.get('last_observed',now)<=MAX_GAP)
+                    gap=MAX_AGE if rule['kind']=='parked_windows' else MAX_GAP
+                    continuous=(previous is not None and 0<timestamp-previous<=gap
+                                and 0<=now-state.get('last_observed',now)<=gap)
                     if not continuous or state.get('candidate') is not matches:
                         state.update(candidate=matches,count=1,first_time=timestamp,first_observed=now)
                     else:state['count']+=1
@@ -217,7 +240,8 @@ class Reminders:
                 record=next((r for r in saved['records'] if r['id']==row[0] and not r['deleted']),None)
                 valid=record and record['body']['enabled'] and signature(record)==row[1]
                 observed=preview(record['body'],raw,now) if valid else None
-                valid=bool(valid and observed['matches'] is (row[2]=='raised') and 0<=now-row[3]<=MAX_GAP)
+                age=MAX_AGE if record and record['body']['kind']=='parked_windows' else MAX_GAP
+                valid=bool(valid and observed['matches'] is (row[2]=='raised') and 0<=now-row[3]<=age)
                 if not valid:
                     db.execute("UPDATE rule_history SET delivery='cancelled',error='条件、规则或有效时间已变化，未发送。' WHERE id=?",(identity,))
                     continue

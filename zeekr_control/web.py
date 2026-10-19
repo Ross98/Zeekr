@@ -1132,7 +1132,7 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     if url.path == '/api/insights/snapshot':
                         return self.send(200, app.insights('snapshot', value('id')))
                     if url.path == '/api/insights/compare':
-                        return self.send(200, app.insights('compare', value('before'), value('after')))
+                        return self.send(200, app.insights('compare', value('before'), value('after'), value('unchanged') == '1'))
                     if url.path == '/api/insights/parking':
                         return self.send_analysis(lambda: app.insights('parking', value('start'), value('end')))
                     if url.path == '/api/insights/report':

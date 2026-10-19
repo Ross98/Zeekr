@@ -3,7 +3,9 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
+    await page.getByRole('button',{name:'设置',exact:true}).click();
     await page.getByRole('button',{name:'自定义提醒',exact:true}).click();
+    await page.getByRole('button',{name:'读取规则与历史',exact:true}).click();
     assert.match(await page.locator('#rule-delivery').innerText(),/Bark.*企业微信兜底/);
     await page.getByLabel('提醒名称',{exact:true}).fill('<img src=x onerror=alert(1)> 合成规则');
     await page.getByLabel('电量阈值（%）',{exact:true}).fill('30');
@@ -32,22 +34,27 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'恢复规则',exact:true}).click();
     await page.locator('[data-rule-record]').filter({hasText:'更新后的合成规则'}).waitFor();
     await page.getByRole('button',{name:'新建规则',exact:true}).click();
-    await page.getByLabel('提醒名称',{exact:true}).fill('车窗待核验');
+    await page.getByLabel('提醒名称',{exact:true}).fill('车窗提醒');
     await page.getByLabel('提醒条件',{exact:true}).selectOption('parked_windows');
     await page.getByLabel('启用这条规则',{exact:true}).check();
     await page.getByRole('button',{name:'保存规则',exact:true}).click();
-    await page.getByRole('alert').filter({hasText:'打开枚举尚未核验'}).waitFor();
-    assert.equal(await page.getByLabel('提醒名称',{exact:true}).inputValue(),'车窗待核验');
-    await page.getByLabel('启用这条规则',{exact:true}).uncheck();
-    await page.getByRole('button',{name:'保存规则',exact:true}).click();
-    await page.locator('[data-rule-record]').filter({hasText:'车窗待核验'}).waitFor();
+    const windowRecord=page.locator('[data-rule-record]').filter({hasText:'车窗提醒'});
+    await windowRecord.getByRole('button',{name:'停用规则',exact:true}).waitFor();
+    assert.match(await page.locator('#rule-kind').innerText(),/停车下电后车窗未关/);
+    await page.getByText(/位置值大于 0 且不超过 100、状态值为 1/).waitFor();
+    const windowRule=(await (await page.request.get(f.origin+'/api/insights/rules')).json()).records.find(r=>r.body.kind==='parked_windows');
+    assert.equal(windowRule.body.enabled,true);
+    assert.equal(windowRule.body.window_mapping,'2026-10-19-v1');
+    await page.locator('[data-rule-record]').filter({hasText:'车窗提醒'}).waitFor();
     assert.ok(await page.locator('[data-rule-history]').count()>0);
     await layouts(page,'custom-reminders');
     await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
+    await page.getByRole('button',{name:'设置',exact:true}).click();
     await page.getByRole('button',{name:'自定义提醒',exact:true}).click();
+    await page.getByRole('button',{name:'读取规则与历史',exact:true}).click();
     await page.locator('[data-rule-record]').filter({hasText:'更新后的合成规则'}).waitFor();
     const refresh=page.waitForResponse(r=>r.url()===f.origin+'/api/insights/rules'&&r.request().method()==='GET');
-    await page.evaluate(async()=>{const real=Date.now;Date.now=()=>real()+31000;try{await pollState(true);}finally{Date.now=real;}});
+    await page.getByRole('button',{name:'读取规则与历史',exact:true}).click();
     await refresh;
     // A context-only change must clear previous account content even if all
     // vehicle metrics, revision and timestamps happen to be identical.
@@ -57,8 +64,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     });
     await page.evaluate(()=>pollState(true));
     assert.equal(await page.locator('[data-rule-record]').count(),0);
-    assert.ok(f.posts.every(url=>url.startsWith(f.origin+'/api/insights/rules')));
+    assert.deepEqual(f.posts.filter(url=>!url.startsWith(f.origin+'/api/insights/rules')&&!/^\/api\/analysis\/[a-f0-9]+\/cancel$/.test(new URL(url).pathname)),[],'Only rule writes and navigation analysis cancellation are allowed');
     assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
-    console.log('UI_CUSTOM_REMINDERS_PASS: preview/create/edit/enable/disable/undo/delete/restore, unverified-window guard, synthetic history, persistence, XSS, form preservation, themes/mobile/zoom/contrast');
+    console.log('UI_CUSTOM_REMINDERS_PASS: preview/create/edit/enable/disable/undo/delete/restore, verified-window enablement, synthetic history, persistence, XSS, form preservation, themes/desktop/zoom/contrast');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

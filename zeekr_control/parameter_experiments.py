@@ -66,7 +66,7 @@ class ParameterExperiments:
             raise ValueError('缺失或无效样本不能作为核实证据。')
         return dict(id=row['id'], side=side, title=body['title'], action_text=body['action_text'],
                     action_at=body['action_at'], saved_at=body['saved_at'], sample=body[side],
-                    observation=field[side], warnings=body['warnings'])
+                    observation=field[side], changed=field.get('changed', True), warnings=body['warnings'])
 
     def update(self,owner,vehicle,data,scope,guard=None):
         action=data.get('action');identity=data.get('id');body=None
@@ -77,7 +77,7 @@ class ParameterExperiments:
                 raise ValueError('请填写已经发生的动作时间（北京时间）。')
             before,after=data.get('before'),data.get('after');paths=data.get('paths')
             if not isinstance(paths,list) or len(paths)>40 or any(not isinstance(p,str) for p in paths):
-                raise ValueError('请从变化列表选择至多 40 个安全字段。')
+                raise ValueError('请选择至多 40 个安全白名单字段。')
             paths=list(dict.fromkeys(paths))
             if identity:
                 existing=self.detail(owner,vehicle,identity)['body']
@@ -86,15 +86,15 @@ class ParameterExperiments:
                 body=dict(existing)
             else:
                 if before==after:raise ValueError('请选择两条不同的前后观测。')
-                compared=self.archive.compare(scope,vehicle,before,after)
+                compared=self.archive.compare(scope,vehicle,before,after,include_unchanged=True)
                 a,b=compared['before'],compared['after']
                 if a['observed_at']>b['observed_at']:raise ValueError('前样本的采集时间不能晚于后样本。')
-                allowed={field['path']:field for field in compared['changes']}
-                if any(p not in allowed for p in paths):raise ValueError('只能保存发生变化的安全白名单字段。')
+                allowed={field['path']:field for field in compared['changes']+compared['unchanged']}
+                if any(p not in allowed for p in paths):raise ValueError('只能保存样本中返回的安全白名单字段。')
                 changes=[]
                 for path in paths:
                     field=allowed[path]
-                    changes.append({**{key:field[key] for key in ('path','name','group','unit','display_limited')},
+                    changes.append({**{key:field[key] for key in ('path','name','group','unit','display_limited','changed')},
                                     **{side:{key:field[side][key] for key in ('raw','value','status')}
                                        for side in ('before','after')}})
                 body=dict(before=a,after=b,paths=paths,changes=changes,compared_fields=compared['compared_fields'],

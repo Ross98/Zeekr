@@ -132,7 +132,7 @@ async function openExperimentReview(id,path,side){
     const display=sample.review_raw;
     if(typeof display!=='string'||display==='未知')throw Error('该样本不支持字典核实。');
     openResearchReview(field,{id,side,title:result.body.title,raw:display,
-      action_text:result.body.action_text,observed_at:result.body[side].state_time,
+      action_text:result.body.action_text,changed:field.changed??true,observed_at:result.body[side].state_time,
       warnings:result.body.warnings});
   }catch(error){toast(error.message);}
 }
@@ -219,7 +219,7 @@ function renderReviewPanelBody(){
     const records = reviewRecords(field.path), status = reviewStatus(field);
     panel.innerHTML = `<div class="card-head"><div><span class="eyebrow">参数详情</span><h2>${esc(field.name)}</h2></div><span class="pill ${status==='confirmed'?'good':status==='pending'||status==='question'?'warn':''}">${reviewLabels[status]}</span></div>
       <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span><div class="review-snapshot"><div><span>当前原值</span><strong>${esc(field.raw)}</strong></div><div><span>系统解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div><details class="parameter-reference"><summary>术语、来源与适用性</summary>${renderFieldReference(field)}</details>
-      <details class="review-history" ${records.length?'open':''}><summary>人工核实记录 · ${records.length} 条</summary>${records.length?records.map(record=>`<div class="review-history-row"><span>${record.scope==='field'?'整个字段':`原值 ${esc(record.raw)}`} · ${reviewLabels[record.status]}</span><strong>${esc(record.meaning || record.note || '未填写说明')}</strong><small>${esc(reviewTime(record.saved_at))}${record.evidence?' · 已关联实验：'+esc(record.evidence.title):''}</small></div>`).join(''):'<p class="subtle">暂无人工核实记录。</p>'}</details></div>
+      <details class="review-history" ${records.length?'open':''}><summary>人工核实记录 · ${records.length} 条</summary>${records.length?records.map(record=>`<div class="review-history-row"><span>${record.scope==='field'?'整个字段':`原值 ${esc(record.raw)}`} · ${reviewLabels[record.status]}</span><strong>${esc(record.meaning || record.note || '未填写说明')}</strong><small>${esc(reviewTime(record.saved_at))}${record.evidence?' · 已关联实验：'+esc(record.evidence.title)+(record.evidence.changed===false?' · 字段未变化':''):''}</small></div>`).join(''):'<p class="subtle">暂无人工核实记录。</p>'}</details></div>
       <div class="review-panel-footer"><div class="review-actions"><button type="button" class="button" data-review-action="edit" ${canEditReview()?'':'disabled'}>编辑核实</button></div></div>`;
     return;
   }
@@ -234,7 +234,7 @@ function renderReviewPanelBody(){
     <div class="review-panel-body"><span class="field-path review-path">${esc(field.path)}</span>
     <div class="review-snapshot"><div><span>本次核实原值</span><strong>${esc(draft.raw)}</strong></div><div><span>系统当前解释</span><b>${esc(field.value)}</b><small>${esc(field.evidence)}</small></div></div>
     ${field.research_only&&!draft.evidence?'<p class="insight-note">当前没有有效原值，只能保存待核实解释；数据返回后再核实具体值。</p>':''}<details class="parameter-reference"><summary>术语、来源与适用性</summary>${renderFieldReference(field)}</details>
-    ${draft.evidence?`<p class="notice info">已关联实验：${esc(draft.evidence.title)} · ${draft.experiment_side==='before'?'前':'后'}样本。核实结果仍需你填写；有疑问为默认状态。</p>`:''}
+    ${draft.evidence?`<p class="notice info">已关联实验：${esc(draft.evidence.title)} · ${draft.experiment_side==='before'?'前':'后'}样本。${draft.evidence.changed===false?'字段在动作前后未变化；保留为反证线索，不自动确认开闭语义。':''}核实结果仍需你填写；有疑问为默认状态。</p>`:''}
     <p class="subtle">核实样本时间：${esc(reviewTime(draft.observed_at))}<br>整车缓存时间；子字段可能不同步。</p>
     <div id="review-live-notice" class="${changed?'notice info':'subtle'}">${changed?`当前原值已变化为 ${esc(field.raw)}；填写内容仍对应原值 ${esc(draft.raw)}。`:'填写期间保留本次样本，刷新不会覆盖草稿。'}</div>
     ${changed?'<button class="text-link" data-review-action="latest">使用最新值核实</button>':''}

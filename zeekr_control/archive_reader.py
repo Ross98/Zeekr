@@ -389,16 +389,21 @@ class ArchiveReader:
                 windows=model['closure']['windows']), 'fields': projection['fields'],
                 'counts': projection['counts'], 'groups': projection['groups']}
 
-    def compare(self, scope, vehicle, before, after):
+    def compare(self, scope, vehicle, before, after, include_unchanged=False):
         left_record, left_raw = self.read(scope, vehicle, before)
         right_record, right_raw = self.read(scope, vehicle, after)
         left, right = self._project(left_record, left_raw), self._project(right_record, right_raw)
-        changes = []
+        changes, unchanged = [], []
         for a, b in zip(left['fields'], right['fields']):
             old, new = lookup(left_raw, a['path']), lookup(right_raw, b['path'])
-            if (type(old), old, a['status']) != (type(new), new, b['status']):
-                changes.append({'path': a['path'], 'name': a['name'], 'group': a['group'],
+            changed = (type(old), old, a['status']) != (type(new), new, b['status'])
+            if changed or include_unchanged and a['status'] != 'missing':
+                target = changes if changed else unchanged
+                target.append({'path': a['path'], 'name': a['name'], 'group': a['group'],
                                 'unit': a['unit'], 'before': a, 'after': b,
-                                'display_limited': a['raw'] == b['raw']})
-        return {'before': left['record'], 'after': right['record'], 'changes': changes,
-                'compared_fields': len(left['fields'])}
+                                'display_limited': changed and a['raw'] == b['raw'], 'changed': changed})
+        result = {'before': left['record'], 'after': right['record'], 'changes': changes,
+                  'compared_fields': len(left['fields'])}
+        if include_unchanged:
+            result['unchanged'] = unchanged
+        return result

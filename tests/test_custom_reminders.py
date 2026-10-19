@@ -104,14 +104,123 @@ class ReminderTests(unittest.TestCase):
         self.assertFalse(self.query()['records'][0]['deleted'])
         for changes in ({'threshold':True},{'confirm_seconds':0},{'cooldown_minutes':0},
                         {'enabled':'true'},{'kind':'raw_expression'},{'delivery':'arbitrary_url'},
-                        {'name':'x'*81},{'kind':'parked_windows'}):
+                        {'name':'x'*81}):
             with self.assertRaises(ValueError):self.save(revision=3,**changes)
 
-    def test_closed_windows_do_not_prove_unknown_open_codes(self):
+    def test_window_position_without_complete_status_cannot_prove_open(self):
         from zeekr_control.custom_reminders import preview
         raw=sample(0);raw['additionalVehicleStatus']['climateStatus']={'winPosDriver':5}
-        result=preview(dict(kind='parked_windows'),raw,BASE)
-        self.assertIsNone(result['matches']);self.assertEqual(result['reason'],'unverified')
+        result=preview(self.window_rule(),raw,BASE)
+        self.assertIsNone(result['matches']);self.assertEqual(result['reason'],'unknown_value')
+
+    @staticmethod
+    def windows(seconds,position=8,status=1,**kwargs):
+        raw=sample(seconds,**kwargs)
+        raw['additionalVehicleStatus']['climateStatus']={
+            key+side:str(value) for side in ('Driver','Passenger','DriverRear','PassengerRear')
+            for key,value in (('winPos',position),('winStatus',status))}
+        return raw
+
+    def window_rule(self,**extra):
+        from zeekr_control.custom_reminders import definition
+        return definition(dict(name='车窗',kind='parked_windows',enabled=True,recovery=True,
+            threshold=25,confirm_seconds=60,cooldown_minutes=1,delivery='in_app',**extra))
+
+    def test_window_verified_pairs_enable_and_preview_without_promoting_unknown_codes(self):
+        from zeekr_control.custom_reminders import preview
+        rule=self.window_rule()
+        self.assertTrue(self.query()['capabilities']['parked_windows'])
+        for position,status,expected in ((0,2,False),(8,1,True),(100,1,True),
+                (4,1,True),(12,1,True),(99,1,True),(101,1,None),(0,1,None),
+                (8,2,None),(100,2,None),(8,3,None),(None,1,None)):
+            with self.subTest(position=position,status=status):
+                raw=self.windows(0,position,status)
+                self.assertIs(preview(rule,raw,BASE)['matches'],expected)
+        raw=self.windows(0,0,2)
+        raw['additionalVehicleStatus']['climateStatus'].update(winPosPassenger='100',winStatusPassenger='1')
+        self.assertIs(preview(rule,raw,BASE)['matches'],True)
+        raw['additionalVehicleStatus']['climateStatus'].pop('winStatusPassengerRear')
+        self.assertIsNone(preview(rule,raw,BASE)['matches'])
+        for changes in ({'speed':1},{'engine':'engine_on'},{'ready':1}):
+            self.assertIsNone(preview(rule,self.windows(0,**changes),BASE)['matches'])
+        raw=self.windows(0);raw['basicVehicleStatus']['speedValidity']=False
+        self.assertIsNone(preview(rule,raw,BASE)['matches'])
+        for now in (BASE+180001,BASE-30001):
+            self.assertIsNone(preview(rule,self.windows(0),now)['matches'])
+        self.assertFalse(self.store.path.exists())
+
+    def test_window_unknown_conflict_and_gaps_cannot_raise_or_recover(self):
+        self.save(kind='parked_windows',cooldown_minutes=1,delivery='wecom')
+        sent=[]
+        def observe(seconds,raw=None,now=None):
+            self.rules.observe('owner','car',raw or self.windows(seconds),
+                BASE+seconds*1000 if now is None else now,sender=sent.append)
+        observe(0)
+        observe(60,self.windows(0))  # Repeated cloud timestamp.
+        self.assertEqual(sent,[])
+        observe(61,self.windows(61,101,1))
+        observe(120)
+        self.assertEqual(sent,[])
+        observe(180)
+        self.assertEqual(len(sent),1)
+        observe(240,self.windows(240,0,1))  # Conflicting closed position/open enum.
+        observe(300,self.windows(300,0,2,engine='engine_on',ready=1))
+        self.assertEqual(len(sent),1)
+        observe(360,self.windows(360,0,2))
+        observe(600,self.windows(600,0,2))  # Four-minute gap breaks window confirmation.
+        self.assertEqual(len(sent),1)
+        observe(660,self.windows(660,0,2))
+        self.assertEqual(len(sent),2)
+        self.assertEqual([r['kind'] for r in self.query()['history']],['recovered','raised'])
+        self.assertNotIn('离车',sent[0])
+
+    def test_legacy_window_rules_require_resave_and_pending_send_rechecks_windows(self):
+        self.store.change('owner','car','rules','save','legacy_window',dict(
+            name='旧车窗',kind='parked_windows',enabled=True,recovery=True,
+            threshold=25,confirm_seconds=60,cooldown_minutes=1,delivery='wecom'),0)
+        sent=[]
+        for second in (0,60,120):
+            self.rules.observe('owner','car',self.windows(second),BASE+second*1000,sender=sent.append)
+        self.assertEqual(sent,[])
+        self.save(id='legacy_window',revision=1,kind='parked_windows',delivery='wecom')
+        for second in (180,240):
+            self.rules.observe('owner','car',self.windows(second),BASE+second*1000)
+        self.assertEqual(self.query()['history'][0]['delivery'],'pending')
+        self.rules.deliver('owner','car',self.windows(300,0,2),BASE+300000,sent.append)
+        self.assertEqual(sent,[])
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
+
+    def test_owner_window_operation_replay_does_not_turn_delivery_delay_into_confirmation(self):
+        from zeekr_control.custom_reminders import preview
+        self.save(kind='parked_windows',delivery='wecom')
+        rule=self.window_rule()
+        sent=[]
+        # Actual window pairs and relative timestamps from the two owner operations.
+        # Parking fields are synthetic; this is not a real notification acceptance test.
+        for vehicle_ms,observed_ms,position,status,expected in (
+                (0,5510,0,2,False),(17783,67499,8,1,True),
+                (77852,88037,8,1,True),(90972,108812,8,1,True),
+                (112427,129466,0,2,False),(185000,191471,0,2,False),
+                (209569,232920,100,1,True),(209569,253449,100,1,True),
+                (254163,294812,0,2,False)):
+            raw=self.windows(0,position,status);raw['updateTime']=BASE+vehicle_ms
+            now=BASE+observed_ms
+            self.assertIs(preview(rule,raw,now)['matches'],expected)
+            self.rules.observe('owner','car',raw,now,sender=sent.append)
+        self.assertEqual(sent,[])
+        self.assertEqual(self.query()['history'],[])
+
+    def test_one_conflicting_window_blocks_decision_and_expired_pending_is_cancelled(self):
+        from zeekr_control.custom_reminders import preview
+        raw=self.windows(0)
+        raw['additionalVehicleStatus']['climateStatus']['winStatusDriverRear']='2'
+        self.assertIsNone(preview(self.window_rule(),raw,BASE)['matches'])
+        self.save(kind='parked_windows',delivery='wecom')
+        for second in (0,60):self.rules.observe('owner','car',self.windows(second),BASE+second*1000)
+        sent=[]
+        self.rules.deliver('owner','car',self.windows(241),BASE+241000,sent.append)
+        self.assertEqual(sent,[])
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
 
     def test_parked_charging_needs_both_park_and_verified_charge_evidence(self):
         from zeekr_control.custom_reminders import preview

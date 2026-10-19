@@ -1,10 +1,11 @@
 const assert=require('node:assert/strict');
-const {fixture,layouts}=require('./ui_insight_helpers.cjs');
+const {fixture,layouts,parameterStage}=require('./ui_insight_helpers.cjs');
 (async()=>{
   const f=await fixture(),{page}=f;
   try{
-    await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
-    await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
+    await page.getByRole('button',{name:'全部参数',exact:true}).click();
+    await page.waitForFunction(()=>reviewCatalog.length===217);
+    await parameterStage(page,'experiment');
     await page.locator('#lab-all-fields').check();
     await page.getByRole('button',{name:'新建实验',exact:true}).click();
     for(const label of ['前','后']){
@@ -28,7 +29,13 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByLabel('实际动作',{exact:true}).fill('用户手动改变设置，仅记录动作');
     await page.getByLabel('动作时间（北京时间）',{exact:true}).fill('2026-09-20T00:00:30');
     await page.getByLabel('研究备注',{exact:true}).fill('这只是线索，不自动确认语义');
-    await page.getByLabel('筛选变化字段',{exact:true}).fill('chargeLevel');
+    await page.getByLabel('包含未变化字段（反证）',{exact:true}).check();
+    await page.getByLabel('筛选实验字段',{exact:true}).fill('winPosDriver');
+    const unchanged=page.locator('[data-lab-field]').filter({hasText:'winPosDriver'}).first();
+    await unchanged.getByText('未变化 · 可记录反证',{exact:true}).waitFor();
+    await page.locator('[data-lab="clear-fields"]').click();
+    await unchanged.locator('input[type=checkbox]').check();
+    await page.getByLabel('筛选实验字段',{exact:true}).fill('chargeLevel');
     assert.equal(await page.locator('[data-lab-field]').count(),1);
     await page.evaluate(()=>render());
     assert.equal(await page.getByLabel('研究备注',{exact:true}).inputValue(),'这只是线索，不自动确认语义');
@@ -38,6 +45,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'回看实验',exact:true}).click();
     await page.getByText(/保存时的观测摘录/).waitFor();
     assert.match(await page.locator('#lab-comparison').innerText(),/研究线索/);
+    await page.getByText('未变化 · 可记录反证',{exact:true}).waitFor();
+    assert.match(await page.locator('#lab-comparison').innerText(),/winPosDriver/);
     await page.getByLabel('研究备注',{exact:true}).fill('补充研究备注');
     await page.getByRole('button',{name:'保存实验记录',exact:true}).click();
     await page.getByText('实验记录已保存。',{exact:true}).waitFor();
@@ -51,12 +60,16 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.waitForFunction(()=>document.querySelector('#lab-note')?.value==='补充研究备注');
     await layouts(page,'parameter-experiments');
     await page.reload();await page.getByRole('button',{name:'用车研究',exact:true}).click();
-    await page.getByRole('button',{name:'参数研究与核实',exact:true}).click();
-    await page.getByRole('button',{name:'3 操作验证',exact:true}).click();
+    await page.getByRole('button',{name:'全部参数',exact:true}).click();
+    await page.waitForFunction(()=>reviewCatalog.length===217);
+    await parameterStage(page,'experiment');
     await page.locator('#lab-all-fields').check();
     await page.getByRole('button',{name:'回看实验',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#lab-note')?.value==='补充研究备注');
-    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/experiments'),'Never promote field review or send vehicle actions');
+    await page.locator('[data-review-experiment][data-side="after"]').first().click();
+    await page.getByText(/字段在动作前后未变化/).waitFor();
+    assert.equal(await page.getByLabel('核实结果',{exact:true}).inputValue(),'question');
+    assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/experiments'||/^\/api\/analysis\/[a-f0-9]+\/cancel$/.test(new URL(url).pathname)),'Never promote field review or send vehicle actions: '+JSON.stringify(f.posts));
     assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
     console.log('UI_PARAMETER_EXPERIMENTS_PASS: before/after samples, field filtering, action/time/notes, save/review/edit/delete/restore, frozen research status, XSS, persistence, themes/desktop/zoom/contrast; no vehicle actions or evidence promotion');
   }finally{await f.close();}

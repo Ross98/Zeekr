@@ -1,7 +1,7 @@
 (function(root){
   'use strict';
-  const kinds={low_soc:'电量低于阈值',high_soc:'电量达到阈值',parked_charging:'停车充电持续中',parked_windows:'停车后车窗未关（待核验）'};
-  const reasons={unknown_time:'车辆时间未知',future:'车辆时间超前',stale:'缓存已陈旧',unknown_value:'条件数值或状态未知',unverified:'枚举尚未核验',matching:'本条符合条件',not_matching:'本条不符合条件',repeat:'重复缓存，未增加确认次数',revision:'同时间修订，重新确认'};
+  const kinds={low_soc:'电量低于阈值',high_soc:'电量达到阈值',parked_charging:'停车充电持续中',parked_windows:'停车下电后车窗未关'};
+  const reasons={unknown_time:'车辆时间未知',future:'车辆时间超前',stale:'缓存已陈旧',unknown_value:'条件数值或状态未知',unverified:'车窗规则需重新保存以采用当前核验结果',not_parked:'尚未确认停车下电及有效零速',matching:'本条符合条件',not_matching:'本条不符合条件',repeat:'重复缓存，未增加确认次数',revision:'同时间修订，重新确认'};
   const deliveries={local:'已记入站内历史',pending:'待发送',sending:'发送中',sent:'已发送',failed:'发送失败',uncertain:'发送结果未确认',cancelled:'已取消发送'};
   const blank=()=>({id:'',name:'',kind:'low_soc',threshold:25,confirm_seconds:120,cooldown_minutes:60,enabled:false,delivery:'in_app',recovery:true});
   function create({getState,request,escape:esc,active,time}){
@@ -30,7 +30,7 @@
           ${field('冷却时间（分钟）','cooldown_minutes','number','required min="1" max="43200" step="1"')}
           <label>提醒方式<select name="delivery" id="rule-delivery" aria-label="提醒方式"><option value="in_app" ${draft.delivery==='in_app'?'selected':''}>仅站内历史</option><option value="wecom" ${draft.delivery==='wecom'?'selected':''}>Bark＋站内历史（企业微信兜底）</option></select></label>
           ${check('启用这条规则','enabled')}${check('恢复时也发送通知','recovery')}</fieldset></form>
-          <p class="insight-note">阈值仅用于电量条件。停车充电要求下电、有效零速及已核验充电状态。车窗仅核验关闭组合，打开枚举尚未核验；可保存停用规则，暂不能启用。</p><p class="insight-note">选择 Bark 并启用后，由采集后台优先推送到 Bark；失败时尝试企业微信。页面预览不发消息；发送结果不明时不会自动重发。只在当前账号与车辆下运行，采集暂停时不判断。</p>
+          <p class="insight-note">阈值仅用于电量条件。停车充电要求下电、有效零速及已核验充电状态。车窗要求停车下电及有效零速。位置值大于 0 且不超过 100、状态值为 1 时判断未关；0/2 判断关闭。已实测关闭、微开、全开，中间开度按区间推断；缺失、冲突或超范围不判断。停车下电不代表已确认人离车。</p><p class="insight-note">选择 Bark 并启用后，由采集后台优先推送到 Bark；失败时尝试企业微信。页面预览不发消息；发送结果不明时不会自动重发。只在当前账号与车辆下运行，采集暂停时不判断。</p>
           <div class="insight-actions">${button('预览条件','preview',loading)}${button('保存规则','save',loading)}</div>
           ${preview?`<div id="rule-preview-result" class="rule-preview"><strong>${preview.matches===true?'本条观测符合条件':preview.matches===false?'本条观测不符合条件':'暂不能判断'}</strong><p>${esc(reasons[preview.reason]||'未知')} · 车辆时间 ${esc(time(preview.state_time))}</p><p>预览不会触发提醒，不计入连续确认，不发送通知。</p></div>`:''}</section>
           <section class="card insight-panel"><h3>我的规则</h3><p class="insight-note">下方是最近一次评估，不保证当前车况。编辑、启停或恢复规则后重新确认；停用会阻止未发通知。</p><div id="rule-records"></div></section>
