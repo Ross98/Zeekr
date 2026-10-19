@@ -9,6 +9,14 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.route('**/api/location/map?*',async r=>{requested++;if(mode==='delayed')await new Promise(resolve=>release=resolve);if(mode==='error')return r.fulfill({status:503,body:'unavailable'});await r.fulfill({contentType:'image/svg+xml',body:map});});
  }});const {page}=f;
  const marker=()=>page.locator('.location-position-marker');
+ async function releaseDelayedMap(label){
+  const deadline=performance.now()+5000;
+  while(!release){
+   if(performance.now()>=deadline)throw Error('Timed out waiting for '+label+' map request');
+   await new Promise(resolve=>setTimeout(resolve,10));
+  }
+  const resume=release;release=null;resume();
+ }
  try{
   await page.waitForFunction(()=>document.querySelector('#map img')?.naturalWidth>0);
   assert.equal(await marker().count(),1,'exactly one visible vehicle marker after a map loads');
@@ -34,7 +42,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   const before=requested;await page.evaluate(()=>render());await page.waitForFunction(()=>document.querySelector('#map-status').textContent.includes('正在更新底图'));
   assert.equal(await page.evaluate(()=>window.originalMarker===document.querySelector('.location-position-marker')),true,'keep old marker until replacement map has loaded');
   assert.match(await marker().getAttribute('aria-label'),/候选位置/,'pending trusted response cannot relabel the old map');
-  while(!release)await new Promise(resolve=>setTimeout(resolve,10));release();
+  await releaseDelayedMap('replacement');
   await page.waitForFunction(()=>document.querySelector('#map img')?.src.includes('moved'));
   assert.equal(requested,before+1);assert.match(await marker().getAttribute('aria-label'),/非实时/);assert.doesNotMatch(await marker().getAttribute('aria-label'),/候选位置/);
   mode='error';revision='failed';await page.evaluate(()=>render());await page.waitForFunction(()=>document.querySelector('#map-status').textContent.includes('新底图加载失败'));
@@ -42,7 +50,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   mode='delayed';revision='other';release=null;
   await page.evaluate(()=>{state.vehicle='other-car';render();});
   assert.equal(await marker().count(),0,'switching vehicle clears the previous vehicle marker immediately');
-  while(!release)await new Promise(resolve=>setTimeout(resolve,10));release();await page.waitForFunction(()=>document.querySelector('#map img')?.src.includes('other'));
+  await releaseDelayedMap('other vehicle');await page.waitForFunction(()=>document.querySelector('#map img')?.src.includes('other'));
   valid=false;await page.evaluate(()=>render());await page.waitForFunction(()=>document.querySelector('#map-status').textContent==='未绘制位置');assert.equal(await marker().count(),0,'invalid location has no marker');
   await page.getByRole('button',{name:'隐藏位置',exact:true}).click();assert.equal(await marker().count(),0,'hide position hides marker');
   valid=true;mode='ok';revision='visible-again';await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).click();await marker().waitFor();

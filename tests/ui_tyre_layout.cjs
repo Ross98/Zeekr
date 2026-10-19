@@ -2,16 +2,28 @@
 const assert = require('node:assert/strict');
 const {fixture} = require('./ui_insight_helpers.cjs');
 (async () => {
-  const f = await fixture({initialResearch:false});
+  let pinnedState=null;
+  const f = await fixture({initialResearch:false,beforeGoto:async page=>{
+    await page.route('**/api/state',async route=>{
+      const response=await route.fetch();
+      await route.fulfill({response,json:pinnedState || await response.json()});
+    });
+  }});
   const {page} = f;
   try {
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.waitForFunction(()=>state?.model&&!busy);
-    await page.evaluate(()=>{
-      state.profile.image='/car.svg';
-      state.model.tyres=['右前','右后','左前','左后'].map(name=>({name,pressure:'256.751 kPa',temperature:'22°C'}));
-      render();
+    pinnedState=await page.evaluate(()=>{
+      const snapshot=structuredClone(state);
+      snapshot.profile.image='/car.svg';
+      snapshot.model.tyres=['右前','右后','左前','左后'].map(name=>({name,pressure:'256.751 kPa',temperature:'22°C'}));
+      return snapshot;
     });
+    await page.evaluate(snapshot=>{state=snapshot;render();},pinnedState);
+    // A real state poll must preserve the synthetic worst-case pressure values.
+    await page.waitForFunction(()=>!polling&&!busy);
+    await page.evaluate(async()=>{await pollState(true);render();});
+    assert.deepEqual(await page.evaluate(()=>state.model.tyres.map(t=>t.pressure)),Array(4).fill('256.751 kPa'),'polling retains the tyre layout fixture');
     for (const view of ['总览','车辆']) {
       await page.getByRole('button',{name:view,exact:true}).first().click();
       if(view==='车辆') await page.getByRole('button',{name:'状态总览',exact:true}).click();
