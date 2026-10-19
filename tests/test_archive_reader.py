@@ -296,6 +296,34 @@ class ArchiveReaderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             list(self.reader.iter_records('owner', 'car', self.start-60000, self.start+60000, limit=1))
 
+    def test_payload_selection_keeps_repeat_revision_metadata_and_read_limits(self):
+        from unittest.mock import patch
+        self.append()
+        self.append(60000, state_offset=0)
+        self.append(120000, state_offset=0, soc=69)
+        self.append(180000, state_offset=-60000)
+        expected = list(self.reader.iter_records('owner', 'car', self.start, self.start+240000))
+        with patch.object(ArchiveReader, '_payload', wraps=ArchiveReader._payload) as decode:
+            selected = list(self.reader.iter_records('owner', 'car', self.start, self.start+240000,
+                payload_when=lambda record: record['observed_at'] == self.start+120000))
+            self.assertEqual(decode.call_count, 1)
+        self.assertEqual([row[0] for row in selected], [row[0] for row in expected])
+        self.assertEqual([row[0]['change'] for row in selected], ['first', 'repeat', 'revision', 'regression'])
+        self.assertEqual(selected[2][1], expected[2][1])
+        self.assertTrue(all(selected[index][1] is None for index in (0, 1, 3)))
+        with self.assertRaises(ValueError):
+            list(self.reader.iter_records('owner', 'car', self.start, self.start+240000,
+                                         limit=1, payload_when=lambda record: False))
+
+    def test_payload_selection_retains_frozen_watermarks(self):
+        self.append()
+        reader = self.reader.frozen('owner', 'car', self.start+240000)
+        self.append(60000)
+        rows = list(reader.iter_records('owner', 'car', self.start, self.start+240000,
+                                      payload_when=lambda record: False))
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0][1])
+
     def test_old_fetch_republished_later_is_stale_at_observation_time(self):
         raw = self.append()
         self.writer.append('owner', 'car', json.dumps(raw), self.start,

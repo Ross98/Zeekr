@@ -389,10 +389,17 @@ class ArchiveReader:
         for _, _, record in self._iter_rows(scope, vehicle, lower, upper, limit):
             yield record
 
-    def iter_records(self, scope, vehicle, lower, upper, limit=50000):
-        """Server-only streaming analytics input; fail rather than silently truncate."""
+    def iter_records(self, scope, vehicle, lower, upper, limit=50000, *, payload_when=None):
+        """Stream every metadata row; optionally omit irrelevant bodies as None.
+
+        Selection never skips metadata, predecessor checks, limits or frozen-shard
+        validation. Callers must retain metadata needed for canonical time rules.
+        """
         last_digest, last_raw = None, None
         for db, row, record in self._iter_rows(scope, vehicle, lower, upper, limit):
+            if payload_when is not None and not payload_when(record):
+                yield record, None
+                continue
             if row['digest'] != last_digest:
                 payload = db.execute('SELECT digest,encoding,raw_bytes,substr(compressed_json,1,?) AS compressed_json '
                                      'FROM payloads WHERE digest=?',

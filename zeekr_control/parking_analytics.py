@@ -1,12 +1,13 @@
 """Parking SOC observations, never joined across charging or uncertain gaps."""
 import json
 import math
+from bisect import bisect_left
 from datetime import datetime
 
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
 from .vehicle_state import decode, numeric
-from .parking_events import build_events, time_advances
+from .parking_events import build_events, time_advances, observation_time
 from .usage_events import UsageEvents, MAX_SUMMARY_BYTES
 from .web_model import parse_location
 from .commute_tags import CommuteTags, _distance
@@ -25,6 +26,30 @@ REASONS = {
     'soc_missing': '区间存在无效或缺失电量', 'insufficient_samples': '有效停车样本不足',
     'range_boundary': '停车区间触及查询边界',
 }
+
+
+def payload_windows(trips, lower, upper):
+    """Conservative complete event windows, never a date-relative history cap.
+
+    Metadata outside these windows still establishes canonical ordering, first
+    observation, latest fresh time and read quality. Its state/location cannot
+    enter an event overlapping the requested dates. Unknown ends stay unbounded.
+    """
+    cursor = float('-inf')
+    windows = []
+    previous = False
+    for trip in sorted((row for row in trips if row.get('kind') == 'trip_end'
+                        and isinstance(row.get('start_time'), (int, float))
+                        and isinstance(row.get('end_time'), (int, float))),
+                       key=lambda row: (row['start_time'], row['end_time'])):
+        right = trip['start_time']
+        if right > cursor and right > lower and cursor < upper:
+            windows.append((cursor, right))
+        cursor = max(cursor, trip['end_time']) if previous else trip['end_time']
+        previous = True
+    if cursor < upper:
+        windows.append((cursor, float('inf')))
+    return windows
 
 
 def analyze_parking(samples, lower, upper, capacity=None):
@@ -249,11 +274,25 @@ class ParkingAnalytics:
             charges = [row for row in events if row['kind'] == 'charge_end']
         archive = (self.archive.frozen(scope, vehicle, int(read_upper))
                    if isinstance(self.archive, ArchiveReader) else self.archive)
+        windows = payload_windows(triples, lower, upper)
+        window_ends = [right for _, right in windows]
+        def needs_payload(record):
+            if max(0, lower-padding) <= record['observed_at'] < upper+padding:
+                return True  # Legacy sessions keep their full boundary padding.
+            instant = observation_time({'record': record})
+            index = bisect_left(window_ends, instant)
+            return index < len(windows) and windows[index][0] <= instant
+        options = {'payload_when': needs_payload} if isinstance(archive, ArchiveReader) and self.database is not None else {}
         def samples():
             cursor = int(read_lower)
             while cursor < read_upper:
                 chunk_end = min(int(read_upper), cursor+33*86400000)
-                for record, raw in archive.iter_records(scope, vehicle, cursor, chunk_end, limit=None):
+                for record, raw in archive.iter_records(scope, vehicle, cursor, chunk_end, limit=None, **options):
+                    # Omitted bodies belong only to windows excluded by build_events.
+                    # Keep timing/freshness for canonicalization and quality reads.
+                    if raw is None:
+                        yield {'record': record, 'state': {}, 'location': None}
+                        continue
                     climate = raw.get('additionalVehicleStatus', {})
                     climate = climate.get('climateStatus', {}) if isinstance(climate, dict) else {}
                     inside = numeric(climate.get('interiorTemp'), -80, 100) if isinstance(climate, dict) else None
