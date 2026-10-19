@@ -12,6 +12,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(!r.url().startsWith(origin))external.push(r.url());if(r.method()==='POST')posts.push(r.url())});
   await page.goto(origin);await page.getByRole('button',{name:'车辆',exact:true}).first().click();
   await page.locator('.vehicle-table').waitFor();assert.match(await page.locator('.vehicle-intro').innerText(),/目录 217 项 · 本次返回 0 项/);
+  assert.match(await page.locator('main').innerText(),/尚未读取/,'empty cached state is not a normal vehicle');
   assert.equal(posts.length,0,'Opening full directory never refreshes the cloud');
   await page.getByRole('button',{name:'刷新状态',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('.vehicle-intro')?.textContent.includes('本次返回 0 项'));
@@ -22,6 +23,23 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   assert.equal(seen.length,217);assert.equal(new Set(seen).size,217);
   assert.deepEqual(new Set(seen),new Set(catalog.fields.map(f=>f.path)));
   assert.ok(!seen.some(p=>/(?:^|\.)(?:vin|longitude|latitude|token|password)$/i.test(p)),'No private fields in full directory');
+  // Migrated ui_car evidence: the catalogue replaces grouped raw disclosures.
+  await page.locator('#vehicle-search').fill('doorOpenStatusDriver');
+  const door=page.locator('[data-parameter="additionalVehicleStatus.drivingSafetyStatus.doorOpenStatusDriver"]');
+  assert.equal(await door.locator('[data-label="原始值"]').innerText(),'0');
+  assert.match(await door.locator('[data-label="参数"]').innerText(),/左前/);
+  const doorDetails=door.locator('details');
+  assert.equal(await doorDetails.getAttribute('open'),null);
+  await doorDetails.locator('summary').focus();await page.keyboard.press('Enter');
+  assert.equal(await doorDetails.getAttribute('open'),'');
+  await page.getByRole('button',{name:'刷新状态',exact:true}).click();
+  await page.waitForFunction(()=>!busy);
+  assert.equal(await doorDetails.getAttribute('open'),'','explicit refresh retains keyboard-opened field evidence');
+  await page.locator('#vehicle-search').fill('sunroofPos');
+  assert.equal(await page.locator('[data-label="原始值"]').innerText(),'101');
+  assert.match(await page.locator('[data-label="解释状态"]').innerText(),/待核实/);
+  await page.locator('#vehicle-reset').click();await page.locator('#vehicle-group').selectOption('空调与座舱');
+  assert.equal(await page.locator('[data-parameter*="winPos"],[data-parameter*="winStatus"],[data-parameter*="sunroof"]').count(),0,'closure fields do not leak into cabin group');
   await page.locator('#vehicle-reset').click();
   await page.getByLabel('搜索参数',{exact:true}).fill('engineHood');
   assert.equal(await page.locator('[data-parameter]').count(),1);
@@ -82,7 +100,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
   await page.route('**/api/refresh',route=>route.fulfill({status:502,json:{error:'合成刷新失败'}}));
   await page.getByRole('button',{name:'刷新状态',exact:true}).click();await page.getByText(/合成刷新失败/).first().waitFor();
   assert.equal(await page.locator('.vehicle-table').innerText(),before);assert.equal(await page.locator('#vehicle-search').inputValue(),'engineHood');
-  assert.equal(posts.length,2,'Only the two explicit refresh clicks post');assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+  assert.equal(posts.length,3,'Only the initial, evidence-preservation and failed explicit refreshes post');assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
   console.log('UI_VEHICLE_PARAMETERS_PASS: all 217 rows, 14 groups, filters, five-row scrolling, focus/details, 6 desktop theme/width layouts, source semantics, failed refresh, no unsolicited cloud requests');
  }finally{if(browser)await browser.close();server.kill()}
 })().catch(e=>{console.error(e);process.exitCode=1});

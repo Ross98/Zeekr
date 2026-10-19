@@ -16,14 +16,14 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     pinnedState=await page.evaluate(()=>{
       const snapshot=structuredClone(state);
       snapshot.profile.image='/car.svg';
-      snapshot.model.tyres=['右前','右后','左前','左后'].map(name=>({name,pressure:'256.751 kPa',temperature:'22°C'}));
+      snapshot.model.tyres=['右前','右后','左前','左后'].map((name,i)=>({name,pressure:`${256.751+i*10} kPa`,temperature:`${21+i}°C`}));
       return snapshot;
     });
     await page.evaluate(snapshot=>{state=snapshot;render();},pinnedState);
     // A real state poll must preserve the synthetic worst-case pressure values.
     await page.waitForFunction(()=>!polling&&!busy);
     await page.evaluate(async()=>{await pollState(true);render();});
-    assert.deepEqual(await page.evaluate(()=>state.model.tyres.map(t=>t.pressure)),Array(4).fill('256.751 kPa'),'polling retains the tyre layout fixture');
+    assert.deepEqual(await page.evaluate(()=>state.model.tyres.map(t=>t.pressure)),pinnedState.model.tyres.map(t=>t.pressure),'polling retains distinct wheel evidence');
     for (const view of ['总览']) {
       await page.getByRole('button',{name:view,exact:true}).first().click();
       for (const theme of ['light','dark']) {
@@ -32,6 +32,14 @@ const {fixture} = require('./ui_insight_helpers.cjs');
           await page.setViewportSize({width,height:1100});
           const diagram=page.locator('.car-tyre-diagram');
           await diagram.scrollIntoViewIfNeeded();
+          for(const tyre of pinnedState.model.tyres){
+            const reading=diagram.locator(`.car-tyre-reading[data-position="${tyre.name}"]`);
+            assert.equal(await reading.locator('strong').innerText(),tyre.pressure.slice(0,-4),`${tyre.name}: exact pressure, no rounding or wheel swap`);
+            assert.equal(await reading.locator('.car-tyre-unit').innerText(),'kPa');
+            assert.match(await reading.locator('.car-tyre-temp').innerText(),new RegExp(tyre.temperature));
+          }
+          const [lf,rf,lr,rr]=await Promise.all(['左前','右前','左后','右后'].map(name=>diagram.locator(`[data-position="${name}"]`).boundingBox()));
+          assert.ok(lf.x+lf.width<=rf.x&&lr.x+lr.width<=rr.x&&lf.y<lr.y&&rf.y<rr.y,'reading grid keeps left/right and front/rear labels');
           const failures=await diagram.evaluate(el=>{
             const art=el.querySelector('.car-tyre-art').getBoundingClientRect();
             const bounds=el.getBoundingClientRect();
