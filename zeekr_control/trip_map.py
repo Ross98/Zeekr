@@ -42,7 +42,7 @@ class AmapStaticMap:
         return [points[round(index * (len(points) - 1) / (limit - 1))] for index in range(limit)]
 
     def position(self, location, zoom=15):
-        """Draw a cached candidate position; preserve its original trust flag."""
+        """Return a centered basemap for the cached-position vehicle overlay."""
         if type(zoom) is not int or not 3 <= zoom <= 17:
             raise ValueError('地图缩放级别无效')
         if not isinstance(location, dict) or location.get('valid') is not True:
@@ -62,9 +62,8 @@ class AmapStaticMap:
             except (KeyError, TypeError, ValueError):
                 raise ValueError('高德坐标转换失败') from None
         point = '%.6f,%.6f' % (lon, lat)
-        color = '0x20776e' if location.get('trusted') is True else '0x7e898a'
         image = self._request('/v3/staticmap', {'key': key, 'location': point, 'zoom': zoom,
-            'size': '750*400', 'scale': 2, 'markers': 'mid,%s,:%s' % (color, point), 'traffic': 0}, binary=True)
+            'size': '750*400', 'scale': 2, 'traffic': 0}, binary=True)
         if not isinstance(image, bytes) or not image.startswith(b'\x89PNG\r\n\x1a\n'):
             raise ValueError('高德底图暂不可用，请稍后重试')
         return image

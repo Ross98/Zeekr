@@ -1059,6 +1059,7 @@ function renderContent() {
   const body = taskPage?'<div id="insights-workspace"></div>':{overview,car,energy,tracks:tracksPage,fields:fieldsPage,insights:()=>'<div id="insights-workspace"></div>',calendar:()=>'<div id="insights-workspace"></div>',report:()=>'<div id="insights-workspace"></div>',settings,more}[page]();
   const retainedImages = [...$('#main').querySelectorAll('img')].filter(image=>!image.closest('#map'));
   const retainedMap = $('#map')?.dataset.owner===mapOwner() ? $('#map').querySelector('img') : null;
+  const retainedMarker = retainedMap ? $('#map').querySelector('.location-position-marker') : null;
   const content = document.createElement('template');
   content.innerHTML = head() + (page!=='overview'?overviewDashboard.backButton():'') + relatedTools() + (error ? `<div class="notice error" role="alert">${icon('info')}<p>${esc(error)}${state?.model?' · 下方保留上次读取的数据与原时间。':''}</p></div>` : '') + (['overview','car'].includes(page) && refreshMessage?`<div class="refresh-result" role="status">${esc(refreshMessage)}</div>`:'') + body + (state?.model ? `<div class="status-footer">本次读取 ${esc(state.read_at)} · 车辆状态更新 ${esc(state.model.updated_at)}</div>` : '');
   // Adopt the inert fragment before moving loaded images into it. Moving them
@@ -1069,7 +1070,7 @@ function renderContent() {
     if(index>=0){const old=retainedImages.splice(index,1)[0];for(const attr of image.attributes)old.setAttribute(attr.name,attr.value);image.replaceWith(old);}
   }
   const nextMap=fragment.querySelector('#map');
-  if(nextMap){nextMap.dataset.owner=mapOwner();if(retainedMap){nextMap.replaceChildren(retainedMap);fragment.querySelector('#map-status').textContent='正在核对缓存位置 · 当前为上次底图，位置可能已变化。';}}
+  if(nextMap){nextMap.dataset.owner=mapOwner();if(retainedMap){nextMap.replaceChildren(retainedMap,...(retainedMarker?[retainedMarker]:[]));fragment.querySelector('#map-status').textContent='正在核对缓存位置 · 当前为上次底图，位置可能已变化。';}}
   $('#main').replaceChildren(fragment);
   if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
   if(chargeManagerNode&&$('#charge-management')){$('#charge-management').replaceWith(chargeManagerNode);if(chargeManagerFocus?.isConnected)chargeManagerFocus.focus({preventScroll:true});}
@@ -1113,6 +1114,15 @@ function createMap(center, zoom = 14, options = {}) {
   return map;
 }
 
+function locationPositionMarker(location) {
+  const marker=document.createElement('div');
+  marker.className='location-position-marker';
+  marker.setAttribute('role','img');
+  marker.setAttribute('aria-label',location.trusted?'车辆缓存位置，非实时位置':'车辆缓存位置，候选位置，实时性未确认');
+  marker.innerHTML=`<span class="location-marker-label">车辆缓存位置</span><span class="location-marker-car" aria-hidden="true">${icon('car')}</span><span class="location-marker-stem" aria-hidden="true"></span><span class="location-marker-dot" aria-hidden="true"></span>`;
+  return marker;
+}
+
 async function loadLocation(version) {
   try {
     const location = await api('/api/location');
@@ -1127,11 +1137,11 @@ async function loadLocation(version) {
     }
     const container=$('#map');
     const source=`/api/location/map?zoom=${locationZoom}&revision=${encodeURIComponent(location.map_revision||'')}`;
-    const status=location.trusted?'高德地图 · 缓存位置，不代表实时位置。':'高德地图 · 灰色候选位置，未确认实时位置。';
+    const status=location.trusted?'高德地图 · 缓存位置，不代表实时位置。':'高德地图 · 候选位置，未确认实时位置。';
     const previous=container.querySelector('img');
     const image=previous?.getAttribute('src')===source?previous:document.createElement('img');
     image.className='amap-position-image';image.alt='高德地图 · 最近缓存位置';
-    image.onload=()=>{if(generation!==version||!showPosition)return;container.classList.remove('map-empty-state');container.replaceChildren(image);$('#map-status').textContent=status;};
+    image.onload=()=>{if(generation!==version||!showPosition)return;container.classList.remove('map-empty-state');container.replaceChildren(image,locationPositionMarker(location));$('#map-status').textContent=status;};
     image.onerror=()=>{if(generation!==version||!showPosition)return;if(!previous){container.classList.add('map-empty-state');container.innerHTML=empty('高德底图暂未加载','请稍后重试；缓存位置与地名信息仍保留。','map');}$('#map-status').textContent=previous?'新底图加载失败 · 保留上次底图，位置可能已变化。':'高德地图加载失败';};
     if(image===previous){$('#map-status').textContent=image.complete&&image.naturalWidth?status:'正在读取高德底图…';return;}
     image.src=source;

@@ -10,7 +10,7 @@ class AmapPositionMapTests(unittest.TestCase):
   config=Path(self.temp.name)/'amap.json';save(config,{'api_key':'synthetic'})
   self.renderer=AmapStaticMap(config)
   self.location=dict(valid=True,trusted=False,latitude=31.2,longitude=121.4,coordinate_system='WGS84（社区解释）')
- def test_converts_gps_and_marks_candidate_without_changing_trust(self):
+ def test_converts_gps_and_returns_unmarked_basemap_without_changing_trust(self):
   calls=[]
   def request(path,params,binary=False):
    calls.append((path,params))
@@ -18,7 +18,7 @@ class AmapPositionMapTests(unittest.TestCase):
   with patch.object(self.renderer,'_request',side_effect=request):
    self.assertTrue(self.renderer.position(self.location,15).startswith(b'\x89PNG'))
   self.assertEqual(calls[-1][1]['location'],'121.404000,31.198000')
-  self.assertIn('0x7e898a',calls[-1][1]['markers']);self.assertFalse(self.location['trusted'])
+  self.assertNotIn('markers',calls[-1][1], 'HTML vehicle marker must be the only position marker');self.assertFalse(self.location['trusted'])
  def test_invalid_points_zoom_or_response_do_not_draw_fake_map(self):
   with patch.object(self.renderer,'_request',return_value=b'error'):
    for location,zoom in [(dict(self.location,valid=False),15),(dict(self.location,coordinate_system='未知'),15),(self.location,99)]:
