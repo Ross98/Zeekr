@@ -384,11 +384,11 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 
 /* Approved desktop hero: identity, power and official vehicle image. */
 @media(min-width:851px){
- main[data-page="overview"] .hero{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr) minmax(0,1fr);gap:24px}
- main[data-page="overview"] .hero>.overview-power{padding:0;border:0;border-radius:0;box-shadow:none;background:transparent;min-width:0}
- .hero>.overview-power .metric-value{font-size:38px;margin:8px 0}
- .hero>.overview-power .metric-label{font-size:13px}
- .hero>.overview-power .metric-foot{font-size:11px;line-height:1.6}
+ main[data-page="overview"] .hero{grid-template-columns:minmax(155px,.85fr) minmax(255px,1.25fr) minmax(120px,.9fr);gap:20px}
+ main[data-page="overview"] .hero .overview-power{padding:0;border:0;border-radius:0;box-shadow:none;background:transparent;min-width:0}
+ .hero .overview-power .metric-value{font-size:38px;margin:8px 0}
+ .hero .overview-power .metric-label{font-size:13px}
+ .hero .overview-power .metric-foot{font-size:11px;line-height:1.6}
  .overview-compact-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
@@ -409,13 +409,18 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
 @media(min-width:851px){
  .overview-part-hood>.overview-param-label,.overview-part-trunk>.overview-param-label{flex-direction:column;align-items:flex-start;gap:3px;white-space:nowrap}
 }
-/* Keep the two desktop summaries compact after power moved into the hero. */
+/* Approved desktop summary cluster: related values stay together inside the hero. */
 @media(min-width:851px){
- .overview-compact-metrics>.metric{display:grid;grid-template-columns:minmax(0,1fr) auto auto;grid-template-rows:auto auto;gap:1px 12px;align-items:center;padding:10px 16px}
- .overview-compact-metrics>.metric:last-child{grid-template-columns:minmax(0,1fr) auto}
- .overview-compact-metrics .metric-label{grid-column:1;grid-row:1;min-width:0;min-height:44px;align-items:center}
- .overview-compact-metrics .metric-label .text-link{max-width:100%;text-align:left;white-space:normal}
- .overview-compact-metrics .metric-value{grid-column:2;grid-row:1;margin:0;white-space:nowrap}
- .overview-compact-metrics .metric-foot{grid-column:1/-1;grid-row:2;min-width:0;overflow-wrap:anywhere;align-self:start}
- .overview-compact-metrics .overview-calendar-link{grid-column:3;grid-row:1;margin:0;justify-self:end}
+ .overview-hero-summary{min-width:0;max-width:440px;width:100%;justify-self:center}
+ .overview-hero-summary .overview-power-values{justify-content:flex-start;gap:24px}
+ .overview-hero-summary .overview-power .battery-track{height:8px;max-width:360px}
+ .overview-hero-summary .overview-compact-metrics{margin:14px 0 0;padding-top:12px;border-top:1px solid var(--line);gap:14px;align-items:start}
+ .overview-hero-summary .overview-compact-metrics>.metric{padding:0;border:0;border-radius:0;box-shadow:none;background:transparent;min-width:0}
+ .overview-hero-summary .overview-compact-metrics .metric-label{font-size:12px;min-height:24px;align-items:start}
+ .overview-hero-summary .metric-label .text-link{font-size:12px;text-align:left;white-space:normal;min-height:24px;align-items:flex-start;padding:0}
+ .overview-hero-summary .overview-compact-metrics .metric-value{font-size:24px;margin:3px 0;letter-spacing:-.5px}
+ .overview-hero-summary .overview-compact-metrics .metric-unit{font-size:12px;margin-left:4px}
+ .overview-hero-summary .overview-compact-metrics .metric-foot{font-size:11px;line-height:1.6;overflow-wrap:anywhere}
+ .overview-summary-reading{display:flex;flex-wrap:wrap;align-items:center;gap:0 8px}
+ .overview-summary-reading .overview-calendar-link{font-size:11px;margin:0;min-height:32px;white-space:nowrap}
 }
