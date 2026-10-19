@@ -304,3 +304,6 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
   .charge-record-disclosure .charge-saved-details{margin:0;padding:0;border:0}
   .energy-tools{margin-top:16px;padding-top:12px}
 }
+
+/* Desktop overview cards keep their own content height. */
+@media(min-width:851px){.overview-health{align-items:start}.overview-health .map-layout{height:360px}}

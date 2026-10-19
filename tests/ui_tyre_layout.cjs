@@ -22,7 +22,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
           const diagram=page.locator('.car-tyre-diagram');
           await diagram.scrollIntoViewIfNeeded();
           const failures=await diagram.evaluate(el=>{
-            const art=el.querySelector('.car-tyre-art img').getBoundingClientRect();
+            const art=el.querySelector('.car-tyre-art').getBoundingClientRect();
             const bounds=el.getBoundingClientRect();
             return [...el.querySelectorAll('.car-tyre-reading')].flatMap(reading=>{
               const r=reading.getBoundingClientRect();
@@ -31,6 +31,9 @@ const {fixture} = require('./ui_insight_helpers.cjs');
               return overlap||outside?[{wheel:reading.dataset.position,overlap,outside}]:[];
             });
           });
+          const metrics=await diagram.evaluate(el=>({height:el.getBoundingClientRect().height,fontSize:parseFloat(getComputedStyle(el.querySelector('strong')).fontSize),weight:Number(getComputedStyle(el.querySelector('strong')).fontWeight)}));
+          assert.ok(metrics.fontSize>=28&&metrics.weight>=700,`${view} pressure must be large and bold: ${JSON.stringify(metrics)}`);
+          assert.ok(metrics.height<=470,`${view} compact diagram: ${metrics.height}px`);
           assert.deepEqual(failures,[],`${view} ${theme} ${width}: wheel labels clear of image and within diagram`);
           if(width===1440&&theme==='light')await diagram.screenshot({path:`/tmp/zeekr-tyre-${view==='总览'?'overview':'vehicle'}.png`});
         }
