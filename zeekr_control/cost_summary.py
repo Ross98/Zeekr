@@ -41,13 +41,14 @@ def _charts(active, selected, *, all_history=False, year=None):
     grouped = {value: {} for value in months}
     if all_history:
         grouped['all'] = {}
+        grouped.update({'annual:' + value: {} for value in years})
 
     def add(row, category, amount):
         date = row.get('date')
         key = date[:7] if isinstance(date, str) else ''
         if not isinstance(date, str) or len(date) != 10 or amount is None:
             return
-        for target in ([key] if key in grouped else []) + (['all'] if all_history else []):
+        for target in ([key] if key in grouped else []) + (['all', 'annual:' + date[:4]] if all_history else []):
             group = grouped[target].setdefault(category, dict(category=category, amount_cents=0, count=0))
             group['amount_cents'] += amount
             group['count'] += 1
@@ -63,6 +64,9 @@ def _charts(active, selected, *, all_history=False, year=None):
                   if row['recorded_cents'] is not None]
     ordered = lambda groups: sorted(groups.values(), key=lambda r: (-r['amount_cents'], r['category']))
     return dict(categories=ordered(grouped['all' if all_history else selected]), years=years, year=chart_year,
+        annual=[dict(year=value, actual_cents=sum(r['amount_cents'] for r in grouped['annual:' + value].values())
+                     if grouped['annual:' + value] else None, categories=ordered(grouped['annual:' + value]))
+                for value in years] if all_history else [],
         largest=max(candidates, key=lambda r: (r['recorded_cents'], r['date'], r['id'])) if candidates else None, months=[
         dict(month=value, actual_cents=sum(r['amount_cents'] for r in grouped[value].values())
              if grouped[value] else None, categories=ordered(grouped[value])) for value in months])

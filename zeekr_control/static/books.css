@@ -94,15 +94,6 @@ main[data-page=books] .books-chart-top>.insight-panel{margin:0;min-width:0;paddi
 .books-largest-main>strong{display:block;font-size:30px;margin:12px 0;font-variant-numeric:tabular-nums}
 .books-largest-main p{font-size:15px;margin:8px 0}
 .books-largest-footer{margin-top:auto;border-top:1px solid var(--line);padding-top:18px;color:var(--night-secondary,#50656e);font-size:13px}
-.books-trend-bars{height:230px;display:flex;align-items:end;gap:22px;border-bottom:1px solid var(--line);padding-top:24px;margin-bottom:16px}
-.books-trend-month{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:end;height:100%;gap:8px}
-.books-trend-value{font-size:13px;font-variant-numeric:tabular-nums;text-align:center;overflow-wrap:anywhere;max-width:100%}
-.books-trend-stack{display:flex;flex-direction:column-reverse;width:60%;max-width:70px;border-radius:5px 5px 0 0;overflow:hidden;flex-shrink:0}
-.books-trend-stack>span{display:block;flex-shrink:0;width:100%}
-.books-trend-month>time{font-size:12px;color:var(--night-secondary,#50656e);padding-bottom:8px}
-.books-chart-legend{display:flex;flex-wrap:wrap;gap:10px 20px;font-size:12px;color:var(--night-secondary,#50656e)}
-.books-chart-legend>span{display:flex;align-items:center;gap:6px;overflow-wrap:anywhere;max-width:100%}
-.books-chart-legend i{height:9px;width:9px;flex-shrink:0;border-radius:2px}
 .books-timeline-heading{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:12px}
 .books-timeline-row{display:grid;grid-template-columns:72px 20px minmax(0,1fr) auto;gap:14px;align-items:center;min-height:76px;border-bottom:1px solid var(--line);padding:12px 0}
 .books-timeline-row:last-of-type{border:0}
@@ -116,7 +107,14 @@ main[data-page=books] .books-chart-top>.insight-panel{margin:0;min-width:0;paddi
 .books-scope-switch .button[aria-pressed=true]{color:var(--accent);background:var(--soft);border-color:var(--accent)}
 .books-year-control{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--night-secondary,#50656e)}
 .books-year-control select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
-.books-trend-year .books-trend-bars{gap:8px;height:250px}
-.books-trend-year .books-trend-value{font-size:12px}
-.books-trend-year .books-trend-stack{width:70%}
 .books-timeline-all .books-timeline-row{grid-template-columns:96px 20px minmax(0,1fr) auto}
+.books-line-chart{width:100%;height:250px;min-width:0}
+.books-line-svg{display:block;width:100%;height:250px}
+.books-line-svg text{fill:var(--night-secondary,#50656e);font-size:12px}
+.books-line-grid{stroke:var(--line);stroke-width:1}
+.books-line-path{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round}
+.books-line-partial{stroke-dasharray:5 5;stroke-width:2}
+.books-line-point{fill:var(--accent)}
+.books-line-point-open{fill:var(--paper);stroke:var(--accent);stroke-width:2}
+.books-line-svg .books-line-value{fill:var(--ink);font-weight:500}
+.books-line-data{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}

@@ -128,3 +128,17 @@ class CostsSummaryTests(unittest.TestCase):
         self.assertEqual(filtered['totals']['actual_cents'], 1500, 'year and category filter must not narrow cumulative total')
         self.assertIsNone(self.summary.query('other', 'car', '2026-10-01', 'all')['totals']['actual_cents'])
         with self.assertRaises(ValueError):self.summary.query('owner','car','2026-10-01','invalid')
+
+    def test_annual_chart_sums_all_months_and_ignores_trend_year_filter(self):
+        self.save('expenses','old',dict(date='2022-02-01',amount_cents=1200,category='维修修复',title='维修'))
+        self.save('expenses','free',dict(date='2024-01-01',amount_cents=0,category='服务包',title='免费'))
+        self.save('charges','pending',dict(date='2025-01-01',actual_cents=None,parking_fee_cents=0))
+        self.save('charges','charge',dict(date='2026-01-01',actual_cents=800,parking_fee_cents=200))
+        self.save('expenses','current',dict(date='2026-10-01',amount_cents=300,category='保养',title='保养'))
+        result=self.summary.query('owner','car','2026-10-01','all',0,'','2022')
+        annual=result['charts']['annual']
+        self.assertEqual([(r['year'],r['actual_cents']) for r in annual], [('2022',1200),('2024',0),('2025',None),('2026',1300)])
+        self.assertEqual(sum(r['actual_cents'] or 0 for r in annual),result['totals']['actual_cents'])
+        self.assertEqual(sum(c['amount_cents'] for c in annual[-1]['categories']),1300)
+        self.assertEqual(self.summary.query('other','car','2026-10-01','all')['charts']['annual'],[])
+        self.assertEqual(self.summary.query('owner','car','2026-10-01')['charts']['annual'],[])

@@ -71,3 +71,13 @@ assert.equal(recordedAmount({actual_cents:1000,parking_cents:600}),1600);
 assert.ok(matchesCategory({kind:'charge',category:'充电',parking_cents:600},'充电停车费'));
 assert.ok(!matchesCategory({kind:'charge',category:'充电',parking_cents:0},'充电停车费'));
 assert.ok(matchesCategory({kind:'life',category:'自定义养护'},'自定义养护'));
+
+const {chartPoints}=require('../zeekr_control/static/books-overview.js');
+const stamp=Date.parse('2026-10-20T12:00:00+08:00');
+const points=chartPoints([{month:'2026-01',actual_cents:null},{month:'2026-10',actual_cents:11022},{month:'2026-11',actual_cents:100}],stamp);
+assert.equal(points[0].value,0,'elapsed empty months display recorded zero');
+assert.equal(points[0].inferred,true,'display zero must not rewrite unknown data');
+assert.equal(points[1].partial,true);
+assert.equal(points[2].value,null,'future months remain empty even if future-dated entries exist');
+assert.equal(chartPoints([{year:'2026',actual_cents:200}],stamp,true)[0].partial,true);
+assert.equal(chartPoints([{year:'2024',actual_cents:0}],stamp,true)[0].inferred,false);
