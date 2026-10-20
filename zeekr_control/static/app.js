@@ -758,9 +758,9 @@ function mapOwner() {
 
 let overviewPartOwner='',overviewPart='rf',overviewStatus='',overviewDetailOpen=false;
 function overviewParts(){
-  const m=state.model;
+  const m=state.model,lock=m.lock.value;
   return [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']].map(([key,name])=>({key,query:name,...(m.doors.find(door=>door.name===name)||{door:'未知',lock:'未知',window:'未知'}),name:name+'门',glyph:'Door'}))
-    .concat([{key:'hood',glyph:'Hood',name:'前舱盖',query:'engineHood',door:m.hood},{key:'trunk',glyph:'Trunk',name:'尾门',query:'trunk',door:m.trunk},{key:'central',glyph:'Central',name:'锁车状态',query:'centralLocking',door:m.lock.confirmed?m.lock.value:'未知'}]);
+    .concat([{key:'hood',glyph:'Hood',name:'前舱盖',query:'engineHood',door:m.hood},{key:'trunk',glyph:'Trunk',name:'尾门',query:'trunk',door:m.trunk},{key:'central',glyph:'Central',name:'锁车状态',query:'centralLocking',door:m.lock.confirmed?(lock==='已锁车'?'已锁':lock==='未锁车'?'未锁':lock):'未知'}]);
 }
 function overviewStatuses(parts){
   return parts.flatMap(part=>part.window!==undefined?['door','window','lock'].map((key,i)=>({part:part.key,name:part.name.replace(/门$/,'')+['车门','车窗','门锁'][i],value:part[key]})):[{part:part.key,name:part.name,value:part.door}]);

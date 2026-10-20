@@ -47,8 +47,17 @@ const {fixture}=require('./ui_insight_helpers.cjs');
    await page.locator('.overview-vehicle h2').click();
    assert.equal(await page.locator('#overview-part-detail').isVisible(),false,'outside click closes the detail');
   }
+  // The backend emits 已锁车 for its verified central-and-four-door combination.
+  await page.evaluate(()=>{state.model.lock={confirmed:true,value:'已锁车'};render();});
+  assert.match(await page.locator('.overview-part-central').innerText(),/已锁车/,'render the actual backend lock label');
+  assert.equal(await page.locator('.overview-part-central [role="img"]').getAttribute('aria-label'),'已锁');
   await page.evaluate(()=>{state.model.lock={confirmed:true,value:'未锁'};render();});
   assert.match(await page.locator('.overview-part-central').innerText(),/未锁车/);
+  await page.evaluate(()=>{state.model.lock={confirmed:true,value:'未锁车'};render();});
+  assert.match(await page.locator('.overview-part-central').innerText(),/未锁车/);
+  assert.equal(await page.locator('.overview-part-central [role="img"]').getAttribute('aria-label'),'未锁');
+  await page.evaluate(()=>{state.model.lock={confirmed:false,value:'已锁车'};render();});
+  assert.match(await page.locator('.overview-part-central').innerText(),/锁止未知/,'unconfirmed state cannot show a locked label');
   await page.evaluate(()=>{state.model.lock={confirmed:false,value:'未知'};render();});
   assert.match(await page.locator('.overview-part-central').innerText(),/锁止未知/);
   assert.doesNotMatch(await page.locator('.overview-tyre-readings').innerText(),/25\.6°C|23\.1°C/,'cabin temperature cannot masquerade as tyre temperature');
