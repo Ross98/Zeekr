@@ -101,6 +101,25 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(runner.health()['data_change'], 'new')
         self.assertEqual(runner.health()['status'], 'fresh')
 
+    def test_old_parked_p_gear_repeat_with_unavailable_speed_waits_for_update(self):
+        class Client:
+            raw = sample(0)
+            raw['basicVehicleStatus']['speedValidity'] = False
+            raw['additionalVehicleStatus']['drivingBehaviourStatus'] = {'gearAutoStatus': 0}
+            def __init__(self, session): pass
+            def vehicles(self): return [{'vin': 'L6T79X2Z0NP000001'}]
+            def status(self, vin): return Client.raw
+        runner = self.runner(Client)
+        runner.tick(BASE)
+        runner.tick(BASE + 3600000)
+        self.assertEqual(runner.health()['status'], 'parked_waiting')
+        self.assertEqual(runner.health()['data_change'], 'repeat')
+        self.assertEqual(runner.health()['state_time'], str(BASE))
+        Client.raw['additionalVehicleStatus']['drivingBehaviourStatus']['gearAutoStatus'] = 2
+        runner.tick(BASE + 3620000)
+        runner.tick(BASE + 3640000)
+        self.assertEqual(runner.health()['status'], 'stale')
+
     def test_parking_wait_does_not_mask_failed_reads_or_unknown_and_future_states(self):
         from zeekr_control.errors import ApiError
         class Client:

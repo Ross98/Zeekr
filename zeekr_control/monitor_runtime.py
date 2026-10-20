@@ -294,10 +294,13 @@ class Runner:
                               state_time=str(int(point['time'])) if point['time'] is not None else '')
                 # A repeated old parking snapshot describes the last known state,
                 # not a collection failure or a new observation for event logic.
+                # Sleeping cars can omit valid speed; P plus power-off is still
+                # evidence for the last known parking state, never current state.
                 if (health['status'] == 'stale' and publication['change'] == 'repeat'
                         and point['time'] is not None and observed - point['time'] > 180000
                         and point['off'] is True and point['charging'] is False
-                        and point['speed'] == 0):
+                        and (point['speed'] == 0
+                             or point['speed'] is None and point['gear'] == 'P')):
                     health['status'] = 'parked_waiting'
                 state = self.monitor.status(binding)
                 # Parking uses the same cadence, so starting a trip stays visible.
