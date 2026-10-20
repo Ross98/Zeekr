@@ -83,18 +83,24 @@
 #charging-review .cr-interval>div:last-child{text-align:right}
 #charging-review .cr-interval strong{font-weight:600;font-size:14px}
 #charging-review .cr-interval strong small{font-size:11px;font-weight:400}
-#charging-review .cr-place-summary{margin:0 0 24px;padding:19px 21px;background:var(--cr-paper);border:1px solid var(--cr-line);border-radius:10px}
-#charging-review .cr-place-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0}
-#charging-review .cr-place-cards>article{min-width:0;padding:14px;border:1px solid var(--cr-line);border-radius:8px;background:var(--cr-bg)}
-#charging-review .cr-place-cards .cr-place-selected{outline:2px solid var(--cr-mark)}
-#charging-review .cr-site-heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-#charging-review h4{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
-#charging-review .cr-site-heading>span{white-space:nowrap;color:var(--cr-muted);font-size:12px}
-#charging-review .cr-site-cost{display:block;font-size:24px;margin-top:10px;font-variant-numeric:tabular-nums}
-#charging-review .cr-place-cards dl{margin:12px 0;font-size:12px}
-#charging-review .cr-place-cards dt{color:var(--cr-muted)}
-#charging-review .cr-place-cards dd{margin:2px 0 10px;font-size:14px}
-#charging-review .cr-place-cards small{font-size:11px;color:var(--cr-muted)}
+#charging-review .cr-place-summary{margin:0 0 24px;padding:0;background:var(--cr-paper);border:1px solid var(--cr-line);border-radius:10px}
+#charging-review .cr-place-list{display:grid;gap:10px;margin:14px 0}
+#charging-review .cr-place-list>article{min-width:0;border:1px solid var(--cr-line);border-radius:8px;overflow:hidden}
+#charging-review .cr-place-list .cr-place-selected{border-color:var(--cr-mark);box-shadow:inset 3px 0 var(--cr-mark)}
+#charging-review button.cr-place-row{display:block;width:100%;padding:16px 18px;border:0;border-radius:0;background:transparent;text-align:left;cursor:pointer}
+#charging-review button.cr-place-row:hover{background:var(--cr-bg)}
+#charging-review button.cr-place-row:focus-visible{outline-offset:-4px}
+#charging-review .cr-site-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:24px}
+#charging-review .cr-site-identity{min-width:0;overflow-wrap:anywhere}
+#charging-review .cr-site-title{display:block;font-size:16px;font-weight:600}
+#charging-review .cr-site-venue{display:block;font-size:12px;color:var(--cr-muted);margin-top:4px}
+#charging-review .cr-site-money{text-align:right;white-space:nowrap}
+#charging-review .cr-site-cost{display:block;font-size:26px;font-weight:600;line-height:1.3;font-variant-numeric:tabular-nums}
+#charging-review .cr-site-share-label{display:block;font-size:12px;color:var(--cr-muted);margin-top:4px}
+#charging-review .cr-site-share{display:block;height:5px;margin:14px 0;background:var(--cr-track);border-radius:3px;overflow:hidden}
+#charging-review .cr-site-share>span{display:block;height:100%;background:var(--cr-mark)}
+#charging-review .cr-site-facts{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:12px;font-size:12px;color:var(--cr-muted)}
+#charging-review .cr-site-pending{font-weight:600}
 #charging-review button.cr-place{font-size:15px;font-weight:600;border:0;border-radius:0;padding:0;background:transparent;text-decoration:underline;text-decoration-color:var(--cr-line);text-underline-offset:4px;text-align:left;overflow-wrap:anywhere}
 #charging-review .cr-place-source{font-size:11px;color:var(--cr-muted);margin-left:8px;white-space:nowrap}
 #charging-review .cr-station-name{font-size:12px;color:var(--cr-muted)}
@@ -127,3 +133,11 @@
 
 #charging-review .cr-reference-candidate{padding:12px;border:1px solid var(--cr-line);border-radius:7px;margin-bottom:14px;font-size:12px}
 #charging-review .cr-reference-candidate button{margin:6px 8px 0 0}
+
+#charging-review button.cr-footprint-toggle{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px 22px;width:100%;padding:16px 20px;background:transparent;border:0;border-radius:10px;text-align:left}
+#charging-review .cr-footprint-toggle strong{font-size:15px;font-weight:600}
+#charging-review .cr-footprint-brief{font-size:12px;color:var(--cr-muted);overflow-wrap:anywhere}
+#charging-review .cr-footprint-action{font-size:12px;color:var(--cr-mark);white-space:nowrap}
+#charging-review .cr-footprint-toggle:focus-visible{outline-offset:-4px}
+#charging-review .cr-place-distribution{padding:0 20px 16px;border-top:1px solid var(--cr-line)}
+#charging-review .cr-place-distribution[hidden]{display:none}

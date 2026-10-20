@@ -8,6 +8,7 @@ import time
 
 from .analysis_cancel import check_cancelled
 from .charging_locations import resolve, coordinates, RADIUS_M
+from .charging_energy import summary as energy_summary
 from .commute_tags import CommuteTags, _distance
 from .trip_place_names import TripPlaceNames, cached_names
 from .place_regions import RegionIndex
@@ -138,6 +139,7 @@ class ChargingPlaces:
             paired=[r for r in billed if number(r['bill'].get('metered_kwh'),.000001,10000) is not None]
             energy=total(r['bill']['metered_kwh'] for r in paired);cost=total(r['bill']['actual_cents'] for r in paired)
             g.update(unlocated=all(r['place_unlocated'] for r in rows) and not g['key'].startswith('station:'),
+                     **energy_summary(rows),
                      location_missing_count=sum(r['place_unlocated'] for r in rows),
                      charge_count=len(rows),known_count=len(billed),pending_count=len(rows)-len(billed),actual_cents=total(r['bill']['actual_cents'] for r in billed),
                      estimated_kwh=total(r.get('estimated_kwh') for r in rows),energy_samples=sum(r.get('estimated_kwh') is not None for r in rows),

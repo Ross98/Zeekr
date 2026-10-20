@@ -3,6 +3,7 @@ import json
 import time
 
 from .charging_analytics import _mode
+from .charging_energy import preferred, summary as energy_summary
 from .charging_intervals import ChargingIntervals
 from .charging_places import ChargingPlaces
 from .usage_events import UsageEvents, number, total
@@ -20,6 +21,7 @@ class ChargingReview:
     def _summary(rows):
         known = [r for r in rows if r['bill'] and r['bill']['actual_cents'] is not None]
         return dict(charge_count=len(rows), partial_count=sum(r['partial'] for r in rows),
+                    **energy_summary(rows),
                     estimated_kwh=total(r['estimated_kwh'] for r in rows),
                     energy_samples=sum(r['estimated_kwh'] is not None for r in rows),
                     actual_cents=total(r['bill']['actual_cents'] for r in known),
@@ -47,6 +49,7 @@ class ChargingReview:
             bill = books.get(event['id'])
             public_bill = {k:bill.get(k) for k in ('id','date','actual_cents','metered_kwh','service_fee_cents','parking_fee_cents')} if bill else None
             row = dict(event, bill=public_bill, mode='unknown')
+            row['charging_kwh'],row['charging_energy_source']=preferred(row)
             (records if current else earlier).append(row)
         # Confirm both saved mode endpoints; conflicting codes remain unknown.
         if records:

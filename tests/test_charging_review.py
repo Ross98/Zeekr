@@ -41,6 +41,52 @@ class ChargingReviewTests(unittest.TestCase):
         self.assertEqual(result['analysis']['metered_samples'],2)
         self.assertIsNone(self.review(owner='other')['summary']['actual_cents'])
 
+    def test_metered_charge_energy_is_known_when_frozen_capacity_is_missing(self):
+        self.charge('metered',battery_capacity_kwh=None);self.bill('metered','44.91','40.455')
+        r=self.review();row=r['records'][0]
+        self.assertIsNone(row['estimated_kwh'])
+        self.assertEqual(row['charging_kwh'],40.455);self.assertEqual(row['charging_energy_source'],'metered')
+        for summary in (r['summary'],r['place_summary'][0]):
+            self.assertEqual(summary['charging_kwh'],40.455)
+            self.assertEqual(summary['metered_energy_samples'],1);self.assertEqual(summary['soc_energy_samples'],0)
+            self.assertEqual(summary['unknown_energy_samples'],0)
+
+    def test_metered_energy_replaces_soc_estimate_without_double_counting(self):
+        self.charge();self.bill('charge','10','60');r=self.review()
+        self.assertEqual(r['summary']['charging_kwh'],60)
+        self.assertAlmostEqual(r['summary']['estimated_kwh'],51.6)
+        self.assertEqual(r['summary']['charging_energy_samples'],1)
+
+    def test_mixed_charge_energy_sources_and_unknowns_remain_explicit(self):
+        self.charge('estimated');self.charge('metered');self.bill('metered','10','60')
+        self.charge('unknown',battery_capacity_kwh=None);r=self.review()
+        for summary in (r['summary'],r['place_summary'][0]):
+            self.assertAlmostEqual(summary['charging_kwh'],111.6)
+            self.assertEqual(summary['metered_energy_samples'],1)
+            self.assertEqual(summary['soc_energy_samples'],1);self.assertEqual(summary['unknown_energy_samples'],1)
+        self.assertAlmostEqual(r['analysis']['unit_price_cents_per_kwh'],1000/60)
+
+    def test_metered_energy_does_not_require_a_known_cost(self):
+        self.charge(battery_capacity_kwh=None);self.bill('charge',None,'40')
+        r=self.review();self.assertEqual(r['records'][0]['charging_kwh'],40)
+        self.assertEqual(r['summary']['pending_count'],1);self.assertIsNone(r['summary']['actual_cents'])
+        self.assertIsNone(r['analysis']['unit_price_cents_per_kwh'])
+
+    def test_zero_metered_energy_is_preserved_and_missing_is_not_zero(self):
+        self.charge();self.bill('charge','0','0');r=self.review()
+        self.assertEqual(r['records'][0]['charging_kwh'],0)
+        self.assertEqual(r['records'][0]['charging_energy_source'],'metered')
+        self.assertEqual(r['summary']['metered_energy_samples'],1)
+        self.charge('unknown',battery_capacity_kwh=None)
+        self.assertIsNone(next(row for row in self.review()['records'] if row['id']=='unknown')['charging_kwh'])
+
+    def test_deleted_bill_falls_back_to_original_soc_estimate(self):
+        self.charge();self.bill('charge','10','60')
+        store=PersonalStore(self.root/'personal.sqlite3');saved=store.read('owner','car','charges')
+        store.change('owner','car','charges','delete',saved['records'][0]['id'],None,saved['revision'])
+        r=self.review();self.assertAlmostEqual(r['records'][0]['charging_kwh'],51.6)
+        self.assertEqual(r['records'][0]['charging_energy_source'],'soc_estimate')
+
     def test_mode_unknown_and_free_charging_are_preserved(self):
         self.charge('ac',report_v2={'start':{'charging_mode':'ac'},'end':{'charging_mode':'ac'}})
         self.charge('conflict',report_v2={'start':{'charging_mode':'ac'},'end':{'charging_mode':'dc'}})

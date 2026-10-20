@@ -63,6 +63,11 @@ async function sharedTheme(page){
  await page.waitForFunction(()=>document.querySelector('#charging-review')?.dataset.loadedMonth==='2026-07');
  assert.equal(await page.locator('[data-cost-mode=ac]').count(),1);assert.equal(await page.locator('[data-cost-mode=dc]').count(),1);
  assert.match(await page.locator('.cr-total').first().innerText(),/105.01/);
+ assert.deepEqual(await page.locator('.cr-kwh strong').allTextContents(),['40','40','40']);
+ assert.deepEqual(await page.locator('.cr-kwh small').allTextContents(),['kWh · 账单电量','kWh · 账单电量','kWh · 账单电量']);
+ assert.match(await page.locator('.cr-total').nth(1).innerText(),/累计充电量/);
+ assert.match(await page.locator('.cr-total').nth(1).innerText(),/120/);
+ assert.match(await page.locator('.cr-total').nth(1).innerText(),/3 次账单/);
  for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);await sharedTheme(page);for(const width of [1024,1280,1440]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));const labels=await page.locator('.cr-share-label').evaluateAll(ns=>ns.map(n=>n.getBoundingClientRect().toJSON()));assert.ok(labels[0].right<=labels[1].left);}}
  await page.locator('[data-review-expand]').first().click();await page.getByRole('button',{name:'打开账单',exact:true}).click();
  await page.getByLabel('实际账单金额（元）',{exact:true}).waitFor();
