@@ -92,7 +92,10 @@ class ChargingReview:
         current_cost, prior_cost = summary['actual_cents'], previous_summary['actual_cents']
         costs = estimate(all_events, books)
         trips = [e for e in all_events if e['kind']=='trip_end' and window['start']<=e['end_time']<upper]
+        # Unchanged SOC on a driven trip cannot establish zero consumption.
+        # Keep it out of both the priced numerator and mileage denominator.
         matched = [e for e in trips if number(e['distance_km'],.000001) is not None and not e['partial']
+                   and number(e['estimated_kwh'], .000001) is not None
                    and costs[e['id']]['status']=='priced' and not costs[e['id']]['overlap']
                    and costs[e['id']]['estimated_cents'] is not None]
         distance = total(e['distance_km'] for e in matched)

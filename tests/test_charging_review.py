@@ -97,3 +97,32 @@ class ChargingReviewTests(unittest.TestCase):
         row=self.review()['records'][0]
         self.assertEqual(row['mode'],'dc')
         self.assertEqual(row['mode_source'],'manual')
+
+    def test_unchanged_soc_trips_cannot_establish_free_driving(self):
+        for i,distance in enumerate((2,1,2,3,3,3,2,4)):
+            self.add('flat_'+str(i),day='2026-09-'+str(16+i),distance_km=distance,
+                     start_soc=80,end_soc=80,soc_delta=0)
+        r=self.review()['driving']
+        self.assertEqual(r['total_trip_count'],8)
+        self.assertEqual(r['included_trip_count'],0)
+        self.assertIsNone(r['matched_distance_km'])
+        self.assertIsNone(r['cents_per_100km'])
+
+    def test_flat_soc_distance_does_not_dilute_priced_trip_cost(self):
+        self.add('charge','charge_end',start_soc=0,end_soc=80,soc_delta=80)
+        self.bill('charge','80','80')
+        self.add('flat',day='2026-09-16',distance_km=20,start_soc=80,end_soc=80,soc_delta=0)
+        self.add('drive',day='2026-09-17',distance_km=40,start_soc=80,end_soc=60,soc_delta=-20)
+        r=self.review()['driving']
+        self.assertEqual(r['included_trip_count'],1)
+        self.assertEqual(r['matched_distance_km'],40)
+        self.assertAlmostEqual(r['cents_per_100km'],5000)
+
+    def test_measured_consumption_with_free_bill_remains_zero_cost(self):
+        self.add('charge','charge_end',start_soc=0,end_soc=80,soc_delta=80)
+        self.bill('charge','0','80')
+        self.add('drive',day='2026-09-16',start_soc=80,end_soc=60,soc_delta=-20)
+        r=self.review()['driving']
+        self.assertEqual(r['included_trip_count'],1)
+        self.assertGreater(r['matched_energy_kwh'],0)
+        self.assertEqual(r['cents_per_100km'],0)
