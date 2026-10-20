@@ -3,12 +3,13 @@ from pathlib import Path
 base=Path('/opt/zeekr-control');record=json.loads((base/'.release-ready.json').read_text());active=(base/'current').resolve()
 assert str(active)==record['candidate']
 baseline=json.loads((base/'.release-baseline.json').read_text());changes=json.loads((base/'.release-changes.json').read_text())
-for name,value in record['candidate_hashes'].items():assert hashlib.sha256((active/name).read_bytes()).hexdigest()==value,'Deployed hash mismatch'
+import importlib.util
+spec=importlib.util.spec_from_file_location('release_workflow',base/'.release-workflow.py');workflow=importlib.util.module_from_spec(spec);spec.loader.exec_module(workflow)
+workflow.verify_hashes(active,record['candidate_hashes'])
+workflow.verify_retired_restore(record['previous'],baseline,changes)
 for name,value in baseline['manifest'].items():
  if name not in changes and name!='release-manifest.json':assert hashlib.sha256((active/name).read_bytes()).hexdigest()==value,'Unrelated deployed file changed'
 print('DEPLOYED_HASHES_PASS',len(changes))
-import importlib.util
-spec=importlib.util.spec_from_file_location('release_workflow',base/'.release-workflow.py');workflow=importlib.util.module_from_spec(spec);spec.loader.exec_module(workflow)
 for service in [*workflow.runtime_services(active),'nginx']:
  values={line.split('=',1)[0]:line.split('=',1)[1] for line in subprocess.check_output(['systemctl','show',service,'-p','ActiveState','-p','SubState','-p','NRestarts','-p','MainPID'],text=True).splitlines()}
  assert values['ActiveState']=='active' and values['SubState']=='running' and values['NRestarts']=='0'

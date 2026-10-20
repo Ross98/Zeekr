@@ -7,6 +7,7 @@ with (base/'.deploy.lock').open('a') as lock:
     assert str((base/'current').resolve())==r['candidate']
     import importlib.util
     spec=importlib.util.spec_from_file_location('release_workflow',base/'.release-workflow.py');workflow=importlib.util.module_from_spec(spec);spec.loader.exec_module(workflow)
+    workflow.verify_retired_restore(r['previous'],json.loads((base/'.release-baseline.json').read_text()),json.loads((base/'.release-changes.json').read_text()))
     installed=Path('/etc/systemd/system/zeekr-reports.service').is_file()
     services=['zeekr-control','zeekr-monitor']+(['zeekr-reports'] if installed else [])
     subprocess.run(['systemctl','stop',*services],check=True)

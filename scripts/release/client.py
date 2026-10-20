@@ -56,12 +56,17 @@ def prepare(args):
         destination = root/name
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
+    delete_retired = getattr(args, 'delete_retired_ui_car', False)
+    if delete_retired:
+        # Only this retired test can be removed; build proves absence in Git.
+        workflow.remove_retired_test(root)
     baseline = json.loads((output/'baseline.json').read_text())
     # Local tool scripts are kept outside the candidate and never implicitly committed.
     bundle = output/'bundle'
     workflow.build(root, output/'baseline.json', args.commit, baseline['active'],
                    '/opt/zeekr-control/releases/'+args.name, '/opt/zeekr-control/backups/'+args.name,
-                   paths, json.loads(Path(args.checks).read_text()), bundle)
+                   paths, json.loads(Path(args.checks).read_text()), bundle,
+                   delete_retired_ui_car=delete_retired)
     for phase in ('workflow', 'server', 'stage', 'cutover', 'verify', 'rollback'):
         shutil.copyfile(HERE/(phase+'.py'), bundle/('.release-'+phase+'.py'))
     with tarfile.open(output/'upload.tar.gz', 'w:gz') as archive:
@@ -95,6 +100,8 @@ def main():
     prep = sub.add_parser('prepare')
     for name in ('transport', 'commit', 'paths', 'checks', 'output', 'name'):
         prep.add_argument('--'+name, required=True)
+    prep.add_argument('--delete-retired-ui-car', action='store_true',
+                      help='Remove only tests/ui_car.cjs, requiring its absence in the commit')
     up = sub.add_parser('upload')
     up.add_argument('--transport', required=True)
     up.add_argument('--bundle', required=True)

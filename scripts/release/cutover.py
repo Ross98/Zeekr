@@ -12,7 +12,9 @@ with (base/'.deploy.lock').open('a') as lock:
     reports_installed=Path('/etc/systemd/system/zeekr-reports.service').is_file()
     stop_services=['zeekr-control','zeekr-monitor']+(['zeekr-reports'] if reports_installed else [])
     assert set(workflow.inputs(candidate)+list(changes)+['release-manifest.json'])==set(record['candidate_hashes']), 'Candidate input set changed'
-    for name,value in record['candidate_hashes'].items():assert hashlib.sha256((candidate/name).read_bytes()).hexdigest()==value,'Candidate drift'
+    workflow.verify_retired_restore(previous,baseline,changes)
+    try:workflow.verify_hashes(candidate,record['candidate_hashes'])
+    except ValueError as error:raise AssertionError('Candidate drift: '+str(error)) from error
     size=int(subprocess.check_output(['du','-sb','/var/lib/zeekr-control'],text=True).split()[0])
     assert shutil.disk_usage(base).free>size+256*1024*1024,'Insufficient backup space'
     backup=Path(record['backup']);assert not backup.exists(),'Backup already exists'

@@ -16,11 +16,18 @@ with (base/'.deploy.lock').open('a') as lock:
     baseline = json.loads((base/'.release-baseline.json').read_text())
     changes = json.loads((base/'.release-changes.json').read_text())
     receipt = json.loads((base/'.release-receipt.json').read_text())
+    sys.path.insert(0, str(base))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('release_workflow', base/'.release-workflow.py')
+    workflow = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(workflow)
+    deleted = workflow.deleted_paths(changes)
     current = (base/'current').resolve()
     candidate = Path(config['candidate'])
     assert str(current) == baseline['active'] == config['previous'], 'Active release changed'
     assert candidate.parent == base/'releases' and candidate != current, 'Invalid candidate path'
     assert Path(config['backup']).parent == base/'backups', 'Invalid backup path'
+    workflow.verify_retired_restore(current, baseline, changes)
     for name, value in baseline['manifest'].items():
         assert hashlib.sha256((current/name).read_bytes()).hexdigest() == value, 'Baseline drift: '+name
     assert not candidate.exists(), 'Candidate already exists; validate it explicitly, do not overwrite'
@@ -28,7 +35,7 @@ with (base/'.deploy.lock').open('a') as lock:
     candidate.mkdir()
     subprocess.run(['cp', '-a', str(current)+'/.', str(candidate)], check=True)
     with tarfile.open(base/'.release-changes.tar') as archive:
-        assert set(archive.getnames()) == set(changes)
+        assert set(archive.getnames()) == set(changes)-set(deleted)
         for member in archive.getmembers():
             assert member.isfile() and not member.name.startswith('/') and '..' not in Path(member.name).parts
             target = candidate/member.name
@@ -37,8 +44,9 @@ with (base/'.deploy.lock').open('a') as lock:
             member.uname = member.gname = 'root'
             member.mode = 0o644
         archive.extractall(candidate)
-    for name, value in changes.items():
-        assert hashlib.sha256((candidate/name).read_bytes()).hexdigest() == value, 'Overlay mismatch'
+    if deleted:
+        workflow.remove_retired_test(candidate)
+    workflow.verify_hashes(candidate, changes)
     for name, value in baseline['manifest'].items():
         if name not in changes and name != 'release-manifest.json':
             assert hashlib.sha256((candidate/name).read_bytes()).hexdigest() == value, 'Unrelated change'
@@ -56,12 +64,7 @@ with (base/'.deploy.lock').open('a') as lock:
     assert metadata['status'] == 'recorded' and all(f['status'] == 'matched' for f in metadata['features'])
     subprocess.run(['sudo', '-u', 'zeekr-control', 'env', 'HOME=/var/lib/zeekr-control', 'python3', str(base/'check-release.py'), str(candidate), '--require-image', '--service-user', 'zeekr-control'], check=True)
     # Risk is recomputed here, rather than trusting a config asking to skip tests.
-    sys.path.insert(0, str(base))
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('release_workflow', base/'.release-workflow.py')
-    workflow = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(workflow)
-    tier = workflow.risk(list(changes))
+    tier = workflow.risk(list(changes), deleted)
     assert tier == config['risk'], 'Risk configuration mismatch'
     if tier == 'ui':
         assert receipt['passed'] and workflow.browser_checks(receipt['commands']), 'Missing browser validation'
@@ -72,6 +75,6 @@ with (base/'.deploy.lock').open('a') as lock:
     else:
         command = ['sudo', '-u', 'zeekr-control', 'env', 'HOME=/var/lib/zeekr-control', 'PYTHONDONTWRITEBYTECODE=1', 'python3', '-m', 'unittest', 'discover', '-s', 'tests']
         workflow.validate(candidate, workflow.inputs(candidate), [command], base/'.release-server-validation.json', context='service-user-candidate')
-    candidate_hashes = {name: hashlib.sha256((candidate/name).read_bytes()).hexdigest() for name in set(workflow.inputs(candidate)+list(changes)+['release-manifest.json'])}
+    candidate_hashes = {name: None if name in deleted else hashlib.sha256((candidate/name).read_bytes()).hexdigest() for name in set(workflow.inputs(candidate)+list(changes)+['release-manifest.json'])}
     (base/'.release-ready.json').write_text(json.dumps(dict(config, features=len(metadata['features']), candidate_hashes=candidate_hashes)))
     print('CANDIDATE_READY', flush=True)

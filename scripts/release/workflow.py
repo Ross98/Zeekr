@@ -13,6 +13,13 @@ import os
 import shutil
 import sys
 
+DESKTOP_INPUTS = frozenset({
+    'package.json', 'scripts/browser-failure-evidence.cjs',
+    'scripts/check-desktop-manifest.cjs', 'scripts/desktop-test-manifest.json',
+    'scripts/test-desktop.cjs',
+})
+RETIRED_DESKTOP_TEST = 'tests/ui_car.cjs'
+
 
 def allowed(name):
     path = PurePosixPath(name)
@@ -26,10 +33,59 @@ def allowed(name):
         or name in {'deploy/zeekr-reports.service', 'zeekr_control/assets/periodic-report/manifest.json'}
         or (name.startswith('scripts/release/') and path.suffix == '.py')
         or (name.startswith('docs/') and path.suffix == '.md')
+        or name in DESKTOP_INPUTS
     )
     if not permitted:
         raise ValueError('Path outside release allowlist: '+name)
     return name
+
+
+def deleted_paths(changes):
+    deleted = []
+    for name, value in changes.items():
+        if name != 'release-manifest.json':
+            allowed(name)
+        if value is None:
+            if name != RETIRED_DESKTOP_TEST:
+                raise ValueError('Deletion outside retirement allowlist: '+name)
+            deleted.append(name)
+    return deleted
+
+
+def public_target(root, name):
+    root = Path(root).resolve()
+    target = root/name
+    if any((root/Path(*PurePosixPath(name).parts[:i])).is_symlink()
+           for i in range(1, len(PurePosixPath(name).parts)+1)):
+        raise ValueError('Public path symlink rejected: '+name)
+    return target
+
+
+def verify_hashes(root, hashes):
+    deleted_paths(hashes)
+    for name, value in hashes.items():
+        target = public_target(root, name)
+        if value is None:
+            if target.exists():
+                raise ValueError('Retired test must be absent: '+name)
+        elif hashlib.sha256(target.read_bytes()).hexdigest() != value:
+            raise ValueError('Public file hash mismatch: '+name)
+
+
+def remove_retired_test(root):
+    target = public_target(root, RETIRED_DESKTOP_TEST)
+    if target.exists():
+        if not target.is_file():
+            raise ValueError('Retired test must be a regular file')
+        target.unlink()
+
+
+def verify_retired_restore(previous, baseline, changes):
+    for name in deleted_paths(changes):
+        value = baseline['manifest'].get(name)
+        if not value:
+            raise ValueError('Retired test missing from rollback baseline')
+        verify_hashes(previous, {name: value})
 
 
 def risk(files, deleted=()):
@@ -99,6 +155,9 @@ def validate(root, files, commands, report, context='local'):
 def inputs(root):
     """All executable candidate inputs, not only changed files. No private data."""
     result = []
+    if (Path(root)/'package.json').exists() or (Path(root)/'package.json').is_symlink():
+        public_target(root, 'package.json')
+        result.append('package.json')
     for folder in ('zeekr_control', 'tests', 'scripts', 'deploy'):
         for path in (root/folder).rglob('*'):
             if not path.is_file() or '__pycache__' in path.parts:
@@ -124,7 +183,8 @@ def runtime_services(root, reports_installed=None):
     return services
 
 
-def build(root, baseline_path, commit, previous, candidate, backup, paths, commands, output):
+def build(root, baseline_path, commit, previous, candidate, backup, paths, commands, output,
+          delete_retired_ui_car=False):
     """root MUST be production baseline plus exact committed overlay, not workspace."""
     root, output = Path(root).resolve(), Path(output).resolve()
     if output == root or root in output.parents:
@@ -133,20 +193,29 @@ def build(root, baseline_path, commit, previous, candidate, backup, paths, comma
         raise ValueError('Full commit SHA required')
     paths = sorted(set(allowed(name) for name in paths))
     repository = Path(__file__).resolve().parents[2]
+    deleted = [RETIRED_DESKTOP_TEST] if delete_retired_ui_car else []
+    if deleted:
+        if RETIRED_DESKTOP_TEST in paths:
+            raise ValueError('Retired test cannot be written and deleted')
+        if subprocess.check_output(['git', 'ls-tree', commit, '--', RETIRED_DESKTOP_TEST], cwd=repository):
+            raise ValueError('Retired test still exists in commit')
+        verify_hashes(root, {RETIRED_DESKTOP_TEST: None})
     for name in paths:
         expected = subprocess.check_output(['git', 'show', commit+':'+name], cwd=repository)
         if (root/name).read_bytes() != expected:
             raise ValueError('Overlay differs from committed content: '+name)
-    if not paths:
+    if not paths and not deleted:
         raise ValueError('Empty release')
     baseline = json.loads(Path(baseline_path).read_text())
     if baseline['active'] != previous:
         raise ValueError('Previous release differs from baseline')
+    if deleted and not baseline['manifest'].get(RETIRED_DESKTOP_TEST):
+        raise ValueError('Retired test missing from rollback baseline')
     for name, sha in baseline['manifest'].items():
-        if name not in paths and name != 'release-manifest.json':
+        if name not in paths and name not in deleted and name != 'release-manifest.json':
             if hashlib.sha256((root/name).read_bytes()).hexdigest() != sha:
                 raise ValueError('Unrelated candidate change: '+name)
-    tier = risk(paths)
+    tier = risk(paths, deleted)
     if tier == 'ui' and not browser_checks(commands):
         raise ValueError('UI release requires explicit browser checks')
     output.mkdir(parents=True, exist_ok=True)
@@ -155,6 +224,7 @@ def build(root, baseline_path, commit, previous, candidate, backup, paths, comma
         validate(root, all_inputs, commands, output/'local-validation.json')
     config = dict(commit=commit, previous=previous, candidate=candidate, backup=backup, risk=tier)
     changes = {name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in paths}
+    changes.update({name: None for name in deleted})
     receipt = {'hashes': {name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in all_inputs}, 'commands': commands,
                'inputs': all_inputs, 'passed': bool(commands)}
     for name, record in [('config', config), ('baseline', baseline), ('changes', changes), ('receipt', receipt)]:

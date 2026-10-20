@@ -10,6 +10,49 @@ spec.loader.exec_module(w)
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_exact_desktop_dependencies_are_public_inputs(self):
+        names = ['package.json', 'scripts/browser-failure-evidence.cjs',
+                 'scripts/check-desktop-manifest.cjs', 'scripts/desktop-test-manifest.json',
+                 'scripts/test-desktop.cjs']
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name in names:
+                self.assertEqual(w.allowed(name), name)
+                target = root/name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('{}')
+            self.assertEqual(w.inputs(root), sorted(names))
+        for name in ['package-lock.json', 'scripts/private.cjs', 'scripts/private.json',
+                     'scripts/desktop-test-manifest.json/../private.json']:
+            with self.assertRaises(ValueError):
+                w.allowed(name)
+
+    def test_deletion_is_exact_absence_and_rejects_symlinks(self):
+        name = 'tests/ui_car.cjs'
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root/'tests').mkdir()
+            target = root/name
+            target.write_text('retired')
+            with self.assertRaisesRegex(ValueError, 'absent'):
+                w.verify_hashes(root, {name: None})
+            w.remove_retired_test(root)
+            w.verify_hashes(root, {name: None})
+            for forbidden in ['tests/test_web.py', 'package.json', '../ui_car.cjs']:
+                with self.assertRaises(ValueError):
+                    w.deleted_paths({forbidden: None})
+            target.symlink_to(root/'missing')
+            with self.assertRaises(ValueError):
+                w.remove_retired_test(root)
+            with self.assertRaises(ValueError):
+                w.verify_hashes(root, {name: None})
+            target.unlink()
+            (root/'tests').rmdir()
+            (root/'elsewhere').mkdir()
+            (root/'tests').symlink_to(root/'elsewhere', target_is_directory=True)
+            with self.assertRaises(ValueError):
+                w.remove_retired_test(root)
+
     def test_static_ui_does_not_require_full_python_suite(self):
         self.assertEqual(w.risk(['zeekr_control/static/app.css', 'zeekr_control/static/app.js', 'tests/ui_smoke.cjs']), 'ui')
 
@@ -74,6 +117,37 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 w.validate(root, ['a'], [['python3', '-c', "from pathlib import Path; Path('a').write_text('two')"]], root/'result.json')
 
 class ReleaseBuildTests(unittest.TestCase):
+    def test_retirement_bundle_proves_commit_absence_and_preserves_rollback_hash(self):
+        import hashlib
+        import tarfile
+        from unittest.mock import patch
+        name = 'tests/ui_car.cjs'
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)/'tree'
+            root.mkdir()
+            baseline = Path(folder)/'baseline.json'
+            baseline.write_text(json.dumps({'active': '/old', 'manifest': {
+                name: hashlib.sha256(b'retired').hexdigest()}}))
+            kwargs = dict(root=root, baseline_path=baseline, commit='a'*40, previous='/old',
+                          candidate='/new', backup='/backup', paths=[], commands=[],
+                          output=Path(folder)/'bundle', delete_retired_ui_car=True)
+            with patch.object(w.subprocess, 'check_output', return_value=b'100644 blob old\ttests/ui_car.cjs\n'):
+                with self.assertRaisesRegex(ValueError, 'commit'):
+                    w.build(**kwargs)
+            with patch.object(w.subprocess, 'check_output', return_value=b''):
+                self.assertEqual(w.build(**kwargs)['risk'], 'full')
+            changes = json.loads((kwargs['output']/'.release-changes.json').read_text())
+            self.assertEqual(changes, {name: None})
+            with tarfile.open(kwargs['output']/'.release-changes.tar') as archive:
+                self.assertEqual(archive.getnames(), [])
+            previous = Path(folder)/'previous'
+            (previous/'tests').mkdir(parents=True)
+            (previous/name).write_bytes(b'retired')
+            w.verify_retired_restore(previous, json.loads(baseline.read_text()), changes)
+            (previous/name).write_bytes(b'drift')
+            with self.assertRaises(ValueError):
+                w.verify_retired_restore(previous, json.loads(baseline.read_text()), changes)
+
     def test_bundle_requires_committed_overlay_and_browser_gate(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as folder:
@@ -146,7 +220,7 @@ class CandidateStageTests(unittest.TestCase):
         repository = Path(__file__).parents[1]
         original_path = list(sys.path)
         try:
-            for tier in ('ui', 'full'):
+            for tier in ('ui', 'full', 'retired'):
                 with self.subTest(tier=tier), tempfile.TemporaryDirectory() as folder:
                     base = Path(folder).resolve()/'host'
                     current = base/'releases/old'
@@ -158,6 +232,7 @@ class CandidateStageTests(unittest.TestCase):
                         'zeekr_control/static/app.js': b'old app',
                         'zeekr_control/static/app.css': b'old css',
                         'tests/ui_fixture.cjs': b'process.exit(0)',
+                        'tests/ui_car.cjs': b'retired test retained for rollback',
                         'zeekr_control/vehicle_profiles.json': b'private config must stay on server',
                     }.items():
                         target = current/name
@@ -176,10 +251,15 @@ class CandidateStageTests(unittest.TestCase):
                     (preview/name).write_bytes(b'new')
                     (preview/'docs').mkdir()
                     (preview/'docs/notes.md').write_bytes(b'new')
+                    if tier == 'retired':
+                        (preview/'tests/ui_car.cjs').unlink()
                     bundle = Path(folder)/'bundle'
-                    with patch.object(w.subprocess, 'check_output', return_value=b'new'):
+                    def committed(argv, **kwargs):
+                        return b'' if 'ls-tree' in argv else b'new'
+                    with patch.object(w.subprocess, 'check_output', side_effect=committed):
                         w.build(preview, baseline_path, 'a'*40, str(current), str(base/'releases/new'), str(base/'backups/new'),
-                                [name, 'docs/notes.md'], [['node', 'tests/ui_fixture.cjs']] if tier == 'ui' else [], bundle)
+                                [name, 'docs/notes.md'], [['node', 'tests/ui_fixture.cjs']] if tier == 'ui' else [], bundle,
+                                delete_retired_ui_car=tier == 'retired')
                     for path in bundle.glob('.release-*'):
                         shutil.copyfile(path, base/path.name)
                     shutil.copyfile(repository/'scripts/release/workflow.py', base/'.release-workflow.py')
@@ -201,6 +281,29 @@ class CandidateStageTests(unittest.TestCase):
                     self.assertTrue((base/'.release-ready.json').exists())
                     ready = json.loads((base/'.release-ready.json').read_text())
                     self.assertIn('docs/notes.md', ready['candidate_hashes'])
+                    if tier == 'retired':
+                        self.assertIsNone(ready['candidate_hashes']['tests/ui_car.cjs'])
+                        self.assertFalse((candidate/'tests/ui_car.cjs').exists())
+                        self.assertEqual((current/'tests/ui_car.cjs').read_bytes(), b'retired test retained for rollback')
+                        cutover_source = (repository/'scripts/release/cutover.py').read_text().replace("Path('/opt/zeekr-control')", 'Path('+repr(str(base))+')')
+                        preflight = cutover_source[:cutover_source.index('size=int')]
+                        (candidate/'tests/ui_car.cjs').write_bytes(b'reintroduced')
+                        with patch('subprocess.run') as stopped:
+                            with self.assertRaisesRegex(AssertionError, 'Candidate drift'):
+                                exec(compile(preflight, '<cutover-preflight>', 'exec'), {})
+                            stopped.assert_not_called()
+                        (candidate/'tests/ui_car.cjs').unlink()
+                        # Simulate the actual rollback script: only the code symlink moves.
+                        (base/'current').unlink()
+                        (base/'current').symlink_to(candidate)
+                        business = base/'business.sqlite3'
+                        business.write_bytes(b'new business records must remain')
+                        rollback = (repository/'scripts/release/rollback.py').read_text().replace("Path('/opt/zeekr-control')", 'Path('+repr(str(base))+')')
+                        with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0)):
+                            exec(compile(rollback, '<rollback>', 'exec'), {})
+                        self.assertEqual((base/'current').resolve(), current)
+                        self.assertEqual((base/'current/tests/ui_car.cjs').read_bytes(), b'retired test retained for rollback')
+                        self.assertEqual(business.read_bytes(), b'new business records must remain')
                     # Drift fails BEFORE stopping any service or reading private data.
                     (candidate/name).write_bytes(b'tampered')
                     cutover_source = (repository/'scripts/release/cutover.py').read_text().replace("Path('/opt/zeekr-control')", 'Path('+repr(str(base))+')')
@@ -214,6 +317,40 @@ class CandidateStageTests(unittest.TestCase):
 
 
 class SnapshotAndTimingTests(unittest.TestCase):
+    def test_client_explicit_retirement_flag_prepares_no_delete_archive_member(self):
+        import hashlib
+        import io
+        import tarfile
+        import types
+        from unittest.mock import patch
+        repository = Path(__file__).parents[1]
+        name = 'tests/ui_car.cjs'
+        raw = io.BytesIO()
+        baseline = {'active': '/old', 'manifest': {name: hashlib.sha256(b'old test').hexdigest()}}
+        with tarfile.open(fileobj=raw, mode='w:gz') as archive:
+            for member, data in [('baseline.json', json.dumps(baseline).encode()), ('staged/'+name, b'old test')]:
+                info = tarfile.TarInfo(member)
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+        spec = importlib.util.spec_from_file_location('release_client', repository/'scripts/release/client.py')
+        client = importlib.util.module_from_spec(spec)
+        with patch.dict('sys.modules', {'workflow': w}):
+            spec.loader.exec_module(client)
+        with tempfile.TemporaryDirectory() as folder:
+            parent = Path(folder)
+            for filename in ['paths.json', 'checks.json']:
+                (parent/filename).write_text('[]')
+            args = types.SimpleNamespace(output=str(parent/'release'), transport='unused', commit='a'*40,
+                                         paths=str(parent/'paths.json'), checks=str(parent/'checks.json'),
+                                         name='retirement', delete_retired_ui_car=True)
+            with patch.object(client, 'transport', return_value=['unused']), patch.object(client, 'remote', return_value=raw.getvalue()), patch.object(w.subprocess, 'check_output', return_value=b''):
+                client.prepare(args)
+            output = Path(args.output)
+            self.assertFalse((output/'staged'/name).exists())
+            self.assertTrue((output/'upload.tar.gz').is_file())
+            self.assertEqual(json.loads((output/'bundle/.release-changes.json').read_text()), {name: None})
+            self.assertEqual(json.loads((output/'baseline.json').read_text()), baseline)
+
     def test_snapshot_never_exports_private_profile(self):
         import io
         import tarfile
