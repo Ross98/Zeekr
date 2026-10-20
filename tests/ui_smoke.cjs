@@ -44,7 +44,9 @@ const path = require('node:path');
       assert.match(await page.locator('main').innerText(), new RegExp(side));
     }
     await page.getByRole('button', { name: '能源与充电', exact: true }).first().click();
-    assert.match(await page.locator('main').innerText(), /暂无有效时间估计/);
+    await page.getByLabel('充电月份',{exact:true}).waitFor();
+    assert.equal(await page.locator('.energy-top').count(),0,'charging review omits current battery/status');
+    assert.match(await page.locator('#charging-review').innerText(), /已知充电花费.*累计补能.*充电次数/s);
     await page.getByRole('button', { name: '用车研究', exact: true }).first().click();
     await page.getByRole('heading', { name: '参数研究与核实', exact: true }).waitFor();
     assert.equal(await page.locator('.insight-navigation').isVisible(),false,'Research opens directly without a separate tool directory');
