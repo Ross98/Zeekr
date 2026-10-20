@@ -24,12 +24,19 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       // Some retained research controls are hidden; exercise their existing handler.
       await page.locator(selector).first().evaluate(el=>el.click());
     }
+    async function settleCalendar(section){
+      if(section!=='calendar')return;
+      // Retained month results can be visible while the new analysis is loading.
+      await page.getByRole('button',{name:'停止分析',exact:true}).waitFor({state:'hidden'});
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    }
     async function loadResults(section,tool){
       const view=tool?.replace('source:','')||section;
       if(view==='calendar'){
         await page.getByLabel('日历月份',{exact:true}).fill('2026-09');
         await page.getByRole('button',{name:'读取用车日历',exact:true}).click();
         await page.waitForSelector('#calendar-result-month');
+        await settleCalendar(section);
         await page.locator('[data-calendar-day="2026-09-19"]').click();
         await page.locator('[data-calendar-event="report-trip-night"]').click();
       }else if(view==='report'){
@@ -116,6 +123,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
           await loadResults(section,tool);
           await page.waitForTimeout(250);
           await page.waitForFunction(()=>!polling&&!busy);
+          await settleCalendar(section);
           await page.evaluate(()=>{
             document.querySelectorAll('main details').forEach(el=>el.open=true);
             const control=[...document.querySelectorAll('main input,main select,main summary,main button')].find(el=>!el.disabled&&!el.matches('input[type="date"],input[type="month"]')&&el.checkVisibility());
@@ -125,6 +133,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
           const before=await page.evaluate(()=>({scroll:scrollY,details:[...document.querySelectorAll('main details')].filter(el=>el.checkVisibility()).map(el=>({label:el.querySelector('summary')?.textContent,open:el.open}))}));
           await page.evaluate(()=>pollState(true));
           await page.waitForTimeout(200);
+          await settleCalendar(section);
           const after=await page.evaluate(()=>({scroll:scrollY,maxScroll:Math.max(0,document.documentElement.scrollHeight-innerHeight),details:[...document.querySelectorAll('main details')].filter(el=>el.checkVisibility()).map(el=>({label:el.querySelector('summary')?.textContent,open:el.open}))}));
           // At the document bottom, a shorter result necessarily clamps scrollY.
           const expectedAfter=Math.min(before.scroll,after.maxScroll);
@@ -134,6 +143,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
           recordsRevision++;
           await page.evaluate(()=>pollState(true));
           await page.waitForTimeout(250);
+          await settleCalendar(section);
           const updated=await page.evaluate(()=>({scroll:scrollY,maxScroll:Math.max(0,document.documentElement.scrollHeight-innerHeight),details:[...document.querySelectorAll('main details')].filter(el=>el.checkVisibility()).map(el=>({label:el.querySelector('summary')?.textContent,open:el.open}))}));
           // The next update preserves the reading position after the first refresh.
           const expectedUpdated=Math.min(after.scroll,updated.maxScroll);
