@@ -58,6 +58,14 @@ const {fixture} = require('./ui_insight_helpers.cjs');
           assert.ok(metrics.fontSize>=28&&metrics.weight>=700,`${view} pressure must be large and bold: ${JSON.stringify(metrics)}`);
           assert.ok(metrics.height<=900,`${view} compact diagram: ${metrics.height}px`);
           assert.deepEqual(failures,[],`${view} ${theme} ${width}: wheel labels clear of image and within diagram`);
+          const collisions=await diagram.evaluate(el=>{
+            const labels=[...el.querySelectorAll('.overview-part,.car-tyre-reading')];
+            return labels.flatMap((label,i)=>labels.slice(i+1).flatMap(other=>{
+              const a=label.getBoundingClientRect(),b=other.getBoundingClientRect();
+              return a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top?[[label.textContent,other.textContent]]:[];
+            }));
+          });
+          assert.deepEqual(collisions,[],`${theme} ${width}: door labels and tyre readings remain separate`);
           if(view==='总览') {
             const edges=await page.locator('.overview-health').evaluate(el=>{
               const [map,tyre]=[...el.children].map(node=>node.getBoundingClientRect());
@@ -65,7 +73,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
               const headings=[el.querySelector('.location-heading h2'),el.querySelector(':scope>.card>.card-head h2')].map(node=>node.getBoundingClientRect());
               return {height:tyre.height,headingTop:Math.abs(headings[0].top-headings[1].top),top:Math.abs(map.top-tyre.top),bottom:Math.abs(map.bottom-tyre.bottom),mapFooterGap:map.bottom-status.bottom};
             });
-            assert.ok(edges.height<=660,`desktop paired cards stay compact: ${JSON.stringify(edges)}`);
+            assert.ok(edges.height<=540,`desktop paired cards stay compact: ${JSON.stringify(edges)}`);
             assert.ok(edges.headingTop<=1,`desktop card headings align: ${JSON.stringify(edges)}`);
             assert.ok(edges.top<=1&&edges.bottom<=1,`desktop cards share top and bottom edges: ${JSON.stringify(edges)}`);
             assert.ok(edges.mapFooterGap<=2,`map fills card without blank footer: ${JSON.stringify(edges)}`);
