@@ -7,7 +7,12 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     state_time:begin+i*1000+(i>=2000?300000:0),trusted:true,plottable:true,time_label:'合成采样 '+i,time_source:'合成源时间'}));
   const gap={start_time:points[1999].state_time,end_time:points[2000].state_time,duration_seconds:301,reason:'合成采样缺口'};
   let tiles=0,evidenceCase='both';
+  const coordinateRequests=[];
   const f=await fixture({demo:true,initialResearch:false,beforeGoto:async page=>{
+    page.on('request',request=>{
+      const url=new URL(request.url());
+      if(url.pathname==='/api/tracks'||(url.pathname==='/api/timeline'&&url.searchParams.get('positions')==='1'))coordinateRequests.push(request.url());
+    });
     await page.addInitScript(()=>history.replaceState(null,'','/?p=tracks&s=local&date=2026-09-20'));
     await page.route('https://wprd0*.is.autonavi.com/**',route=>{
       tiles++;return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e5ece6"/></svg>'});
@@ -42,6 +47,12 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   }}),{page}=f;
   try{
     await page.getByRole('button',{name:'查询行程',exact:true}).click();
+    await page.waitForFunction(()=>localTrips.queried&&!localTrips.listBusy&&localTrips.timeline);
+    await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).waitFor();
+    assert.deepEqual(coordinateRequests,[],'querying trips before location consent must not request coordinates');
+    assert.equal(await page.locator('#map').count(),0,'location stays hidden before consent');
+    assert.equal(tiles,0,'no map tiles load before location consent');
+    await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).click();
     const ready=()=>page.waitForFunction(()=>localTrips.route?.count===4001&&!localTrips.routeBusy&&map?.getContainer()===document.querySelector('#map'));
     await ready();
     async function check(){
