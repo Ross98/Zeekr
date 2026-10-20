@@ -68,3 +68,47 @@ main[data-page=books] .notice.books-duplicate.info{color:var(--ink)}
   .life-history-actions .button{padding:10px 12px}
   .life-history-details{margin-left:104px}
 }
+
+/* Ledger graphics reuse the dashboard's light/night palette. */
+.books-visual-total{display:flex;flex-direction:column;gap:8px;padding:10px 0}
+.books-visual-total>span,.books-timeline-heading,.books-largest-main>span{font-size:13px;color:var(--night-secondary,#50656e)}
+main[data-page=books] #books-totals .books-visual-total>strong{font-size:36px;font-variant-numeric:tabular-nums}
+.books-chart-top{display:grid;grid-template-columns:1.3fr 1fr;gap:18px;margin-bottom:18px;align-items:stretch}
+main[data-page=books] .books-chart-top>.insight-panel{margin:0;min-width:0;padding:22px}
+[data-books-panel] h2{font-size:17px;margin:0 0 20px}
+.books-category-row{display:grid;grid-template-columns:minmax(78px,1fr) minmax(50px,1.5fr) minmax(90px,1fr);align-items:center;gap:14px;margin:22px 0}
+.books-category-button{padding:3px 0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;overflow-wrap:anywhere;cursor:pointer}
+.books-category-button[aria-pressed=true]{color:var(--accent);text-decoration:underline;text-underline-offset:4px}
+.books-category-track{height:12px;border-radius:4px;background:var(--soft);overflow:hidden}
+.books-category-fill{height:100%;border-radius:4px}
+.books-category-money{text-align:right;font-variant-numeric:tabular-nums;font-size:14px;overflow-wrap:anywhere}
+.books-category-money>span{display:block;font-size:12px;color:var(--night-secondary,#50656e);margin-top:4px}
+.books-tone-0{background:var(--accent)}
+.books-tone-1{background:var(--night-secondary,#50656e)}
+.books-tone-2{background:var(--amber)}
+.books-tone-3{background:var(--chart-dc)}
+.books-tone-4{background:var(--chart-unknown)}
+.books-tone-5{background:var(--chart-ac)}
+.books-largest{display:flex;flex-direction:column}
+.books-largest-main{border-left:3px solid var(--accent);padding:2px 0 2px 18px;margin:16px 0 28px;overflow-wrap:anywhere}
+.books-largest-main>strong{display:block;font-size:30px;margin:12px 0;font-variant-numeric:tabular-nums}
+.books-largest-main p{font-size:15px;margin:8px 0}
+.books-largest-footer{margin-top:auto;border-top:1px solid var(--line);padding-top:18px;color:var(--night-secondary,#50656e);font-size:13px}
+.books-trend-bars{height:230px;display:flex;align-items:end;gap:22px;border-bottom:1px solid var(--line);padding-top:24px;margin-bottom:16px}
+.books-trend-month{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:end;height:100%;gap:8px}
+.books-trend-value{font-size:13px;font-variant-numeric:tabular-nums;text-align:center;overflow-wrap:anywhere;max-width:100%}
+.books-trend-stack{display:flex;flex-direction:column-reverse;width:60%;max-width:70px;border-radius:5px 5px 0 0;overflow:hidden;flex-shrink:0}
+.books-trend-stack>span{display:block;flex-shrink:0;width:100%}
+.books-trend-month>time{font-size:12px;color:var(--night-secondary,#50656e);padding-bottom:8px}
+.books-chart-legend{display:flex;flex-wrap:wrap;gap:10px 20px;font-size:12px;color:var(--night-secondary,#50656e)}
+.books-chart-legend>span{display:flex;align-items:center;gap:6px;overflow-wrap:anywhere;max-width:100%}
+.books-chart-legend i{height:9px;width:9px;flex-shrink:0;border-radius:2px}
+.books-timeline-heading{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:12px}
+.books-timeline-row{display:grid;grid-template-columns:72px 20px minmax(0,1fr) auto;gap:14px;align-items:center;min-height:76px;border-bottom:1px solid var(--line);padding:12px 0}
+.books-timeline-row:last-of-type{border:0}
+.books-timeline-row time{font-size:13px;color:var(--night-secondary,#50656e);font-variant-numeric:tabular-nums}
+.books-timeline-dot{height:12px;width:12px;border-radius:50%;justify-self:center}
+.books-timeline-row>div{display:flex;flex-direction:column;gap:5px;overflow-wrap:anywhere}
+.books-timeline-row>div>strong{font-size:15px;font-weight:500}
+.books-timeline-row>div>span{font-size:12px;color:var(--night-secondary,#50656e)}
+.books-timeline-amount{font-size:16px;font-weight:500;font-variant-numeric:tabular-nums;text-align:right;max-width:230px;overflow-wrap:anywhere}

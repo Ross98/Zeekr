@@ -75,3 +75,30 @@ class CostsSummaryTests(unittest.TestCase):
             result = self.store.read_many('owner', 'car', ['charges', 'expenses'])
         self.assertEqual(result['expenses']['records'][0]['body']['amount_cents'], 2)
         self.assertEqual(self.store.read('owner', 'car', 'expenses')['records'][0]['body']['amount_cents'], 3)
+
+    def test_charts_use_actual_categories_and_six_months_from_one_snapshot(self):
+        self.save('charges', 'bill', dict(date='2026-10-08', actual_cents=1000, parking_fee_cents=200))
+        self.save('charges', 'pending', dict(date='2026-10-09', actual_cents=None, estimated_cents=9000, parking_fee_cents=0))
+        self.save('expenses', 'custom', dict(date='2026-10-08', amount_cents=3000, category='自定义养护', title='真实分类'))
+        self.save('expenses', 'free', dict(date='2026-10-09', amount_cents=0, category='免费服务', title='免费'))
+        self.save('expenses', 'prior', dict(date='2026-05-01', amount_cents=500, category='保险', title='旧账'))
+        self.save('expenses', 'outside', dict(date='2026-04-30', amount_cents=999, category='范围外', title='不纳入'))
+        with patch.object(self.store, 'read_many', wraps=self.store.read_many) as read:
+            value = self.summary.query('owner', 'car', '2026-10-01')
+        self.assertEqual(read.call_count, 1)
+        chart = value['charts']
+        categories = {r['category']: r['amount_cents'] for r in chart['categories']}
+        self.assertEqual(categories, {'充电': 1000, '充电停车费': 200, '自定义养护': 3000, '免费服务': 0})
+        self.assertEqual(sum(categories.values()), value['totals']['actual_cents'])
+        self.assertEqual([r['month'] for r in chart['months']], ['2026-05','2026-06','2026-07','2026-08','2026-09','2026-10'])
+        self.assertEqual(chart['months'][0]['actual_cents'], 500)
+        self.assertIsNone(chart['months'][1]['actual_cents'])
+        self.assertEqual(chart['months'][-1]['actual_cents'], 4200)
+        self.assertEqual(chart['largest']['id'], 'custom')
+        self.assertEqual(chart['largest']['recorded_cents'], 3000)
+        other = self.summary.query('other', 'car', '2026-10-01')['charts']
+        self.assertEqual(other['categories'], [])
+        self.assertTrue(all(r['actual_cents'] is None for r in other['months']))
+        self.assertIsNone(other['largest'])
+        self.store.change('owner', 'car', 'expenses', 'delete', 'custom', None, 4)
+        self.assertNotIn('自定义养护', {r['category'] for r in self.summary.query('owner', 'car', '2026-10-01')['charts']['categories']})
