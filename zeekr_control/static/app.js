@@ -1436,8 +1436,8 @@ const navigationFields={
   range:'#charge-query-mode',
   month:'#ledger-month,#books-month,#life-month,#tag-month,#routes-month,#calendar-month',
   date:'#calendar-selected,#track-date,#report-date,#insight-date,#review-date,#charge-date',
-  start:'#quality-start,#research-start,#life-start,#parking-start,#trip-manage-start,#charge-manage-start',
-  end:'#quality-end,#research-end,#life-end,#parking-end,#trip-manage-end,#charge-manage-end,#charge-end-date',
+  start:'#quality-start,#research-start,#life-start,#trip-manage-start,#charge-manage-start',
+  end:'#quality-end,#research-end,#life-end,#trip-manage-end,#charge-manage-end,#charge-end-date',
   view:'#calendar-view',
   period:'#report-period'
 };

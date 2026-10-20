@@ -51,7 +51,7 @@ python3 scripts/release/client.py deploy --transport /private/tmp/transport.json
 
 桌面检查新增的公开输入仅允许 `package.json`、`scripts/browser-failure-evidence.cjs`、`scripts/check-desktop-manifest.cjs`、`scripts/desktop-test-manifest.json`、`scripts/test-desktop.cjs`，它们进入快照、候选验证指纹及切换前哈希校验；不放开其他根 JSON 或 scripts 文件。
 
-删除仅支持两组固定退役路径，须有对应功能移除及发布授权。`--delete-retired-ui-car` 仅删除 `tests/ui_car.cjs`；`--delete-cloud-history` 仅删除 `zeekr_control/history.py`、`zeekr_control/static/history.js`、`tests/test_history.py`、`tests/test_history_connect.py`、`tests/test_history_web.py`。给 `prepare` 添加对应选项，不要把退役文件放进写入用的 `paths.json`。不支持其他路径或任意删除列表，不删除私有数据。
+删除仅支持三组固定退役路径，须有对应功能移除及发布授权。`--delete-retired-ui-car` 仅删除 `tests/ui_car.cjs`；`--delete-cloud-history` 仅删除 `zeekr_control/history.py`、`zeekr_control/static/history.js`、`tests/test_history.py`、`tests/test_history_connect.py`、`tests/test_history_web.py`。`--delete-parking-page` 仅删除 `zeekr_control/static/parking.js`、`tests/parking_calendar.cjs`、`tests/parking_calendar_model.cjs`、`tests/parking_manual_start.cjs`、`tests/ui_parking_calendar.cjs`，不影响后台停车分析。给 `prepare` 添加对应选项，不要把退役文件放进写入用的 `paths.json`。不支持其他路径或任意删除列表，不删除私有数据。
 
 构建必须证明指定 Git 提交中每个退役路径均不存在，且生产基线逐项记录旧文件哈希。删除以 changes 中各路径的 `null` 表示，不含删除用归档成员。候选只删除普通文件，拒绝文件和父目录符号链接；删除强制走服务用户 Python 全量。切换前及上线后逐项核验候选文件缺失，重新出现立即失败。
 

@@ -155,6 +155,9 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(load(self.app.session_path.parent / 'sampling.json')['interval'], '10')
 
 
+    def test_retired_parking_page_asset_is_not_served(self):
+        self.assertEqual(self.request('GET','/parking.js')[0],404)
+
     def test_retired_cloud_history_has_no_routes_or_state(self):
         self.post('/api/refresh', {'vehicle': 1})
         before=self.app.session_path.read_bytes()

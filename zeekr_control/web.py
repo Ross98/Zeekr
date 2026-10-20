@@ -1146,7 +1146,6 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/insights.js': ('insights.js', 'text/javascript; charset=utf-8'),
                           '/automatic-insights.js': ('automatic-insights.js', 'text/javascript; charset=utf-8'),
                           '/insights.css': ('insights.css', 'text/css; charset=utf-8'),
-                          '/parking.js': ('parking.js', 'text/javascript; charset=utf-8'),
                           '/usage-reports.js': ('usage-reports.js', 'text/javascript; charset=utf-8'),
                           '/charge-ledger.js': ('charge-ledger.js', 'text/javascript; charset=utf-8'),
                           '/books-overview.js': ('books-overview.js', 'text/javascript; charset=utf-8'),

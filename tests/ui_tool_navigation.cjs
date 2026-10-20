@@ -10,7 +10,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     assert.equal(await page.locator('#navigation [data-page]').count(),9);
     assert.deepEqual(await page.locator('.insight-tabs h2').allTextContents(),['参数核实']);
     const groups = [
-      ['能源与充电', ['充电曲线对比', '停车观测']],
+      ['能源与充电', ['充电曲线对比']],
       ['用车账本', ['费用总览', '充电账本', '生活账本']],
       ['行程与轨迹', ['常走路线对比']],
       ['车辆', []],

@@ -23,6 +23,10 @@ RETIRED_CLOUD_HISTORY = frozenset({
     'zeekr_control/history.py', 'zeekr_control/static/history.js',
     'tests/test_history.py', 'tests/test_history_connect.py', 'tests/test_history_web.py',
 })
+RETIRED_PARKING_PAGE = frozenset({
+    'zeekr_control/static/parking.js', 'tests/parking_calendar.cjs',
+    'tests/parking_calendar_model.cjs', 'tests/parking_manual_start.cjs', 'tests/ui_parking_calendar.cjs',
+})
 
 
 def allowed(name):
@@ -50,7 +54,7 @@ def deleted_paths(changes):
         if name != 'release-manifest.json':
             allowed(name)
         if value is None:
-            if name not in RETIRED_CLOUD_HISTORY and name != RETIRED_DESKTOP_TEST:
+            if name not in RETIRED_CLOUD_HISTORY | RETIRED_PARKING_PAGE and name != RETIRED_DESKTOP_TEST:
                 raise ValueError('Deletion outside retirement allowlist: '+name)
             deleted.append(name)
     return deleted
@@ -194,7 +198,7 @@ def runtime_services(root, reports_installed=None):
 
 
 def build(root, baseline_path, commit, previous, candidate, backup, paths, commands, output,
-          delete_retired_ui_car=False, delete_cloud_history=False):
+          delete_retired_ui_car=False, delete_cloud_history=False, delete_parking_page=False):
     """root MUST be production baseline plus exact committed overlay, not workspace."""
     root, output = Path(root).resolve(), Path(output).resolve()
     if output == root or root in output.parents:
@@ -205,6 +209,7 @@ def build(root, baseline_path, commit, previous, candidate, backup, paths, comma
     repository = Path(__file__).resolve().parents[2]
     deleted = [RETIRED_DESKTOP_TEST] if delete_retired_ui_car else []
     if delete_cloud_history:deleted.extend(sorted(RETIRED_CLOUD_HISTORY))
+    if delete_parking_page:deleted.extend(sorted(RETIRED_PARKING_PAGE))
     for name in deleted:
         if name in paths:
             raise ValueError('Retired path cannot be written and deleted')

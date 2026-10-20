@@ -26,6 +26,22 @@ class ReleaseWorkflowTests(unittest.TestCase):
             (root/names[0]).symlink_to(root/'session.json')
             with self.assertRaises(ValueError):w.remove_retired_paths(root,[names[0]])
 
+    def test_parking_retirement_only_removes_named_public_files(self):
+        names=['zeekr_control/static/parking.js','tests/parking_calendar.cjs',
+               'tests/parking_calendar_model.cjs','tests/parking_manual_start.cjs','tests/ui_parking_calendar.cjs']
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            for name in [*names,'zeekr_control/web.py','session.json']:
+                target=root/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(b'keep')
+            w.remove_retired_paths(root,names)
+            w.verify_hashes(root,{name:None for name in names})
+            self.assertEqual((root/'zeekr_control/web.py').read_bytes(),b'keep')
+            self.assertEqual((root/'session.json').read_bytes(),b'keep')
+            for name in ['session.json','zeekr_control/web.py','tests/other.py']:
+                with self.assertRaises(ValueError):w.remove_retired_paths(root,[name])
+            (root/names[0]).symlink_to(root/'session.json')
+            with self.assertRaises(ValueError):w.remove_retired_paths(root,[names[0]])
+
     def test_exact_desktop_dependencies_are_public_inputs(self):
         names = ['package.json', 'scripts/browser-failure-evidence.cjs',
                  'scripts/check-desktop-manifest.cjs', 'scripts/desktop-test-manifest.json',
@@ -157,6 +173,30 @@ class ReleaseBuildTests(unittest.TestCase):
             with patch.object(w.subprocess,'check_output',return_value=b''):
                 with self.assertRaisesRegex(ValueError,'rollback baseline'):w.build(**kwargs)
 
+    def test_parking_bundle_requires_all_commit_absences_and_rollback_hashes(self):
+        import hashlib
+        import tarfile
+        from unittest.mock import patch
+        names=['zeekr_control/static/parking.js','tests/parking_calendar.cjs',
+               'tests/parking_calendar_model.cjs','tests/parking_manual_start.cjs','tests/ui_parking_calendar.cjs']
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'tree';root.mkdir()
+            baseline=Path(folder)/'baseline.json'
+            record={'active':'/old','manifest':{name:hashlib.sha256(b'old').hexdigest() for name in names}}
+            baseline.write_text(json.dumps(record))
+            kwargs=dict(root=root,baseline_path=baseline,commit='a'*40,previous='/old',candidate='/new',
+                        backup='/backup',paths=[],commands=[],output=Path(folder)/'bundle',delete_parking_page=True)
+            with patch.object(w.subprocess,'check_output',side_effect=lambda argv,**_:b'present' if argv[-1]==names[-1] else b''):
+                with self.assertRaisesRegex(ValueError,'commit'):w.build(**kwargs)
+            with patch.object(w.subprocess,'check_output',return_value=b''):
+                self.assertEqual(w.build(**kwargs)['risk'],'full')
+            self.assertEqual(json.loads((kwargs['output']/'.release-changes.json').read_text()),dict.fromkeys(names))
+            with tarfile.open(kwargs['output']/'.release-changes.tar') as archive:
+                self.assertEqual(archive.getnames(),[])
+            del record['manifest'][names[-1]];baseline.write_text(json.dumps(record))
+            with patch.object(w.subprocess,'check_output',return_value=b''):
+                with self.assertRaisesRegex(ValueError,'rollback baseline'):w.build(**kwargs)
+
     def test_retirement_bundle_proves_commit_absence_and_preserves_rollback_hash(self):
         import hashlib
         import tarfile
@@ -260,7 +300,7 @@ class CandidateStageTests(unittest.TestCase):
         repository = Path(__file__).parents[1]
         original_path = list(sys.path)
         try:
-            for tier in ('ui', 'full', 'retired', 'cloud'):
+            for tier in ('ui', 'full', 'retired', 'cloud', 'parking'):
                 with self.subTest(tier=tier), tempfile.TemporaryDirectory() as folder:
                     base = Path(folder).resolve()/'host'
                     current = base/'releases/old'
@@ -280,7 +320,8 @@ class CandidateStageTests(unittest.TestCase):
                         target.write_bytes(data)
                     cloud_paths=['zeekr_control/history.py','zeekr_control/static/history.js',
                                  'tests/test_history.py','tests/test_history_connect.py','tests/test_history_web.py']
-                    if tier=='cloud':
+                    if tier=='parking':cloud_paths=sorted(w.RETIRED_PARKING_PAGE)
+                    if tier in ('cloud','parking'):
                         for cloud_name in cloud_paths:
                             target=current/cloud_name;target.parent.mkdir(parents=True,exist_ok=True)
                             target.write_bytes(b'cloud code retained for rollback')
@@ -299,7 +340,7 @@ class CandidateStageTests(unittest.TestCase):
                     (preview/'docs/notes.md').write_bytes(b'new')
                     if tier == 'retired':
                         (preview/'tests/ui_car.cjs').unlink()
-                    if tier=='cloud':
+                    if tier in ('cloud','parking'):
                         for cloud_name in cloud_paths:(preview/cloud_name).unlink()
                     bundle = Path(folder)/'bundle'
                     def committed(argv, **kwargs):
@@ -307,7 +348,7 @@ class CandidateStageTests(unittest.TestCase):
                     with patch.object(w.subprocess, 'check_output', side_effect=committed):
                         w.build(preview, baseline_path, 'a'*40, str(current), str(base/'releases/new'), str(base/'backups/new'),
                                 [name, 'docs/notes.md'], [['node', 'tests/ui_fixture.cjs']] if tier == 'ui' else [], bundle,
-                                delete_retired_ui_car=tier == 'retired',delete_cloud_history=tier=='cloud')
+                                delete_retired_ui_car=tier == 'retired',delete_cloud_history=tier=='cloud',delete_parking_page=tier=='parking')
                     for path in bundle.glob('.release-*'):
                         shutil.copyfile(path, base/path.name)
                     shutil.copyfile(repository/'scripts/release/workflow.py', base/'.release-workflow.py')
@@ -329,7 +370,7 @@ class CandidateStageTests(unittest.TestCase):
                     self.assertTrue((base/'.release-ready.json').exists())
                     ready = json.loads((base/'.release-ready.json').read_text())
                     self.assertIn('docs/notes.md', ready['candidate_hashes'])
-                    if tier=='cloud':
+                    if tier in ('cloud','parking'):
                         for cloud_name in cloud_paths:
                             self.assertIsNone(ready['candidate_hashes'][cloud_name])
                             self.assertFalse((candidate/cloud_name).exists())
@@ -339,7 +380,7 @@ class CandidateStageTests(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             w.verify_retired_restore(current,baseline,json.loads((base/'.release-changes.json').read_text()))
                         (current/cloud_paths[-1]).write_bytes(b'cloud code retained for rollback')
-                    if tier in ('retired','cloud'):
+                    if tier in ('retired','cloud','parking'):
                         retired_name='tests/ui_car.cjs' if tier=='retired' else cloud_paths[0]
                         retired_bytes=b'retired test retained for rollback' if tier=='retired' else b'cloud code retained for rollback'
                         self.assertIsNone(ready['candidate_hashes'][retired_name])

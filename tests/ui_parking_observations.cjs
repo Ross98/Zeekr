@@ -1,44 +1,47 @@
-// Desktop parking entry and advancing-time observation display; synthetic inputs only.
-const {fixture}=require('./ui_insight_helpers.cjs');
+// Retired parking workspace; local trips/calendar and saved-evidence API remain.
 const assert=require('node:assert/strict');
-const fs=require('node:fs');
-(async()=>{const f=await fixture(),{page}=f;try{
- const context=await page.evaluate(()=>state.insights_context);
- let requests=0,release;
- const data={context,start_date:'2026-09-19',end_date:'2026-09-20',calculation_version:2,
-  comparable_count:1,uncertain_count:0,orphan_count:0,orphan_sessions:[],events:[{
-   id:'synthetic-continuous',category:'same_day',start_time:1789772400000,end_time:1789776000000,
-   start_trip_id:'a',end_trip_id:'b',duration_seconds:3600,start_soc:70,end_soc:70,
-   soc_drop:0,estimated_kwh:0,status:'comparable',parking_status:'parked',open:false,reason_labels:[],sample_count:13,gap_count:0,p_gear_samples:13
-  }]};
- await page.route('**/api/insights/parking?*',async route=>{requests++;if(requests===2)await new Promise(resolve=>release=resolve);await route.fulfill({json:data})});
- await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
- await page.getByRole('button',{name:'停车观测',exact:true}).click();
- assert.equal(requests,0,'entry does not analyze automatically');
- await page.locator('#parking-start').fill('2026-09-19');await page.locator('#parking-end').fill('2026-09-20');
- assert.equal(requests,0,'date edits do not analyze automatically');
- await page.getByRole('button',{name:'分析停车观测',exact:true}).click();
- await page.locator('[data-parking-session]').waitFor();
- assert.match(await page.locator('[data-parking-session]').innerText(),/1小时/);
- await page.locator('[data-parking-session]').click();
- assert.match(await page.locator('#parking-detail').innerText(),/70% → 70%/);
- assert.match(await page.locator('#parking-detail').innerText(),/13 条/);
- assert.match(await page.locator('#parking-detail').innerText(),/0 处/);
- assert.match(await page.locator('#parking-detail').innerText(),/P 档辅助证据/);
- assert.match(await page.locator('#parking-detail').innerText(),/13 条有效观测/);
- data.events[0].status='uncertain';data.events[0].soc_drop=null;data.events[0].estimated_kwh=null;data.events[0].reason_labels=['停车期间有异常时间或无效观测'];data.comparable_count=0;data.uncertain_count=1;
- await page.getByRole('button',{name:'分析停车观测',exact:true}).click();
- await page.getByRole('button',{name:'正在分析…',exact:true}).waitFor();
- assert.equal(await page.getByRole('button',{name:'正在分析…',exact:true}).isDisabled(),true);
- while(!release)await new Promise(resolve=>setTimeout(resolve,10));release();
- await page.getByRole('button',{name:'分析停车观测',exact:true}).waitFor();
- assert.match(await page.locator('[data-parking-session]').innerText(),/1小时/);
- assert.match(await page.locator('[data-parking-session]').innerText(),/耗电未知/);
- assert.doesNotMatch(await page.locator('[data-parking-session]').innerText(),/停车待确认/);
- fs.mkdirSync('/tmp/zeekr-parking-observations-qa',{recursive:true});
- for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1280,1024]){
-  await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${theme} ${width}`);
-  if(width===1440){await page.evaluate(()=>{scrollTo(0,0);document.querySelector('#toast').hidden=true});await page.screenshot({path:`/tmp/zeekr-parking-observations-qa/${theme}.png`,fullPage:true})}
- }}
- assert.deepEqual(f.errors,[]);console.log('DESKTOP_PARKING_OBSERVATIONS_PASS: manual entry, same-value hour, 13 samples, no gap, loading guard, 6 layouts');
-}finally{await f.close()}})().catch(e=>{console.error(e);process.exitCode=1});
+const {fixture}=require('./ui_insight_helpers.cjs');
+(async()=>{
+ const requests=[];
+ const f=await fixture({initialResearch:false,beforeGoto:async page=>{
+  page.on('request',r=>requests.push(new URL(r.url()).pathname));
+ }}),{page}=f;
+ try{
+  await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
+  assert.equal(await page.getByRole('button',{name:'停车观测',exact:true}).count(),0,'parking has no independent entry');
+  assert.equal(await page.locator('[data-section-task="parking"],[data-insight-view="parking"]').count(),0);
+  await page.getByRole('button',{name:'充电曲线对比',exact:true}).click();
+  await page.getByLabel('充电 A 月份',{exact:true}).waitFor();
+  for(const query of ['?p=energy&t=parking&start=2026-09-19&end=2026-09-20&q=1','?p=insights&t=parking&date=2026-09-19']){
+   await page.goto(f.origin+'/'+query);
+   await page.getByLabel('轨迹日期',{exact:true}).waitFor();
+   assert.equal(await page.getByLabel('轨迹日期',{exact:true}).inputValue(),'2026-09-19');
+   assert.equal(await page.locator('#navigation [data-page="tracks"]').getAttribute('aria-current'),'page');
+   assert.equal(new URL(page.url()).searchParams.get('s'),'local');
+   assert.equal(new URL(page.url()).searchParams.get('t'),null);
+   await page.reload();await page.getByLabel('轨迹日期',{exact:true}).waitFor();
+   assert.equal(await page.getByLabel('轨迹日期',{exact:true}).inputValue(),'2026-09-19');
+  }
+  await page.getByRole('button',{name:'用车日历',exact:true}).click();
+  await page.getByLabel('日历月份',{exact:true}).fill('2026-09');
+  await page.getByRole('button',{name:'读取用车日历',exact:true}).click();
+  await page.locator('[data-calendar-day="2026-09-19"]').click();
+  await page.getByText('当日采集说明',{exact:true}).click();
+  assert.match(await page.locator('#calendar-day-detail').innerText(),/有停车观测/);
+  assert.ok(!requests.includes('/parking.js'),'retired workspace script is never loaded');
+  assert.ok(!requests.includes('/api/insights/parking'),'normal navigation does not trigger separate parking analysis');
+  const data=await page.evaluate(()=>api('/api/insights/parking?start=2026-09-19&end=2026-09-20'));
+  assert.ok(Array.isArray(data.events),'saved parking data remains available');
+  assert.ok(data.events.length,'synthetic parking evidence still produces events');
+  for(const theme of ['light','dark']){
+   await page.getByLabel('外观',{exact:true}).selectOption(theme);
+   for(const width of [1024,1280,1440]){
+    await page.setViewportSize({width,height:1000});
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    assert.equal(await page.locator('[data-section-task="parking"],[data-insight-view="parking"]').count(),0);
+   }
+  }
+  assert.deepEqual(f.errors,[]);assert.ok(f.posts.every(url=>/^\/api\/analysis\/[^/]+\/cancel$/.test(new URL(url).pathname)),'navigation may only cancel local analysis jobs');
+  console.log('UI_PARKING_RETIREMENT_PASS: entry removed; old URLs/reload; calendar evidence; parking API; desktop themes');
+ }finally{await f.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

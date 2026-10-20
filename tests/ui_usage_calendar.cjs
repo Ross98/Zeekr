@@ -20,9 +20,17 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.evaluate(()=>render());
     assert.match(await page.locator('#calendar-day-detail').innerText(),/2026-09-20/);
     await page.locator('[data-calendar-day="2026-09-21"]').click();
-    assert.match(await page.locator('#calendar-day-detail').innerText(),/未来日期/);
+    // This fixed fixture day is historical; do not treat it as a future date.
+    assert.match(await page.locator('#calendar-day-detail').innerText(),/无归档观测/);
     await page.locator('[data-calendar-day="2026-09-01"]').click();
     assert.match(await page.locator('#calendar-day-detail').innerText(),/无归档观测/);
+    const futureMonth=String(new Date().getUTCFullYear()+1)+'-01';
+    await page.getByLabel('日历月份',{exact:true}).fill(futureMonth);
+    await page.getByRole('button',{name:'读取用车日历',exact:true}).click();
+    await page.locator(`[data-calendar-day="${futureMonth}-01"]`).click();
+    assert.match(await page.locator('#calendar-day-detail').innerText(),/未来日期/);
+    await page.getByLabel('日历月份',{exact:true}).fill('2026-09');
+    await page.getByRole('button',{name:'读取用车日历',exact:true}).click();
     await page.locator('[data-calendar-day="2026-09-19"]').click();
     await layouts(page,'usage-calendar');
     if(!process.env.DESKTOP_ONLY){
@@ -46,7 +54,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'读取用车日历',exact:true}).click();
     await page.getByRole('alert').filter({hasText:'合成读取失败'}).waitFor();
     assert.equal(await page.locator('#calendar-result-month').count(),0,'Changing query conditions clears previous results');
-    assert.deepEqual(f.posts,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    assert.ok(f.posts.every(url=>/^\/api\/analysis\/[^/]+\/cancel$/.test(new URL(url).pathname)),'navigation may only cancel local analysis jobs');assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
     console.log('UI_USAGE_CALENDAR_PASS: month grid, cross-midnight days, full event detail, inline parking evidence/time-machine link, future/missing dates, retained selection/error result, themes/layout/zoom/contrast; read-only');
   }finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
