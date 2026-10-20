@@ -74,6 +74,8 @@ const icons = {
   statusDoor: '<path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.646 5H8.4a2 2 0 0 0-1.903 1.257L5 10 3 8"></path><path d="M7 14h.01"></path><path d="M17 14h.01"></path><rect width="18" height="8" x="3" y="10" rx="2"></rect><path d="M5 18v2"></path><path d="M19 18v2"></path>',
   statusWindow: '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path><path d="M9 21V9"></path>',
   statusLock: '<circle cx="12" cy="16" r="1"></circle><rect x="3" y="10" width="18" height="12" rx="2"></rect><path d="M7 10V7a5 5 0 0 1 10 0v3"></path>',
+  statusUnlock: '<rect x="3" y="10" width="18" height="12" rx="2"></rect><path d="M7 10V7a5 5 0 0 1 10-1"></path><circle cx="12" cy="16" r="1"></circle>',
+  statusUnknown: '<circle cx="12" cy="12" r="9"></circle><path d="M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3M12 17h.01"></path>',
   statusCentral: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path>',
   statusHood: '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path>',
   statusTrunk: '<rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 15h18"></path>',
@@ -754,35 +756,87 @@ function mapOwner() {
   return JSON.stringify([state?.request_key,state?.insights_context,state?.vehicle]);
 }
 
-let overviewPartOwner='',overviewPart='rf',overviewStatus='';
+let overviewPartOwner='',overviewPart='rf',overviewStatus='',overviewDetailOpen=false;
 function overviewParts(){
   const m=state.model;
   return [['rf','右前'],['rr','右后'],['lf','左前'],['lr','左后']].map(([key,name])=>({key,query:name,...(m.doors.find(door=>door.name===name)||{door:'未知',lock:'未知',window:'未知'}),name:name+'门',glyph:'Door'}))
-    .concat([{key:'hood',glyph:'Hood',name:'前舱盖',query:'engineHood',door:m.hood},{key:'trunk',glyph:'Trunk',name:'尾门',query:'trunk',door:m.trunk},{key:'central',glyph:'Central',name:'中控锁',query:'centralLocking',door:m.lock.confirmed?m.lock.value:'未知'}]);
+    .concat([{key:'hood',glyph:'Hood',name:'前舱盖',query:'engineHood',door:m.hood},{key:'trunk',glyph:'Trunk',name:'尾门',query:'trunk',door:m.trunk},{key:'central',glyph:'Central',name:'锁车状态',query:'centralLocking',door:m.lock.confirmed?m.lock.value:'未知'}]);
 }
 function overviewStatuses(parts){
   return parts.flatMap(part=>part.window!==undefined?['door','window','lock'].map((key,i)=>({part:part.key,name:part.name.replace(/门$/,'')+['车门','车窗','门锁'][i],value:part[key]})):[{part:part.key,name:part.name,value:part.door}]);
 }
+function overviewLockIcon(value){
+  const glyph=value==='已锁'?'Lock':value==='未锁'?'Unlock':'Unknown';
+  return `<span class="overview-lock-icon" role="img" aria-label="${esc(value==='已锁'?'已锁':value==='未锁'?'未锁':'锁止未知')}">${statusIcon(glyph)}</span>`;
+}
+function overviewReading(value,unit,round=false){
+  const text=String(value??'未知'),number=unit&&text.endsWith(unit)?text.slice(0,-unit.length).trim():text;
+  const valid=number.trim()!==''&&Number.isFinite(Number(number));
+  return `<span class="overview-number"><strong>${esc(valid&&round?Number(number).toFixed(1):number)}</strong>${valid&&unit?`<span class="overview-value-unit ${unit==='kPa'?'car-tyre-unit':''}">${esc(unit)}</span>`:''}</span>`;
+}
+function overviewEnvironment(){
+  const m=state.model,raw=m.fields.find(field=>field.group==='空气质量'&&field.key==='interiorPM25')?.value;
+  const hasPm=(typeof raw==='number'||typeof raw==='string'&&raw.trim()!=='')&&Number.isFinite(Number(raw))&&Number(raw)>=0;
+  return [{key:'outside',name:'车外',value:m.metrics.outside,unit:'°C'}, {key:'inside',name:'车内',value:m.metrics.inside,unit:'°C'}, {key:'pm25',name:'PM2.5',value:hasPm?raw:'暂无数据',unit:hasPm?'μg/m³':'',valid:hasPm}];
+}
 function overviewPartDetail(part){
-  return `<strong class="overview-param-label">${statusIcon(part.glyph)}${esc(part.name)} · ${esc(part.door)}</strong>${part.window!==undefined?`<span class="overview-part-facts"><span class="overview-param-label">${statusIcon('Lock')}门锁 ${esc(part.lock)}</span><span class="overview-param-label">${statusIcon('Window')}车窗 ${esc(part.window)}</span></span>`:''}<p>${age(state.model.updated_time,'车辆缓存 ')} · 不代表实时状态</p><button class="text-link" data-overview-parameters="${esc(part.query)}" data-parameter-group="门窗与安全">查看参数${icon('arrow')}</button>`;
+  const reading=overviewEnvironment().find(item=>item.key===part?.key);
+  if(reading){
+    const pm=reading.key==='pm25';
+    return `<h3 id="overview-detail-title">${esc(pm?'车内 PM2.5':reading.name+'温度')}</h3><div>${overviewReading(reading.value,reading.unit)}</div><p>${pm?'PM2.5 独立更新时间未提供':age(state.model.temperature_updated_time,'温度更新于 ')+' · 与整车状态可能不同步'}</p>${pm?'<p>单位按 μg/m³ 展示，接口单位定义尚未直接证实。</p>':''}<button class="text-link" data-overview-parameters="${pm?'interiorPM25':reading.key==='inside'?'interiorTemp':'exteriorTemp'}" data-parameter-group="${pm?'空气质量':'空调与座舱'}">查看参数${icon('arrow')}</button>`;
+  }
+  return `<h3 id="overview-detail-title">${esc(part.name)} · ${esc(part.door)}</h3>${part.window!==undefined?`<span class="overview-part-facts"><span>门锁 ${esc(part.lock)}</span><span>车窗 ${esc(part.window)}</span></span>`:''}<p>${age(state.model.updated_time,'车辆缓存 ')} · 不代表实时状态</p><button class="text-link" data-overview-parameters="${esc(part.query)}" data-parameter-group="门窗与安全">查看参数${icon('arrow')}</button>`;
+}
+function overviewDetailContent(){
+  const part=overviewParts().find(part=>part.key===overviewPart)||overviewEnvironment().find(item=>item.key===overviewPart);
+  return part?`<button class="overview-detail-close" data-overview-detail-close aria-label="关闭详情">×</button>${overviewPartDetail(part)}`:'';
+}
+function overviewDetailAnchor(){
+  return document.querySelector(`.overview-part[data-overview-part="${overviewPart}"], [data-overview-reading="${overviewPart}"]`);
+}
+function positionOverviewDetail(){
+  const pop=$('#overview-part-detail'),anchor=overviewDetailAnchor(),card=$('.overview-vehicle');
+  if(!pop||pop.hidden||!anchor||!card)return;
+  const box=card.getBoundingClientRect(),target=anchor.getBoundingClientRect(),gap=10;
+  let left=target.right-box.left+gap;
+  if(left+pop.offsetWidth>box.width-gap)left=target.left-box.left-pop.offsetWidth-gap;
+  pop.style.left=Math.max(gap,Math.min(left,box.width-pop.offsetWidth-gap))+'px';
+  const top=anchor.closest('.card-head,.overview-cabin')?target.bottom-box.top+gap:target.top-box.top;
+  pop.style.top=Math.max(gap,Math.min(top,box.height-pop.offsetHeight-gap))+'px';
+}
+function closeOverviewDetail(restoreFocus=false){
+  overviewDetailOpen=false;
+  const pop=$('#overview-part-detail');if(pop)pop.hidden=true;
+  document.querySelectorAll('.overview-part,[data-overview-reading]').forEach(el=>el.setAttribute('aria-expanded','false'));
+  if(restoreFocus)overviewDetailAnchor()?.focus({preventScroll:true});
+}
+function showOverviewDetail(key){
+  if(overviewDetailOpen&&overviewPart===key){closeOverviewDetail();return;}
+  overviewPart=key;overviewDetailOpen=true;
+  const pop=$('#overview-part-detail');pop.innerHTML=overviewDetailContent();pop.hidden=false;
+  document.querySelectorAll('.overview-part,[data-overview-reading]').forEach(el=>{const selected=(el.dataset.overviewPart||el.dataset.overviewReading)===key;el.setAttribute('aria-expanded',String(selected));if(el.classList.contains('overview-part'))el.setAttribute('aria-pressed',String(selected));});
+  positionOverviewDetail();
 }
 function overviewVehicle(){
   const m=state.model,parts=overviewParts(),statuses=overviewStatuses(parts),owner=mapOwner();
-  if(owner!==overviewPartOwner){overviewPartOwner=owner;overviewStatus='';overviewPart=statuses.find(item=>carStateKind(item.value)==='attention')?.part||'rf';}
-  const selected=parts.find(part=>part.key===overviewPart)||parts[0];
+  if(owner!==overviewPartOwner){overviewPartOwner=owner;overviewStatus='';overviewPart='rf';overviewDetailOpen=false;}
   const attention=statuses.filter(item=>carStateKind(item.value)==='attention'),unknown=statuses.filter(item=>carStateKind(item.value)==='unknown');
-  const list=(items)=>items.map(item=>`<button class="pill warn" data-overview-part="${item.part}">${esc(item.name)} · ${esc(item.value)}</button>`).join('');
-  const art=state.profile?.image==='/car.svg'?`<div class="car-tyre-art">${carImage('top','极氪 001 俯视图，车头朝左')}</div>`:'<div class="car-tyre-no-art">车型图片待配置</div>';
+  const list=items=>items.map(item=>`<button class="pill warn" data-overview-part="${item.part}">${esc(item.name)} · ${esc(item.value)}</button>`).join('');
+  const art=state.profile?.image==='/car.svg'?`<div class="car-tyre-art">${carImage('top','极氪 001 俯视图，车头朝上')}</div>`:'<div class="car-tyre-no-art">车型图片待配置</div>';
   const readings=['左前','右前','左后','右后'].map(name=>{
     const tyre=m.tyres.find(tyre=>tyre.name===name),pressure=tyre?.pressure??'未知',hasUnit=/ kPa$/.test(pressure);
-    return `<div class="car-tyre-reading" data-position="${name}"><span class="car-tyre-name overview-param-label">${statusIcon('Pressure')}${name}</span><div><strong>${esc(hasUnit?pressure.slice(0,-4):pressure)}</strong>${hasUnit?'<span class="car-tyre-unit">kPa</span>':''}</div><span class="car-tyre-temp overview-param-label">${statusIcon('Temperature')}胎温 ${esc(tyre?.temperature??'未知')}</span></div>`;
+    return `<div class="car-tyre-reading" data-position="${name}"><span class="car-tyre-name">${name}</span><div>${overviewReading(hasUnit?pressure.slice(0,-4):pressure,hasUnit?'kPa':'',hasUnit)}</div><span class="car-tyre-temp">胎温 ${esc(tyre?.temperature??'未知')}</span></div>`;
   }).join('');
-  const pm25=m.fields.find(field=>field.group==='空气质量'&&field.key==='interiorPM25')?.value;
-  const hasPm25=(typeof pm25==='number'||typeof pm25==='string'&&pm25.trim()!=='')&&Number.isFinite(Number(pm25))&&Number(pm25)>=0;
-  return `<section class="card overview-vehicle"><div class="card-head"><h2>车辆状态</h2><button class="text-link" data-overview-tool="parameters">完整参数${icon('arrow')}</button></div>
-  <div class="overview-vehicle-alerts"><div class="overview-status-counts"><button class="pill ${attention.length?'warn':''}" data-overview-status="attention" aria-expanded="${overviewStatus==='attention'}">需关注 ${attention.length} 项</button><button class="pill ${unknown.length?'warn':''}" data-overview-status="unknown" aria-expanded="${overviewStatus==='unknown'}">未知 ${unknown.length} 项</button><span>门窗与锁止 · 15 项</span></div>${!m.charging.confirmed?`<button class="pill warn" data-overview-tool="parameters">${statusIcon('Charge')}充电状态待确认</button>`:''}<div class="overview-status-list" data-status-list="attention" ${overviewStatus==='attention'?'':'hidden'}>${list(attention)}</div><div class="overview-status-list" data-status-list="unknown" ${overviewStatus==='unknown'?'':'hidden'}>${list(unknown)}</div></div>
-  <div class="car-tyre-diagram overview-vehicle-diagram"><div class="overview-vehicle-stage">${art}${parts.map(part=>{const kinds=[part.door,...(part.window!==undefined?[part.window,part.lock]:[])].map(carStateKind),kind=kinds.includes('attention')?'attention':kinds.includes('unknown')?'unknown':'safe';return `<button id="overview-part-${part.key}" class="overview-part overview-part-${part.key} state-${kind}" data-overview-part="${part.key}" aria-label="${esc(part.name)} ${esc(part.door)}${part.window!==undefined?` 车窗${esc(part.window)} 门锁${esc(part.lock)}`:''}" aria-pressed="${part.key===selected.key}"><span class="overview-param-label">${statusIcon(part.glyph)}${esc(part.name)}</span><strong>${esc(part.door)}</strong>${part.window!==undefined?`<small><span class="overview-param-label">${statusIcon('Window')}车窗${esc(part.window)}</span><span class="overview-param-label">${statusIcon('Lock')}门锁${esc(part.lock)}</span></small>`:''}</button>`;}).join('')}</div><div id="overview-part-detail" class="overview-part-detail" aria-live="polite">${overviewPartDetail(selected)}</div><div class="overview-tyre-heading"><h3>四轮胎压与胎温</h3><span>保留原始精度</span></div><div class="overview-tyre-readings">${readings}</div></div>
-  <div class="overview-cabin"><div class="overview-environment-values"><span class="overview-environment-reading"><span class="overview-param-label">${statusIcon('Temperature')}车内</span><strong>${esc(m.metrics.inside)}</strong></span><span class="overview-environment-reading"><span class="overview-param-label">${statusIcon('Temperature')}车外</span><strong>${esc(m.metrics.outside)}</strong></span><button class="text-link overview-pm25" data-overview-parameters="interiorPM25" data-parameter-group="空气质量"><span class="overview-param-label">${statusIcon('Air')}PM2.5 <strong>${hasPm25?esc(pm25):'暂无数据'}</strong></span><small>${hasPm25?'单位待核实':'未返回有效读数'}</small></button></div><p>${age(m.temperature_updated_time,'温度更新于 ')} · 与整车状态可能不同步</p><p>PM2.5 独立更新时间未提供</p></div></section>`;
+  const partButton=part=>{
+    const kinds=[part.door,...(part.window!==undefined?[part.window,part.lock]:[])].map(carStateKind),kind=kinds.includes('attention')?'attention':kinds.includes('unknown')?'unknown':'safe';
+    const central=part.key==='central',label=central?(part.door==='已锁'?'已锁车':part.door==='未锁'?'未锁车':'锁止未知'):part.name;
+    return `<button id="overview-part-${part.key}" class="overview-part overview-part-${part.key} state-${kind}" data-overview-part="${part.key}" aria-label="${esc(part.name)} ${esc(part.door)}${part.window!==undefined?` 车窗${esc(part.window)} 门锁${esc(part.lock)}`:''}" aria-expanded="${overviewDetailOpen&&overviewPart===part.key}" aria-controls="overview-part-detail" aria-pressed="${overviewPart===part.key}">${central?`<span>锁车状态</span><span class="overview-lock-reading">${overviewLockIcon(part.door)}${label}</span>`:`<span class="overview-part-name">${esc(label)}${part.window!==undefined?overviewLockIcon(part.lock):''}</span>`}</button>`;
+  };
+  return `<section class="card overview-vehicle"><div class="card-head"><h2>车辆状态</h2>${partButton(parts.find(part=>part.key==='central'))}<button class="text-link" data-overview-tool="parameters">完整参数${icon('arrow')}</button></div>
+  <div class="overview-vehicle-alerts"><div class="overview-status-counts"><button class="pill ${attention.length?'warn':''}" data-overview-status="attention" aria-expanded="${overviewStatus==='attention'}">需关注 ${attention.length} 项</button><button class="pill ${unknown.length?'warn':''}" data-overview-status="unknown" aria-expanded="${overviewStatus==='unknown'}">未知 ${unknown.length} 项</button></div>${!m.charging.confirmed?`<button class="pill warn" data-overview-tool="parameters">${statusIcon('Charge')}充电状态待确认</button>`:''}<div class="overview-status-list" data-status-list="attention" ${overviewStatus==='attention'?'':'hidden'}>${list(attention)}</div><div class="overview-status-list" data-status-list="unknown" ${overviewStatus==='unknown'?'':'hidden'}>${list(unknown)}</div></div>
+  <div class="overview-cabin"><div class="overview-environment-values">${overviewEnvironment().map(item=>`<button class="overview-environment-reading ${item.key==='pm25'?'overview-pm25':''}" data-overview-reading="${item.key}" aria-expanded="${overviewDetailOpen&&overviewPart===item.key}" aria-controls="overview-part-detail"><span class="overview-reading-label">${item.name}</span>${overviewReading(item.value,item.unit)}</button>`).join('')}</div></div>
+  <div class="car-tyre-diagram overview-vehicle-diagram"><div class="overview-vehicle-stage">${art}${parts.filter(part=>part.key!=='central').map(partButton).join('')}<div class="overview-tyre-readings">${readings}</div></div></div>
+  <div id="overview-part-detail" class="overview-part-detail" role="dialog" aria-label="车辆状态详情" aria-live="polite" ${overviewDetailOpen?'':'hidden'}>${overviewDetailContent()}</div></section>`;
 }
 function openVehicleParameters(options={}){
   vehiclePage.openParameters(options);page='car';sectionTask='';render();window.scrollTo(0,0);focusPageHeading();
@@ -800,7 +854,7 @@ function overviewCollection(){
   const recording=state.recording||{},monitor=state.monitoring||{};
   const label={never:'尚未开启',paused:'已暂停',active:monitor.online===true?'在线运行':monitor.online===false?'后台未在线':'状态待确认',failed:'采集失败',offline:'后台未在线'}[recording.status]||(recording.active?'状态待确认':'已暂停');
   const activity=monitor.charge==='charging'?'充电记录中':monitor.trip==='driving'?'行程记录中':monitor.trip==='waiting'?'等待行程结束确认':'没有进行中活动的证据';
-  return `<div class="overview-collection overview-secondary"><div class="overview-collection-info"><div class="overview-collection-row"><div class="overview-collection-state"><span>后台采集 <strong>${esc(label)}</strong></span><span>采样间隔 <strong>${esc(recording.interval??'未知')} 秒</strong></span><span>最近检查 <strong data-overview-last-sample>${esc(recording.last_sample||'未知')}</strong></span></div><section id="overview-attention" class="overview-attention" aria-label="需要留意" hidden></section></div><div class="overview-collection-meta"><span>${esc(activity)} · 非实时状态</span><span>本次读取 ${esc(state.read_at)} · 车辆缓存 ${esc(state.model.updated_at)}</span></div><p class="unknown overview-collection-error" ${recording.error?'':'hidden'}>${esc(recording.error||'')}</p></div><button class="button secondary" data-overview-tool="settings">采集设置</button><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用专用字段，与低压电池分开；续航为车辆返回的估计。</p><p>胎压保留接口精度，不设置未经核对的报警阈值。未知不代表正常或异常；车型图片仅供参考。</p>${row('车辆状态时间',state.model.updated_at)}${row('温度状态时间',state.model.temperature_updated_at)}${row('最近云端读取',state.read_at)}<p>温度与整车可能不同步；云端读取不等于车辆产生新数据。定位时间和可信度见地图说明。</p></div></details></div>`;
+  return `<div class="overview-collection overview-secondary"><div class="overview-collection-info"><div class="overview-collection-row"><div class="overview-collection-state"><span>后台采集 <strong>${esc(label)}</strong></span><span>采样间隔 <strong>${esc(recording.interval??'未知')} 秒</strong></span><span>最近检查 <strong data-overview-last-sample>${esc(recording.last_sample||'未知')}</strong></span></div><section id="overview-attention" class="overview-attention" aria-label="需要留意" hidden></section></div><div class="overview-collection-meta"><span>${esc(activity)} · 非实时状态</span><span>本次读取 ${esc(state.read_at)} · 车辆缓存 ${esc(state.model.updated_at)}</span></div><p class="unknown overview-collection-error" ${recording.error?'':'hidden'}>${esc(recording.error||'')}</p></div><button class="button secondary" data-overview-tool="settings">采集设置</button><details class="data-explanation" data-detail="overview-explanation"><summary>数据说明与完整时间</summary><div class="explanation-content"><p>动力电池使用专用字段，与低压电池分开；续航为车辆返回的估计。</p><p>胎压显示一位小数，原始参数保留接口精度；不设置未经核对的报警阈值。未知不代表正常或异常；车型图片仅供参考。</p>${row('车辆状态时间',state.model.updated_at)}${row('温度状态时间',state.model.temperature_updated_at)}${row('最近云端读取',state.read_at)}<p>温度与整车可能不同步；云端读取不等于车辆产生新数据。定位时间和可信度见地图说明。</p></div></details></div>`;
 }
 function overview() {
   if(!state?.model)return '<section id="overview-attention" class="overview-attention" aria-label="需要留意" hidden></section>'+modelRequired();
@@ -1109,6 +1163,7 @@ function renderContent() {
   const nextMap=fragment.querySelector('#map');
   if(nextMap){nextMap.dataset.owner=mapOwner();if(retainedMap){nextMap.replaceChildren(retainedMap,...(retainedMarker?[retainedMarker]:[]));fragment.querySelector('#map-status').textContent='正在核对缓存位置 · 当前为上次底图，位置可能已变化。';}}
   $('#main').replaceChildren(fragment);
+  if(page==='overview')queueMicrotask(positionOverviewDetail);else overviewDetailOpen=false;
   if(managerNode&&$('#trip-management')){$('#trip-management').replaceWith(managerNode);if(managerFocus?.isConnected)managerFocus.focus({preventScroll:true});}
   if(chargeManagerNode&&$('#charge-management')){$('#charge-management').replaceWith(chargeManagerNode);if(chargeManagerFocus?.isConnected)chargeManagerFocus.focus({preventScroll:true});}
   if (insightSections.includes(page)) {
@@ -1233,6 +1288,10 @@ async function updateRecording(saveInterval = false) {
 }
 
   document.addEventListener('click', event => {
+  if(overviewDetailOpen&&!event.target.closest('#overview-part-detail,[data-overview-part],[data-overview-reading]'))closeOverviewDetail();
+  if(event.target.closest('[data-overview-detail-close]')){closeOverviewDetail(true);return;}
+  const readingButton=event.target.closest('[data-overview-reading]');
+  if(readingButton&&page==='overview'){showOverviewDetail(readingButton.dataset.overviewReading);return;}
   if(window.booksWritePending()&&event.target.closest('[data-page],[data-section-task],[data-costs],[data-books-return],[data-overview-back]')){event.preventDefault();return;}
   if(event.target.closest('[data-overview-back]')){page='overview';sectionTask='';render();overviewDashboard.restore();return;}
   if(overviewDashboard.handle(event))return;
@@ -1247,8 +1306,7 @@ async function updateRecording(saveInterval = false) {
   }
   const partButton=event.target.closest('[data-overview-part]');
   if(partButton&&page==='overview'&&state?.model){
-    const part=overviewParts().find(part=>part.key===partButton.dataset.overviewPart);
-    if(part){overviewPart=part.key;document.querySelectorAll('.overview-part').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.overviewPart===part.key)));$('#overview-part-detail').innerHTML=overviewPartDetail(part);}
+    showOverviewDetail(partButton.dataset.overviewPart);
     return;
   }
   const attentionLink=event.target.closest('[data-attention-target]');
@@ -1508,3 +1566,6 @@ document.querySelector("#logout").addEventListener("click", async () => {
   const response = await fetch("/auth/logout", {method:"POST", headers:{"Content-Type":"application/json"},body:"{}"});
   if(response.ok) location.replace("/");
 });
+
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&overviewDetailOpen){closeOverviewDetail(true);event.preventDefault();}});
+window.addEventListener('resize',positionOverviewDetail);

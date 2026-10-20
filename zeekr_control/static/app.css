@@ -429,3 +429,64 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
  .overview-summary-reading{display:flex;flex-wrap:wrap;align-items:center;gap:0 8px}
  .overview-summary-reading .overview-calendar-link{font-size:11px;margin:0;min-height:32px;white-space:nowrap}
 }
+
+/* Approved desktop vehicle diagram: portrait artwork, quiet labels and on-demand details. */
+@media(min-width:851px){
+ .overview-vehicle{position:relative;display:flex;flex-direction:column;min-height:850px;container-type:inline-size;overflow:visible}
+ .overview-health>.overview-vehicle>.card-head{display:grid;grid-template-columns:1fr auto 1fr;align-items:start;gap:8px;min-height:76px}
+ .overview-vehicle>.card-head>.text-link{justify-self:end;white-space:nowrap;font-size:12px}
+ .overview-vehicle .overview-part{position:absolute;display:block;grid-area:auto;justify-self:auto;border:0;background:transparent;padding:8px 0;text-align:center;color:var(--muted);font-size:12px;line-height:1.5;border-radius:6px;min-width:0;white-space:nowrap}
+ .overview-vehicle .overview-part[aria-pressed=true]{outline:none}
+ .overview-vehicle .overview-part:hover,.overview-vehicle .overview-part[aria-expanded=true]{color:var(--accent);background:transparent}
+ .overview-vehicle .overview-part.state-attention{color:var(--night-warning,#86531f)}
+ .overview-vehicle .overview-part.state-unknown .overview-part-name{text-decoration:underline dotted;text-underline-offset:5px}
+ .overview-vehicle .overview-part>.overview-part-name{display:flex;align-items:center;justify-content:center;gap:6px;color:inherit}
+ .overview-lock-icon{display:inline-flex;align-items:center;color:inherit}
+ .overview-vehicle .overview-lock-icon .status-parameter-icon{width:14px;height:14px;color:inherit}
+ .overview-vehicle .overview-part-central{position:static;padding:0;color:var(--ink);font-size:15px;font-weight:650}
+ .overview-part-central>span{color:inherit}
+ .overview-lock-reading{display:flex!important;justify-content:center;align-items:center;gap:5px;margin-top:3px;font-size:13px;font-weight:500}
+ .overview-vehicle .overview-part-central .status-parameter-icon{width:15px;height:15px}
+ .overview-vehicle-alerts{flex:none;padding-bottom:10px}
+ .overview-vehicle .overview-cabin{flex:none;margin:0 20px;padding:12px 0 8px;border-top:1px solid var(--line);display:block}
+ .overview-environment-values{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:start}
+ .overview-vehicle .overview-environment-values>button{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0;border:0;background:transparent;padding:0;color:var(--ink);text-align:center;font:inherit}
+ .overview-reading-label{font-size:12px;color:var(--muted)}
+ .overview-number{position:relative;display:inline-block;width:max-content;white-space:nowrap;font-variant-numeric:tabular-nums}
+ .overview-cabin .overview-number strong{font-size:28px;line-height:1.3;font-weight:700}
+ .overview-value-unit{position:absolute;left:100%;bottom:.15em;margin-left:4px;font-size:11px;line-height:1.5;color:var(--muted);font-weight:400}
+ .overview-health .overview-vehicle-diagram{position:relative;flex:1;display:block;margin:0 20px 12px;min-height:650px}
+ .overview-vehicle-stage{display:block;position:absolute;inset:0;padding:0}
+ .overview-vehicle-stage .car-tyre-art{position:absolute;left:30%;top:10%;width:40%;height:80%;aspect-ratio:auto;max-width:none;overflow:visible;margin:0}
+ .overview-vehicle-stage .car-tyre-art img{position:absolute;left:50%;top:50%;width:166.67%;height:auto;max-width:none;transform:translate(-50%,-50%)}
+ .overview-vehicle-stage .car-tyre-no-art{position:absolute;left:31%;top:20%;width:38%;min-height:50%;display:grid;place-items:center;text-align:center;color:var(--muted)}
+ .overview-vehicle .overview-part-lf{left:12%;top:39%;width:15%}
+ .overview-vehicle .overview-part-rf{right:12%;top:39%;width:15%}
+ .overview-vehicle .overview-part-lr{left:12%;top:58%;width:15%}
+ .overview-vehicle .overview-part-rr{right:12%;top:58%;width:15%}
+ .overview-vehicle .overview-part-hood{left:50%;top:2%;transform:translateX(-50%);padding:5px 8px}
+ .overview-vehicle .overview-part-trunk{left:50%;right:auto;top:91%;transform:translateX(-50%);padding:5px 8px}
+ .overview-vehicle-stage .overview-part:after{content:"";position:absolute;top:50%;height:1px;width:3cqw;background:var(--line);opacity:.5;pointer-events:none}
+ .overview-vehicle-stage .overview-part-lf:after,.overview-vehicle-stage .overview-part-lr:after{left:100%}
+ .overview-vehicle-stage .overview-part-rf:after,.overview-vehicle-stage .overview-part-rr:after{right:100%}
+ .overview-vehicle-stage .overview-part-hood:after{top:100%;left:50%;width:1px;height:12px}
+ .overview-vehicle-stage .overview-part-trunk:after{top:auto;bottom:100%;left:50%;width:1px;height:12px}
+ .overview-vehicle-stage .overview-part:hover:after,.overview-vehicle-stage .overview-part[aria-expanded=true]:after{background:var(--accent);opacity:1}
+ .overview-tyre-readings{display:contents;margin:0}
+ .overview-tyre-readings .car-tyre-reading{position:absolute;width:24%;text-align:center;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}
+ .overview-tyre-readings [data-position="左前"]{left:1%;top:18%}
+ .overview-tyre-readings [data-position="右前"]{right:1%;top:18%}
+ .overview-tyre-readings [data-position="左后"]{left:1%;top:75%}
+ .overview-tyre-readings [data-position="右后"]{right:1%;top:75%}
+ .overview-tyre-readings .car-tyre-name{font-size:12px}
+ .overview-tyre-readings .car-tyre-reading strong{font-size:28px;line-height:1.35;font-weight:700;letter-spacing:-.5px}
+ .overview-tyre-readings .car-tyre-temp{font-size:11px;white-space:nowrap}
+ .overview-vehicle .overview-part-detail{position:absolute;z-index:20;display:block;box-sizing:border-box;width:min(280px,calc(100% - 20px));max-height:calc(100% - 20px);overflow:auto;padding:16px;background:var(--paper);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 28px #0002;color:var(--ink);font-size:13px;line-height:1.7}
+ .overview-vehicle .overview-part-detail[hidden]{display:none}
+ .overview-part-detail h3{font-size:14px;line-height:1.6;margin:0 24px 10px 0}
+ .overview-part-detail .overview-part-facts{display:flex;gap:12px;flex-wrap:wrap}
+ .overview-part-detail p{font-size:12px;color:var(--muted);margin:10px 0}
+ .overview-part-detail .text-link{font-size:12px;margin-top:4px}
+ .overview-detail-close{position:absolute;right:8px;top:6px;padding:4px 8px;background:transparent;color:var(--muted);font-size:22px;line-height:1}
+ .overview-part-detail .overview-number strong{font-size:24px}
+}

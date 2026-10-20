@@ -34,7 +34,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
           await diagram.scrollIntoViewIfNeeded();
           for(const tyre of pinnedState.model.tyres){
             const reading=diagram.locator(`.car-tyre-reading[data-position="${tyre.name}"]`);
-            assert.equal(await reading.locator('strong').innerText(),tyre.pressure.slice(0,-4),`${tyre.name}: exact pressure, no rounding or wheel swap`);
+            assert.equal(await reading.locator('strong').innerText(),Number(tyre.pressure.slice(0,-4)).toFixed(1),`${tyre.name}: one decimal, no wheel swap`);
             assert.equal(await reading.locator('.car-tyre-unit').innerText(),'kPa');
             assert.match(await reading.locator('.car-tyre-temp').innerText(),new RegExp(tyre.temperature));
           }
@@ -52,7 +52,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
           });
           const metrics=await diagram.evaluate(el=>({height:el.getBoundingClientRect().height,fontSize:parseFloat(getComputedStyle(el.querySelector('.car-tyre-reading strong')).fontSize),weight:Number(getComputedStyle(el.querySelector('.car-tyre-reading strong')).fontWeight)}));
           assert.ok(metrics.fontSize>=28&&metrics.weight>=700,`${view} pressure must be large and bold: ${JSON.stringify(metrics)}`);
-          assert.ok(metrics.height<=(view==='总览'?680:470),`${view} compact diagram: ${metrics.height}px`);
+          assert.ok(metrics.height<=900,`${view} compact diagram: ${metrics.height}px`);
           assert.deepEqual(failures,[],`${view} ${theme} ${width}: wheel labels clear of image and within diagram`);
           if(view==='总览') {
             const edges=await page.locator('.overview-health').evaluate(el=>{

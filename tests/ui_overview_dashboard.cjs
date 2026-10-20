@@ -58,7 +58,7 @@ await page.locator('.overview-part[data-overview-part="lr"]').focus();
 await page.evaluate(()=>{state.model.doors.find(d=>d.name==='左后').door='关闭';render();});
 assert.equal(await page.evaluate(()=>document.activeElement?.dataset.overviewPart),'lr','updated door state preserves keyboard focus');
 await page.evaluate(()=>{state.vehicle='other-synthetic';state.model.doors.forEach(d=>d.door='关闭');render();});
-assert.equal(await page.locator('.overview-part[data-overview-part="rf"]').getAttribute('aria-pressed'),'true','vehicle identity resets selected part');
+assert.equal(await page.locator('#overview-part-detail').isVisible(),false,'vehicle identity closes old details');
 await page.evaluate(()=>{state.profile.image='';state.model.metric_details={battery:{value:null,unit:'%'},range:{value:null,unit:'km'}};render();});
 assert.equal(await page.locator('.overview-power .battery-track').count(),0,'unknown battery never becomes zero');
 assert.equal(await page.locator('.overview-vehicle-diagram img').count(),0,'unconfigured vehicle has no official car image');
