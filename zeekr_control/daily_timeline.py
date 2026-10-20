@@ -44,7 +44,7 @@ class DailyTimeline:
         if nearby:return min(nearby,key=lambda p:_distance(point,(p['latitude'],p['longitude'])))
         return dict(latitude=point[0],longitude=point[1],label='未命名地点',name_source='reference')
 
-    def _interpret(self, owner, vehicle, place, identity, side, saved):
+    def _interpret(self, owner, vehicle, place, identity, side, saved, aliases=()):
         if place is None:
             return dict(key=None,label='位置未知',source='unknown',decision='unresolved',issues=['missing_position'])
         result=dict(key=anchor_key(place),label=place['label'] if place['name_source']!='reference' else '未命名地点',
@@ -68,6 +68,13 @@ class DailyTimeline:
                     and _distance((result['latitude'],result['longitude']),(body['latitude'],body['longitude']))<=150):
                 result.update(label='未命名地点',source='unknown',decision='rejected',key=body['key'])
         chosen=saved['_decisions'].get((identity,side))
+        if chosen is None:
+            # Read legacy fragment decisions without rewriting the personal store.
+            inherited=[saved['_decisions'][(alias,side)] for alias in aliases if (alias,side) in saved['_decisions']]
+            if inherited:
+                signatures={(body['action'],body.get('name'),body.get('target_key'),body.get('candidate')) for body in inherited}
+                if len(signatures)==1:chosen=inherited[0]
+                else:result['issues'].append('candidate_conflict')
         if chosen:
             result['key']=chosen.get('target_key') or chosen['key']
             if chosen['action']=='reject':
@@ -105,14 +112,19 @@ class DailyTimeline:
             row['_position']=dict(latitude=point['point'][0],longitude=point['point'][1],state_time=point['time']) if point else None
             row['bill']=booked.get(event['id']) if row['type']=='charge' else None
             records.append(row)
-        parked=ParkingAnalytics(self.archive).query(scope,vehicle,start_date,end_date,context_days=1)
-        for session in parked['sessions']:
+        parked=ParkingAnalytics(self.archive,self.database,store=self.store,owner=owner).query(
+            scope,vehicle,start_date,end_date,context_days=1)
+        for session in parked['events']:
             if session['end_time']>now:continue
-            row={k:session[k] for k in ('start_time','end_time','duration_seconds','sample_count','reasons','reason_labels')}
+            row={k:session[k] for k in ('start_time','end_time','duration_seconds','sample_count','reasons','reason_labels',
+                'parking_status','p_gear_samples','open','observation_quality','observation_gaps',
+                'charging_phases','soc_drop','estimated_kwh')}
+            aliases=['parking_'+digest(fragment['id'])[:32] for fragment in parked['sessions']
+                     if fragment['start_time']>=row['start_time'] and fragment['end_time']<=row['end_time']]
             # A parking sample itself must have a trusted endpoint; never borrow a trip's location.
             point=None;observed_position=None
             with self.events.connect() as db:
-                if db is not None and db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone():
+                if 'movement' not in row['reasons'] and db is not None and db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone():
                     from .trip_endpoints import endpoint
                     match=endpoint(db,vehicle,row['start_time'],min(row['end_time'],row['start_time']+180000),True)
                     if match:
@@ -120,8 +132,8 @@ class DailyTimeline:
                         point=self._parking_place(observed_position,stats['places'],corrections['_regions'])
             row['_position']=observed_position
             row.update(id='parking_'+digest(session['id'])[:32],type='parking',status='observed',partial=bool(session['reasons']),bill=None)
-            row['start_place']=self._interpret(owner,vehicle,point,row['id'],'start',corrections)
-            row['end_place']=self._interpret(owner,vehicle,point,row['id'],'end',corrections)
+            row['start_place']=self._interpret(owner,vehicle,point,row['id'],'start',corrections,aliases)
+            row['end_place']=self._interpret(owner,vehicle,point,row['id'],'end',corrections,aliases)
             records.append(row)
         records.sort(key=lambda r:(r['start_time'] if r['start_time'] is not None else r['end_time'],r['id']))
         for row in records:

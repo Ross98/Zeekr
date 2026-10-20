@@ -10,7 +10,7 @@ class TimelineTests(unittest.TestCase):
     def setUp(self):
         fixtures.CommuteTagTests.setUp(self)
         self.trip('a', self.start+3600000, (31.2,121.4), (31.21,121.41))
-        self.archive=Mock()
+        self.archive=Mock(spec=['iter_records'])
         self.archive.iter_records.return_value=iter([])
         self.timeline=DailyTimeline(self.db,self.archive,self.tags.store)
 
@@ -191,8 +191,8 @@ class RecallApiTests(unittest.TestCase):
         self.assertEqual(self.get('/api/place-history?start=2026-09-01&end=2026-09-30&key=bad')[0],400)
         code,result=self.get('/api/timeline?date=2026-09-20')
         self.assertEqual(code,200)
-        self.assertEqual(result['records'],[])
-        self.assertNotIn('position',json_dump(result))
+        self.assertTrue(all(r['type']=='parking' and r['parking_status']=='candidate' for r in result['records']))
+        self.assertNotIn('"position":',json_dump(result))
         payload=dict(operation='undo',revision=0,context=result['context'])
         self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''},'/api/place-corrections')[0],403)
         self.assertEqual(self.post_ledger(dict(payload,context='stale'),route='/api/place-corrections')[0],400)
@@ -231,7 +231,9 @@ class RecallEvidenceTests(unittest.TestCase):
         with sqlite3.connect(self.app.database_path) as db:db.execute('DELETE FROM monitor_events')
         day=self.timeline.query(self.scope,vehicle,'2026-09-20',owner=self.owner)
         self.assertTrue(day['records'])
-        self.assertTrue(all(r['end_place']['label']=='停车车库' for r in day['records']))
+        confirmed=[r for r in day['records'] if r['parking_status']=='parked']
+        self.assertTrue(confirmed)
+        self.assertTrue(all(r['end_place']['label']=='停车车库' for r in confirmed))
         month=self.timeline.calendar.query(self.scope,vehicle,'2026-09-20',owner=self.owner)
         self.assertTrue(month['totals']['parking_places'])
         self.assertTrue(all(p['key']==key for p in month['totals']['parking_places']))
@@ -270,9 +272,10 @@ class RecallEvidenceTests(unittest.TestCase):
         vehicle=self.app.vehicle_key
         before=UsageEvents(self.app.database_path).between(vehicle,0,32503680000000)['events']
         result=self.timeline.query(self.scope,vehicle,'2026-09-20',owner=self.owner,positions=True)
-        self.assertEqual([r['type'] for r in result['records']],['trip','parking','charge','parking','trip','parking'])
-        parking=next(r for r in result['records'] if r['type']=='parking')
-        self.assertEqual(parking['duration_seconds'],39*60)
+        self.assertEqual([r['type'] for r in result['records']],['parking','trip','parking','charge','trip','parking'])
+        parking=next(r for r in result['records'] if r.get('parking_status')=='parked')
+        self.assertEqual(parking['duration_seconds'],100*60)
+        self.assertEqual(len(parking['charging_phases']),1)
         data=dict(date='2026-09-20',record_id=parking['id'],side='end',action='reject',revision=0)
         plan=self.timeline.update(self.owner,vehicle,dict(data,operation='preview'),scope=self.scope)
         self.timeline.update(self.owner,vehicle,dict(data,operation='save',preview_token=plan['preview_token']),scope=self.scope)
@@ -281,8 +284,76 @@ class RecallEvidenceTests(unittest.TestCase):
         revised=next(r for r in after['records'] if r['id']==parking['id'])
         self.assertEqual(revised['end_place']['decision'],'rejected')
         self.assertEqual(UsageEvents(self.app.database_path).between(vehicle,0,32503680000000)['events'],before)
-        self.assertNotIn('position',json_dump(after))
+        self.assertNotIn('"position":',json_dump(after))
         self.assertNotIn('latitude',json_dump(after))
+
+    def parked_samples(self, *, off=False, moving=False):
+        """P gear with missing speed, slight GPS drift and a real observation gap."""
+        import json,sqlite3
+        from zeekr_control.tracks import day_bounds
+        from zeekr_control.monitor import Monitor
+        start=day_bounds('2026-09-21')[0]+8*3600000
+        vehicle=self.app.vehicle_key
+        with sqlite3.connect(self.app.database_path) as db:
+            db.execute('DELETE FROM monitor_events')
+            for identity,a,b in [('arrival',start-1200000,start),('departure',start+7200000,start+8400000)]:
+                body=dict(start_time=a,end_time=b,duration_seconds=1200,distance_km=10,
+                          start_soc=71,end_soc=70,partial=False)
+                db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
+                           (identity,vehicle,'trip_end',json.dumps(body),'SYNTHETIC',b))
+        for index,minute in enumerate((0,5,35,40,60,90,120)):
+            stamp=start+minute*60000
+            raw={'updateTime':stamp,'position':{'latitude':111960000+index*10,'longitude':437076000,
+                 'posCanBeTrusted':True,'marsCoordinates':False},
+                 'basicVehicleStatus':{'speedValidity':False,**({'engineStatus':'engine_off'} if off else {})},
+                 'additionalVehicleStatus':{'electricVehicleStatus':{'ptReady':0 if off else None,'chargeLevel':70,
+                    'chargeSts':0,'chargerState':0,'statusOfChargerConnection':0},
+                    'drivingBehaviourStatus':{'gearAutoStatus':3 if moving and minute==40 else 0},
+                    'maintenanceStatus':{'odometer':1000}}}
+            self.app.snapshot_store.publish(self.scope,vehicle,raw,stamp,source='monitor')
+            Monitor(self.app.database_path).tracks.record(vehicle,raw,stamp,180)
+        return start
+
+    def test_p_gear_parking_merges_drift_and_keeps_gap_unknown(self):
+        start=self.parked_samples()
+        day=self.timeline.query(self.scope,self.app.vehicle_key,'2026-09-21',owner=self.owner)
+        rows=[r for r in day['records'] if r['type']=='parking' and r['start_time']>=start]
+        self.assertEqual(len(rows),1)
+        row=rows[0]
+        self.assertEqual((row['start_time'],row['end_time']),(start,start+7200000))
+        self.assertEqual(row['parking_status'],'parked')
+        self.assertEqual(row['p_gear_samples'],7)
+        self.assertEqual(row['sample_count'],7)
+        self.assertIn('gap',row['reasons'])
+        self.assertTrue(row['observation_gaps'])
+        self.assertIsNone(row['soc_drop'])
+        self.assertNotIn('latitude',json_dump(day))
+
+    def test_drive_gear_conflict_splits_parking_instead_of_merging(self):
+        start=self.parked_samples(moving=True)
+        day=self.timeline.query(self.scope,self.app.vehicle_key,'2026-09-21',owner=self.owner)
+        rows=[r for r in day['records'] if r['type']=='parking' and r['start_time']>=start]
+        self.assertEqual([(r['start_time']-start,r['end_time']-start) for r in rows],
+                         [(0,35*60000),(60*60000,120*60000)])
+        self.assertTrue(all('boundary' in r['reasons'] and r['soc_drop'] is None for r in rows))
+
+    def test_merged_parking_retains_old_fragment_place_correction(self):
+        from zeekr_control.daily_timeline import digest
+        from zeekr_control.parking_analytics import ParkingAnalytics
+        from zeekr_control.trip_place_names import anchor_key
+        start=self.parked_samples(off=True)
+        vehicle=self.app.vehicle_key
+        old=ParkingAnalytics(self.timeline.archive).query(self.scope,vehicle,'2026-09-21','2026-09-21',context_days=1)
+        fragment=old['sessions'][-1]
+        identity='parking_'+digest(fragment['id'])[:32]
+        key=anchor_key(dict(latitude=31.21,longitude=121.41))
+        body=dict(record_id=identity,side='end',action='assign',name='旧记录人工名称',candidate='未命名地点',
+                  key=key,target_key=None,latitude=31.21,longitude=121.41,remember=False)
+        self.app.personal_store.change(self.owner,vehicle,'place_corrections','save','old-correction',body,0)
+        rows=[r for r in self.timeline.query(self.scope,vehicle,'2026-09-21',owner=self.owner)['records']
+              if r['type']=='parking' and r['start_time']>=start]
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['end_place']['label'],'旧记录人工名称')
 
     def test_month_length_history_and_overnight_identity(self):
         vehicle=self.app.vehicle_key
