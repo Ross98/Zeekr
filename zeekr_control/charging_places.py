@@ -15,6 +15,9 @@ from .usage_events import UsageEvents, number, total
 from .usage_reports import date_label
 
 COLLECTION='charging_places'
+# Names explicitly confirmed by the owner tolerate parking-area GPS drift.
+# Fixed anchors still separate distant branches with identical names.
+CONFIRMED_STATION_RADIUS_M=1000
 
 
 def _key(value):
@@ -86,8 +89,10 @@ class ChargingPlaces:
 
     def apply(self,owner,vehicle,records):
         resolved=self._resolved(owner,vehicle,records);anchors=[]
-        for row in sorted(records,key=lambda r:(r['end_time'],r['id'])):
-            r=resolved[row['id']];point=r['point'];key=r['group_key'] if point is not None else None
+        ordered=sorted(records,key=lambda r:(r['end_time'],r['id']))
+        station_keys=self._station_keys(ordered,resolved)
+        for row in ordered:
+            r=resolved[row['id']];point=r['point'];key=station_keys.get(row['id']) or (r['group_key'] if point is not None else None)
             if key is None and point:
                 match=next((a for a in anchors if _distance(a[1],point)<=RADIUS_M),None)
                 if match:key=match[0]
@@ -97,6 +102,29 @@ class ChargingPlaces:
                        place_key=key,place_unlocated=point is None,station_name=r['station_name'],station_source=r['station_source'],
                        location_quality=r['evidence']['source'])
         return self.summary(records)
+
+    @staticmethod
+    def _station_keys(ordered,resolved):
+        stations={};keys={}
+        for row in ordered:
+            check_cancelled();r=resolved[row['id']]
+            if r['name_source']!='manual' or r['station_source']!='manual' or not r['station_name']:continue
+            identity=(r['name'],r['station_name']);group=stations.setdefault(identity,dict(anchors=[],missing=[]))
+            point=r['point']
+            if point is None:
+                group['missing'].append(row['id']);continue
+            matches=[a for a in group['anchors'] if _distance(a[1],point)<=CONFIRMED_STATION_RADIUS_M]
+            if matches:key=min(matches,key=lambda a:_distance(a[1],point))[0]
+            else:
+                key='station:'+_key(json.dumps([*identity,'%.6f,%.6f'%point],ensure_ascii=False))
+                group['anchors'].append((key,point))
+            keys[row['id']]=key
+        for identity,group in stations.items():
+            # Missing GPS can join only an unambiguous manually confirmed station.
+            if len(group['anchors'])>1:continue
+            key=group['anchors'][0][0] if group['anchors'] else 'station:'+_key(json.dumps([*identity,None],ensure_ascii=False))
+            for event_id in group['missing']:keys[event_id]=key
+        return keys
 
     @staticmethod
     def summary(records):
@@ -109,7 +137,9 @@ class ChargingPlaces:
             rows=g.pop('records');billed=[r for r in rows if r.get('bill') and r['bill']['actual_cents'] is not None]
             paired=[r for r in billed if number(r['bill'].get('metered_kwh'),.000001,10000) is not None]
             energy=total(r['bill']['metered_kwh'] for r in paired);cost=total(r['bill']['actual_cents'] for r in paired)
-            g.update(charge_count=len(rows),known_count=len(billed),pending_count=len(rows)-len(billed),actual_cents=total(r['bill']['actual_cents'] for r in billed),
+            g.update(unlocated=all(r['place_unlocated'] for r in rows) and not g['key'].startswith('station:'),
+                     location_missing_count=sum(r['place_unlocated'] for r in rows),
+                     charge_count=len(rows),known_count=len(billed),pending_count=len(rows)-len(billed),actual_cents=total(r['bill']['actual_cents'] for r in billed),
                      estimated_kwh=total(r.get('estimated_kwh') for r in rows),energy_samples=sum(r.get('estimated_kwh') is not None for r in rows),
                      metered_kwh=energy,paired_count=len(paired),cents_per_kwh=cost/energy if energy and cost is not None else None,
                      modes={mode:sum(r['mode']==mode for r in rows) for mode in ('ac','dc','unknown')},

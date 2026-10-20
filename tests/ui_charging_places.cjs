@@ -75,5 +75,25 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
  await page.getByLabel('地点修改范围',{exact:true}).selectOption('place');await page.getByRole('button',{name:'预览地点修改',exact:true}).click();await page.locator('[data-place-preview]').waitFor();
  await page.getByRole('button',{name:'查看并校正地图位置',exact:true}).click();await page.locator('.cr-place-map.leaflet-container').waitFor();
  for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);await contrast(page,'#charging-review');await page.locator('.cr-place-editor').screenshot({path:`/tmp/zeekr-charging-places/editor-${theme}.png`});}
- assert.deepEqual(f.errors,[]);console.log('CHARGING_PLACES_BROWSER_PASS: no default maps/network; whole-session evidence; preview invalidation; history scope; explicit station; correction map; undo; desktop themes');
+ await page.getByRole('button',{name:'关闭地点详情',exact:true}).click();
+ const beforeMerge=await (await page.request.get(f.origin+'/api/insights/charging-review?date=2026-09-01')).json();
+ for(const [event_id,latitude] of [['report-charge',31.2],['place-repeat',31.20156],['place-unknown',null]]){
+  const state=await (await page.request.get(f.origin+'/api/state')).json();
+  const detail=await (await page.request.get(f.origin+'/api/insights/charging-place?event='+event_id)).json();
+  const payload={context:state.insights_context,event_id,revision:detail.revision,scope:'single',name:'合并验收园区',station_name:'合并验收站',latitude,longitude:latitude===null?null:121.4,radius_m:75};
+  const headers={'Origin':f.origin,'X-Request-Key':state.request_key};
+  const plan=await (await page.request.post(f.origin+'/api/insights/charging-place',{headers,data:{...payload,action:'preview'}})).json();
+  assert.equal((await page.request.post(f.origin+'/api/insights/charging-place',{headers,data:{...payload,action:'save',token:plan.token}})).status(),200);
+ }
+ await page.getByRole('button',{name:'刷新充电回顾',exact:true}).click();
+ const merged=page.locator('[data-charge-place-summary]').filter({hasText:'合并验收园区'});
+ await merged.waitFor();assert.equal(await page.locator('[data-charge-place-summary]').count(),1);
+ assert.match(await merged.innerText(),/3 次/);assert.match(await merged.innerText(),/1 次坐标缺失/);
+ assert.doesNotMatch(await merged.innerText(),/地点待确认/);
+ const afterMerge=await (await page.request.get(f.origin+'/api/insights/charging-review?date=2026-09-01')).json();
+ assert.equal(afterMerge.summary.actual_cents,beforeMerge.summary.actual_cents);
+ assert.equal(afterMerge.place_summary[0].actual_cents,beforeMerge.summary.actual_cents);
+ await merged.getByRole('button',{name:'查看记录',exact:true}).click();assert.equal(await page.locator('[data-review-record]').count(),3);
+ for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);await contrast(page,'#charging-review');await page.locator('.cr-place-summary').screenshot({path:`/tmp/zeekr-charging-places/merged-${theme}.png`});}
+ assert.deepEqual(f.errors,[]);console.log('CHARGING_PLACES_BROWSER_PASS: no default maps/network; whole-session evidence; preview invalidation; history scope; explicit station; correction map; undo; desktop themes; confirmed station merge and coordinate disclosure');
 }finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

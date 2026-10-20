@@ -246,6 +246,64 @@ class ChargingPlaceTests(unittest.TestCase):
 
 
 
+    def confirmed_stations(self, entries):
+        from zeekr_control.charge_ledger import ChargeLedger
+        places=self.review().places
+        for revision,(identity,lat,venue,station,amount) in enumerate(entries):
+            day='2026-09-%02d'%(15+revision);stamp=self.charge(identity,day)
+            if lat is not None:self.observe(stamp,lat)
+            p=dict(self.proposal(),event_id=identity,revision=revision,name=venue,station_name=station,
+                   latitude=lat,longitude=121.4 if lat is not None else None)
+            plan=places.preview('owner','car',p);places.update('owner','car',dict(p,action='save',token=plan['token']))
+            ChargeLedger(places.store,self.db).update('owner','car',dict(action='save',revision=revision,event_id=identity,date=day,source='unknown',amount=amount,metered_kwh='40'))
+        return places
+
+    def test_confirmed_station_merges_drift_named_region_and_missing_coordinates(self):
+        self.review().places.store.change('owner','car','place_names','save','region',dict(name='同一园区',latitude=31.2,longitude=121.4,radius_m=150,shape='circle'),0)
+        places=self.confirmed_stations([('first',31.2,'同一园区','园区充电站','44.09'),
+            ('drift',31.20156,'同一园区','园区充电站','20.31'),('missing',None,'同一园区','园区充电站','43.82')])
+        result=self.review().query('owner','car','2026-09-01',now=self.now);groups=result['place_summary']
+        self.assertEqual(len(groups),1);g=groups[0]
+        self.assertEqual(g['charge_count'],3);self.assertEqual(g['actual_cents'],10822)
+        self.assertAlmostEqual(g['cents_per_kwh'],10822/120)
+        self.assertEqual(g['location_missing_count'],1);self.assertFalse(g['unlocated'])
+        self.assertEqual(len({r['place_key'] for r in result['records']}),1)
+        self.assertIsNone(places.detail('owner','car','missing')['location'])
+        self.assertAlmostEqual(places.detail('owner','car','drift')['location']['latitude'],31.20156)
+
+    def test_distant_confirmed_names_do_not_merge_or_absorb_ambiguous_missing_point(self):
+        self.confirmed_stations([('first',31.2,'连锁园区','同名站','10'),
+            ('far',32.2,'连锁园区','同名站','20'),('missing',None,'连锁园区','同名站','30')])
+        result=self.review().query('owner','car','2026-09-01',now=self.now)
+        self.assertEqual(len(result['place_summary']),3)
+        self.assertEqual(sum(g['actual_cents'] for g in result['place_summary']),6000)
+        self.assertTrue(next(g for g in result['place_summary'] if g['actual_cents']==3000)['unlocated'])
+
+    def test_confirmed_station_identity_needs_both_venue_and_station(self):
+        self.confirmed_stations([('a',31.2,'园区A','站点A','10'),('b',31.2,'园区A','站点B','20'),
+            ('c',31.2,'园区B','站点A','30')])
+        self.assertEqual(len(self.review().query('owner','car','2026-09-01',now=self.now)['place_summary']),3)
+
+    def test_confirmed_station_drift_does_not_chain_into_distant_site(self):
+        self.confirmed_stations([('a',31.2,'园区','同名站','10'),('b',31.208,'园区','同名站','20'),
+            ('c',31.216,'园区','同名站','30')])
+        result=self.review().query('owner','car','2026-09-01',now=self.now)
+        self.assertEqual(len(result['place_summary']),2)
+        rows={r['id']:r for r in result['records']}
+        self.assertEqual(rows['a']['place_key'],rows['b']['place_key'])
+        self.assertNotEqual(rows['a']['place_key'],rows['c']['place_key'])
+
+    def test_confirmed_station_without_any_coordinates_keeps_name_and_undo(self):
+        places=self.confirmed_stations([('first',None,'同一园区','园区站','10'),('second',None,'同一园区','园区站','20')])
+        groups=self.review().query('owner','car','2026-09-01',now=self.now)['place_summary']
+        self.assertEqual(len(groups),1);self.assertEqual(groups[0]['name'],'同一园区')
+        self.assertFalse(groups[0]['unlocated']);self.assertEqual(groups[0]['location_missing_count'],2)
+        places.update('owner','car',dict(action='undo',revision=2))
+        result=self.review().query('owner','car','2026-09-01',now=self.now)
+        self.assertEqual(len(result['place_summary']),2)
+        self.assertEqual(sum(g['actual_cents'] for g in result['place_summary']),3000)
+        self.assertTrue(next(r for r in result['records'] if r['id']=='second')['place_unlocated'])
+
     def named_sites(self):
         from zeekr_control.charge_ledger import ChargeLedger
         places=self.review().places
