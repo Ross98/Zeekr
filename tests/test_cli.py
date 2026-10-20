@@ -11,6 +11,17 @@ from zeekr_control.storage import save
 
 
 class CliTests(unittest.TestCase):
+    def test_retired_history_command_preserves_existing_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'session.json'
+            save(path,{'accessToken':'KEEP-STATE','historyAccessToken':'KEEP-LEGACY','custom':'keep'})
+            before=path.read_bytes()
+            with contextlib.redirect_stderr(io.StringIO()),patch('sys.stdin.isatty',return_value=False):
+                with self.assertRaises(SystemExit) as result:
+                    main(['history-connect'],path)
+            self.assertEqual(result.exception.code,2)
+            self.assertEqual(path.read_bytes(),before)
+
     def test_missing_session_exit_and_no_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()

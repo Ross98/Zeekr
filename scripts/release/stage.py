@@ -45,7 +45,7 @@ with (base/'.deploy.lock').open('a') as lock:
             member.mode = 0o644
         archive.extractall(candidate)
     if deleted:
-        workflow.remove_retired_test(candidate)
+        workflow.remove_retired_paths(candidate, deleted)
     workflow.verify_hashes(candidate, changes)
     for name, value in baseline['manifest'].items():
         if name not in changes and name != 'release-manifest.json':

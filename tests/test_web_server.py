@@ -155,11 +155,13 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(load(self.app.session_path.parent / 'sampling.json')['interval'], '10')
 
 
-    def test_history_unavailable_is_not_empty_success_and_bad_dates_fail(self):
+    def test_retired_cloud_history_has_no_routes_or_state(self):
         self.post('/api/refresh', {'vehicle': 1})
-        data = self.request('GET', '/api/history?date=2024-01-01')[1]
-        self.assertEqual(data['status'], 'authorization_required')
-        self.assertNotIn('trips', data)
+        before=self.app.session_path.read_bytes()
+        for route in ('/api/history?date=2024-01-01','/api/history/points?trip=old','/history.js'):
+            self.assertEqual(self.request('GET',route)[0],404,route)
+        self.assertNotIn('history',self.request('GET','/api/state')[1])
+        self.assertEqual(self.app.session_path.read_bytes(),before)
         self.assertEqual(self.request('GET', '/api/tracks?date=wrong')[0], 400)
 
     def test_static_traversal_and_unknown_api_not_served(self):

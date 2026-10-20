@@ -2,6 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const stored=new Map(),sessionStorage={getItem:key=>stored.get(key),setItem:(key,value)=>stored.set(key,value)};
 const window={addEventListener(){}};vm.runInNewContext(fs.readFileSync('zeekr_control/static/navigation-state.js','utf8'),{window,URLSearchParams,Date,sessionStorage});
 const nav=window.NavigationState;
+assert.equal(nav.encode(nav.read('?p=tracks&s=cloud&date=2026-10-19&q=1')),'p=tracks&date=2026-10-19&q=1','retired cloud links retain the local query date');
 assert.equal(nav.encode(nav.read('?p=energy&t=ledger&month=2026-09&latitude=31&name=家&token=SECRET')),'p=energy&t=ledger&month=2026-09');
 assert.equal(nav.encode(nav.read('?p=invalid&date=2026-02-30&month=2026-13&period=invalid')),'');
 assert.equal(nav.encode(nav.read('?p=tracks&s=tags&month=2026-09')),'p=tracks&s=tags&month=2026-09');

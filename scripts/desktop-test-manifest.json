@@ -60,7 +60,8 @@
       "tests/ui_custom_reminders.cjs",
       "tests/ui_parameter_experiments.cjs",
       "tests/ui_refresh_view.cjs",
-      "tests/ui_refresh_scroll.cjs"
+      "tests/ui_refresh_scroll.cjs",
+      "tests/ui_history.cjs"
     ]
   },
   "exclusions": [
@@ -135,10 +136,6 @@
     {
       "path": "tests/ui_field_reviews.cjs",
       "reason": "Legacy field reviews suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
-    },
-    {
-      "path": "tests/ui_history.cjs",
-      "reason": "Legacy history suite contains unconditional narrow viewports; needs desktop-only migration before routine execution."
     },
     {
       "path": "tests/ui_hypothesis_lab.cjs",

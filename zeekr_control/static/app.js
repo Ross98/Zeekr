@@ -955,7 +955,7 @@ function overviewLocation() {
 
 function tracksPage() {
   const toolbar = trackSource==='tags'?'':`<div class="track-toolbar"><label><span class="subtle">北京时间 </span><input type="date" id="track-date" aria-label="轨迹日期" value="${esc(trackDate)}"></label></div>`;
-  return toolbar + (trackSource==='tags'?'<div id="trip-tags-workspace" class="insight-content"></div>':trackSource==='cloud'?cloudHistoryPage():localTripsPage()) + '<div id="insights-workspace"></div>';
+  return toolbar + (trackSource==='tags'?'<div id="trip-tags-workspace" class="insight-content"></div>':localTripsPage()) + '<div id="insights-workspace"></div>';
 }
 
 function accountNeedsAttention(){
@@ -1086,7 +1086,7 @@ function releaseSummary(){
 function settings() {
   const recording = state?.recording || {active:true,interval:30,last_sample:'未知',last_new:'未知'};
   return `${collectionSummary()}<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('Web 服务已连接')}</div><div class="card-body"><div class="settings-row" id="settings-account"><div><h3 id="settings-account-title" tabindex="-1">账号会话</h3><p>${accountNeedsAttention()?'车辆账号未连接或认证异常。请在运行服务的设备上重新登录车辆账号，再查看采集诊断。':state?.authenticated?'已发现车辆会话；可用性以最近一次车辆读取结果为准。':'尚未登录。请在运行服务的设备上完成车辆登录。'}</p></div>${pill(accountNeedsAttention()?'需要重新连接':state?.authenticated?'会话已保存':'未登录',accountNeedsAttention()?'warn':'')}</div><div class="settings-row"><div><h3>总览位置显示</h3><p>总览地图默认显示，行程与轨迹地图默认隐藏，两处独立控制。此开关控制总览位置。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section><details class="settings-detail" data-detail="settings-notifications"><summary>通知状态与规则说明</summary>${monitoringPanel()}</details>
-  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会停止自动检查和常规通知领取，已有记录保留；存储巡检与已启用报表继续。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">${esc(samplingDescription(recording))}</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="${esc(recording.policy?.min_interval??10)}" max="${esc(recording.policy?.max_interval??60)}" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><details class="settings-detail" data-detail="settings-storage"><summary>存储与归档管理</summary><div id="settings-storage-root"><section hidden></section></div></details>${releaseSummary()}<section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('历史轨迹接口',state?.history?.message || '待连接')}${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section><div id="insights-workspace"></div>`;
+  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会停止自动检查和常规通知领取，已有记录保留；存储巡检与已启用报表继续。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">${esc(samplingDescription(recording))}</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="${esc(recording.policy?.min_interval??10)}" max="${esc(recording.policy?.max_interval??60)}" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><details class="settings-detail" data-detail="settings-storage"><summary>存储与归档管理</summary><div id="settings-storage-root"><section hidden></section></div></details>${releaseSummary()}<section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section><div id="insights-workspace"></div>`;
 }
 
 function updateHeartbeat() {
@@ -1111,7 +1111,7 @@ function more() {
 }
 function relatedTools() {
   if(!['energy','books','tracks','settings'].includes(page))return '';
-  if(page==='tracks')return `<nav class="related-tools task-navigation" aria-label="行程与轨迹子功能">${[['local','本地记录'],['cloud','云端历史'],['tags','行程标签']].map(([source,label])=>`<button class="button secondary" data-source="${source}" ${source==='tags'?'data-track-tags="true"':''} aria-pressed="${!sectionTask&&trackSource===source}">${label}</button>`).join('')}<button class="button secondary" data-section-task="routes" aria-pressed="${sectionTask==='routes'}">常走路线对比</button></nav>`;
+  if(page==='tracks')return `<nav class="related-tools task-navigation" aria-label="行程与轨迹子功能">${[['local','本地记录'],['tags','行程标签']].map(([source,label])=>`<button class="button secondary" data-source="${source}" ${source==='tags'?'data-track-tags="true"':''} aria-pressed="${!sectionTask&&trackSource===source}">${label}</button>`).join('')}<button class="button secondary" data-section-task="routes" aria-pressed="${sectionTask==='routes'}">常走路线对比</button></nav>`;
   if(page==='energy'&&!sectionTask)return '';
   const base={car:'车辆状态',energy:'充电状态',settings:'采集与设置'}[page];
   const item=(id,label)=>`<button class="button secondary" data-section-task="${id}" aria-pressed="${sectionTask===id}">${label}</button>`;
@@ -1145,7 +1145,6 @@ function renderContent() {
     ? [...document.querySelectorAll('#main details[data-detail][open]')].map(el => el.dataset.detail) : [];
   const focusedDetail = $('#main').dataset.page === page ? document.activeElement?.closest('details[data-detail]')?.dataset.detail : null;
   if (map) { map.remove(); map = null; mapMarker = null; }
-  syncCloudHistory();
   navigation();
   $('#main').dataset.page=page;
   updateConnection();
@@ -1193,7 +1192,6 @@ function renderContent() {
   if (page === 'car'&&!sectionTask) {vehiclePage.restoreFocus(vehicleFocus);vehiclePage.ensure();}
   if (page === 'settings' && !sectionTask && window.StorageManagement) window.StorageManagement.mount($('#settings-storage-root'),api);
   if ($('#field-results')) {renderFields();reviewRestoreFocus(fieldFocus);}
-  if (page === 'tracks' && !sectionTask && trackSource === 'cloud') renderCloudMap();
   if (page === 'overview' && showPosition && state?.model) loadLocation(generation);
   if (page === 'energy' && (!sectionTask||sectionTask==='records') && state?.model) { mountChargeManagement(); ensureChargingAnalytics(chargingSelection); }
   if (page === 'tracks' && !sectionTask && trackSource === 'local'){mountLocalTrips();openDetails.filter(key=>key.startsWith('recall-')).forEach(key=>{const detail=$(`details[data-detail="${key}"]`);if(detail)detail.open=true;});if(focusedDetail?.startsWith('recall-'))$(`details[data-detail="${focusedDetail}"] > summary`)?.focus({preventScroll:true});}
@@ -1259,8 +1257,8 @@ function setPlayback(index, {pan=true} = {}) {
   if (!point || !map) return;
   if (mapMarker) mapMarker.remove();
   mapMarker = L.circleMarker([point.latitude,point.longitude],{radius:9,color:point.trusted?'#20776e':'#8a9391',fillOpacity:.35,weight:3}).addTo(map);
-  if (pan) map.panTo([point.latitude,point.longitude],{animate:trackSource!=='cloud'});
-  $('#playback-label').textContent = `${index+1} / ${playback.length} · ${point.time_label} · ${point.time_source} · ${trackSource==='cloud'?'云端轨迹点':point.trusted?'接口标记可信':'位置未确认'}`;
+  if (pan) map.panTo([point.latitude,point.longitude],{animate:true});
+  $('#playback-label').textContent = `${index+1} / ${playback.length} · ${point.time_label} · ${point.time_source} · ${point.trusted?'接口标记可信':'位置未确认'}`;
 }
 
 async function refresh() {
@@ -1337,7 +1335,6 @@ async function updateRecording(saveInterval = false) {
   if (target.dataset.reviewExperiment) {openExperimentReview(target.dataset.reviewExperiment,target.dataset.path,target.dataset.side);return;}
   if (target.dataset.openExperiment) {sectionTask='';page='insights';render();insightsPage.openExperiment({id:target.dataset.openExperiment});window.scrollTo(0,0);return;}
   if (handleReviewAction(target)) return;
-  if (handleCloudAction(target)) return;
   if (handleLocalTripAction(target)) return;
   if (target.dataset.page==='books') {enterBooks(window.BookSession.read(state?.insights_context,'navigation')?.task||'costs');return;}
   if (target.dataset.page) { sectionTask='';page=target.dataset.page==='map'?'overview':target.dataset.page==='fields'?'insights':target.dataset.page; render(); if(target.dataset.page==='fields')insightsPage.openTool('fields');window.scrollTo(0,0);focusPageHeading(); return; }
@@ -1346,7 +1343,7 @@ async function updateRecording(saveInterval = false) {
     case 'refresh': refresh(); break;
     case 'reconnect': pollState(true); break;
     case 'show-position': if(page==='tracks')showTrackPosition=true;else showPosition=true;render();break;
-    case 'hide-position': if(page==='tracks')showTrackPosition=false;else showPosition=false;showCoordinates=false;trackData=null;playback=[];if(cloudHistory){cloudHistory.detail=null;cloudHistory.detailBusy=false;cloudHistory.detailRequest++;}render();break;
+    case 'hide-position': if(page==='tracks')showTrackPosition=false;else showPosition=false;showCoordinates=false;trackData=null;playback=[];render();break;
     case 'coordinates': showCoordinates=!showCoordinates;render();break;
     case 'recenter': if(page==='overview'){locationZoom=15;render();}else if(map&&mapMarker)map.setView(mapMarker.getLatLng(),15);break;
     case 'location-zoom-in': locationZoom=Math.min(17,locationZoom+1);render();break;
@@ -1385,7 +1382,6 @@ document.addEventListener('input', event => {
   if(event.target.id==='search') {search=event.target.value;renderFields();}
   if(event.target.id==='playback') {
     if (trackSource==='local') {stopLocalPlayback();displayLocalPoint(Number(event.target.value));}
-    else setPlayback(Number(event.target.value));
   }
   if(event.target.id==='charging-point') setChargingPoint(Number(event.target.value));
 });
@@ -1546,7 +1542,6 @@ async function pollState(force = false) {
       latest.insights_context!==state.insights_context ||
       latest.trip_records_revision!==state.trip_records_revision ||
       latest.charge_records_revision!==state.charge_records_revision ||
-      JSON.stringify(latest.history)!==JSON.stringify(state.history) ||
       latest.snapshot_revision!==state.snapshot_revision ||
       JSON.stringify(latest.recent_events)!==JSON.stringify(state.recent_events) ||
       JSON.stringify(latest.field_reviews)!==JSON.stringify(state.field_reviews);

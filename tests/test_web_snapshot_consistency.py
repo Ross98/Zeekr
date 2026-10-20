@@ -86,14 +86,12 @@ class WebSnapshotConsistencyTests(unittest.TestCase):
 
     def test_changed_session_clears_cached_model_profile_and_selection(self):
         self.refresh(self.raw)
-        self.app.history_selections['old-selection'] = {'private': 'old-session'}
         save(self.path, {'accessToken': 'SYNTHETIC-B', 'userId': 'account-b'})
         result = self.app.state()
         for name in ('model', 'profile', 'snapshot_revision', 'read_time', 'refresh_result'):
             self.assertIsNone(result[name], name)
         self.assertEqual(result['vehicles'], [])
         self.assertIsNone(result['field_reviews']['vehicle'])
-        self.assertEqual(self.app.history_selections, {})
         self.assertIsNone(self.app.location().get('latitude'))
         self.assertEqual(self.app.vehicle_parameters()['counts']['missing'], 217)
 

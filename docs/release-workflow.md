@@ -51,9 +51,11 @@ python3 scripts/release/client.py deploy --transport /private/tmp/transport.json
 
 桌面检查新增的公开输入仅允许 `package.json`、`scripts/browser-failure-evidence.cjs`、`scripts/check-desktop-manifest.cjs`、`scripts/desktop-test-manifest.json`、`scripts/test-desktop.cjs`，它们进入快照、候选验证指纹及切换前哈希校验；不放开其他根 JSON 或 scripts 文件。
 
-唯一删除例外是已退役的 `tests/ui_car.cjs`。明确授权后，给 `prepare` 加 `--delete-retired-ui-car`；不要把此文件放进写入用的 `paths.json`。构建必须证明指定 Git 提交中该路径不存在，且生产基线记录了旧文件哈希。删除以 changes 中该路径的 `null` 表示，不含删除用归档成员，不支持其他路径或任意删除列表。候选只删除这个普通文件，拒绝文件和父目录符号链接；删除强制走服务用户 Python 全量。切换前及上线后均核验候选中该文件缺失，重新出现立即失败。
+删除仅支持两组固定退役路径，须有对应功能移除及发布授权。`--delete-retired-ui-car` 仅删除 `tests/ui_car.cjs`；`--delete-cloud-history` 仅删除 `zeekr_control/history.py`、`zeekr_control/static/history.js`、`tests/test_history.py`、`tests/test_history_connect.py`、`tests/test_history_web.py`。给 `prepare` 添加对应选项，不要把退役文件放进写入用的 `paths.json`。不支持其他路径或任意删除列表，不删除私有数据。
 
-代码回滚备份仍是保留的上一版 release 目录；不会从中删除旧测试。stage、切换前、上线核验及手动回滚前均验证旧测试与生产基线哈希一致。回滚原子切回上一目录即可恢复旧测试，不用旧业务数据覆盖新数据。停服私有目录备份及逐文件校验保持原流程。合成回归执行实际回滚脚本，验证旧文件恢复且后续业务数据保留；这不代表在生产执行过回滚演练。
+构建必须证明指定 Git 提交中每个退役路径均不存在，且生产基线逐项记录旧文件哈希。删除以 changes 中各路径的 `null` 表示，不含删除用归档成员。候选只删除普通文件，拒绝文件和父目录符号链接；删除强制走服务用户 Python 全量。切换前及上线后逐项核验候选文件缺失，重新出现立即失败。
+
+代码回滚备份仍是保留的上一版 release 目录；不会从中删除退役文件。stage、切换前、上线核验及手动回滚前均验证退役文件与生产基线哈希一致。回滚原子切回上一目录即可恢复旧代码，不用旧业务数据覆盖新数据。停服私有目录备份及逐文件校验保持原流程。合成回归执行实际回滚脚本，验证旧文件恢复且后续业务数据保留；这不代表在生产执行过回滚演练。
 
 ## 耗时与范围
 

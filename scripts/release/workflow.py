@@ -19,6 +19,10 @@ DESKTOP_INPUTS = frozenset({
     'scripts/test-desktop.cjs',
 })
 RETIRED_DESKTOP_TEST = 'tests/ui_car.cjs'
+RETIRED_CLOUD_HISTORY = frozenset({
+    'zeekr_control/history.py', 'zeekr_control/static/history.js',
+    'tests/test_history.py', 'tests/test_history_connect.py', 'tests/test_history_web.py',
+})
 
 
 def allowed(name):
@@ -46,7 +50,7 @@ def deleted_paths(changes):
         if name != 'release-manifest.json':
             allowed(name)
         if value is None:
-            if name != RETIRED_DESKTOP_TEST:
+            if name not in RETIRED_CLOUD_HISTORY and name != RETIRED_DESKTOP_TEST:
                 raise ValueError('Deletion outside retirement allowlist: '+name)
             deleted.append(name)
     return deleted
@@ -72,12 +76,18 @@ def verify_hashes(root, hashes):
             raise ValueError('Public file hash mismatch: '+name)
 
 
+def remove_retired_paths(root, names):
+    deleted = deleted_paths(dict.fromkeys(names))
+    targets = [public_target(root, name) for name in deleted]
+    for target in targets:
+        if target.exists() and not target.is_file():
+            raise ValueError('Retired path must be a regular file')
+    for target in targets:
+        if target.exists():target.unlink()
+
+
 def remove_retired_test(root):
-    target = public_target(root, RETIRED_DESKTOP_TEST)
-    if target.exists():
-        if not target.is_file():
-            raise ValueError('Retired test must be a regular file')
-        target.unlink()
+    remove_retired_paths(root, [RETIRED_DESKTOP_TEST])
 
 
 def verify_retired_restore(previous, baseline, changes):
@@ -184,7 +194,7 @@ def runtime_services(root, reports_installed=None):
 
 
 def build(root, baseline_path, commit, previous, candidate, backup, paths, commands, output,
-          delete_retired_ui_car=False):
+          delete_retired_ui_car=False, delete_cloud_history=False):
     """root MUST be production baseline plus exact committed overlay, not workspace."""
     root, output = Path(root).resolve(), Path(output).resolve()
     if output == root or root in output.parents:
@@ -194,12 +204,13 @@ def build(root, baseline_path, commit, previous, candidate, backup, paths, comma
     paths = sorted(set(allowed(name) for name in paths))
     repository = Path(__file__).resolve().parents[2]
     deleted = [RETIRED_DESKTOP_TEST] if delete_retired_ui_car else []
-    if deleted:
-        if RETIRED_DESKTOP_TEST in paths:
-            raise ValueError('Retired test cannot be written and deleted')
-        if subprocess.check_output(['git', 'ls-tree', commit, '--', RETIRED_DESKTOP_TEST], cwd=repository):
-            raise ValueError('Retired test still exists in commit')
-        verify_hashes(root, {RETIRED_DESKTOP_TEST: None})
+    if delete_cloud_history:deleted.extend(sorted(RETIRED_CLOUD_HISTORY))
+    for name in deleted:
+        if name in paths:
+            raise ValueError('Retired path cannot be written and deleted')
+        if subprocess.check_output(['git', 'ls-tree', commit, '--', name], cwd=repository):
+            raise ValueError('Retired path still exists in commit: '+name)
+        verify_hashes(root, {name: None})
     for name in paths:
         expected = subprocess.check_output(['git', 'show', commit+':'+name], cwd=repository)
         if (root/name).read_bytes() != expected:
@@ -209,8 +220,9 @@ def build(root, baseline_path, commit, previous, candidate, backup, paths, comma
     baseline = json.loads(Path(baseline_path).read_text())
     if baseline['active'] != previous:
         raise ValueError('Previous release differs from baseline')
-    if deleted and not baseline['manifest'].get(RETIRED_DESKTOP_TEST):
-        raise ValueError('Retired test missing from rollback baseline')
+    for name in deleted:
+        if not baseline['manifest'].get(name):
+            raise ValueError('Retired path missing from rollback baseline: '+name)
     for name, sha in baseline['manifest'].items():
         if name not in paths and name not in deleted and name != 'release-manifest.json':
             if hashlib.sha256((root/name).read_bytes()).hexdigest() != sha:
