@@ -50,6 +50,10 @@ const {fixture} = require('./ui_insight_helpers.cjs');
               return overlap||outside?[{wheel:reading.dataset.position,overlap,outside}]:[];
             });
           });
+          assert.ok(await diagram.locator('.car-tyre-art').evaluate(el=>{
+            const box=el.getBoundingClientRect(),image=el.querySelector('img').getBoundingClientRect();
+            return image.top>=box.top-1&&image.bottom<=box.bottom+1;
+          }),`${theme} ${width}: portrait artwork leaves room for hood and trunk labels`);
           const metrics=await diagram.evaluate(el=>({height:el.getBoundingClientRect().height,fontSize:parseFloat(getComputedStyle(el.querySelector('.car-tyre-reading strong')).fontSize),weight:Number(getComputedStyle(el.querySelector('.car-tyre-reading strong')).fontWeight)}));
           assert.ok(metrics.fontSize>=28&&metrics.weight>=700,`${view} pressure must be large and bold: ${JSON.stringify(metrics)}`);
           assert.ok(metrics.height<=900,`${view} compact diagram: ${metrics.height}px`);
