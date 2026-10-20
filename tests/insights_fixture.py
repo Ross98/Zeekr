@@ -101,6 +101,10 @@ def seed_charging_intervals(app, session):
         with Monitor(app.database_path).tracks.connect() as db:
             db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
                        (identity,vehicle,'charge_end',json.dumps(body),'SYNTHETIC',end))
+    stamp=day_bounds('2026-09-11')[0]+8*3600000-60000
+    payload=dict(state_time=stamp,observed_at=stamp+1000,soc=80,odometer=1310,charging=False,decoder_version='synthetic-v1')
+    with Monitor(app.database_path).tracks.connect() as db:
+        db.execute('INSERT INTO report_observations VALUES (?,?,?,?,?)',(vehicle,stamp,stamp+1000,json.dumps(payload),'synthetic-v1'))
     owner=account_scope(session)
     for revision,(identity,date,amount) in enumerate([('interval-a','2026-08-31','40'),('interval-b','2026-09-02','0')]):
         app.charge_ledger.update(owner,vehicle,dict(action='save',revision=revision,date=date,event_id=identity,source='unknown',amount=amount,metered_kwh='40'))

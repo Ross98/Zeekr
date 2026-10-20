@@ -144,3 +144,93 @@ class ChargingIntervalsTests(unittest.TestCase):
         self.charge('a','2026-09-15',30,80,1000)
         self.charge('b','2026-09-20',40,90,1000000)
         self.assertEqual(self.query()['records'][0]['reason'],'odometer_jump')
+
+    def observation(self, day='2026-09-20', minutes=1, soc=40, odometer=1200, *, vehicle='car', charging=False, age=1000, decoder=None):
+        stamp=day_bounds(day)[0]+8*3600000-minutes*60000
+        payload=dict(state_time=stamp,observed_at=stamp+age,soc=soc,odometer=odometer,charging=charging,decoder_version=decoder)
+        with self.add_db() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS report_observations (vehicle TEXT,state_time INTEGER,observed_at INTEGER,normalized_payload TEXT,decoder_version TEXT)')
+            db.execute('INSERT INTO report_observations VALUES (?,?,?,?,?)',(vehicle,stamp,stamp+age,json.dumps(payload),decoder))
+        return stamp
+
+    def test_late_charge_uses_last_noncharging_state_with_its_matching_odometer(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        # First charging observation has already added energy and must not be used.
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        end=self.observation(soc=40,odometer=1200)
+        r=self.query();row=r['records'][0]
+        self.assertIsNone(row['reason'])
+        self.assertEqual(row['end_time'],end)
+        self.assertEqual(row['end_soc'],40)
+        self.assertEqual(row['distance_km'],200)
+        self.assertAlmostEqual(row['kwh_per_100km'],17.2)
+        self.assertEqual(row['end_boundary_source'],'precharge_observation')
+        self.assertEqual(row['reference_gap_seconds'],60)
+        self.assertEqual(r['summary']['reference_count'],1)
+
+    def test_latest_eligible_reference_wins_and_other_vehicle_is_ignored(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        self.observation(minutes=5,soc=45,odometer=1190)
+        stamp=self.observation(minutes=2,soc=40,odometer=1200)
+        self.observation(minutes=1,soc=10,odometer=1500,vehicle='other')
+        row=self.query()['records'][0]
+        self.assertIsNone(row['reason']);self.assertEqual(row['end_time'],stamp)
+        self.assertEqual(row['end_soc'],40)
+
+    def test_reference_is_an_observed_cutoff_and_does_not_fill_unobserved_gap(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        stamp=self.observation(minutes=114,soc=40,odometer=1200)
+        row=self.query()['records'][0]
+        self.assertIsNone(row['reason']);self.assertEqual(row['end_time'],stamp)
+        self.assertEqual(row['reference_gap_seconds'],114*60)
+        self.assertEqual(row['distance_km'],200)
+
+    def test_stale_charging_or_post_start_observations_are_not_precharge_references(self):
+        for changes in [dict(age=600000),dict(charging=True),dict(minutes=-1)]:
+            with self.subTest(changes=changes):
+                self.setUp();self.charge('a','2026-09-15',30,80,1000);self.charge('b','2026-09-20',60,90,1300,partial=True)
+                self.observation(**changes)
+                self.assertEqual(self.query()['records'][0]['reason'],'late_start')
+
+    def test_saved_previous_trip_end_can_supply_reference_without_observation_table(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        stamp=day_bounds('2026-09-20')[0]+8*3600000-120000
+        self.add('drive',day='2026-09-20',end_time=stamp,report_v2={'end':dict(state_time=stamp,observed_at=stamp+1000,soc=40,odometer=1200,charging=False)})
+        row=self.query()['records'][0]
+        self.assertIsNone(row['reason']);self.assertEqual(row['end_boundary_source'],'previous_trip_end')
+        self.assertEqual(row['end_time'],stamp)
+
+    def test_reference_does_not_hide_a_known_intermediate_charge(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        self.observation(minutes=2,soc=40,odometer=1200)
+        self.observation(minutes=5,soc=35,odometer=1200,charging=True)
+        self.assertEqual(self.query()['records'][0]['reason'],'unclosed_charge')
+
+    def test_confirmed_charge_start_stays_preferred_over_older_reference(self):
+        self.pair();self.observation(soc=30,odometer=1190)
+        row=self.query()['records'][0]
+        self.assertEqual(row['end_boundary_source'],'charge_start')
+        self.assertEqual(row['end_soc'],40)
+        self.assertIsNone(row['reference_gap_seconds'])
+        self.assertEqual(self.query()['summary']['reference_count'],0)
+
+    def test_reference_before_previous_charge_end_is_not_used(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        self.observation(day='2026-09-14',soc=40,odometer=1200)
+        self.assertEqual(self.query()['records'][0]['reason'],'late_start')
+
+    def test_reference_cannot_bypass_hidden_previous_charge(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        self.observation(soc=40,odometer=1200)
+        with self.add_db() as db:
+            db.execute('CREATE TABLE charge_record_trash(vehicle TEXT,event_id TEXT)')
+            db.execute("INSERT INTO charge_record_trash VALUES('car','a')")
+        row=self.query()['records'][0]
+        self.assertEqual(row['reason'],'hidden_charge')
+        self.assertIsNone(row['start_time'])

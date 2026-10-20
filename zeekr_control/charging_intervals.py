@@ -27,7 +27,7 @@ def _boundary(event, side):
             or soc is None or soc != expected_soc or odometer is None
             or point.get('charging') is not (side == 'start')):
         return None
-    return dict(soc=soc, odometer=odometer, decoder=point.get('decoder_version'))
+    return dict(soc=soc, odometer=odometer, decoder=point.get('decoder_version'), time=state, source='charge_'+side)
 
 
 class ChargingIntervals:
@@ -78,11 +78,57 @@ class ChargingIntervals:
         events.sort(key=lambda e:(e['end_time'],e['id']))
         return events, invalid, sorted(starts)
 
-    @staticmethod
-    def _interval(previous, current, books, invalid, starts):
+    def _precharge(self, vehicle, lower, upper):
+        """Last observed noncharging state; its time is the cutoff, never extrapolated."""
+        def point(raw, stamp, source):
+            raw=_object(raw)
+            soc=number(raw.get('soc'),0,100);odometer=number(raw.get('odometer'),0,10000000)
+            state=number(raw.get('state_time'),1,32503680000000);observed=number(raw.get('observed_at'),1,32503680000000)
+            if (state!=stamp or observed is None or not -30000<=observed-state<=180000
+                    or soc is None or odometer is None or raw.get('charging') is not False):return None
+            decoder=raw.get('decoder_version')
+            return dict(soc=soc,odometer=odometer,time=state,source=source,
+                        decoder=decoder if isinstance(decoder,str) and len(decoder)<=128 else None)
+        candidate=None;charging=[]
+        with self.events.connect() as db:
+            if db is None:return None,False
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_observations'").fetchone():
+                rows=db.execute('SELECT state_time,CASE WHEN length(CAST(normalized_payload AS BLOB))<=? THEN normalized_payload END '
+                                'FROM report_observations WHERE vehicle=? AND state_time>? AND state_time<? '
+                                'ORDER BY state_time DESC LIMIT 256',(MAX_SUMMARY_BYTES,vehicle,lower,upper))
+                for stamp,encoded in rows:
+                    check_cancelled()
+                    try:raw=json.loads(encoded) if isinstance(encoded,str) else None
+                    except (ValueError,TypeError,RecursionError):continue
+                    if not isinstance(raw,dict):continue
+                    observed=number(raw.get('observed_at'),1,32503680000000)
+                    if (raw.get('charging') is True and raw.get('state_time')==stamp and observed is not None
+                            and -30000<=observed-stamp<=180000):charging.append(stamp)
+                    found=point(raw,stamp,'precharge_observation')
+                    if candidate is None and found is not None:candidate=found
+            if candidate is None:
+                # Older databases can retain trip-end telemetry after sample pruning.
+                rows=db.execute('SELECT CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END '
+                                "FROM monitor_events WHERE vehicle=? AND kind='trip_end' AND "+visible_clause(db)+
+                                ' ORDER BY created DESC,id DESC LIMIT 256',(MAX_SUMMARY_BYTES,vehicle))
+                for encoded, in rows:
+                    check_cancelled()
+                    try:raw=json.loads(encoded) if isinstance(encoded,str) else None
+                    except (ValueError,TypeError,RecursionError):continue
+                    if not isinstance(raw,dict):continue
+                    stamp=number(raw.get('end_time'),1,32503680000000)
+                    if stamp is None or not lower<stamp<upper:continue
+                    report=_object(raw.get('report_v2'))
+                    found=point(report.get('end',raw.get('report_end')),stamp,'previous_trip_end')
+                    if found is not None and (candidate is None or found['time']>candidate['time']):candidate=found
+        blocked=bool(candidate and any(lower<stamp<candidate['time'] for stamp in charging))
+        return candidate,blocked
+
+    def _interval(self, previous, current, books, invalid, starts, vehicle):
         row = dict(id=current['id'], previous_id=previous['id'] if previous and previous['visible'] else None,
                    start_time=previous['end_time'] if previous and previous['visible'] else None, end_time=current['start_time'],
                    closed_time=current['end_time'], cross_month=False, start_soc=None, end_soc=None,
+                   charge_observed_time=current['start_time'],end_boundary_source=None,reference_gap_seconds=None,
                    soc_drop=None, distance_km=None, estimated_kwh=None, kwh_per_100km=None,
                    reference_cents_per_kwh=None, estimated_cents=None, reason=None)
         def reject(reason):
@@ -94,14 +140,19 @@ class ChargingIntervals:
         if current['start_time'] is None or previous['end_time']>=current['start_time']:return reject('overlap')
         next_start=bisect_right(starts,previous['end_time'])
         if next_start<len(starts) and starts[next_start]<current['start_time']:return reject('unclosed_charge')
-        row['cross_month']=date_label(previous['end_time'])[:7]!=date_label(current['start_time'])[:7]
-        # A partial closing charge may already have added energy before its first observation.
-        if current['partial']:return reject('late_start')
         quality = [_object(e['report'].get('quality')) for e in (previous,current)]
         if any(q.get('decoder_changed_mid_session') or q.get('upgrade_mid_session') for q in quality):
             return reject('decoder_changed')
-        left,right=_boundary(previous,'end'),_boundary(current,'start')
-        if left is None or right is None:return reject('missing_endpoint')
+        left=_boundary(previous,'end')
+        right=None if current['partial'] else _boundary(current,'start')
+        if left is None:return reject('missing_endpoint')
+        if right is None:
+            right,blocked=self._precharge(vehicle,previous['end_time'],current['start_time'])
+            if blocked:return reject('unclosed_charge')
+            if right is None:return reject('late_start' if current['partial'] else 'missing_endpoint')
+        row.update(end_time=right['time'],end_boundary_source=right['source'],
+                   reference_gap_seconds=(current['start_time']-right['time'])/1000 if right['source']!='charge_start' else None)
+        row['cross_month']=date_label(previous['end_time'])[:7]!=date_label(right['time'])[:7]
         if left['decoder'] and right['decoder'] and left['decoder']!=right['decoder']:return reject('decoder_changed')
         cap,other=previous['battery_capacity_kwh'],current['battery_capacity_kwh']
         if cap is None or other is None:return reject('missing_capacity')
@@ -110,7 +161,7 @@ class ChargingIntervals:
         row.update(start_soc=left['soc'],end_soc=right['soc'],soc_drop=drop,distance_km=round(distance,6))
         if distance<0:return reject('odometer_reset')
         if distance==0:return reject('no_distance')
-        if distance/((current['start_time']-previous['end_time'])/3600000)>400:return reject('odometer_jump')
+        if distance/((right['time']-previous['end_time'])/3600000)>400:return reject('odometer_jump')
         if drop<0:return reject('soc_increase')
         if drop<MIN_SOC_DROP:return reject('soc_resolution')
         if distance<MIN_DISTANCE_KM:return reject('short_distance')
@@ -130,7 +181,7 @@ class ChargingIntervals:
         for charge in charges:
             check_cancelled()
             if charge['visible'] and window['start']<=charge['end_time']<upper:
-                rows.append(self._interval(previous,charge,books,invalid,starts))
+                rows.append(self._interval(previous,charge,books,invalid,starts,vehicle))
             previous=charge
         valid=[r for r in rows if r['reason'] is None]
         priced=[r for r in valid if r['estimated_cents'] is not None]
@@ -143,6 +194,7 @@ class ChargingIntervals:
                     rules=dict(min_distance_km=MIN_DISTANCE_KM,min_soc_drop=MIN_SOC_DROP,history_days=180),
                     quality=dict(undated_charge_count=invalid),
                     summary=dict(interval_count=len(rows),valid_count=len(valid),excluded_count=len(rows)-len(valid),
+                                 reference_count=sum(r['end_boundary_source']!='charge_start' for r in valid),
                                  distance_km=distance,estimated_kwh=energy,
                                  kwh_per_100km=energy/distance*100 if distance and energy is not None else None,
                                  priced_count=len(priced),priced_distance_km=priced_distance,estimated_cents=cents,
