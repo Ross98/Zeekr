@@ -72,18 +72,9 @@ class ChargingReviewTests(unittest.TestCase):
             r=self.review(date)
             self.assertEqual(r['records'],[])
             self.assertIsNone(r['analysis']['unit_price_cents_per_kwh'])
-            self.assertIsNone(r['driving']['cents_per_100km'])
+            self.assertIsNone(r['intervals']['summary']['kwh_per_100km'])
             self.assertIsNone(r['comparison']['change_percent'])
         with self.assertRaises(ValueError):self.review('2026-02-30')
-
-    def test_driving_cost_requires_matching_priced_energy(self):
-        self.add('charge','charge_end',start_soc=0,end_soc=80,soc_delta=80);self.bill('charge','80','80')
-        self.add('drive',day='2026-09-16',start_soc=80,end_soc=60,soc_delta=-20)
-        r=self.review()['driving']
-        self.assertEqual(r['included_trip_count'],1)
-        self.assertEqual(r['matched_distance_km'],40)
-        self.assertAlmostEqual(r['cents_per_100km'],5000)
-        self.assertIsNone(self.review(owner='other')['driving']['cents_per_100km'])
 
     def test_partial_energy_is_counted_but_not_fabricated(self):
         self.charge(partial=True);r=self.review()
@@ -98,31 +89,12 @@ class ChargingReviewTests(unittest.TestCase):
         self.assertEqual(row['mode'],'dc')
         self.assertEqual(row['mode_source'],'manual')
 
-    def test_unchanged_soc_trips_cannot_establish_free_driving(self):
-        for i,distance in enumerate((2,1,2,3,3,3,2,4)):
-            self.add('flat_'+str(i),day='2026-09-'+str(16+i),distance_km=distance,
-                     start_soc=80,end_soc=80,soc_delta=0)
-        r=self.review()['driving']
-        self.assertEqual(r['total_trip_count'],8)
-        self.assertEqual(r['included_trip_count'],0)
-        self.assertIsNone(r['matched_distance_km'])
-        self.assertIsNone(r['cents_per_100km'])
-
-    def test_flat_soc_distance_does_not_dilute_priced_trip_cost(self):
-        self.add('charge','charge_end',start_soc=0,end_soc=80,soc_delta=80)
-        self.bill('charge','80','80')
-        self.add('flat',day='2026-09-16',distance_km=20,start_soc=80,end_soc=80,soc_delta=0)
-        self.add('drive',day='2026-09-17',distance_km=40,start_soc=80,end_soc=60,soc_delta=-20)
-        r=self.review()['driving']
-        self.assertEqual(r['included_trip_count'],1)
-        self.assertEqual(r['matched_distance_km'],40)
-        self.assertAlmostEqual(r['cents_per_100km'],5000)
-
-    def test_measured_consumption_with_free_bill_remains_zero_cost(self):
-        self.add('charge','charge_end',start_soc=0,end_soc=80,soc_delta=80)
-        self.bill('charge','0','80')
-        self.add('drive',day='2026-09-16',start_soc=80,end_soc=60,soc_delta=-20)
-        r=self.review()['driving']
-        self.assertEqual(r['included_trip_count'],1)
-        self.assertGreater(r['matched_energy_kwh'],0)
-        self.assertEqual(r['cents_per_100km'],0)
+    def test_review_exposes_whole_interval_consumption_instead_of_trip_costs(self):
+        from test_charging_intervals import ChargingIntervalsTests
+        ChargingIntervalsTests.charge(self,'a','2026-09-15',30,80,1000)
+        ChargingIntervalsTests.charge(self,'b','2026-09-20',40,90,1200)
+        r=self.review()
+        self.assertIsNone(r['driving']['cents_per_100km'])
+        self.assertEqual(r['driving']['status'],'replaced_by_intervals')
+        self.assertAlmostEqual(r['intervals']['summary']['kwh_per_100km'],17.2)
+        self.assertIsNone(r['intervals']['summary']['cents_per_100km'])

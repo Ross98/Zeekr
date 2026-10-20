@@ -10,7 +10,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
  assert.ok(await page.locator('[data-review-record]').count());
  assert.equal(await page.getByRole('heading',{name:'充电花费构成',exact:true}).count(),1);
  const driving=page.locator('.cr-analysis-metrics>div').nth(2);
- assert.match(await driving.innerText(),/有效样本不足，暂无法估算/);
+ assert.match(await driving.innerText(),/区间依据不足，暂无法估算/);
  assert.equal(await driving.locator('strong').innerText(),'样本不足');
  const values=await page.locator('.cr-total>strong').evaluateAll(nodes=>nodes.map(n=>getComputedStyle(n).fontSize));assert.equal(new Set(values).size,1);
  await page.locator('[data-review-expand]').first().click();

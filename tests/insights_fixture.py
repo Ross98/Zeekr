@@ -86,6 +86,26 @@ def seed_events(app, partial_charge=False):
     app.data_quality.clock=lambda:calendar_now+12*3600000
 
 
+def seed_charging_intervals(app, session):
+    """Closed, cross-month and late-start intervals in the temporary fixture only."""
+    vehicle=hashlib.sha256(b'insights-fixture-car').hexdigest()
+    for identity,date,a,b,km,partial in [('interval-a','2026-08-31',30,80,1000,False),
+                                       ('interval-b','2026-09-02',40,90,1200,False),
+                                       ('interval-c','2026-09-10',80,90,1300,False),
+                                       ('interval-late','2026-09-11',80,90,1310,True)]:
+        start=day_bounds(date)[0]+8*3600000;end=start+3600000
+        report=dict(start=dict(state_time=start,observed_at=start+1000,soc=a,odometer=km,charging=True,charging_mode='dc'),
+                    end=dict(state_time=end,observed_at=end+1000,soc=b,odometer=km,charging=False,charging_mode='dc'),
+                    partial=partial,profile_snapshot=dict(battery_capacity_kwh=86),quality={})
+        body=dict(start_time=start,end_time=end,duration_seconds=3600,start_soc=a,end_soc=b,soc_delta=b-a,partial=partial,report_v2=report)
+        with Monitor(app.database_path).tracks.connect() as db:
+            db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
+                       (identity,vehicle,'charge_end',json.dumps(body),'SYNTHETIC',end))
+    owner=account_scope(session)
+    for revision,(identity,date,amount) in enumerate([('interval-a','2026-08-31','40'),('interval-b','2026-09-02','0')]):
+        app.charge_ledger.update(owner,vehicle,dict(action='save',revision=revision,date=date,event_id=identity,source='unknown',amount=amount,metered_kwh='40'))
+
+
 def seed_reminders(app,session):
     owner=account_scope(session);vehicle=hashlib.sha256(b'insights-fixture-car').hexdigest()
     app.reminders.update(owner,vehicle,dict(action='save',revision=0,name='合成演示：低电量',
@@ -168,6 +188,7 @@ if __name__ == '__main__':
     parser.add_argument('--demo',action='store_true',help='Preload synthetic bills, tags, tasks and an experiment.')
     parser.add_argument('--partial-charge',action='store_true',help='Use a partial charge for observed-metric acceptance.')
     parser.add_argument('--automatic',action='store_true',help='Preload synthetic automatic analysis results.')
+    parser.add_argument('--charging-intervals',action='store_true',help='Preload synthetic interval boundaries.')
     parser.add_argument('--port',type=int,default=0,help='Loopback port; default chooses an available port.')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
@@ -180,6 +201,8 @@ if __name__ == '__main__':
         seed(app, session)
         seed_events(app,args.partial_charge)
         seed_reminders(app,session)
+        if args.charging_intervals:
+            seed_charging_intervals(app,session)
         seed_charge_curves(app)
         if args.demo:
             seed_demo(app,session)

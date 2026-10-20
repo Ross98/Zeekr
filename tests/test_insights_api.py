@@ -22,7 +22,7 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(code,200)
         self.assertEqual(result['context'],self.get('/api/state')[1]['insights_context'])
         self.assertIn('groups',result)
-        self.assertIn('driving',result)
+        self.assertIn('intervals',result)
         self.assertEqual(self.get('/api/insights/charging-review?date=2026-02-30')[0],400)
         for secret in ('PRIVATE-VIN','latitude','longitude','accessToken'):
             self.assertNotIn(secret,json.dumps(result))

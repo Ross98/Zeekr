@@ -76,3 +76,10 @@
 :root[data-theme="dark"] #charging-review{color-scheme:dark}
 #charging-review{padding:20px}
 #charging-review [data-review="expand"]{padding:4px 8px;font-size:12px;justify-self:end}
+
+#charging-review .cr-intervals{border-top:1px solid var(--cr-line);margin-top:16px;padding-top:14px}
+#charging-review .cr-interval-list{display:grid;gap:10px;margin-top:12px}
+#charging-review .cr-interval{display:grid;grid-template-columns:minmax(0,1fr) minmax(155px,.55fr);gap:16px;border-top:1px solid var(--cr-line);padding-top:10px}
+#charging-review .cr-interval>div:last-child{text-align:right}
+#charging-review .cr-interval strong{font-weight:600;font-size:14px}
+#charging-review .cr-interval strong small{font-size:11px;font-weight:400}

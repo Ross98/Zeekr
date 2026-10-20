@@ -3,7 +3,7 @@ import json
 import time
 
 from .charging_analytics import _mode
-from .energy_costs import estimate
+from .charging_intervals import ChargingIntervals
 from .usage_events import UsageEvents, number, total
 from .usage_reports import DAY, date_label, period_window
 from .trip_places import TripPlaces
@@ -90,16 +90,7 @@ class ChargingReview:
             groups.append(dict(mode=mode, **info, share_percent=100*info['actual_cents']/summary['actual_cents']
                 if info['actual_cents'] is not None and summary['actual_cents'] is not None and summary['actual_cents']>0 else None))
         current_cost, prior_cost = summary['actual_cents'], previous_summary['actual_cents']
-        costs = estimate(all_events, books)
-        trips = [e for e in all_events if e['kind']=='trip_end' and window['start']<=e['end_time']<upper]
-        # Unchanged SOC on a driven trip cannot establish zero consumption.
-        # Keep it out of both the priced numerator and mileage denominator.
-        matched = [e for e in trips if number(e['distance_km'],.000001) is not None and not e['partial']
-                   and number(e['estimated_kwh'], .000001) is not None
-                   and costs[e['id']]['status']=='priced' and not costs[e['id']]['overlap']
-                   and costs[e['id']]['estimated_cents'] is not None]
-        distance = total(e['distance_km'] for e in matched)
-        driving_cents = total(costs[e['id']]['estimated_cents'] for e in matched)
+        retired_trip_count=sum(e['kind']=='trip_end' and window['start']<=e['end_time']<upper for e in all_events)
         return dict(window=window, as_of=now, records=records, summary=summary, groups=groups,
             ledger_revision=saved['revision'], history_quality=dict(unreadable_or_undated=history['unreadable_or_undated'],history_days=180),
             analysis=dict(unit_price_cents_per_kwh=paired_cents/metered if metered and paired_cents is not None else None,
@@ -109,8 +100,9 @@ class ChargingReview:
                             previous_start_date=previous['start_date'], previous_end_date=date_label(previous_upper-1) if previous_upper>previous['start'] else None,
                             change_cents=current_cost-prior_cost if current_cost is not None and prior_cost is not None else None,
                             change_percent=100*(current_cost-prior_cost)/prior_cost if current_cost is not None and prior_cost is not None and prior_cost>0 else None),
-            driving=dict(cents_per_100km=driving_cents/distance*100 if distance and driving_cents is not None else None,
-                         matched_distance_km=distance, estimated_cents=driving_cents, included_trip_count=len(matched),
-                         total_trip_count=len(trips), excluded_trip_count=len(trips)-len(matched),
-                         matched_energy_kwh=total(e['estimated_kwh'] for e in matched),
-                         loss_unknown=any(costs[e['id']]['loss_unknown'] for e in matched)))
+            intervals=ChargingIntervals(self.database).query(vehicle,window,now,books),
+            # Older open tabs must not resurrect the retired trip-cost calculation.
+            driving=dict(cents_per_100km=None,matched_distance_km=None,estimated_cents=None,
+                         included_trip_count=0,total_trip_count=retired_trip_count,
+                         excluded_trip_count=retired_trip_count,
+                         matched_energy_kwh=None,loss_unknown=False,status='replaced_by_intervals'))

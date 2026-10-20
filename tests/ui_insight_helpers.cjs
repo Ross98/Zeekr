@@ -2,8 +2,8 @@ const {chromium}=require('playwright');
 const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 const {spawn}=require('node:child_process');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
-async function fixture({demo=false,partialCharge=false,automatic=false,initialResearch=true,beforeGoto,evidenceTestId}={}){
-  const server=spawn('python3',[path.join(__dirname,'insights_fixture.py'),...(demo?['--demo']:[]),...(partialCharge?['--partial-charge']:[]),...(automatic?['--automatic']:[])]);
+async function fixture({chargingIntervals=false,demo=false,partialCharge=false,automatic=false,initialResearch=true,beforeGoto,evidenceTestId}={}){
+  const server=spawn('python3',[path.join(__dirname,'insights_fixture.py'),...(demo?['--demo']:[]),...(partialCharge?['--partial-charge']:[]),...(automatic?['--automatic']:[]),...(chargingIntervals?['--charging-intervals']:[])]);
   let browser,evidence;
   try{
     const port=await new Promise((resolve,reject)=>{
