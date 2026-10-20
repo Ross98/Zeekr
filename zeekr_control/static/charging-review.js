@@ -7,7 +7,8 @@
   const modes={ac:'交流充电（AC）',dc:'直流充电（DC）',unknown:'类型未知'};
   const duration=n=>{if(!Number.isFinite(n))return '时长未知';if(n>0&&n<60)return '<1 分钟';const m=Math.round(n/60),h=Math.floor(m/60);return (h?h+' 小时 ':'')+(m%60||!h?(m%60)+' 分钟':'');};
   function create({getState,request,escape:esc,active,openRecord,openLedger}){
-    let node=null,owner='',month=dateAt(Date.now()).slice(0,7),data=null,loading=false,error='',expanded='',pending=false,serial=0,controller=null,revision='',loadedMonth='',attempted=false;
+    let node=null,owner='',month=dateAt(Date.now()).slice(0,7),data=null,loading=false,error='',expanded='',pending=false,serial=0,controller=null,revision='',loadedMonth='',attempted=false,placeFilter='';
+    const places=root.ChargingPlaceEditor.create({request,escape:esc,context:()=>context(),active,paint:()=>paint(),onSaved:async()=>{error='';await load();},onError:message=>{error=message;paint();}});
     const context=()=>getState()?.insights_context||'';
     const valid=token=>token===serial&&owner===context()&&active();
     const button=(label,action,attrs='')=>`<button type="button" class="cursor-interaction cr-action" data-review="${action}" ${attrs}>${label}</button>`;
@@ -33,7 +34,11 @@
       const day=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',day:'numeric'}).format(new Date(e.end_time));
       const weekday=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',weekday:'short'}).format(new Date(e.end_time));
       const open=expanded===e.id,bill=e.bill;
-      return `<article class="cr-event" data-review-record="${esc(e.id)}"><div class="cr-date"><strong>${esc(day.replace('日',''))}</strong><span class="cr-muted">${Number(dateAt(e.end_time).slice(5,7))} 月 · ${esc(weekday)}</span></div><div class="cr-content"><div class="cr-line"><span class="cr-place">${esc(e.place_label)}${e.place_reference?' · 参考位置':''}</span><span class="cr-money">${money(bill?.actual_cents)}</span></div><div class="cr-observed"><span>${esc(clock(e.start_time))}–${esc(clock(e.end_time))}</span><span>${duration(e.duration_seconds)}</span><span>${modes[e.mode]}${e.mode_source==='manual'?' · 手动修正':''}${e.partial?' · 部分记录':''}</span></div><div class="cr-energy">${battery(e)}<div class="cr-kwh"><strong>${number(e.estimated_kwh)}</strong> <small>${e.estimated_kwh==null?'电量估算不足':'kWh · SOC 估算'}</small></div>${button(open?'收起':'展开','expand',`data-review-expand="${esc(e.id)}" aria-expanded="${open}" aria-controls="review-detail-${esc(e.id)}"`)}</div>${open?`<section class="cr-detail" id="review-detail-${esc(e.id)}"><div><span class="cr-muted">账单电表电量</span><strong>${bill?.metered_kwh==null?'未填写':number(bill.metered_kwh)+' kWh'}</strong></div><div><span class="cr-muted">实际费用</span><strong>${money(bill?.actual_cents)}</strong></div><div><span class="cr-muted">历史地点</span><strong>${esc(e.place_label)}</strong></div><div><span class="cr-muted">记录完整性</span><strong>${e.partial?'部分记录':'已结束记录'}</strong></div><p class="cr-quality">${e.partial?'实际起点可能更早，只展示已观测片段。':'起止时间来自历史采集，不代表精确插拔枪时间。'}电量估算使用当时保存的容量；没有地点依据时不使用当前位置补填。</p><div class="cr-detail-actions">${button('查看充电曲线','curve',`data-id="${esc(e.id)}"`)}${button(bill?'打开账单':'补充充电账单','ledger',`data-id="${esc(e.id)}"`)}</div></section>`:''}</div></article>`;
+      return `<article class="cr-event" data-review-record="${esc(e.id)}"><div class="cr-date"><strong>${esc(day.replace('日',''))}</strong><span class="cr-muted">${Number(dateAt(e.end_time).slice(5,7))} 月 · ${esc(weekday)}</span></div><div class="cr-content"><div class="cr-line"><div><button type="button" class="cr-place" data-review="place" data-id="${esc(e.id)}" aria-label="查看充电地点 ${esc(e.place_label)}">${esc(e.place_label)}</button><span class="cr-place-source">${e.place_source==='manual'?'名称已确认':e.place_source==='unknown'?'名称待确认':'已有地点'}${e.place_reference?' · 参考位置':''}</span>${e.station_name?`<p class="cr-station-name">${esc(e.station_name)} · 已确认站点</p>`:''}</div><span class="cr-money">${money(bill?.actual_cents)}</span></div><div class="cr-observed"><span>${esc(clock(e.start_time))}–${esc(clock(e.end_time))}</span><span>${duration(e.duration_seconds)}</span><span>${modes[e.mode]}${e.mode_source==='manual'?' · 手动修正':''}${e.partial?' · 部分记录':''}</span></div><div class="cr-energy">${battery(e)}<div class="cr-kwh"><strong>${number(e.estimated_kwh)}</strong> <small>${e.estimated_kwh==null?'电量估算不足':'kWh · SOC 估算'}</small></div>${button(open?'收起':'展开','expand',`data-review-expand="${esc(e.id)}" aria-expanded="${open}" aria-controls="review-detail-${esc(e.id)}"`)}</div>${places.html(e.id)}${open?`<section class="cr-detail" id="review-detail-${esc(e.id)}"><div><span class="cr-muted">账单电表电量</span><strong>${bill?.metered_kwh==null?'未填写':number(bill.metered_kwh)+' kWh'}</strong></div><div><span class="cr-muted">实际费用</span><strong>${money(bill?.actual_cents)}</strong></div><div><span class="cr-muted">历史地点</span><strong>${esc(e.place_label)}</strong></div><div><span class="cr-muted">记录完整性</span><strong>${e.partial?'部分记录':'已结束记录'}</strong></div><p class="cr-quality">${e.partial?'实际起点可能更早，只展示已观测片段。':'起止时间来自历史采集，不代表精确插拔枪时间。'}电量估算使用当时保存的容量；没有地点依据时不使用当前位置补填。</p><div class="cr-detail-actions">${button('查看充电曲线','curve',`data-id="${esc(e.id)}"`)}${button(bill?'打开账单':'补充充电账单','ledger',`data-id="${esc(e.id)}"`)}</div></section>`:''}</div></article>`;
+    }
+    function placeSummary(){
+      const groups=data.place_summary||[];
+      return `<section class="cr-place-summary" aria-label="本月充电地点统计"><div class="cr-analysis-head"><h3>按地点看充电</h3><div class="cr-place-tools">${placeFilter?button('显示全部地点','places-all'):''}${data.place_can_undo?button('撤销最近地点修改','place-undo'):''}</div></div><p class="cr-muted">${groups.filter(g=>!g.unlocated).length} 处可定位地点 · 同地点合并展示；费用待补不计零，电价仅用费用与电表电量配对账单。</p><div class="cr-place-cards">${groups.map(g=>`<article data-charge-place-summary="${esc(g.key)}" class="${placeFilter===g.key?'cr-place-selected':''}"><div class="cr-site-heading"><h4>${esc(g.unlocated?'地点待确认':g.name)}</h4><span>${g.charge_count} 次</span></div>${g.station_names.length?`<p class="cr-muted">${g.station_names.map(esc).join(' · ')}</p>`:''}<strong class="cr-site-cost">${g.actual_cents==null?'费用待补':money(g.actual_cents)}</strong><p class="cr-muted">${g.known_count} 次已记账 · ${g.pending_count} 次待补</p><dl><div><dt>SOC 累计补能</dt><dd>${g.estimated_kwh==null?'未知':number(g.estimated_kwh)+' kWh'} <small>· ${g.energy_samples} 次</small></dd></div><div><dt>实际综合电价</dt><dd>${g.cents_per_kwh==null?'依据不足':number(g.cents_per_kwh/100,2)+' 元/kWh'} <small>· ${g.paired_count} 次配对</small></dd></div></dl><p class="cr-muted">AC ${g.modes.ac} 次 · DC ${g.modes.dc} 次${g.modes.unknown?' · 类型未知 '+g.modes.unknown+' 次':''}${g.reference_count?' · '+g.reference_count+' 次参考位置':''}</p>${button('查看记录','place-filter',`data-place-key="${esc(g.key)}" aria-pressed="${placeFilter===g.key}"`)}</article>`).join('')||'<p class="cr-muted">暂无可统计的充电地点。</p>'}</div><p class="cr-muted">地点相近不代表同一充电站；点击记录中的地点，可查看依据、确认站点或修正历史。</p></section>`;
     }
     function guides(){
       const svg=node?.querySelector('.cr-share-guides'),bar=node?.querySelector('.cr-share');if(!svg||!bar)return;
@@ -47,14 +52,15 @@
     function paint(){if(!node?.isConnected||!active())return;return root.RefreshView?root.RefreshView.preserve(node,draw):draw();}
     function draw(){
       if(root.deferDateRender?.(paint))return;
+      places.removeMap();
       const s=data?.summary;
       node.dataset.loadedMonth=data?loadedMonth:'';
       node.innerHTML=`<div class="cr-toolbar"><h3>充电回顾</h3><div class="cr-month-controls"><label class="cr-muted" for="charging-review-month">月份</label><input id="charging-review-month" type="month" value="${esc(month)}" aria-label="充电月份">${button('本月','today')}${button('刷新充电回顾','load',loading?'aria-busy="true"':'')}</div></div>${error?`<p role="alert" class="notice error">${esc(error)}</p>`:''}${loading?'<p class="cr-muted" role="status">正在读取本地充电记录与账单…</p>':''}<section class="cr-totals" aria-label="本月充电汇总">${[
         ['已知充电花费',s?.actual_cents==null?'—':(s.actual_cents/100).toFixed(2)+' <small>元</small>',s?`${s.known_count} 次已记账 ${button(pending?'显示全部':s.pending_count+' 次待补账','pending',`aria-pressed="${pending}"`)}`:'等待本地记录'],
         ['累计补能 · SOC 估算',s?.estimated_kwh==null?'—':number(s.estimated_kwh)+' <small>kWh</small>',s?`${s.energy_samples} / ${s.charge_count} 次可估算 · 含 ${s.partial_count} 次片段`:''],
         ['充电次数',s?s.charge_count+' <small>次</small>':'—',s?`${s.charge_count-s.partial_count} 次完整 · ${s.partial_count} 次片段`:'']
-      ].map(([label,value,note])=>`<div class="cr-total"><span class="cr-muted">${label}</span><strong>${value}</strong><span class="cr-muted">${note}</span></div>`).join('')}</section>${data?analysis():''}<div class="cr-records-heading"><h3>本月充电记录</h3><span class="cr-muted">按结束时间 · 新记录在前</span></div>${data?.records.length?`<section class="cr-timeline" aria-label="本月充电时间轴">${data.records.filter(e=>!pending||e.bill?.actual_cents==null).map(record).join('')||'<p class="cr-empty">没有待补账记录。</p>'}</section>`:`<p class="cr-empty">${loading?'等待本月记录…':data?'该月暂无已结束充电记录；不代表车辆没有充电。':'等待当前账号车辆缓存。'}</p>`}<div class="cr-legend"><span><i></i>充电前 SOC</span><span><i class="cr-green"></i>本次补入</span><span>条形展示历史电量变化</span></div>${data?`<p class="cr-muted">数据截至 ${esc(clock(data.as_of))} · 仅读取本地记录，不请求车辆。</p>`:''}`;
-      guides();
+      ].map(([label,value,note])=>`<div class="cr-total"><span class="cr-muted">${label}</span><strong>${value}</strong><span class="cr-muted">${note}</span></div>`).join('')}</section>${data?analysis()+placeSummary():''}<div class="cr-records-heading"><h3>本月充电记录</h3><span class="cr-muted">按结束时间 · 新记录在前</span></div>${data?.records.length?`<section class="cr-timeline" aria-label="本月充电时间轴">${data.records.filter(e=>(!pending||e.bill?.actual_cents==null)&&(!placeFilter||e.place_key===placeFilter)).map(record).join('')||'<p class="cr-empty">当前筛选没有充电记录。</p>'}</section>`:`<p class="cr-empty">${loading?'等待本月记录…':data?'该月暂无已结束充电记录；不代表车辆没有充电。':'等待当前账号车辆缓存。'}</p>`}<div class="cr-legend"><span><i></i>充电前 SOC</span><span><i class="cr-green"></i>本次补入</span><span>条形展示历史电量变化</span></div>${data?`<p class="cr-muted">数据截至 ${esc(clock(data.as_of))} · 仅读取本地记录，不请求车辆。</p>`:''}`;
+      guides();places.mount(node);
     }
     async function load(){
       if(!active()||!owner||!/^20\d{2}-(0[1-9]|1[0-2])$/.test(month))return;
@@ -63,31 +69,36 @@
       try{
         const result=await request('/api/insights/charging-review?date='+encodeURIComponent(target+'-01'),undefined,50000,{signal:controller.signal,active});
         if(!valid(token)||target!==month)return;if(result.context!==owner)throw Error('账号或车辆已切换，请重新读取。');
-        data=result;loadedMonth=target;
+        data=result;loadedMonth=target;if(placeFilter&&!data.place_summary?.some(g=>g.key===placeFilter))placeFilter='';
         if(!data.records.some(e=>e.id===expanded))expanded='';
       }catch(failure){if(valid(token))error=failure.message;}
       finally{if(valid(token)){loading=false;paint();}}
     }
-    function suspend(){if(loading){controller?.abort();serial++;loading=false;attempted=false;}}
+    function suspend(){places.close(false);if(loading){controller?.abort();serial++;loading=false;attempted=false;}}
     function mount(container){
       if(!container||!active())return;
-      const identity=context(),nextRevision=JSON.stringify([getState()?.charge_records_revision,getState()?.trip_records_revision,root.recallPersonalRevision]);
+      const identity=context(),nextRevision=JSON.stringify([getState()?.charge_records_revision,getState()?.trip_records_revision,getState()?.charging_places_revision,root.recallPersonalRevision]);
       const changed=owner!==identity,updated=revision!==nextRevision;
       node=container;
-      if(changed){suspend();owner=identity;data=null;loadedMonth=expanded=error='';pending=false;attempted=false;}
+      if(changed){suspend();owner=identity;data=null;loadedMonth=expanded=error='';pending=false;placeFilter='';attempted=false;}
       revision=nextRevision;paint();
       if(owner&&(!data&&!attempted&&!loading||updated&&!loading))load();
     }
     function handle(event){
       if(!active()||!node?.contains(event.target))return false;
+      if(places.handle(event))return true;
       if(event.type==='change'&&event.target.id==='charging-review-month'){
-        if(month!==event.target.value){month=event.target.value;suspend();data=null;expanded='';pending=false;paint();load();}return true;
+        if(month!==event.target.value){month=event.target.value;suspend();data=null;expanded='';pending=false;placeFilter='';paint();load();}return true;
       }
       if(event.type!=='click')return false;
       const target=event.target.closest('[data-review]');if(!target||target.disabled)return false;
       const action=target.dataset.review;
-      if(action==='load')load();
-      if(action==='today'){month=dateAt(Date.now()).slice(0,7);pending=false;expanded='';data=null;load();}
+      if(action==='load'){places.close(false);load();}
+      if(action==='place')places.open(target.dataset.id);
+      if(action==='place-undo')places.undo(data.place_revision);
+      if(action==='place-filter'){places.close(false);placeFilter=target.dataset.placeKey;expanded='';paint();}
+      if(action==='places-all'){placeFilter='';paint();}
+      if(action==='today'){places.close(false);placeFilter='';month=dateAt(Date.now()).slice(0,7);pending=false;expanded='';data=null;load();}
       if(action==='pending'){pending=!pending;expanded='';paint();}
       if(action==='expand'){expanded=expanded===target.dataset.reviewExpand?'':target.dataset.reviewExpand;paint();}
       if(action==='curve'||action==='ledger'){

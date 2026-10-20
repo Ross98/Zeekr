@@ -92,7 +92,7 @@ class ReadContext:
     now: int
 
 
-READ_ANALYSES = frozenset(('charging-review', 'calendar', 'report', 'day-timeline', 'place-history',
+READ_ANALYSES = frozenset(('charging-place', 'charging-review', 'calendar', 'report', 'day-timeline', 'place-history',
                           'year-review', 'quality', 'timeline', 'snapshot', 'compare', 'costs'))
 
 
@@ -231,10 +231,16 @@ class App:
                 charge_revision = self.charge_manager.revision(self.vehicle_key) if authenticated and self.vehicle_key else None
             except Exception:
                 charge_revision = None
+            try:
+                charging_places_revision=(self.personal_store.revisions(account_scope(session),self.vehicle_key,
+                    ('charging_places','place_names','charges'),include_commute=True) if authenticated and self.vehicle_key else None)
+            except Exception:
+                charging_places_revision=None
             return {'release':read_release(), 'field_reviews': field_reviews, 'request_key': self.request_key, 'authenticated': authenticated,
                     'insights_context': self._insights_context(),
                     'trip_records_revision': trip_revision,
                     'charge_records_revision': charge_revision,
+                    'charging_places_revision': charging_places_revision,
                     'model': self.model, 'vehicle': self.vehicle, 'vehicles': self.vehicles,
                     'read_at': updated_at(self.read_at), 'read_time': self.read_at,
                     'query_cached': self.query_cached, 'refresh_result': self.refresh_result,
@@ -478,7 +484,7 @@ class App:
 
     def _analysis_revision(self, context):
         personal = self.personal_store.revisions(context.owner, context.vehicle,
-            ('charges','expenses','place_names','place_corrections'),include_commute=True)
+            ('charges','expenses','place_names','place_corrections','charging_places'),include_commute=True)
         with self.cost_summary.events.connect() as db:
             event_revision = None
             if db is not None:
@@ -505,6 +511,7 @@ class App:
             'snapshot': self.archive_reader.snapshot,
             'compare': self.archive_reader.compare,
             'report': lambda s,v,*a:self.usage_reports.query(s,v,*a,now=context.now),
+            'charging-place': lambda s,v,*a:self.charging_review.places.detail(context.owner,v,*a),
             'charging-review': lambda s,v,*a:self.charging_review.query(context.owner,v,*a,now=context.now),
             'calendar': lambda s,v,*a:self.usage_calendar.query(s,v,*a,now=context.now,owner=context.owner),
             'quality': self.data_quality.query,
@@ -703,7 +710,28 @@ class App:
             result['context'] = context
             return result
 
+    def charging_place_candidates(self,data):
+        context=self._read_context()
+        if data.get('context')!=context.context:raise ValueError('账号或车辆已切换，请重新读取。')
+        return self._bounded_analysis(context,lambda:self.charging_review.places.candidates(
+            context.owner,context.vehicle,data.get('event_id'),self.location_geocoder))
+
+    def update_charging_place(self,data):
+        context=self._read_context()
+        if data.get('context')!=context.context:raise ValueError('账号或车辆已切换，请重新读取。')
+        if not self.analysis_slots.acquire(blocking=False):raise AnalysisBusy('地点分析正在处理其他查询，请稍后重试。')
+        try:
+            revision=self._analysis_revision(context)
+            def guard():
+                self._check_context(context)
+                if revision!=self._analysis_revision(context):raise ValueError('记录已变化，请重新预览地点修改。')
+            result=self.charging_review.places.update(context.owner,context.vehicle,data,guard=guard,commit_lock=self.lock)
+            result['context']=context.context
+            return result
+        finally:self.analysis_slots.release()
+
     def update_insight_record(self, operation, data):
+        if operation=='charging-place':return self.update_charging_place(data)
         with self.lock:
             session = self._read_session()
             if not session.get('accessToken'):
@@ -1062,6 +1090,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                         return self.send_analysis(lambda: app.insights('parking', value('start'), value('end')))
                     if url.path == '/api/insights/report':
                         return self.send_analysis(lambda: app.insights('report', value('period'), value('date')))
+                    if url.path == '/api/insights/charging-place':
+                        return self.send_analysis(lambda: app.insights('charging-place',value('event')))
                     if url.path == '/api/insights/charging-review':
                         return self.send_analysis(lambda: app.insights('charging-review',value('date')))
                     if url.path == '/api/insights/calendar':
@@ -1176,6 +1206,7 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/route-quality.js': ('route-quality.js', 'text/javascript; charset=utf-8'),
                           '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),
                           '/trip-management.js': ('trip-management.js', 'text/javascript; charset=utf-8'),
+                          '/charging-places.js': ('charging-places.js', 'text/javascript; charset=utf-8'),
                           '/charging-review.js': ('charging-review.js', 'text/javascript; charset=utf-8'),
                           '/charging-review.css': ('charging-review.css', 'text/css; charset=utf-8'),
                           '/charge-management.js': ('charge-management.js', 'text/javascript; charset=utf-8'),
@@ -1236,6 +1267,10 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     return self.send(200, app.manage_charges(self.path.rsplit('/',1)[1], data, owner))
                 if self.path == '/api/place-corrections':
                     return self.send(200,app.update_insight_record('place-corrections',data))
+                if self.path == '/api/insights/charging-place':
+                    return self.send(200,app.update_insight_record('charging-place',data))
+                if self.path == '/api/insights/charging-place/candidates':
+                    return self.send(200,app.charging_place_candidates(data))
                 if self.path == '/api/insights/ledger':
                     return self.send(200, app.update_insight_record('ledger',data))
                 if self.path == '/api/insights/tyres':

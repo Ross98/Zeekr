@@ -193,34 +193,47 @@ class AmapGeocoder:
         with build_opener(NoRedirect()).open(request, timeout=5) as response:
             return json.loads(response.read(65536))
 
+    def _nearby(self, location, estimate=False):
+        if not is_trusted_location(dict(location,trusted=True) if estimate and isinstance(location,dict) else location):
+            return None
+        system=location.get('coordinate_system');lat,lon=location['latitude'],location['longitude']
+        key=load(self.config_path).get('api_key','').strip()
+        if not key:return None
+        coordinates='%.6f,%.6f'%(lon,lat)
+        if system=='WGS84（社区解释）':
+            converted=self._request('/v3/assistant/coordinate/convert',{'key':key,'locations':coordinates,'coordsys':'gps','output':'JSON'})
+            if not isinstance(converted,dict) or converted.get('status')!='1':return None
+            coordinates=converted.get('locations')
+            if not isinstance(coordinates,str):return None
+            x,y=map(float,coordinates.split(','))
+            if not -180<=x<=180 or not -90<=y<=90:return None
+        result=self._request('/v3/geocode/regeo',{'key':key,'location':coordinates,'extensions':'all','radius':300,'output':'JSON'})
+        if not isinstance(result,dict) or result.get('status')!='1' or not isinstance(result.get('regeocode'),dict):return None
+        return result['regeocode']
+
     def __call__(self, location, *, estimate=False):
-        # Notification lookups require trusted coordinates. The overview may explicitly
-        # request an estimate from valid coordinates without changing their trust flag.
         try:
-            if not is_trusted_location(dict(location, trusted=True) if estimate and isinstance(location, dict) else location):
-                return None
-            system = location.get('coordinate_system')
-            lat, lon = location.get('latitude'), location.get('longitude')
-            key = load(self.config_path).get('api_key', '').strip()
-            if not key:
-                return None
-            coordinates = '%.6f,%.6f' % (lon, lat)
-            if system == 'WGS84（社区解释）':
-                converted = self._request('/v3/assistant/coordinate/convert',
-                    {'key': key, 'locations': coordinates, 'coordsys': 'gps', 'output': 'JSON'})
-                if not isinstance(converted, dict) or converted.get('status') != '1':
-                    return None
-                coordinates = converted.get('locations')
-                if not isinstance(coordinates, str):
-                    return None
-                x, y = map(float, coordinates.split(','))
-                if not -180 <= x <= 180 or not -90 <= y <= 90:
-                    return None
-            result = self._request('/v3/geocode/regeo',
-                {'key': key, 'location': coordinates, 'extensions': 'all', 'radius': 300, 'output': 'JSON'})
-            if not isinstance(result, dict) or result.get('status') != '1':
-                return None
-            return short_address(result.get('regeocode'))
+            return short_address(self._nearby(location,estimate))
         except Exception:
-            # Provider errors can contain the key or coordinates; never log them.
+            # Provider errors may contain keys/coordinates; never log them.
+            return None
+
+    def charging_candidates(self,location):
+        """Nearby POIs are suggestions only. No station is selected or saved here."""
+        try:
+            result=self._nearby(location)
+            if result is None:return None
+            pois=result.get('pois');rows=[];seen=set()
+            for poi in pois[:100] if isinstance(pois,list) else []:
+                if not isinstance(poi,dict):continue
+                name=poi.get('name');kind=poi.get('type','');identity=poi.get('id')
+                if (not isinstance(name,str) or not name.strip() or len(name)>80 or any(ord(c)<32 for c in name)
+                        or not isinstance(kind,str) or not ('充电' in kind or '充电站' in name)
+                        or not isinstance(identity,str) or not 1<=len(identity)<=128):continue
+                try:distance=float(poi.get('distance'))
+                except (ValueError,TypeError):continue
+                if not math.isfinite(distance) or not 0<=distance<=300 or identity in seen:continue
+                seen.add(identity);rows.append(dict(id=identity,name=name.strip(),distance_m=distance))
+            return sorted(rows,key=lambda r:(r['distance_m'],r['id']))[:8]
+        except Exception:
             return None

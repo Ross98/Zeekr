@@ -28,6 +28,34 @@ class InsightsApiTests(unittest.TestCase):
             self.assertNotIn(secret,json.dumps(result))
 
 
+    def test_charging_place_details_and_corrections_are_context_revision_guarded(self):
+        from zeekr_control.monitor import Monitor
+        from unittest.mock import patch
+        with Monitor(self.app.database_path).tracks.connect() as db:
+            summary=dict(start_time=self.start,end_time=self.start+3600000,partial=False,duration_seconds=3600,start_soc=20,end_soc=80,soc_delta=60)
+            db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',('place-test',self.vehicle,'charge_end',json.dumps(summary),'',self.start))
+        route='/api/insights/charging-place'
+        code,detail=self.get(route+'?event=place-test')
+        self.assertEqual(code,200);self.assertIsNone(detail['location'])
+        payload=dict(action='preview',context=detail['context'],event_id='place-test',revision=0,scope='single',name='人工地点',station_name='测试充电站',latitude=31.2,longitude=121.4,radius_m=75)
+        self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''},route)[0],403)
+        self.assertEqual(self.post_ledger(dict(payload,context='old'),route=route)[0],400)
+        code,preview=self.post_ledger(payload,route=route);self.assertEqual(code,200)
+        save=dict(payload,action='save',token=preview['token'])
+        before_revision=self.get('/api/state')[1].get('charging_places_revision')
+        self.assertEqual(self.post_ledger(save,route=route)[0],200)
+        after_revision=self.get('/api/state')[1].get('charging_places_revision')
+        self.assertNotEqual(before_revision,after_revision,'other browser tabs can detect a place correction')
+        self.assertEqual(self.post_ledger(save,route=route)[0],400)
+        self.assertEqual(self.get(route+'?event=place-test')[1]['name'],'人工地点')
+        with patch.object(self.app.location_geocoder,'charging_candidates',return_value=[]):
+            code,candidates=self.post_ledger(dict(context=detail['context'],event_id='place-test'),route=route+'/candidates')
+        self.assertEqual(code,200);self.assertEqual(candidates['status'],'ok')
+        self.assertEqual(self.get(route+'?event=other')[0],400)
+        code,monthly=self.get('/api/insights/charging-review?date=2026-09-01')
+        self.assertEqual(code,200);self.assertEqual(monthly['place_summary'][0]['name'],'人工地点')
+        self.assertNotIn('latitude',json.dumps(monthly))
+
     def test_tyre_settings_require_context_revision_and_request_key(self):
         code,result=self.get('/api/insights/tyres')
         self.assertEqual(code,200)

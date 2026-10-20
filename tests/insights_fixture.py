@@ -110,6 +110,27 @@ def seed_charging_intervals(app, session):
         app.charge_ledger.update(owner,vehicle,dict(action='save',revision=revision,date=date,event_id=identity,source='unknown',amount=amount,metered_kwh='40'))
 
 
+def seed_charging_places(app,session):
+    """Charge-location acceptance data; all points and station suggestions are synthetic."""
+    vehicle=hashlib.sha256(b'insights-fixture-car').hexdigest();owner=account_scope(session)
+    store=app.personal_store
+    store.change(owner,vehicle,'place_names','save','synthetic_plaza',dict(name='测试广场',latitude=31.2,longitude=121.4,radius_m=150,shape='circle'),0)
+    with Monitor(app.database_path).tracks.connect() as db:
+        for identity,date in [('place-repeat','2026-09-10'),('place-old','2026-08-10'),('place-unknown','2026-09-25')]:
+            start=day_bounds(date)[0]+8*3600000
+            summary=dict(start_time=start,end_time=start+3600000,duration_seconds=3600,start_soc=30,end_soc=80,soc_delta=50,partial=False,battery_capacity_kwh=86,report_v2=dict(start=dict(charging_mode='dc'),end=dict(charging_mode='dc')))
+            db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',(identity,vehicle,'charge_end',json.dumps(summary),'SYNTHETIC',start+3600000))
+        for identity,date in [('report-charge','2026-09-19'),('place-repeat','2026-09-10'),('place-old','2026-08-10')]:
+            start=day_bounds(date)[0]+8*3600000
+            for i in range(6):
+                stamp=start+i*300000;lat=32 if i==0 and identity=='report-charge' else 31.2+i/1000000
+                loc=dict(valid=True,trusted=True,plottable=True,coordinate_system='WGS84（社区解释）',latitude=lat,longitude=121.4)
+                db.execute('INSERT INTO observations(vehicle,cache_key,state_time,observed_time,gap_seconds,location) VALUES(?,?,?,?,?,?)',(vehicle,identity+str(i),stamp,stamp+1000,1,json.dumps(loc)))
+    revision=store.read(owner,vehicle,'charges')['revision']
+    app.charge_ledger.update(owner,vehicle,dict(action='save',revision=revision,event_id='place-repeat',date='2026-09-10',source='unknown',amount='60',metered_kwh='40'))
+    app.location_geocoder.charging_candidates=lambda location:[dict(id='synthetic-one',name='测试快充站',distance_m=35),dict(id='synthetic-two',name='测试地下充电站',distance_m=80)]
+
+
 def seed_reminders(app,session):
     owner=account_scope(session);vehicle=hashlib.sha256(b'insights-fixture-car').hexdigest()
     app.reminders.update(owner,vehicle,dict(action='save',revision=0,name='合成演示：低电量',
@@ -193,6 +214,7 @@ if __name__ == '__main__':
     parser.add_argument('--partial-charge',action='store_true',help='Use a partial charge for observed-metric acceptance.')
     parser.add_argument('--automatic',action='store_true',help='Preload synthetic automatic analysis results.')
     parser.add_argument('--charging-intervals',action='store_true',help='Preload synthetic interval boundaries.')
+    parser.add_argument('--charging-places',action='store_true',help='Preload synthetic charging venues and station candidates.')
     parser.add_argument('--port',type=int,default=0,help='Loopback port; default chooses an available port.')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
@@ -210,6 +232,8 @@ if __name__ == '__main__':
         seed_charge_curves(app)
         if args.demo:
             seed_demo(app,session)
+        if args.charging_places:
+            seed_charging_places(app,session)
         if args.automatic:
             seed_automatic(app,session)
         server = make_server(app, args.port)

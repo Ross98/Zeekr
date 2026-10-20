@@ -4,11 +4,9 @@ import time
 
 from .charging_analytics import _mode
 from .charging_intervals import ChargingIntervals
+from .charging_places import ChargingPlaces
 from .usage_events import UsageEvents, number, total
 from .usage_reports import DAY, date_label, period_window
-from .trip_places import TripPlaces
-from .trip_place_names import TripPlaceNames
-from .commute_tags import CommuteTags
 
 
 class ChargingReview:
@@ -16,6 +14,7 @@ class ChargingReview:
         self.events = UsageEvents(database)
         self.database = database
         self.store = store
+        self.places = ChargingPlaces(database,store)
 
     @staticmethod
     def _summary(rows):
@@ -25,19 +24,6 @@ class ChargingReview:
                     energy_samples=sum(r['estimated_kwh'] is not None for r in rows),
                     actual_cents=total(r['bill']['actual_cents'] for r in known),
                     known_count=len(known), pending_count=len(rows)-len(known))
-
-    def _places(self, owner, vehicle, records):
-        names = TripPlaceNames(self.store)
-        stats = TripPlaces(self.database).query(vehicle, records, names.regions(owner, vehicle))
-        stats = names.apply(owner, vehicle, stats, CommuteTags(self.store, self.database).rule(owner, vehicle))
-        places = {p['id']:p for p in stats['places']}
-        for record in records:
-            candidates = [places.get(record.pop(side+'_place', None)) for side in ('start','end')]
-            place = next((p for p in candidates if p and p['name_source'] != 'reference'), None)
-            record['place_label'] = place['label'] if place else '地点未知'
-            record['place_source'] = place['name_source'] if place else 'unknown'
-            record['place_reference'] = bool(record.pop('start_place_evidence', None) or record.pop('end_place_evidence', None))
-            record.pop('end_place_evidence', None)
 
     def query(self, owner, vehicle, date, now=None):
         now = int(time.time()*1000) if now is None else now
@@ -76,7 +62,8 @@ class ChargingReview:
                     if override in ('ac','dc'):
                         row['mode'] = override
                         row['mode_source'] = 'manual'
-            self._places(owner, vehicle, records)
+        place_summary = self.places.apply(owner,vehicle,records)
+        place_saved=self.store.read(owner,vehicle,'charging_places')
         summary = self._summary(records)
         previous_summary = self._summary(earlier)
         pairs = [r for r in records if r['bill'] and r['bill']['actual_cents'] is not None
@@ -91,7 +78,9 @@ class ChargingReview:
                 if info['actual_cents'] is not None and summary['actual_cents'] is not None and summary['actual_cents']>0 else None))
         current_cost, prior_cost = summary['actual_cents'], previous_summary['actual_cents']
         retired_trip_count=sum(e['kind']=='trip_end' and window['start']<=e['end_time']<upper for e in all_events)
-        return dict(window=window, as_of=now, records=records, summary=summary, groups=groups,
+        return dict(window=window, as_of=now, records=records, summary=summary, groups=groups,place_summary=place_summary,
+            place_revision=place_saved['revision'],
+            place_can_undo=place_saved['can_undo'],
             ledger_revision=saved['revision'], history_quality=dict(unreadable_or_undated=history['unreadable_or_undated'],history_days=180),
             analysis=dict(unit_price_cents_per_kwh=paired_cents/metered if metered and paired_cents is not None else None,
                           metered_kwh=metered, matched_cents=paired_cents, metered_samples=len(pairs)),

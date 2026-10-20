@@ -26,6 +26,7 @@
       "tests/browser_failure_evidence.cjs"
     ],
     "review": [
+      "tests/ui_charging_places.cjs",
       "tests/ui_charging_intervals.cjs",
       "tests/ui_charging_review.cjs",
       "tests/ui_vehicle_parameters.cjs",

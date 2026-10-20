@@ -209,7 +209,7 @@ function samplingDescription(recording){
 window.samplingDescription=samplingDescription;
 
 async function api(path, data, timeout = 50000, analysisOptions = {}) {
-  const analysis=data===undefined&&/^\/api\/(?:insights\/(?:calendar|parking|report|quality|charging-review)|charging\/(?:process|statistics|series)|timeline|place-history|year-review|place-corrections)(?:\?|$)/.test(path);
+  const analysis=data===undefined&&/^\/api\/(?:insights\/(?:calendar|parking|report|quality|charging-review|charging-place)|charging\/(?:process|statistics|series)|timeline|place-history|year-review|place-corrections)(?:\?|$)/.test(path);
   const identity=state?.insights_context,originPage=page,originTask=sectionTask,deadline=Date.now()+600000;
   const requestKey=state?.request_key||'';
   const options=data===undefined?{cache:'no-store',...(analysis?{headers:{Prefer:'respond-async'}}:{})}:{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':requestKey},body:JSON.stringify(data)};
@@ -1529,6 +1529,7 @@ async function pollState(force = false) {
       latest.insights_context!==state.insights_context ||
       latest.trip_records_revision!==state.trip_records_revision ||
       latest.charge_records_revision!==state.charge_records_revision ||
+      JSON.stringify(latest.charging_places_revision)!==JSON.stringify(state.charging_places_revision) ||
       latest.snapshot_revision!==state.snapshot_revision ||
       JSON.stringify(latest.recent_events)!==JSON.stringify(state.recent_events) ||
       JSON.stringify(latest.field_reviews)!==JSON.stringify(state.field_reviews);

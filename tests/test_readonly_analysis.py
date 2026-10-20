@@ -71,6 +71,18 @@ class ReadonlyAnalysisTests(unittest.TestCase):
         with patch.object(self.app.charging_analytics, 'series', side_effect=read):
             self.app.charging_series('current', 'power-soc')
 
+    def test_charging_place_preview_does_not_hold_application_lock(self):
+        def read(*args):
+            acquired=[]
+            def state():
+                with self.app.lock:acquired.append(True)
+            worker=threading.Thread(target=state);worker.start();worker.join(.5)
+            self.assertEqual(acquired,[True],'charge-place planning holds the live state lock')
+            return dict(scope='single',name='Test',station_name='',point=None,radius_m=75),[dict(id='x')],{}
+        context=self.app._read_context()
+        with patch.object(self.app.charging_review.places,'_proposal',side_effect=read):
+            self.app.update_insight_record('charging-place',dict(action='preview',context=context.context,revision=0))
+
     def test_query_retries_once_then_rejects_changed_data(self):
         from zeekr_control.web import AnalysisChanged
         with patch.object(self.app, '_analysis_revision', side_effect=[1, 2, 2, 3]), \

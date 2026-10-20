@@ -19,6 +19,21 @@ class GeocodingTests(unittest.TestCase):
         from zeekr_control.geocoding import AmapGeocoder
         return AmapGeocoder(self.config)
 
+    def test_charging_candidates_are_bounded_filtered_and_never_auto_confirmed(self):
+        resolver=self.resolver()
+        payload={'status':'1','regeocode':{'pois':[
+            {'id':'a','name':'测试充电站','type':'汽车服务;充电站','distance':'25'},
+            {'id':'broken','name':'坏数据充电站','type':'充电站','distance':'bad'},
+            {'id':'b','name':'测试商场','type':'购物服务','distance':'1'},
+            {'id':'c','name':'远处充电站','type':'充电站','distance':'800'},
+            {'id':'d','name':'非法充电站','type':'充电站','distance':'nan'}]}}
+        with patch.object(resolver,'_request',side_effect=[{'status':'1','locations':'121.004,30.998'},payload]):
+            rows=resolver.charging_candidates(self.location)
+        self.assertEqual(rows,[dict(id='a',name='测试充电站',distance_m=25.0)])
+        self.config.unlink()
+        with patch.object(resolver,'_request',side_effect=AssertionError('no key')):
+            self.assertIsNone(resolver.charging_candidates(self.location))
+
     def test_gps_is_converted_before_chinese_address_lookup(self):
         requests = []
         def request(path, params):

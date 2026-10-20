@@ -83,3 +83,47 @@
 #charging-review .cr-interval>div:last-child{text-align:right}
 #charging-review .cr-interval strong{font-weight:600;font-size:14px}
 #charging-review .cr-interval strong small{font-size:11px;font-weight:400}
+#charging-review .cr-place-summary{margin:0 0 24px;padding:19px 21px;background:var(--cr-paper);border:1px solid var(--cr-line);border-radius:10px}
+#charging-review .cr-place-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:14px 0}
+#charging-review .cr-place-cards>article{min-width:0;padding:14px;border:1px solid var(--cr-line);border-radius:8px;background:var(--cr-bg)}
+#charging-review .cr-place-cards .cr-place-selected{outline:2px solid var(--cr-mark)}
+#charging-review .cr-site-heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+#charging-review h4{margin:0;font-size:15px;font-weight:600;overflow-wrap:anywhere}
+#charging-review .cr-site-heading>span{white-space:nowrap;color:var(--cr-muted);font-size:12px}
+#charging-review .cr-site-cost{display:block;font-size:24px;margin-top:10px;font-variant-numeric:tabular-nums}
+#charging-review .cr-place-cards dl{margin:12px 0;font-size:12px}
+#charging-review .cr-place-cards dt{color:var(--cr-muted)}
+#charging-review .cr-place-cards dd{margin:2px 0 10px;font-size:14px}
+#charging-review .cr-place-cards small{font-size:11px;color:var(--cr-muted)}
+#charging-review button.cr-place{font-size:15px;font-weight:600;border:0;border-radius:0;padding:0;background:transparent;text-decoration:underline;text-decoration-color:var(--cr-line);text-underline-offset:4px;text-align:left;overflow-wrap:anywhere}
+#charging-review .cr-place-source{font-size:11px;color:var(--cr-muted);margin-left:8px;white-space:nowrap}
+#charging-review .cr-station-name{font-size:12px;color:var(--cr-muted)}
+#charging-review .cr-place-editor{background:var(--cr-bg);border:1px solid var(--cr-line);border-radius:9px;margin:14px 0;padding:17px}
+#charging-review .cr-editor-heading{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:14px}
+#charging-review .cr-location-evidence{border-left:3px solid var(--cr-mark);padding-left:12px;font-size:12px;margin-bottom:16px}
+#charging-review .cr-location-evidence>span{margin-left:10px;color:var(--cr-muted)}
+#charging-review .cr-location-evidence p{color:var(--cr-muted)}
+#charging-review .cr-place-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px 18px;margin-bottom:10px}
+#charging-review .cr-place-fields label,#charging-review .cr-coordinate-fields label{display:flex;flex-direction:column;gap:5px;font-size:12px;min-width:0}
+#charging-review select{font:inherit;color:var(--cr-text);background:var(--cr-paper);border:1px solid var(--cr-line);border-radius:7px;padding:6px 10px;max-width:100%}
+#charging-review .cr-place-fields input{width:100%;min-width:0}
+#charging-review .cr-place-tools{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:10px 0}
+#charging-review .cr-place-tools button,#charging-review .cr-place-editor button{font-size:12px}
+#charging-review button:disabled{cursor:default;opacity:.55}
+#charging-review .cr-station-candidates{border:1px solid var(--cr-line);border-radius:7px;padding:10px 12px;font-size:12px}
+#charging-review .cr-station-candidates>div{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:8px}
+#charging-review .cr-station-candidates small{color:var(--cr-muted)}
+#charging-review .cr-place-map{height:340px;width:100%;border:1px solid var(--cr-line);border-radius:8px;margin:10px 0;isolation:isolate}
+#charging-review .cr-coordinate-fields{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end}
+#charging-review .cr-coordinate-fields input{min-width:0;width:100%}
+#charging-review [data-place-preview]{border:1px solid var(--cr-mark);border-radius:7px;padding:13px;margin:14px 0;font-size:12px}
+#charging-review [data-place-preview] ul{max-height:150px;overflow:auto;padding-left:18px;margin:8px 0}
+#charging-review [data-place-preview] li{margin-bottom:4px}
+#charging-review .cr-place-map .leaflet-tooltip{background:#fff;color:#253e31}
+#charging-review .cr-place-map .leaflet-control-attribution,#charging-review .cr-place-map .leaflet-control-attribution a{background:#fff;color:#253e31}
+
+#charging-review .cr-map-pin span{display:block;width:24px;height:24px;background:#28744c;border:3px solid #fff;border-radius:50%;box-shadow:0 1px 6px #26392d99}
+#charging-review .cr-coordinate-fields{grid-template-columns:1fr 1fr;align-items:end}
+
+#charging-review .cr-reference-candidate{padding:12px;border:1px solid var(--cr-line);border-radius:7px;margin-bottom:14px;font-size:12px}
+#charging-review .cr-reference-candidate button{margin:6px 8px 0 0}
