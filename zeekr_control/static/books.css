@@ -112,3 +112,11 @@ main[data-page=books] .books-chart-top>.insight-panel{margin:0;min-width:0;paddi
 .books-timeline-row>div>strong{font-size:15px;font-weight:500}
 .books-timeline-row>div>span{font-size:12px;color:var(--night-secondary,#50656e)}
 .books-timeline-amount{font-size:16px;font-weight:500;font-variant-numeric:tabular-nums;text-align:right;max-width:230px;overflow-wrap:anywhere}
+.books-scope-switch{display:flex;gap:8px;margin:4px 0 12px}
+.books-scope-switch .button[aria-pressed=true]{color:var(--accent);background:var(--soft);border-color:var(--accent)}
+.books-year-control{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--night-secondary,#50656e)}
+.books-year-control select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+.books-trend-year .books-trend-bars{gap:8px;height:250px}
+.books-trend-year .books-trend-value{font-size:12px}
+.books-trend-year .books-trend-stack{width:70%}
+.books-timeline-all .books-timeline-row{grid-template-columns:96px 20px minmax(0,1fr) auto}

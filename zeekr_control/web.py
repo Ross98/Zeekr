@@ -1105,7 +1105,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     if url.path == '/api/insights/ledger':
                         return self.send(200, app.insights('ledger', value('date')))
                     if url.path == '/api/insights/costs':
-                        return self.send(200, app.insights('costs', value('date')))
+                        return self.send(200, app.insights('costs', value('date'), value('scope') or 'month',
+                                                          value('page') or 0, value('category') or '', value('year') or None))
                     if url.path == '/api/insights/tyres':
                         return self.send(200, app.insights('tyres'))
                     if url.path == '/api/insights/rules':
