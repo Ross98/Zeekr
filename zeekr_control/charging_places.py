@@ -10,6 +10,7 @@ from .analysis_cancel import check_cancelled
 from .charging_locations import resolve, coordinates, RADIUS_M
 from .commute_tags import CommuteTags, _distance
 from .trip_place_names import TripPlaceNames, cached_names
+from .place_regions import RegionIndex
 from .usage_events import UsageEvents, number, total
 from .usage_reports import date_label
 
@@ -47,6 +48,7 @@ class ChargingPlaces:
 
     def _resolved(self, owner, vehicle, events, saved=None):
         saved=saved or self.store.read(owner,vehicle,COLLECTION);overrides=sorted((r for r in saved['records'] if not r['deleted']),key=lambda r:(r['body'].get('version',0),r['updated_at'],r['id']),reverse=True);results={}
+        named_regions=RegionIndex(TripPlaceNames(self.store).regions(owner,vehicle))
         with self.events.connect() as db:
             if db is None:return results
             for event in events:
@@ -60,7 +62,9 @@ class ChargingPlaces:
                     body=chosen['body'];r.update(name=body['name'],name_source='manual',point=tuple(body['point']) if body['point'] else None,
                         station_name=body.get('station_name') or None,station_source='manual' if body.get('station_name') else None,
                         correction_id=chosen['id'],correction_scope=body['scope'],rule_anchor=body.get('anchor'),radius_m=body['radius_m'],reference=r['reference'] if body['point'] and tuple(body['point'])==anchor else False,
-                        group_key='correction:'+chosen['id'] if body['scope']=='place' else r['group_key'])
+                        group_key=None)
+                    effective_region=named_regions.pick(r['point']) if r['point'] else None
+                    if effective_region:r['group_key']='named:'+effective_region['id']
                 r['anchor']=anchor;r['event_id']=event['id'];results[event['id']]=r
         return results
 
@@ -83,7 +87,7 @@ class ChargingPlaces:
     def apply(self,owner,vehicle,records):
         resolved=self._resolved(owner,vehicle,records);anchors=[]
         for row in sorted(records,key=lambda r:(r['end_time'],r['id'])):
-            r=resolved[row['id']];point=r['point'];key=r['group_key']
+            r=resolved[row['id']];point=r['point'];key=r['group_key'] if point is not None else None
             if key is None and point:
                 match=next((a for a in anchors if _distance(a[1],point)<=RADIUS_M),None)
                 if match:key=match[0]

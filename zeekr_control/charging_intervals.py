@@ -108,9 +108,14 @@ class ChargingIntervals:
                     if candidate is None and found is not None:candidate=found
             if candidate is None:
                 # Older databases can retain trip-end telemetry after sample pruning.
-                rows=db.execute('SELECT CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END '
-                                "FROM monitor_events WHERE vehicle=? AND kind='trip_end' AND "+visible_clause(db)+
-                                ' ORDER BY created DESC,id DESC LIMIT 256',(MAX_SUMMARY_BYTES,vehicle))
+                rows=db.execute('SELECT summary FROM monitor_events '
+                                "WHERE vehicle=? AND kind='trip_end' AND "+visible_clause(db)+
+                                ' AND CASE WHEN length(CAST(summary AS BLOB))<=? THEN '
+                                "CASE WHEN json_valid(summary) THEN json_type(summary,'$.end_time') IN ('integer','real') "
+                                "AND json_extract(summary,'$.end_time')>? AND json_extract(summary,'$.end_time')<? "
+                                'ELSE 0 END ELSE 0 END '
+                                "ORDER BY json_extract(summary,'$.end_time') DESC,id DESC LIMIT 256",
+                                (vehicle,MAX_SUMMARY_BYTES,lower,upper))
                 for encoded, in rows:
                     check_cancelled()
                     try:raw=json.loads(encoded) if isinstance(encoded,str) else None
@@ -144,12 +149,14 @@ class ChargingIntervals:
         if any(q.get('decoder_changed_mid_session') or q.get('upgrade_mid_session') for q in quality):
             return reject('decoder_changed')
         left=_boundary(previous,'end')
-        right=None if current['partial'] else _boundary(current,'start')
+        evidence=current['start_evidence']
+        missing_start=current['partial'] and not (evidence['basis']=='bounded' and evidence['first_state_time']==current['start_time'])
+        right=None if missing_start else _boundary(current,'start')
         if left is None:return reject('missing_endpoint')
         if right is None:
             right,blocked=self._precharge(vehicle,previous['end_time'],current['start_time'])
             if blocked:return reject('unclosed_charge')
-            if right is None:return reject('late_start' if current['partial'] else 'missing_endpoint')
+            if right is None:return reject('late_start' if missing_start else 'missing_endpoint')
         row.update(end_time=right['time'],end_boundary_source=right['source'],
                    reference_gap_seconds=(current['start_time']-right['time'])/1000 if right['source']!='charge_start' else None)
         row['cross_month']=date_label(previous['end_time'])[:7]!=date_label(right['time'])[:7]

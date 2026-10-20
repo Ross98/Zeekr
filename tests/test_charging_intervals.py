@@ -234,3 +234,69 @@ class ChargingIntervalsTests(unittest.TestCase):
         row=self.query()['records'][0]
         self.assertEqual(row['reason'],'hidden_charge')
         self.assertIsNone(row['start_time'])
+
+    def start_evidence(self, day='2026-09-20', basis='bounded'):
+        start=day_bounds(day)[0]+8*3600000
+        return dict(version=1,basis=basis,first_state_time=start,detected_at=start+1000,
+                    previous_state_time=start-60000,previous_observed_at=start-59000)
+
+    def test_mid_session_gap_with_bounded_start_keeps_interval_endpoint(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',40,90,1200,partial=True,start_evidence=self.start_evidence())
+        self.observation(soc=30,odometer=1190)
+        row=self.query()['records'][0]
+        self.assertIsNone(row['reason']);self.assertEqual(row['end_boundary_source'],'charge_start')
+        self.assertEqual(row['end_soc'],40);self.assertEqual(row['distance_km'],200)
+        self.assertAlmostEqual(row['kwh_per_100km'],17.2)
+        self.assertIsNone(row['reference_gap_seconds'])
+
+    def test_first_observation_evidence_cannot_promote_partial_charge_start(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True,start_evidence=self.start_evidence(basis='first_observation'))
+        self.assertEqual(self.query()['records'][0]['reason'],'late_start')
+        self.observation(soc=40,odometer=1200)
+        row=self.query()['records'][0]
+        self.assertEqual(row['end_boundary_source'],'precharge_observation')
+        self.assertEqual(row['end_soc'],40)
+
+    def test_bounded_evidence_still_requires_valid_endpoint_and_matching_start_time(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',40,90,1200,partial=True,start_evidence=self.start_evidence(),start={})
+        self.assertEqual(self.query()['records'][0]['reason'],'missing_endpoint')
+        evidence=self.start_evidence();evidence['first_state_time']-=60000
+        self.charge('c','2026-09-25',40,90,1300,partial=True,start_evidence=evidence)
+        self.assertEqual(self.query()['records'][0]['reason'],'late_start')
+
+    def test_old_trip_reference_is_stable_after_256_out_of_window_new_trips(self):
+        self.test_saved_previous_trip_end_can_supply_reference_without_observation_table()
+        expected=self.query()
+        for index in range(256):
+            stamp=day_bounds('2026-10-01')[0]+index*60000
+            self.add('new-trip-'+str(index),end_time=stamp,report_v2={'end':dict(state_time=stamp,observed_at=stamp+1000,soc=10,odometer=9999,charging=False)})
+            with self.add_db() as db:db.execute('UPDATE monitor_events SET created=? WHERE id=?',(stamp,'new-trip-'+str(index)))
+        self.assertEqual(self.query(),expected)
+
+    def test_trip_reference_filter_ignores_malformed_hidden_and_foreign_events(self):
+        self.test_saved_previous_trip_end_can_supply_reference_without_observation_table()
+        expected=self.query()
+        stamp=day_bounds('2026-09-20')[0]+8*3600000-60000
+        for identity,vehicle,kind,end in [('foreign','other','trip_end',stamp),('hidden','car','trip_end',stamp),('wrong-kind','car','charge_start',stamp)]:
+            self.add(identity,vehicle=vehicle,kind=kind,end_time=end,report_v2={'end':dict(state_time=end,observed_at=end+1000,soc=10,odometer=9999,charging=False)})
+        with self.add_db() as db:
+            db.execute('CREATE TABLE trip_record_trash(vehicle TEXT,event_id TEXT)');db.execute("INSERT INTO trip_record_trash VALUES('car','hidden')")
+            db.execute("INSERT INTO monitor_events VALUES('bad','car','trip_end','not-json',9999999999999)")
+        self.assertEqual(self.query(),expected)
+
+    def test_bounded_partial_start_keeps_other_interval_quality_checks(self):
+        for reason,changes in [('decoder_changed',{'quality':{'decoder_changed_mid_session':True}}),('capacity_changed',{'profile_snapshot':{'battery_capacity_kwh':100}})]:
+            with self.subTest(reason=reason):
+                self.setUp();self.charge('a','2026-09-15',30,80,1000)
+                self.charge('b','2026-09-20',40,90,1200,partial=True,start_evidence=self.start_evidence(),**changes)
+                self.assertEqual(self.query()['records'][0]['reason'],reason)
+
+    def test_trip_reference_window_keeps_256_candidate_resource_limit(self):
+        self.test_saved_previous_trip_end_can_supply_reference_without_observation_table()
+        stamp=day_bounds('2026-09-20')[0]+8*3600000
+        for index in range(256):
+            self.add('invalid-in-window-'+str(index),end_time=stamp-index-1,report_v2={'end':{}})
+        self.assertEqual(self.query()['records'][0]['reason'],'late_start')

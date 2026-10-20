@@ -245,4 +245,64 @@ class ChargingPlaceTests(unittest.TestCase):
         self.assertIsNone(unknown['actual_cents']);self.assertIsNone(unknown['cents_per_kwh'])
 
 
+
+    def named_sites(self):
+        from zeekr_control.charge_ledger import ChargeLedger
+        places=self.review().places
+        for revision,(identity,lat) in enumerate([('region-a',31.2),('region-b',32.2)]):
+            places.store.change('owner','car','place_names','save',identity,dict(name=identity,latitude=lat,longitude=121.4,radius_m=150,shape='circle'),revision)
+        for revision,(identity,day,lat,amount) in enumerate([('charge','2026-09-15',31.2,'10'),('destination','2026-09-16',32.2,'20'),('stays','2026-09-17',31.2,'30')]):
+            stamp=self.charge(identity,day);self.observe(stamp,lat)
+            ChargeLedger(places.store,self.db).update('owner','car',dict(action='save',revision=revision,event_id=identity,date=day,source='unknown',amount=amount,metered_kwh='40'))
+        return places
+
+    def month_groups(self):
+        result=self.review().query('owner','car','2026-09-01',now=self.now)
+        self.assertEqual(result['summary']['actual_cents'],6000)
+        self.assertEqual(sum(g['actual_cents'] or 0 for g in result['place_summary']),6000)
+        return result
+
+    def test_single_location_move_reassigns_costs_to_destination_region_and_undo_restores(self):
+        places=self.named_sites();before=self.month_groups();keys={r['id']:r['place_key'] for r in before['records']}
+        proposal=dict(self.proposal(),name='修正后的地点',latitude=32.2)
+        plan=places.preview('owner','car',proposal);places.update('owner','car',dict(proposal,action='save',token=plan['token']))
+        after=self.month_groups();rows={r['id']:r for r in after['records']};groups={g['key']:g for g in after['place_summary']}
+        self.assertEqual(places.detail('owner','car','charge')['location']['latitude'],32.2)
+        self.assertEqual(rows['charge']['place_key'],keys['destination'])
+        self.assertEqual(groups[keys['destination']]['charge_count'],2);self.assertEqual(groups[keys['destination']]['actual_cents'],3000)
+        self.assertEqual(groups[keys['charge']]['charge_count'],1);self.assertEqual(groups[keys['charge']]['actual_cents'],3000)
+        places.update('owner','car',dict(action='undo',revision=1))
+        restored=self.month_groups();self.assertEqual(restored['place_summary'],before['place_summary'])
+
+    def test_cleared_location_moves_to_unknown_group_and_undo_restores(self):
+        places=self.named_sites();before=self.month_groups();keys={r['id']:r['place_key'] for r in before['records']}
+        proposal=dict(self.proposal(),latitude=None,longitude=None)
+        plan=places.preview('owner','car',proposal);places.update('owner','car',dict(proposal,action='save',token=plan['token']))
+        after=self.month_groups();row=next(r for r in after['records'] if r['id']=='charge')
+        self.assertIsNone(places.detail('owner','car','charge')['location'])
+        unknown=next(g for g in after['place_summary'] if g['unlocated'])
+        self.assertEqual(row['place_key'],unknown['key']);self.assertNotEqual(row['place_key'],keys['charge'])
+        self.assertEqual(unknown['charge_count'],1);self.assertEqual(unknown['actual_cents'],1000)
+        places.update('owner','car',dict(action='undo',revision=1))
+        self.assertEqual(self.month_groups()['place_summary'],before['place_summary'])
+
+    def test_clearing_whole_site_does_not_leave_region_rule_as_a_location_group(self):
+        places=self.named_sites();self.charge('prior-unknown','2026-09-19')
+        proposal=dict(self.proposal('place'),latitude=None,longitude=None)
+        plan=places.preview('owner','car',proposal);places.update('owner','car',dict(proposal,action='save',token=plan['token']))
+        after=self.month_groups();unknown=next(g for g in after['place_summary'] if g['unlocated'])
+        self.assertEqual(unknown['charge_count'],3);self.assertEqual(unknown['actual_cents'],4000)
+        self.assertEqual(sum(g['unlocated'] for g in after['place_summary']),1)
+        for row in after['records']:
+            if row['id']!='destination':self.assertEqual(row['place_key'],unknown['key'])
+
+    def test_whole_site_move_merges_with_effective_destination_region(self):
+        places=self.named_sites();before=self.month_groups();destination=next(r['place_key'] for r in before['records'] if r['id']=='destination')
+        proposal=dict(self.proposal('place'),latitude=32.2)
+        plan=places.preview('owner','car',proposal);places.update('owner','car',dict(proposal,action='save',token=plan['token']))
+        groups=self.month_groups()['place_summary']
+        self.assertEqual(len(groups),1);self.assertEqual(groups[0]['key'],destination)
+        self.assertEqual(groups[0]['charge_count'],3);self.assertEqual(groups[0]['actual_cents'],6000)
+
+
 if __name__=='__main__':unittest.main()
