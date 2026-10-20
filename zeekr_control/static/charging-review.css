@@ -1,5 +1,5 @@
 
-#charging-review{--cr-paper:light-dark(#fff,#202923);--cr-bg:light-dark(#f5f7f4,#18211b);--cr-text:light-dark(#253e31,#e4ece7);--cr-muted:light-dark(#576b5e,#b6c7bc);--cr-line:light-dark(#dbe5dd,#405348);--cr-soft:light-dark(#eaf2eb,#2b4032);--cr-mark:light-dark(#39805c,#9cc9ac);--cr-track:light-dark(#e5eae6,#3b4840);--cr-old:light-dark(#bac9bf,#6b7d70);color-scheme:light dark;background:var(--cr-bg);color:var(--cr-text);font:14px/1.5 system-ui,sans-serif;border-radius:12px;overflow:hidden}
+#charging-review{--cr-paper:var(--paper);--cr-bg:var(--bg);--cr-text:var(--ink);--cr-muted:var(--muted);--cr-line:var(--line);--cr-soft:var(--soft);--cr-mark:var(--accent);--cr-track:var(--line);--cr-old:var(--control-border);color-scheme:light dark;background:var(--cr-bg);color:var(--cr-text);font:14px/1.5 system-ui,sans-serif;border-radius:12px;overflow:hidden}
 #charging-review *{box-sizing:border-box}
 #charging-review h3{font-size:17px;margin:0;font-weight:600}
 #charging-review p{margin:5px 0}
@@ -15,9 +15,9 @@
 #charging-review .cr-analysis{background:var(--cr-paper);border:1px solid var(--cr-line);border-radius:10px;padding:19px 21px;margin-bottom:24px}
 #charging-review .cr-analysis-head{display:flex;justify-content:space-between;gap:15px;align-items:baseline;margin-bottom:15px}
 #charging-review .cr-share{display:flex;height:12px;background:var(--cr-track);border-radius:6px;overflow:hidden;margin-bottom:22px}
-#charging-review .cr-share-ac{background:var(--cr-mark)}
-#charging-review .cr-share-dc{background:light-dark(#a7c7b4,#637f6d)}
-#charging-review .cr-share-unknown{background:var(--cr-old)}
+#charging-review .cr-share-ac{background:var(--chart-ac)}
+#charging-review .cr-share-dc{background:var(--chart-dc)}
+#charging-review .cr-share-unknown{background:var(--chart-unknown)}
 #charging-review .cr-share-labels{display:grid;margin:4px 0 0;color:var(--cr-text)}
 #charging-review .cr-share-label{min-width:0;display:flex;flex-direction:column;align-items:center;text-align:center}
 #charging-review .cr-share-name{display:flex;align-items:baseline;gap:8px;font-size:16px;font-weight:600}
@@ -119,10 +119,10 @@
 #charging-review [data-place-preview]{border:1px solid var(--cr-mark);border-radius:7px;padding:13px;margin:14px 0;font-size:12px}
 #charging-review [data-place-preview] ul{max-height:150px;overflow:auto;padding-left:18px;margin:8px 0}
 #charging-review [data-place-preview] li{margin-bottom:4px}
-#charging-review .cr-place-map .leaflet-tooltip{background:#fff;color:#253e31}
-#charging-review .cr-place-map .leaflet-control-attribution,#charging-review .cr-place-map .leaflet-control-attribution a{background:#fff;color:#253e31}
+#charging-review .cr-place-map .leaflet-tooltip{background:var(--cr-paper);color:var(--cr-text)}
+#charging-review .cr-place-map .leaflet-control-attribution,#charging-review .cr-place-map .leaflet-control-attribution a{background:var(--cr-paper);color:var(--cr-text)}
 
-#charging-review .cr-map-pin span{display:block;width:24px;height:24px;background:#28744c;border:3px solid #fff;border-radius:50%;box-shadow:0 1px 6px #26392d99}
+#charging-review .cr-map-pin span{display:block;width:24px;height:24px;background:var(--cr-mark);border:3px solid var(--cr-paper);border-radius:50%;box-shadow:0 1px 6px var(--cr-line)}
 #charging-review .cr-coordinate-fields{grid-template-columns:1fr 1fr;align-items:end}
 
 #charging-review .cr-reference-candidate{padding:12px;border:1px solid var(--cr-line);border-radius:7px;margin-bottom:14px;font-size:12px}

@@ -1,5 +1,23 @@
 const assert=require('node:assert/strict');
-const {fixture}=require('./ui_insight_helpers.cjs');
+const {fixture,contrast}=require('./ui_insight_helpers.cjs');
+async function sharedTheme(page){
+ const mismatches=await page.evaluate(()=>{
+  const probe=document.createElement('span');document.body.append(probe);
+  const checks=[['#charging-review','backgroundColor','--bg'],['#charging-review','color','--ink'],
+   ['.cr-analysis','backgroundColor','--paper'],['.cr-analysis','borderTopColor','--line'],
+   ['#charging-review .cr-muted','color','--muted'],['.cr-added','backgroundColor','--accent'],
+   ['.cr-share-ac','backgroundColor','--chart-ac'],['.cr-share-dc','backgroundColor','--chart-dc'],
+   ['.cr-share-unknown','backgroundColor','--chart-unknown']];
+  const errors=[];
+  for(const [selector,property,token] of checks){const node=document.querySelector(selector);if(!node)continue;
+   probe.style.color='var('+token+')';const expected=getComputedStyle(probe).color,actual=getComputedStyle(node)[property];
+   if(actual!==expected)errors.push({selector,property,expected,actual});
+  }
+  probe.remove();return errors;
+ });
+ assert.deepEqual(mismatches,[],'charging review follows shared theme colors');
+ await contrast(page,'#charging-review');
+}
 (async()=>{const requests=[];const f=await fixture({demo:true,initialResearch:false,beforeGoto:async p=>p.on('request',r=>requests.push(new URL(r.url()).pathname))}),{page}=f;try{
  await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
  await page.getByLabel('充电月份',{exact:true}).waitFor();
@@ -21,7 +39,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
  await page.getByRole('tab',{name:'充电回顾',exact:true}).click();await page.getByLabel('充电月份',{exact:true}).waitFor();
  assert.equal(await page.getByLabel('充电月份',{exact:true}).inputValue(),'2026-09');
  await page.reload();await page.getByLabel('充电月份',{exact:true}).waitFor();assert.equal(await page.getByLabel('充电月份',{exact:true}).inputValue(),'2026-09');
- for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1024,1280,1440]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));}}
+ for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);await sharedTheme(page);for(const width of [1024,1280,1440]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));}}
  await page.getByLabel('充电月份',{exact:true}).fill('2024-02');await page.getByRole('button',{name:'刷新充电回顾',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#charging-review')?.dataset.loadedMonth==='2024-02');assert.equal(await page.locator('[data-review-record]').count(),0);
  let held,seen=0;
  const delayed=async route=>{seen++;if(seen===1)await new Promise(resolve=>{held=resolve;});await route.fallback();};
@@ -45,7 +63,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
  await page.waitForFunction(()=>document.querySelector('#charging-review')?.dataset.loadedMonth==='2026-07');
  assert.equal(await page.locator('[data-cost-mode=ac]').count(),1);assert.equal(await page.locator('[data-cost-mode=dc]').count(),1);
  assert.match(await page.locator('.cr-total').first().innerText(),/105.01/);
- for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1024,1280,1440]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));const labels=await page.locator('.cr-share-label').evaluateAll(ns=>ns.map(n=>n.getBoundingClientRect().toJSON()));assert.ok(labels[0].right<=labels[1].left);}}
+ for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);await sharedTheme(page);for(const width of [1024,1280,1440]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));const labels=await page.locator('.cr-share-label').evaluateAll(ns=>ns.map(n=>n.getBoundingClientRect().toJSON()));assert.ok(labels[0].right<=labels[1].left);}}
  await page.locator('[data-review-expand]').first().click();await page.getByRole('button',{name:'打开账单',exact:true}).click();
  await page.getByLabel('实际账单金额（元）',{exact:true}).waitFor();
  assert.equal(await page.getByLabel('关联充电记录',{exact:true}).inputValue(),'curve-gap');
