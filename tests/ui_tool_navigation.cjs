@@ -10,7 +10,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     assert.equal(await page.locator('#navigation [data-page]').count(),9);
     assert.deepEqual(await page.locator('.insight-tabs h2').allTextContents(),['参数核实']);
     const groups = [
-      ['能源与充电', ['充电曲线对比']],
+      ['能源与充电', []],
       ['用车账本', ['费用总览', '充电账本', '生活账本']],
       ['行程与轨迹', ['常走路线对比']],
       ['车辆', []],
@@ -59,8 +59,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     assert.equal(await page.getByRole('heading',{name:'通勤自动标注'}).count(),1);
     assert.equal(await page.evaluate(()=>scrollY),0,'task navigation remains available after opening tags');
     await page.getByRole('button', {name:'能源与充电', exact:true}).first().click();
-    await page.getByRole('button', {name:'充电曲线对比', exact:true}).click();
-    await page.getByLabel('充电 A 月份', {exact:true}).waitFor();
+    await page.getByLabel('充电月份',{exact:true}).waitFor();
     await page.getByRole('button', {name:'用车研究',exact:true}).click();
     await page.getByRole('button', {name:'用车日历',exact:true}).click();
     await page.getByLabel('日历月份',{exact:true}).fill('2026-09');

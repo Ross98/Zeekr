@@ -16,6 +16,18 @@ from zeekr_control.parking_analytics import ParkingAnalytics
 
 
 class InsightsApiTests(unittest.TestCase):
+    def test_charging_review_is_read_only_scoped_and_has_no_private_fields(self):
+        with patch.object(self.app.archive_reader,'iter_records',side_effect=AssertionError('review must not scan raw archive')):
+            code,result=self.get('/api/insights/charging-review?date=2026-09-01')
+        self.assertEqual(code,200)
+        self.assertEqual(result['context'],self.get('/api/state')[1]['insights_context'])
+        self.assertIn('groups',result)
+        self.assertIn('driving',result)
+        self.assertEqual(self.get('/api/insights/charging-review?date=2026-02-30')[0],400)
+        for secret in ('PRIVATE-VIN','latitude','longitude','accessToken'):
+            self.assertNotIn(secret,json.dumps(result))
+
+
     def test_tyre_settings_require_context_revision_and_request_key(self):
         code,result=self.get('/api/insights/tyres')
         self.assertEqual(code,200)

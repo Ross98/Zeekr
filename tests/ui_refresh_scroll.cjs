@@ -25,6 +25,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       await page.locator(selector).first().evaluate(el=>el.click());
     }
     async function settleCalendar(section){
+      if(section==='energy'&&await page.locator('#charging-review').count()){await page.waitForFunction(()=>!!document.querySelector('#charging-review')?.dataset.loadedMonth&&!document.querySelector('#charging-review [aria-busy="true"]'));return;}
       if(section!=='calendar')return;
       // Retained month results can be visible while the new analysis is loading.
       await page.getByRole('button',{name:'停止分析',exact:true}).waitFor({state:'hidden'});
@@ -67,7 +68,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       }else if(view==='car'){
         await page.locator('.vehicle-table').waitFor();
       }else if(view==='energy'){
-        await page.locator('[data-action="charging-tab"][data-tab="process"]').click();
+        await page.locator('[data-action="charging-tab"][data-tab="summary"]').click();
       }else if(view==='statistics'){
         await page.waitForFunction(()=>!chargingAnalyticsBusy);
       }else if(view==='life'){
@@ -112,10 +113,10 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         await navigate(`[data-page="${section}"]`);
         const selector=section==='insights'?'#insights-workspace [data-insight-view]':'.task-navigation [data-section-task]';
         const tools=await page.locator(selector).evaluateAll(els=>els.map(el=>el.dataset.insightView||el.dataset.sectionTask).filter(Boolean));
-        const variants=section==='car'?[]:section==='energy'?['statistics']:section==='tracks'?['source:local','source:tags']:[];
+        const variants=section==='car'?[]:section==='energy'?['records']:section==='tracks'?['source:local','source:tags']:[];
         for(const tool of [null,...variants,...tools]){
           if(tool){
-            const selector=tool==='parameters'&&section==='car'?'[data-vehicle="parameters"]':tool==='statistics'?'[data-action="charging-tab"][data-tab="statistics"]':
+            const selector=tool==='parameters'&&section==='car'?'[data-vehicle="parameters"]':tool==='records'?'[data-action="charging-tab"][data-tab="records"]':
               tool.startsWith('source:')?`[data-source="${tool.slice(7)}"]`:section==='insights'?`[data-insight-view="${tool}"]`:`[data-section-task="${tool}"]`;
             await navigate(selector);
           }

@@ -10,8 +10,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
   assert.equal(await page.getByRole('button',{name:'停车观测',exact:true}).count(),0,'parking has no independent entry');
   assert.equal(await page.locator('[data-section-task="parking"],[data-insight-view="parking"]').count(),0);
-  await page.getByRole('button',{name:'充电曲线对比',exact:true}).click();
-  await page.getByLabel('充电 A 月份',{exact:true}).waitFor();
+    await page.getByLabel('充电月份',{exact:true}).waitFor();
   for(const query of ['?p=energy&t=parking&start=2026-09-19&end=2026-09-20&q=1','?p=insights&t=parking&date=2026-09-19']){
    await page.goto(f.origin+'/'+query);
    await page.getByLabel('轨迹日期',{exact:true}).waitFor();

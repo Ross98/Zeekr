@@ -39,6 +39,7 @@ from .trip_visibility import visible_clause
 from .storage_management import StorageManager
 from .storage_health import StorageHealth, severity
 from .charging_analytics import ChargingAnalytics
+from .charging_review import ChargingReview
 from .vehicle_parameters import parameters
 from .archive_reader import ArchiveReader, ArchiveChanged
 from .snapshot_archive import BEIJING
@@ -91,7 +92,7 @@ class ReadContext:
     now: int
 
 
-READ_ANALYSES = frozenset(('calendar', 'report', 'day-timeline', 'place-history',
+READ_ANALYSES = frozenset(('charging-review', 'calendar', 'report', 'day-timeline', 'place-history',
                           'year-review', 'quality', 'timeline', 'snapshot', 'compare', 'costs'))
 
 
@@ -125,6 +126,7 @@ class App:
         self.travel_insights = TravelInsights(self.personal_store, self.database_path)
         self.charge_comparison = ChargeComparison(self.database_path)
         self.experiments = ParameterExperiments(self.personal_store, self.archive_reader)
+        self.charging_review = ChargingReview(self.database_path, self.personal_store)
         self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader, store=self.personal_store)
         self.daily_timeline = DailyTimeline(self.database_path,self.archive_reader,self.personal_store)
         self.vehicle_life = VehicleLife(self.personal_store)
@@ -503,6 +505,7 @@ class App:
             'snapshot': self.archive_reader.snapshot,
             'compare': self.archive_reader.compare,
             'report': lambda s,v,*a:self.usage_reports.query(s,v,*a,now=context.now),
+            'charging-review': lambda s,v,*a:self.charging_review.query(context.owner,v,*a,now=context.now),
             'calendar': lambda s,v,*a:self.usage_calendar.query(s,v,*a,now=context.now,owner=context.owner),
             'quality': self.data_quality.query,
             'day-timeline': lambda s,v,date,positions=False:self.daily_timeline.query(s,v,date,owner=context.owner,positions=positions),
@@ -1059,6 +1062,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                         return self.send_analysis(lambda: app.insights('parking', value('start'), value('end')))
                     if url.path == '/api/insights/report':
                         return self.send_analysis(lambda: app.insights('report', value('period'), value('date')))
+                    if url.path == '/api/insights/charging-review':
+                        return self.send_analysis(lambda: app.insights('charging-review',value('date')))
                     if url.path == '/api/insights/calendar':
                         return self.send_analysis(lambda: app.insights('calendar',value('date')))
                     if url.path == '/api/insights/life':
@@ -1171,6 +1176,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/route-quality.js': ('route-quality.js', 'text/javascript; charset=utf-8'),
                           '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),
                           '/trip-management.js': ('trip-management.js', 'text/javascript; charset=utf-8'),
+                          '/charging-review.js': ('charging-review.js', 'text/javascript; charset=utf-8'),
+                          '/charging-review.css': ('charging-review.css', 'text/css; charset=utf-8'),
                           '/charge-management.js': ('charge-management.js', 'text/javascript; charset=utf-8'),
                           '/trips.css': ('trips.css', 'text/css; charset=utf-8'),
                           '/field-reviews.js': ('field-reviews.js', 'text/javascript; charset=utf-8'),

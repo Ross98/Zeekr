@@ -1,11 +1,12 @@
 (function(root){
   'use strict';
   const pages=['overview','calendar','report','car','energy','books','tracks','fields','insights','settings','more'];
-  const tasks=['costs','records','ledger','charge-comparison','life','rules','quality','parameters','hypotheses','fields','research','automatic','lab','time','report','calendar','routes','review'];
+  const tasks=['costs','records','ledger','life','rules','quality','parameters','hypotheses','fields','research','automatic','lab','time','report','calendar','routes','review'];
   const date=value=>/^20\d{2}-\d{2}-\d{2}$/.test(value)&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
-  const rules={energyTab:v=>['process','records','statistics','parameters'].includes(v),lifeMode:v=>['expenses','reminders'].includes(v),step:v=>['overview','evidence','experiment','conclusion'].includes(v),p:v=>pages.includes(v)&&v!=='overview',t:v=>tasks.includes(v),s:v=>['local','tags'].includes(v),
+  const rules={energyTab:v=>['summary','records','parameters'].includes(v),lifeMode:v=>['expenses','reminders'].includes(v),step:v=>['overview','evidence','experiment','conclusion'].includes(v),p:v=>pages.includes(v)&&v!=='overview',t:v=>tasks.includes(v),s:v=>['local','tags'].includes(v),
     review:v=>v==='1',heat:v=>['distance','cost'].includes(v),year:v=>/^20\d{2}$/.test(v),record:v=>/^[A-Za-z0-9_:-]{1,256}$/.test(v),range:v=>['day','range'].includes(v),date,month:v=>/^20\d{2}-(0[1-9]|1[0-2])$/.test(v),start:date,end:date,view:v=>['distance','cost','pending','energy'].includes(v),period:v=>['week','month'].includes(v),q:v=>v==='1'};
   function clean(values){
+    if(values.t==='charge-comparison'||values.p==='energy'&&['process','statistics'].includes(values.energyTab)){values={...values,p:'energy',energyTab:'summary'};delete values.t;}
     // Retired parking bookmarks now open saved local trips at their selected day.
     if(values.t==='parking'){
       values={...values,p:'tracks',s:'local',date:values.date||values.start};

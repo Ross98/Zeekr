@@ -29,3 +29,6 @@ window.BookSession.setMonth('owner-a','2026-13');
 assert.equal(window.BookSession.month('owner-a','2026-10'),'2026-09','invalid input cannot poison the selected month');
 assert.deepEqual(JSON.parse(JSON.stringify(window.BookSession.monthRange('2024-02'))),{start:'2024-02-01',end:'2024-02-29'});
 console.log('NAVIGATION_STATE_PASS');
+
+for(const old of ['?p=energy&energyTab=process','?p=energy&energyTab=statistics','?p=energy&t=charge-comparison'])assert.deepEqual({...nav.read(old)},{energyTab:'summary',p:'energy'});
+assert.equal(nav.read('?p=energy&energyTab=summary&month=2026-09').month,'2026-09');

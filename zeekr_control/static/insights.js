@@ -9,7 +9,7 @@
       {id:'parameters',label:'参数研究与核实',description:'参数字典、假设与验证、实验依据与人工核实'}
     ]},
     {name:'能源与充电',page:'energy',tools:[
-      {id:'charge-comparison',label:'充电曲线对比',description:'对照两次充电的功率、温度与耗时'}
+
     ]},
     {name:'用车账本',page:'books',tools:[
       {id:'costs',label:'费用总览',description:'充电、停车与日常支出，待补账与重复核对'},
@@ -230,7 +230,6 @@
     const reportPage=lazyPage([['AutomaticInsightsPage','automatic-insights.js'],['UsageReportPage','usage-reports.js']],()=>root.UsageReportPage.create({getState,request,escape:esc,active:()=>active() && tab==='report',time}),{getState,active:()=>active()&&tab==='report'});
     const ledgerPage=lazyPage([['ChargeLedgerPage','charge-ledger.js']],()=>root.ChargeLedgerPage.create({getState,request,escape:esc,active:()=>active() && tab==='ledger',time}),{getState,active:()=>active()&&tab==='ledger'});
     const rulesPage=lazyPage([['CustomRemindersPage','custom-reminders.js']],()=>root.CustomRemindersPage.create({getState,request,escape:esc,active:()=>active() && tab==='rules',time}),{getState,active:()=>active()&&tab==='rules'});
-    const chargeComparisonPage=lazyPage([['ChargeComparisonPage','charge-comparison.js']],()=>root.ChargeComparisonPage.create({getState,request,escape:esc,active:()=>active() && tab==='charge-comparison',time}),{getState,active:()=>active()&&tab==='charge-comparison'});
     const parameterPage=lazyPage([['ParameterStudies','parameter-studies.js'],['HypothesisLabPage','hypothesis-lab.js'],['ParameterExperimentsPage','parameter-experiments.js']],()=>parameterWorkspace({getState,request,esc,active:()=>active()&&tab==='parameters',dictionary,time,review,history:openParameterHistory}),{getState,active:()=>active()&&tab==='parameters'});
     const researchPage=lazyPage([['VehicleResearchPage','vehicle-research.js']],()=>root.VehicleResearchPage.create({getState,request,escape:esc,active:()=>active() && tab==='research',time,experiment:openExperiment,review,diagnose:()=>navigate('settings','quality')}),{getState,active:()=>active()&&tab==='research'});
     const calendarPage=lazyPage([['UsageCalendarPage','usage-calendar.js']],()=>root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate}),{getState,active:()=>active()&&tab==='calendar'});
@@ -240,7 +239,7 @@
 
     const costsPage=lazyPage([['BooksOverview','books-overview.js']],()=>root.BooksOverview.create({getState,request,escape:esc,active:()=>active()&&section==='books',getView:()=>tab,navigate:(view,date,filter)=>{navigate('books',view,date);if(view==='ledger')ledgerPage.setFilter(filter);}}),{getState,active:()=>active()&&section==='books'});
     root.updateBooksSummary=()=>{if(active()&&section==='books')costsPage.refresh();};
-    const views={costs:costsPage,parameters:parameterPage,routes:routesPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,'charge-comparison':chargeComparisonPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
+    const views={costs:costsPage,parameters:parameterPage,routes:routesPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;

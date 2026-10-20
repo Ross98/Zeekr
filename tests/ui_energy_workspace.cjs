@@ -26,8 +26,8 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
     await page.locator('#navigation [data-page="energy"]').click();
-    await page.getByRole('tab',{name:'当前状态',exact:true}).waitFor();
-    await page.getByRole('heading',{name:'最近一次充电',exact:true}).waitFor();
+    await page.getByRole('tab',{name:'充电回顾',exact:true}).waitFor();
+    await page.getByLabel('充电月份',{exact:true}).waitFor();
     fs.mkdirSync('/tmp/zeekr-energy-workspace',{recursive:true});
     await page.evaluate(()=>{document.querySelector('#toast').hidden=true;document.activeElement?.blur();scrollTo(0,0);});
     await page.screenshot({path:'/tmp/zeekr-energy-workspace/idle-light.png',fullPage:true});
@@ -35,7 +35,8 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     assert.equal(await page.locator('#charge-management').count(),0,'current state does not mount management');
     assert.equal(reads.filter(url=>url.includes('/api/events?')||url.includes('/api/charging/manage?')).length,0);
     assert.equal(await page.locator('.energy-current-soc').count(),0,'SOC shown once in the top summary');
-    await page.getByRole('button',{name:'查看记录',exact:true}).click();
+    await page.getByRole('tab',{name:'充电记录',exact:true}).click();
+    await page.getByRole('button',{name:'查询充电记录',exact:true}).click();
     await page.getByRole('heading',{name:'充电详情',exact:true}).waitFor();
     assert.equal(await page.getByRole('tab',{name:'充电记录',exact:true}).getAttribute('aria-selected'),'true');
     assert.match(await page.locator('#charge-detail').innerText(),/40.*64/s);
@@ -71,16 +72,16 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await page.unroute('**/api/events?**',heldList);
     await page.getByRole('heading',{name:'充电详情',exact:true}).waitFor();
     await page.locator('.charging-process-title').getByText('历史详情',{exact:true}).waitFor();
-    await page.getByRole('tab',{name:'当前状态',exact:true}).click();
-    await page.getByRole('heading',{name:'最近一次充电',exact:true}).waitFor();
+    await page.getByRole('tab',{name:'充电回顾',exact:true}).click();
+    await page.getByLabel('充电月份',{exact:true}).waitFor();
     assert.equal(await page.locator('.charging-charts').count(),0,'returning current state never displays selected historical chart');
-    assert.equal(new URL(reads.filter(url=>url.includes('/api/charging/process?')).at(-1)).searchParams.get('id'),'current');
+    assert.ok(reads.filter(url=>url.includes('/api/charging/process?')).every(url=>new URL(url).searchParams.get('id')!=='current'));
     // Hold a historical response, then return to current before it completes.
     releaseHistory=null;
     await page.getByRole('tab',{name:'充电记录',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('.charge-loading'));
-    await page.getByRole('tab',{name:'当前状态',exact:true}).click();
-    await page.getByRole('heading',{name:'最近一次充电',exact:true}).waitFor();
+    await page.getByRole('tab',{name:'充电回顾',exact:true}).click();
+    await page.getByLabel('充电月份',{exact:true}).waitFor();
     const oldResponse=page.waitForResponse(response=>response.url().includes('/api/charging/process?')&&new URL(response.url()).searchParams.get('id')!=='current');
     releaseHistory();await oldResponse;releaseHistory=undefined;
     await page.evaluate(()=>new Promise(requestAnimationFrame));
@@ -102,27 +103,21 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await page.reload();
     await page.getByRole('tab',{name:'充电记录',exact:true}).waitFor();
     assert.equal(await page.getByRole('tab',{name:'充电记录',exact:true}).getAttribute('aria-selected'),'true','reload keeps the selected workspace tab');
-    // A real current process remains available after the reorganization.
-    currentActive=true;
-    await page.getByRole('tab',{name:'当前状态',exact:true}).click();
-    await page.locator('.charging-charts').waitFor();
-    assert.match(await page.locator('.charging-tab-panel').innerText(),/本次观测.*52%.*64%/s);
-    assert.equal(await page.getByRole('heading',{name:'最近一次充电',exact:true}).count(),0,'active process keeps past summary in records');
     fs.mkdirSync('/tmp/zeekr-energy-workspace',{recursive:true});
     for(const theme of ['light','dark']){
       await page.getByLabel('外观',{exact:true}).selectOption(theme);
       for(const width of [1440,1280,1024]){
         await page.setViewportSize({width,height:1000});
-        for(const name of ['当前状态','充电记录','能源参数']){
+        for(const name of ['充电回顾','充电记录','能源参数']){
           await page.getByRole('tab',{name,exact:true}).click();
           assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${name} ${theme} ${width} overflows`);
         }
       }
-      await page.getByRole('tab',{name:'当前状态',exact:true}).click();
+      await page.getByRole('tab',{name:'充电回顾',exact:true}).click();
       await page.setViewportSize({width:1440,height:1000});
       await page.screenshot({path:`/tmp/zeekr-energy-workspace/current-${theme}.png`,fullPage:true});
     }
     assert.deepEqual(errors,[]);
-    console.log('Energy workspace passed: desktop tabs, recent record, lazy queries, current/history isolation, late response, disclosures and themes.');
+    console.log('Energy workspace passed: desktop tabs, recent record, lazy queries, review/history isolation, late response, disclosures and themes.');
   }finally{if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(error=>{console.error(error);process.exitCode=1;});
