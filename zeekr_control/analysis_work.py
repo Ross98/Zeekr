@@ -12,6 +12,9 @@ from .analysis_cancel import configure_sqlite, check_cancelled
 
 
 MAX_RESULT_BYTES = 4 * 1024 * 1024
+ARCHIVE_RECORD_FIELDS = ('key', 'fetched_at', 'source', 'flags', 'gap_seconds', 'delay_seconds')
+ARCHIVE_RECORD_KEYS = frozenset((*ARCHIVE_RECORD_FIELDS, 'observed_at', 'state_time', 'change'))
+PARKING_LOCATION_FIELDS = ('valid', 'latitude', 'longitude', 'coordinate_system', 'trusted')
 
 
 class AnalysisCapacity(ValueError):
@@ -119,7 +122,7 @@ class SampleRows:
             sample=dict(record=dict(observed_at=row[1],state_time=row[2],flags=[] if row[3] else ['invalid'],change=row[11]),
                         state=dict(soc=row[4],charging=None if row[5] is None else bool(row[5]),km=row[6],
                                    off=None if row[7] is None else bool(row[7]),speed=row[8],gear=row[9]),
-                        location=json.loads(row[10]))
+                        location=self.store.location(row[10]))
             yield (row[0],sample) if indexed else sample
 
     def with_condition(self, where, args=()):
@@ -135,10 +138,15 @@ class SampleRows:
 
 
 class SampleStore(WorkDatabase):
-    """Replayable scalar projection, ordered and canonicalized using v6 rules."""
-    def __init__(self, samples):
+    """Replayable scalar projection, ordered and canonicalized using v6 rules.
+
+    compact is for ParkingAnalytics, which removes internal positions after
+    naming. Direct build_events keeps the complete input location dictionaries.
+    """
+    def __init__(self, samples, *, compact=False):
         super().__init__()
         self.samples = samples
+        self.compact = compact
 
     def __enter__(self):
         super().__enter__()
@@ -151,8 +159,21 @@ class SampleStore(WorkDatabase):
                 for sample in self.samples:
                     check_cancelled()
                     record, state = sample['record'], sample['state']
-                    projection = (json.dumps(record, ensure_ascii=False, separators=(',', ':')),
-                                  json.dumps(sample.get('location'), ensure_ascii=False, separators=(',', ':')))
+                    saved_record, location = record, sample.get('location')
+                    if self.compact:
+                        # Archive metadata's timing/change values already have scalar columns.
+                        # Unknown record shapes retain their complete original representation.
+                        if (record.keys() == ARCHIVE_RECORD_KEYS
+                                and type(record['observed_at']) is int
+                                and type(record['state_time']) in (int, type(None))
+                                and isinstance(record['change'], str)):
+                            saved_record = [record[key] for key in ARCHIVE_RECORD_FIELDS]
+                        # Public parking responses remove internal positions after naming.
+                        # Retain all fields used by position, movement and trust decisions.
+                        if isinstance(location, dict):
+                            location = [location.get(key) for key in PARKING_LOCATION_FIELDS]
+                    projection = (json.dumps(saved_record, ensure_ascii=False, separators=(',', ':')),
+                                  json.dumps(location, ensure_ascii=False, separators=(',', ':')))
                     if any(len(part.encode()) > 8192 for part in projection):
                         raise AnalysisCapacity('分析观测元数据过大，无法安全读取。')
                     yield (record['observed_at'], record.get('state_time'), observation_time(sample),
@@ -182,11 +203,18 @@ class SampleStore(WorkDatabase):
             self.__exit__(type(error), error, error.__traceback__)
             raise
 
-    @staticmethod
-    def decode(row):
+    def location(self, encoded):
+        value = json.loads(encoded)
+        return dict(zip(PARKING_LOCATION_FIELDS, value)) if self.compact and isinstance(value, list) else value
+
+    def decode(self, row):
         state = dict(soc=row[6], charging=None if row[7] is None else bool(row[7]), km=row[8],
                      off=None if row[9] is None else bool(row[9]), speed=row[10], gear=row[11])
-        return dict(record=json.loads(row[5]), state=state, location=json.loads(row[12]),
+        record = json.loads(row[5])
+        if self.compact and isinstance(record, list):
+            record = dict(zip(ARCHIVE_RECORD_FIELDS, record))
+            record.update(observed_at=row[1], state_time=row[2], change=row[15])
+        return dict(record=record, state=state, location=self.location(row[12]),
                     inside_temp=row[13], inside_time=row[14])
 
     def raw(self, where='1', args=()):

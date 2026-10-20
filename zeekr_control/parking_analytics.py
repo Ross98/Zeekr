@@ -299,7 +299,7 @@ class ParkingAnalytics:
                     inside_time = numeric(climate.get('temperatureUpdateTime'), 1, 9999999999999) if isinstance(climate, dict) else None
                     yield {'record': record, 'state': decode(raw), 'location': parse_location(raw), 'inside_temp': inside, 'inside_time': inside_time}
                 cursor = chunk_end
-        with SampleStore(samples()) as base_samples:
+        with SampleStore(samples(), compact=True) as base_samples:
             result = analyze_parking(base_samples.raw('r.observed>=? AND r.observed<?',
                                       (max(0, lower-padding), upper+padding)), lower, upper, capacity)
             if self.database is not None:
