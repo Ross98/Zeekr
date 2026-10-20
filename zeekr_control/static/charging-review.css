@@ -26,7 +26,7 @@
 #charging-review .cr-share-label strong small{font-size:12px;font-weight:400;margin-left:4px}
 #charging-review .cr-share-pointer{height:11px;width:1px;background:var(--cr-muted);opacity:.65}
 #charging-review .cr-swatch{width:11px;height:6px;border-radius:2px}
-#charging-review .cr-analysis-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--cr-line);padding-top:17px;gap:24px}
+#charging-review .cr-analysis-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--cr-line);padding-top:17px;gap:24px}
 #charging-review .cr-analysis-value{font-size:26px;line-height:1.25;font-weight:600;font-variant-numeric:tabular-nums;display:block;margin:6px 0;letter-spacing:-.4px}
 #charging-review .cr-analysis-value small{font-size:12px;font-weight:400}
 #charging-review .cr-analysis details{border-top:1px solid var(--cr-line);padding-top:11px;margin-top:16px;font-size:12px;color:var(--cr-muted)}
@@ -141,3 +141,5 @@
 #charging-review .cr-footprint-toggle:focus-visible{outline-offset:-4px}
 #charging-review .cr-place-distribution{padding:0 20px 16px;border-top:1px solid var(--cr-line)}
 #charging-review .cr-place-distribution[hidden]{display:none}
+
+.cr-records-tools{display:flex;align-items:center;gap:12px}.cr-records-tools button{font-size:12px}

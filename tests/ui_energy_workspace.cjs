@@ -35,10 +35,11 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     assert.equal(await page.locator('#charge-management').count(),0,'current state does not mount management');
     assert.equal(reads.filter(url=>url.includes('/api/events?')||url.includes('/api/charging/manage?')).length,0);
     assert.equal(await page.locator('.energy-current-soc').count(),0,'SOC shown once in the top summary');
-    await page.getByRole('tab',{name:'充电记录',exact:true}).click();
+    await page.getByRole('button',{name:'管理记录',exact:true}).click();
     await page.getByRole('button',{name:'查询充电记录',exact:true}).click();
     await page.getByRole('heading',{name:'充电详情',exact:true}).waitFor();
-    assert.equal(await page.getByRole('tab',{name:'充电记录',exact:true}).getAttribute('aria-selected'),'true');
+    assert.deepEqual(await page.locator('.charging-tabs [role=tab]').allTextContents(),['充电回顾','能源参数']);
+    assert.equal(await page.getByRole('tab',{name:'充电回顾',exact:true}).getAttribute('aria-selected'),'true');
     assert.match(await page.locator('#charge-detail').innerText(),/40.*64/s);
     assert.equal(await page.locator('#charge-record-view #charge-detail').count(),1,'selected detail has one stable reading pane');
     const layout=await page.evaluate(()=>{const list=document.querySelector('.charge-list-card').getBoundingClientRect(),detail=document.querySelector('#charge-detail').getBoundingClientRect(),chart=document.querySelector('.energy-record-process').getBoundingClientRect(),evidence=document.querySelector('[data-detail="charge-record-evidence"]').getBoundingClientRect();return {sideBySide:list.right<=detail.left,chartFirst:chart.top<evidence.top};});
@@ -78,7 +79,7 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     assert.ok(reads.filter(url=>url.includes('/api/charging/process?')).every(url=>new URL(url).searchParams.get('id')!=='current'));
     // Hold a historical response, then return to current before it completes.
     releaseHistory=null;
-    await page.getByRole('tab',{name:'充电记录',exact:true}).click();
+    await page.getByRole('button',{name:'管理记录',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('.charge-loading'));
     await page.getByRole('tab',{name:'充电回顾',exact:true}).click();
     await page.getByLabel('充电月份',{exact:true}).waitFor();
@@ -92,7 +93,8 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await page.locator('[data-detail="energy-low-voltage"] summary').click();
     await page.evaluate(()=>render());
     assert.equal(await page.locator('[data-detail="energy-low-voltage"]').getAttribute('open'),'');
-    await page.getByRole('tab',{name:'充电记录',exact:true}).click();
+    await page.getByRole('tab',{name:'充电回顾',exact:true}).click();
+    await page.getByRole('button',{name:'管理记录',exact:true}).click();
     assert.equal(await page.locator('#charge-management').count(),0,'management mounts only when requested');
     await page.locator('[data-detail="energy-management"] summary').click();
     await page.getByRole('button',{name:'查询管理充电记录',exact:true}).waitFor();
@@ -101,14 +103,16 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await page.locator('[data-charge-record="fixture-charge"]').waitFor();
     await page.waitForFunction(()=>new URLSearchParams(location.search).get('energyTab')==='records');
     await page.reload();
-    await page.getByRole('tab',{name:'充电记录',exact:true}).waitFor();
-    assert.equal(await page.getByRole('tab',{name:'充电记录',exact:true}).getAttribute('aria-selected'),'true','reload keeps the selected workspace tab');
+    await page.getByRole('button',{name:'返回充电回顾',exact:true}).waitFor();
+    assert.equal(await page.getByRole('tab',{name:'充电回顾',exact:true}).getAttribute('aria-selected'),'true','legacy records URL restores management under review');
+    await page.getByRole('button',{name:'返回充电回顾',exact:true}).click();
+    await page.getByLabel('充电月份',{exact:true}).waitFor();
     fs.mkdirSync('/tmp/zeekr-energy-workspace',{recursive:true});
     for(const theme of ['light','dark']){
       await page.getByLabel('外观',{exact:true}).selectOption(theme);
       for(const width of [1440,1280,1024]){
         await page.setViewportSize({width,height:1000});
-        for(const name of ['充电回顾','充电记录','能源参数']){
+        for(const name of ['充电回顾','能源参数']){
           await page.getByRole('tab',{name,exact:true}).click();
           assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${name} ${theme} ${width} overflows`);
         }

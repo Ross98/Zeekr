@@ -142,7 +142,7 @@ const insightSections = ['car','energy','books','tracks','insights','settings','
 window.RefreshView.context=()=>[state?.insights_context||'',page,sectionTask,trackSource].join('|');
 const insightsPage = window.InsightsPage.create({getState:()=>state,request:api,escape:esc,active:()=>insightSections.includes(page),review:openResearchReview,dictionary:{mount:container=>{reviewSync();if(!container.querySelector('#field-results'))container.innerHTML=fieldsPage();renderFields();},handle:()=>false,selected:()=>reviewSelected,select:selectReviewField,catalog:setReviewCatalog,study:setReviewStudy,onPanel:callback=>{reviewPanelMount=callback;},refresh:renderFields,editing:()=>reviewEditing,edit:editReviewStep,canEdit:canEditReview,propose:proposeReview},
   navigate:(section,view,date,eventId)=>{if(['ledger','life','costs'].includes(view)){enterBooks(view,date,eventId);return;}page=['calendar','report'].includes(view)?view:section;sectionTask=['insights','calendar','report'].includes(page)?'':view;render();if(date===undefined)insightsPage.openTool(view);else insightsPage.openDate(view,date);$('#insights-workspace')?.scrollIntoView({block:'start'});}});
-const chargingReview = window.ChargingReviewPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='energy'&&!sectionTask&&chargingTab==='summary',openRecord:openOverviewRecord,openLedger:row=>enterBooks('ledger',row.bill?.date||beijingDate(row.end_time),row.id)});
+const chargingReview = window.ChargingReviewPage.create({getState:()=>state,request:api,escape:esc,active:()=>page==='energy'&&!sectionTask&&chargingTab==='summary',openRecord:openOverviewRecord,openManagement:()=>selectChargingTab('records'),openLedger:row=>enterBooks('ledger',row.bill?.date||beijingDate(row.end_time),row.id)});
 const overviewDashboard = window.OverviewDashboard.create({getState:()=>state,request:api,escape:esc,active:()=>page==='overview',attention:overviewAttentionItems,time:value=>Number.isFinite(value)?tripTagTime(value):'时间未知',openRecord:openOverviewRecord,
   openTool:(tool,date)=>{if(tool==='calendar'){page='calendar';sectionTask='';render();insightsPage.openDate('calendar',date);}else if(tool==='parameters'){openVehicleParameters();}else if(tool==='settings'){page='settings';sectionTask='';render();}else if(tool==='places'){page='tracks';sectionTask='';trackSource='tags';render();}else{if(tool==='ledger'||tool==='costs'){enterBooks(tool,date);return;}page='settings';sectionTask=tool;render();insightsPage.openDate(tool,date);}window.scrollTo(0,0);}});
 async function openOverviewRecord(record){
@@ -568,9 +568,10 @@ function chargingRecords() {
 }
 
 function chargingWorkspace(details) {
-  const tabs=[['summary','充电回顾'],['records','充电记录'],['parameters','能源参数']];
-  const body=chargingTab==='summary'?'<div id="charging-review"></div>':chargingTab==='records'?chargingRecords():energyParameters(details);
-  return `<section class="charging-workspace"><div class="charging-tabs" role="tablist" aria-label="能源内容">${tabs.map(([key,label])=>`<button id="charging-tab-${key}" role="tab" aria-controls="charging-tab-panel" aria-selected="${chargingTab===key}" data-action="charging-tab" data-tab="${key}" class="${chargingTab===key?'active':''}">${label}</button>`).join('')}</div><div id="charging-tab-panel" class="charging-tab-panel" role="tabpanel" aria-labelledby="charging-tab-${chargingTab}">${body}</div></section>`;
+  const tabs=[['summary','充电回顾'],['parameters','能源参数']];
+  const activeTab=chargingTab==='records'?'summary':chargingTab;
+  const body=chargingTab==='summary'?'<div id="charging-review"></div>':chargingTab==='records'?`<div class="cr-records-heading"><h3>充电记录管理</h3><button data-action="charging-tab" data-tab="summary">返回充电回顾</button></div>${chargingRecords()}`:energyParameters(details);
+  return `<section class="charging-workspace"><div class="charging-tabs" role="tablist" aria-label="能源内容">${tabs.map(([key,label])=>`<button id="charging-tab-${key}" role="tab" aria-controls="charging-tab-panel" aria-selected="${activeTab===key}" data-action="charging-tab" data-tab="${key}" class="${activeTab===key?'active':''}">${label}</button>`).join('')}</div><div id="charging-tab-panel" class="charging-tab-panel" role="tabpanel" aria-labelledby="charging-tab-${activeTab}">${body}</div></section>`;
 }
 
 function selectChargingTab(tab) {

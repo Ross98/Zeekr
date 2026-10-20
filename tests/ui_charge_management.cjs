@@ -20,7 +20,7 @@ const assert=require('node:assert/strict');
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
     await page.getByText('64%',{exact:true}).first().waitFor();
     await page.getByRole('button',{name:'能源与充电',exact:true}).click();
-    await page.getByRole('tab',{name:'充电记录',exact:true}).click();
+    await page.getByRole('button',{name:'管理记录',exact:true}).click();
     await page.locator('[data-detail="energy-management"] summary').click();
     await page.getByRole('heading',{name:'管理充电记录',exact:true}).waitFor();
     await page.getByRole('button',{name:'查询管理充电记录',exact:true}).click();
