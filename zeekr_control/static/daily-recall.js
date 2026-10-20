@@ -67,7 +67,7 @@ async function recallLoadHistory(side,cursor=null){
 }
 function recallOpenDay(date,id='day'){
   page='tracks';sectionTask='';trackSource='local';trackDate=date;render();const h=syncLocalTrips();h.selection='day';h.restoreSelection=id;
-  loadLocalTrips(true).then(()=>{if(localTrips===h&&showPosition)loadLocalRoute();});window.scrollTo({top:0,behavior:'instant'});
+  loadLocalTrips(true).then(()=>{if(localTrips===h&&showTrackPosition)loadLocalRoute();});window.scrollTo({top:0,behavior:'instant'});
 }
 async function recallLoadYear(){
   const year=$('#recall-year')?.value,context=state?.insights_context,serial=++recallYearSerial;

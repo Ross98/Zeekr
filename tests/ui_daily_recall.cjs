@@ -7,15 +7,17 @@ const {contrast}=require('./ui_insight_helpers.cjs');
  try{
  const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('fixture timeout')),30000);server.stdout.once('data',d=>{clearTimeout(timer);resolve(Number(String(d).trim()));});server.stderr.on('data',d=>process.stderr.write(d));server.once('exit',code=>reject(Error('fixture exited '+code)));});
  browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});const page=await browser.newPage({viewport:{width:1440,height:1080}});page.setDefaultTimeout(10000);
- const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const errors=[],routeQueries=[];page.on('pageerror',e=>errors.push(e.message));
+ page.on('request',request=>{if(new URL(request.url()).pathname==='/api/tracks')routeQueries.push(request.url());});
  await page.route('https://wprd0*.is.autonavi.com/**',r=>r.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e5ece6"/><path d="M0 128H256M128 0V256" stroke="#fff" stroke-width="8"/></svg>'}));
  await page.goto('http://127.0.0.1:'+port);
- // Current overview shows location by default; exercise the user's hide action
- // before checking that summaries retain the explicitly hidden state.
- await page.getByRole('button',{name:'隐藏位置',exact:true}).click();
+ // Overview and tracks have independent defaults; entering tracks is not map consent.
+ assert.equal(await page.getByRole('button',{name:'隐藏位置',exact:true}).count(),1);
  await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();await page.getByLabel('轨迹日期').fill('2026-09-20');await page.getByRole('button',{name:'查询行程',exact:true}).click();
  await page.locator('[data-local-trip="recall-charge"]').waitFor();assert.match(await page.locator('#recall-summary').innerText(),/27 km/);
  assert.ok(await page.locator('[data-local-trip^="parking_"]').count());assert.equal(await page.locator('#map').count(),0);
+ assert.equal(routeQueries.length,0,'default trip queries must not load coordinates');
+ await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).waitFor();
  const hidden=await page.evaluate(()=>localTrips.events);assert.ok(hidden.every(r=>!r.position));
  const parking=hidden.find(r=>r.parking_status==='parked'&&r.duration_seconds===6000);
  assert.ok(parking,'one complete stop must span both sides of charging');
@@ -48,7 +50,20 @@ const {contrast}=require('./ui_insight_helpers.cjs');
  await page.setViewportSize({width:1440,height:1080});await page.getByLabel('外观',{exact:true}).selectOption('light');await page.locator('.recall-year-panel>summary').click();await page.locator('[data-local-trip="recall-drive"]').click();if(await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).isVisible())await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).click();await page.waitForFunction(()=>localTrips.route?.count>1);
  await page.locator('.local-observation-details>summary').click();await page.evaluate(()=>render());assert.equal(await page.locator('.local-observation-details').evaluate(el=>el.open),true);await page.locator('.local-observation-details>summary').click();
  await page.screenshot({path:dir+'/timeline-desktop-viewport.png'});await page.screenshot({path:dir+'/timeline-desktop.png',fullPage:true});if(!process.env.DESKTOP_ONLY){await page.setViewportSize({width:390,height:844});await page.screenshot({path:dir+'/timeline-mobile.png',fullPage:true});}
+ await page.reload();await page.locator('[data-local-trip="recall-drive"]').waitFor();
+ await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).waitFor();
+ assert.equal(await page.locator('#map').count(),0,'reloading tracks restores the hidden default');
+ assert.ok((await page.evaluate(()=>localTrips.events)).every(r=>!r.position));
+ await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).click();await page.waitForFunction(()=>localTrips.route?.count>1);
  await page.getByRole('button',{name:'隐藏位置',exact:true}).click();assert.equal(await page.locator('#map').count(),0);assert.ok((await page.evaluate(()=>localTrips.events)).every(r=>!r.position));
+ await page.getByRole('button',{name:'总览',exact:true}).first().click();
+ await page.getByRole('button',{name:'隐藏位置',exact:true}).waitFor();
+ assert.equal(await page.locator('#map').count(),1,'hiding tracks must not hide the overview map');
+ await page.getByRole('button',{name:'隐藏位置',exact:true}).click();
+ await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).click();
+ await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();
+ await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).waitFor();
+ assert.equal(await page.locator('#map').count(),0,'showing the overview map must not enable the tracks map');
  await page.reload();await page.locator('[data-local-trip="recall-drive"]').waitFor();await page.waitForFunction(()=>localTrips.selection==='recall-drive');assert.equal(new URL(page.url()).searchParams.get('record'),'recall-drive');
  assert.deepEqual(errors,[]);console.log('Daily recall browser passed: timeline, consent, map reuse, correction, undo, history, ledger return, year, URL, responsive contrast.');
  }finally{if(browser)await browser.close();server.kill();}

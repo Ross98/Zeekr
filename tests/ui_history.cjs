@@ -66,14 +66,16 @@ const fs = require('node:fs');
     assert.equal(await page.locator('path.route-sparse-line').getAttribute('stroke-dasharray'),'7 7');
     await page.getByLabel('轨迹回看位置').fill('2');
     assert.match(await page.locator('#playback-label').innerText(), /3 \/ 3.*08:20/);
-    for(const width of [320,390,1024,1440]) {
+    for(const width of (process.env.DESKTOP_ONLY?[1024,1280,1440]:[320,390,1024,1440])) {
       await page.setViewportSize({width,height:1050});
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),false,`overflow at ${width}`);
     }
-    await page.setViewportSize({width:390,height:1050});
-    fs.mkdirSync('/tmp/zeekr-history-qa',{recursive:true});
-    await page.evaluate(() => window.scrollTo(0,0));
-    await page.screenshot({path:'/tmp/zeekr-history-qa/history-mobile.png',fullPage:true});
+    if(!process.env.DESKTOP_ONLY){
+      await page.setViewportSize({width:390,height:1050});
+      fs.mkdirSync('/tmp/zeekr-history-qa',{recursive:true});
+      await page.evaluate(() => window.scrollTo(0,0));
+      await page.screenshot({path:'/tmp/zeekr-history-qa/history-mobile.png',fullPage:true});
+    }
     await page.setViewportSize({width:1440,height:1050});
     fs.mkdirSync('/tmp/zeekr-history-qa',{recursive:true});
     await page.evaluate(() => window.scrollTo(0,0));
@@ -82,7 +84,9 @@ const fs = require('node:fs');
     await page.getByRole('button',{name:'下一页',exact:true}).click();
     await page.waitForFunction(() => document.querySelector('[data-action="cloud-next"]')?.disabled);
     assert.match(queries[1], /cursor=1704070000000/);
-    assert.equal(await page.locator('#cloud-detail').count(), 0);
+    assert.equal(await page.evaluate(()=>cloudHistory.selected?.key),'trip-2');
+    assert.equal(await page.locator('#map').count(),0,'pagination clears the previous route');
+    await page.getByRole('button',{name:'读取行程路线',exact:true}).waitFor();
     for (const [status,message] of [['empty','这一天没有云端行程'],['forbidden','账号无权读取云端历史'],['session_expired','历史会话已失效'],['request_failed','历史查询失败']]) {
       response = {status,message,trips:status==='empty'?[]:undefined,next_cursor:null};
       await page.getByRole('button',{name:'查询行程',exact:true}).click();
@@ -98,11 +102,13 @@ const fs = require('node:fs');
     await page.getByRole('button',{name:'查询行程',exact:true}).click();
     await page.waitForFunction(() => document.querySelector('[data-action="cloud-query"]')?.disabled);
     await page.getByLabel('轨迹日期').fill('2024-01-02');
+    await page.getByLabel('轨迹日期').blur();
+    await page.waitForFunction(()=>trackDate==='2024-01-02'&&!cloudHistory.busy);
     finish();
     await page.waitForTimeout(100);
     assert.equal(await page.getByRole('button',{name:/查看行程 1/}).count(), 0);
     assert.match(await page.locator('main').innerText(), /查询所选日期/);
     assert.deepEqual(errors,[]);
-    console.log('History UI passed: authorization, explicit query, privacy, detail, pagination, states, stale response, four widths.');
+    console.log(`History UI passed: authorization, explicit query, privacy, detail, pagination, states, stale response, ${process.env.DESKTOP_ONLY?'desktop widths':'four widths'}.`);
   } finally { if(browser) await browser.close(); server.kill(); }
 })().catch(error => { console.error(error); process.exitCode=1; });

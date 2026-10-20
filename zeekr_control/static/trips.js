@@ -134,7 +134,7 @@ async function fetchLocalTrips(h) {
   const request=++h.listRequest;
   renderLocalTripList();
   try {
-    const [timeline,result]=await Promise.all([api(`/api/timeline?date=${encodeURIComponent(trackDate)}${showPosition?'&positions=1':''}`),api(`/api/trips?date=${encodeURIComponent(trackDate)}`)]);
+    const [timeline,result]=await Promise.all([api(`/api/timeline?date=${encodeURIComponent(trackDate)}${showTrackPosition?'&positions=1':''}`),api(`/api/trips?date=${encodeURIComponent(trackDate)}`)]);
     result.events=timeline.records;result.next_cursor=null;result.revision=timeline.revision;
     if (localTrips!==h || request!==h.listRequest) return;
     if(h.revision!==undefined&&h.revision!==result.revision){recallHistory=null;if(recallCorrection){recallCorrection.preview=null;recallCorrection.message='记录已更新，请重新预览后保存。';}}
@@ -170,7 +170,7 @@ function mountLocalTrips() {
   if(tripManagementOpen)tripManager.mount($('#trip-management'));
   recallPaintYear();
   if(h.queried&&h.personalRevision!==window.recallPersonalRevision)loadLocalTrips(true);
-  if(h.queried&&showPosition&&!h.route)loadLocalRoute();
+  if(h.queried&&showTrackPosition&&!h.route)loadLocalRoute();
 }
 
 function refreshLocalTrips() {
@@ -194,7 +194,7 @@ function clearLocalRoute() {
 
 async function loadLocalRoute(force=false) {
   const h=localTrips;
-  if (!h || !h.queried || !showPosition || !localTripVisible(h) || (h.routeBusy&&!force)) return;
+  if (!h || !h.queried || !showTrackPosition || !localTripVisible(h) || (h.routeBusy&&!force)) return;
   h.routeBusy=true;h.routeError='';
   const selection=h.selection, request=++h.routeRequest;
   if (!h.route) renderLocalRoute();
@@ -206,7 +206,7 @@ async function loadLocalRoute(force=false) {
       const observations=p?[{...p,state_time:t,observed_time:t,trusted:true,plottable:true,time_label:tripTime(t),time_source:'记录位置'}]:[];
       result={observations,segments:[],gaps:[],count:observations.length};
     }else result=await api(`/api/tracks?date=${encodeURIComponent(trackDate)}${selection==='day'?'':`&trip=${encodeURIComponent(selection)}`}`);
-    if (!localTripVisible(h)||!showPosition||request!==h.routeRequest||selection!==h.selection) return;
+    if (!localTripVisible(h)||!showTrackPosition||request!==h.routeRequest||selection!==h.selection) return;
     if (JSON.stringify(result)!==JSON.stringify(h.route)) {
       const point=tripPointKey(playback[h.index]);
       h.route=result;trackData=result;
@@ -218,7 +218,7 @@ async function loadLocalRoute(force=false) {
       if(h.fitSelection){fitLocalRoute();h.fitSelection=false;}
     }
   } catch(error) {
-    if (localTripVisible(h)&&request===h.routeRequest&&showPosition) {h.routeError=error.message;renderLocalRoute();}
+    if (localTripVisible(h)&&request===h.routeRequest&&showTrackPosition) {h.routeError=error.message;renderLocalRoute();}
   } finally {
     if (request===h.routeRequest) {
       h.routeBusy=false;
@@ -254,7 +254,7 @@ function renderLocalRoute() {
 function renderLocalRouteContent() {
   const h=localTrips,target=$('#local-trip-route');
   if (!target) return;
-  if (!showPosition) {target.innerHTML=privacyGate(true);return;}
+  if (!showTrackPosition) {target.innerHTML=privacyGate(true);return;}
   const result=h.route;
   if (!result) {
     if(map&&map.getContainer()===$('#local-trips #map')){renderLocalRouteStatus();return;}
@@ -357,11 +357,11 @@ function stopLocalPlayback() {
 
 function startLocalPlayback() {
   const h=localTrips;
-  if (!h || playback.length<2 || !showPosition) return;
+  if (!h || playback.length<2 || !showTrackPosition) return;
   stopLocalPlayback();
   if (h.index>=playback.length-1) displayLocalPoint(0);
   h.timer=setInterval(()=>{
-    if (!localTripVisible(h)||!showPosition||document.hidden) {stopLocalPlayback();return;}
+    if (!localTripVisible(h)||!showTrackPosition||document.hidden) {stopLocalPlayback();return;}
     displayLocalPoint(h.index+1);
     if(h.index>=playback.length-1)stopLocalPlayback();
   },1000/h.speed);
@@ -373,7 +373,7 @@ function prepareLocalTripRender() {
   if (map && $('#local-trips')) localTrips.viewport={center:map.getCenter(),zoom:map.getZoom()};
   stopLocalPlayback();
   if($('#local-trip-list'))localTrips.listScroll=$('#local-trip-list').scrollTop;
-  if (!showPosition) {for(const row of localTrips.events||[])delete row.position;localTrips.routeRequest++;localTrips.route=null;localTrips.routeBusy=false;localTrips.routeError='';localTrips.index=0;localTrips.viewport=null;}
+  if (!showTrackPosition) {for(const row of localTrips.events||[])delete row.position;localTrips.routeRequest++;localTrips.route=null;localTrips.routeBusy=false;localTrips.routeError='';localTrips.index=0;localTrips.viewport=null;}
 }
 
 function handleLocalTripAction(target) {
@@ -386,7 +386,7 @@ function handleLocalTripAction(target) {
     if(selection!=='day'&&!trip)return true;
     clearLocalRoute();h.selection=selection;h.selected=trip || null;h.notice='';recallCorrection=null;recallHistory=null;
     renderLocalTripList();renderLocalTripDetail();
-    persistNavigation();if(showPosition)loadLocalRoute();return true;
+    persistNavigation();if(showTrackPosition)loadLocalRoute();return true;
   }
   switch(target.dataset.action) {
     case 'local-manage':tripManagementOpen=!tripManagementOpen;stopLocalPlayback();render();return true;
@@ -395,7 +395,7 @@ function handleLocalTripAction(target) {
     case 'local-step-back': stopLocalPlayback();displayLocalPoint(h.index-1);return true;
     case 'local-step-next': stopLocalPlayback();displayLocalPoint(h.index+1);return true;
     case 'local-route-retry': loadLocalRoute(true);return true;
-    case 'local-reload': h.cursor=null;h.previous=[];loadLocalTrips(true).then(()=>{if(localTripVisible(h)&&showPosition)loadLocalRoute(true);});return true;
+    case 'local-reload': h.cursor=null;h.previous=[];loadLocalTrips(true).then(()=>{if(localTripVisible(h)&&showTrackPosition)loadLocalRoute(true);});return true;
     case 'local-prev': if(h.previous.length){h.cursor=h.previous.pop();loadLocalTrips();}return true;
     case 'local-next': if(h.nextCursor){h.previous.push(h.cursor);h.cursor=h.nextCursor;loadLocalTrips();}return true;
     case 'local-day-before': case 'local-day-after': case 'local-today': {

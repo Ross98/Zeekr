@@ -25,7 +25,7 @@ function cloudTripDetail() {
   const trip = cloudHistory.selected;
   if (!trip) return '';
   let route;
-  if (!showPosition) {
+  if (!showTrackPosition) {
     route = `<div class="cloud-route-gate">${icon('map')}<h3>按需显示行程路线</h3><p class="subtle">路线可能包含常去地点。开启后会读取轨迹点；地图底图由 OpenStreetMap 提供。</p>${cloudButton('显示行程路线','cloud-show-route')}</div>`;
   } else if (cloudHistory.detailBusy) {
     route = `<div role="status">${empty('正在读取路线','正在查询所选行程的轨迹点。','tracks')}</div>`;
@@ -38,7 +38,7 @@ function cloudTripDetail() {
   } else {
     route = `<div id="map" class="map-canvas" aria-label="云端行程路线地图"></div><div id="map-status" class="map-status"></div><div class="track-timeline"><div id="playback-label" class="subtle">拖动滑块逐点回看</div><input id="playback" type="range" aria-label="轨迹回看位置" min="0" max="0" value="0" disabled></div>`;
   }
-  return `<section class="card" id="cloud-detail"><div class="card-head"><h2>行程详情</h2>${pill('云端历史')}${showPosition?cloudButton('隐藏位置','hide-position'):''}</div><div class="card-body cloud-trip-facts">${row('开始时间',trip.start_at)}${row('结束时间',trip.end_at)}${row('行驶里程',cloudMetric(trip.distance_km,' km'))}${row('行驶时长',cloudMetric(trip.duration_minutes,' 分钟'))}${row('平均速度',cloudMetric(trip.average_speed_kmh,' km/h'))}${row('行程上报',trip.report_at)}</div>${route}</section>`;
+  return `<section class="card" id="cloud-detail"><div class="card-head"><h2>行程详情</h2>${pill('云端历史')}${showTrackPosition?cloudButton('隐藏位置','hide-position'):''}</div><div class="card-body cloud-trip-facts">${row('开始时间',trip.start_at)}${row('结束时间',trip.end_at)}${row('行驶里程',cloudMetric(trip.distance_km,' km'))}${row('行驶时长',cloudMetric(trip.duration_minutes,' 分钟'))}${row('平均速度',cloudMetric(trip.average_speed_kmh,' km/h'))}${row('行程上报',trip.report_at)}</div>${route}</section>`;
 }
 function cloudHistoryPage() {
   const h = cloudHistory;
@@ -91,12 +91,12 @@ async function queryCloudHistory(direction='first') {
 }
 async function loadCloudDetail() {
   const h=cloudHistory;
-  if(!h?.selected || !showPosition || h.detailBusy) return;
+  if(!h?.selected || !showTrackPosition || h.detailBusy) return;
   const version=++h.detailRequest, trip=h.selected.key;
   h.detailBusy=true; h.detail=null; render();
   try {
     const result=await api(`/api/history/points?trip=${encodeURIComponent(trip)}`);
-    if(cloudHistory===h && h.detailRequest===version && showPosition) h.detail=result;
+    if(cloudHistory===h && h.detailRequest===version && showTrackPosition) h.detail=result;
   } catch(error) {
     if(cloudHistory===h && h.detailRequest===version) h.detail={status:'request_failed',message:error.message};
   } finally {
@@ -108,7 +108,7 @@ async function loadCloudDetail() {
 }
 function renderCloudMap() {
   const result=cloudHistory?.detail;
-  if(!showPosition || !result || result.status!=='available' || !$('#map')) return;
+  if(!showTrackPosition || !result || result.status!=='available' || !$('#map')) return;
   playback=(result.points || []).filter(point=>point.plottable);
   const note=`${result.count} 个轨迹点 · ${result.unplottable_count || 0} 个点无法绘制${result.truncated?' · 仅显示前 5000 个点':''}。间断分段显示，不补画路线。`;
   $('#map-status').textContent=note;
@@ -147,7 +147,7 @@ function handleCloudAction(target) {
     if(trip) {
       cloudHistory.selected=trip; cloudHistory.detail=null; cloudHistory.detailBusy=false; cloudHistory.detailRequest++;
       render();
-      if(showPosition) loadCloudDetail();
+      if(showTrackPosition) loadCloudDetail();
     }
     return true;
   }
@@ -155,7 +155,7 @@ function handleCloudAction(target) {
     case 'cloud-query': queryCloudHistory(); return true;
     case 'cloud-next': queryCloudHistory('next'); return true;
     case 'cloud-previous': queryCloudHistory('previous'); return true;
-    case 'cloud-show-route': showPosition=true; loadCloudDetail(); return true;
+    case 'cloud-show-route': showTrackPosition=true; loadCloudDetail(); return true;
     case 'cloud-retry-detail': loadCloudDetail(); return true;
     case 'cloud-day-before': cloudDate(-1); return true;
     case 'cloud-day-after': cloudDate(1); return true;
