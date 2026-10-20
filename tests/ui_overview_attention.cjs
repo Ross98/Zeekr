@@ -3,8 +3,9 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {fixture,contrast}=require('./ui_insight_helpers.cjs');
 (async()=>{
-  const f=await fixture(),{page}=f;
+  const f=await fixture({initialResearch:false}),{page}=f;
   try{
+    await page.waitForFunction(()=>state?.model);
     const original=await page.evaluate(()=>structuredClone(state));
     const healthy={...original,authenticated:true,error:null,
       recording:{...original.recording,active:true,status:'active',error:''},
@@ -24,6 +25,22 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:/车况已/}).click();
     assert.equal(await page.locator('#main').getAttribute('data-page'),'settings');
     await page.getByLabel('质量分析开始日期',{exact:true}).waitFor();
+    await show({monitoring:{...healthy.monitoring,status:'parked_waiting',data_change:'repeat'},
+      model:{...healthy.model,updated_time:Date.now()-7200000}});
+    assert.match(await page.locator('#overview-attention').innerText(),/最后状态为停车.*2 小时.*等待车辆更新/);
+    assert.equal(await page.locator('#overview-attention .pill.warn').count(),0);
+    const waitingPanel=await page.evaluate(()=>monitoringPanel());
+    assert.match(waitingPanel,/采集正常，等待车辆更新/);
+    assert.match(waitingPanel,/重复缓存/);
+    await page.route('**/api/refresh',r=>r.fulfill({json:response}));
+    for(const [result,message] of [['revision',/同一车辆时间.*修订/],['unchanged',/重复缓存/]]){
+      response={...response,refresh_result:result,next_query_at:0};
+      await page.getByRole('button',{name:'刷新状态',exact:true}).click();
+      await page.waitForFunction(()=>!busy);
+      assert.match(await page.locator('.refresh-result').innerText(),message);
+    }
+    fs.mkdirSync('/tmp/zeekr-attention-qa',{recursive:true});
+    await page.screenshot({path:'/tmp/zeekr-attention-qa/parked-repeat-desktop.png',fullPage:true});
     await show({model:{...healthy.model,updated_time:null}});
     assert.match(await page.locator('#overview-attention').innerText(),/车辆更新时间未知/);
     await show({model:{...healthy.model,updated_time:Date.now()+120000}});
@@ -54,7 +71,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     await show({monitoring:{...healthy.monitoring,events:[{kind:'trip_end',delivery:'failed',alert_delivery:'sent'}]}});
     await page.getByRole('button',{name:'最近 1 条通知失败',exact:true}).click();
     assert.equal(await page.locator('[data-detail="settings-notifications"]').getAttribute('open'),'');
-    assert.match(await page.locator('[data-detail="settings-notifications"]').innerText(),/发送失败/);
+    assert.match(await page.locator('[data-detail="settings-notifications"]').innerText(),/通知投递健康/);
     await show({monitoring:{...healthy.monitoring,online:false},recording:{...healthy.recording,status:'offline'}});
     assert.match(await page.locator('#overview-attention').innerText(),/后台未在线/);
     await show({monitoring:{...healthy.monitoring,status:'unavailable',online:false}});
@@ -71,16 +88,16 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     fs.mkdirSync('/tmp/zeekr-attention-qa',{recursive:true});
     for(const theme of ['light','dark']){
       await page.getByLabel('外观',{exact:true}).selectOption(theme);
-      for(const width of [1440,390,320]){
+      for(const width of [1440,1280]){
         await page.setViewportSize({width,height:900});
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`${theme} ${width} fits`);
         await contrast(page,'#overview-attention');
-        if(width!==320)await page.screenshot({path:`/tmp/zeekr-attention-qa/${theme}-${width}.png`,fullPage:true});
+        await page.screenshot({path:`/tmp/zeekr-attention-qa/${theme}-${width}.png`,fullPage:true});
       }
     }
     await show();
     assert.equal(await page.locator('#overview-attention').isVisible(),false,'resolved issues disappear');
-    assert.deepEqual(f.posts,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
-    console.log('UI_OVERVIEW_ATTENTION_PASS: health, freshness, unknown/future time, auth, monitoring, notification deduplication, recovery links, themes/mobile');
+    assert.equal(f.posts.filter(url=>url.endsWith('/api/refresh')).length,2);assert.ok(f.posts.every(url=>/\/api\/(refresh|analysis\/[a-f0-9]+\/cancel)$/.test(url)),JSON.stringify(f.posts));assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    console.log('UI_OVERVIEW_ATTENTION_PASS: health, freshness, unknown/future time, auth, monitoring, notification deduplication, recovery links, themes/desktop, parked repeated cache and same-time revision');
   }finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -15,6 +15,7 @@ from .client import Client
 from .cli import find_vins
 from .errors import ApiError, RateLimited
 from .monitor import Monitor
+from .vehicle_state import decode
 from .geocoding import AmapGeocoder
 from .focused_trip_image import FocusedTripImage
 from .profiles import vehicle_profile
@@ -125,7 +126,7 @@ def process_lock(path):
 
 
 PUBLIC_HEALTH_FIELDS = ('status', 'heartbeat', 'next_check', 'interval', 'last_success',
-                        'last_new', 'trip', 'charge')
+                        'last_new', 'trip', 'charge', 'data_change', 'state_time')
 
 
 def _safe_error(value):
@@ -283,11 +284,21 @@ class Runner:
                 observed = int(time.time() * 1000) if live_clock else now
                 fetched = getattr(client, 'last_query_fetched_at', None)
                 fetched_at = int(fetched * 1000) if type(fetched) in (int, float) else observed
-                SnapshotStore(self.root / 'snapshots.sqlite3').publish(
+                publication = SnapshotStore(self.root / 'snapshots.sqlite3').publish(
                     session_scope(session), binding, raw, observed, fetched_at=fetched_at, source='monitor')
                 profile = vehicle_profile(binding, choices.index(vin) + 1, len(choices))
                 health['status'] = self.monitor.observe(binding, raw, observed,
                     battery_capacity_kwh=profile.get('battery_capacity_kwh'), profile=profile)
+                point = decode(raw, self.monitor.active_codes, self.monitor.stopped_codes)
+                health.update(data_change=publication['change'],
+                              state_time=str(int(point['time'])) if point['time'] is not None else '')
+                # A repeated old parking snapshot describes the last known state,
+                # not a collection failure or a new observation for event logic.
+                if (health['status'] == 'stale' and publication['change'] == 'repeat'
+                        and point['time'] is not None and observed - point['time'] > 180000
+                        and point['off'] is True and point['charging'] is False
+                        and point['speed'] == 0):
+                    health['status'] = 'parked_waiting'
                 state = self.monitor.status(binding)
                 # Parking uses the same cadence, so starting a trip stays visible.
                 if health['status'] == 'fresh':

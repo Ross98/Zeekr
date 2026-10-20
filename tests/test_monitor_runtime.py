@@ -72,6 +72,64 @@ class RuntimeTests(unittest.TestCase):
         runner.tick(BASE + 2000)
         self.assertEqual(runner.health()['status'], 'blocked')
 
+    def test_old_parked_repeat_is_waiting_but_other_old_states_stay_stale(self):
+        class Client:
+            raw = sample(0)
+            def __init__(self, session): pass
+            def vehicles(self): return [{'vin': 'L6T79X2Z0NP000001'}]
+            def status(self, vin): return Client.raw
+        runner = self.runner(Client)
+        runner.tick(BASE)
+        runner.tick(BASE + 24 * 3600000)
+        health = runner.health()
+        self.assertEqual(health['status'], 'parked_waiting')
+        self.assertEqual(health['data_change'], 'repeat')
+        self.assertEqual(health['state_time'], str(BASE))
+        self.assertEqual(health['last_success'], str(BASE + 24 * 3600000))
+        self.assertEqual(health['error'], '')
+        self.assertEqual(runner.monitor.status(__import__('hashlib').sha256(b'L6T79X2Z0NP000001').hexdigest())['last']['time'], BASE)
+        Client.raw = sample(0, soc=79)
+        runner.tick(BASE + 24 * 3600000 + 20000)
+        self.assertEqual(runner.health()['data_change'], 'revision')
+        self.assertEqual(runner.health()['status'], 'stale')
+        Client.raw = sample(1, speed=40, engine='engine_running', ready=1)
+        runner.tick(BASE + 24 * 3600000 + 40000)
+        runner.tick(BASE + 24 * 3600000 + 60000)
+        self.assertEqual(runner.health()['status'], 'stale')
+        Client.raw = sample(24 * 3600 + 80)
+        runner.tick(BASE + 24 * 3600000 + 80000)
+        self.assertEqual(runner.health()['data_change'], 'new')
+        self.assertEqual(runner.health()['status'], 'fresh')
+
+    def test_parking_wait_does_not_mask_failed_reads_or_unknown_and_future_states(self):
+        from zeekr_control.errors import ApiError
+        class Client:
+            raw = sample(0)
+            fail = False
+            def __init__(self, session): pass
+            def vehicles(self): return [{'vin': 'L6T79X2Z0NP000001'}]
+            def status(self, vin):
+                if Client.fail: raise ApiError('网络或 TLS 连接失败')
+                return Client.raw
+        runner = self.runner(Client)
+        runner.tick(BASE)
+        runner.tick(BASE + 3600000)
+        self.assertEqual(runner.health()['status'], 'parked_waiting')
+        Client.fail = True
+        runner.tick(BASE + 3620000)
+        self.assertEqual(runner.health()['status'], 'retrying')
+        self.assertTrue(runner.health()['error'])
+        Client.fail = False
+        for label, raw in [('unknown-speed', sample(0)), ('future', sample(10000)),
+                           ('unknown-time', sample(0))]:
+            with self.subTest(label=label):
+                if label == 'unknown-speed': raw['basicVehicleStatus']['speedValidity'] = False
+                if label == 'unknown-time': raw.pop('updateTime')
+                Client.raw = raw
+                runner.tick(BASE + 3640000)
+                runner.tick(BASE + 3660000)
+                self.assertEqual(runner.health()['status'], 'stale')
+
     def test_successful_tick_publishes_shared_snapshot(self):
         class Client:
             def __init__(self, session): pass

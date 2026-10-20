@@ -368,16 +368,13 @@ class App:
                 raise ApiError('车辆未返回唯一有效 VIN。')
             vin = next(iter(vins))
             raw = client.status(vin)
-            model = build_model(raw, vehicle=vehicles[vehicle - 1])
             with self.lock:
                 if session_scope(self._read_session()) != scope:
                     raise ApiError('车辆会话已变化，请重新刷新状态。')
                 key = hashlib.sha256(vin.encode()).hexdigest()
-                previous_time = self.model.get('updated_time') if self.model and key == self.vehicle_key else None
-                incoming_time = model['updated_time']
                 fetched_at = getattr(client, "last_query_fetched_at", None)
                 observed_at = int(time.time() * 1000)
-                self.snapshot_store.publish(
+                publication = self.snapshot_store.publish(
                     scope, key, raw, observed_at,
                     fetched_at=int((fetched_at if fetched_at is not None else time.time()) * 1000), source='manual')
                 self.vehicle, self.vehicle_key = vehicle, key
@@ -389,8 +386,8 @@ class App:
                 self._restore_snapshot(session, vehicle=vehicles[vehicle - 1])
                 self.query_cached = bool(getattr(client, 'last_query_cached', False))
                 self.next_query_at = getattr(client, 'next_query_at', None)
-                self.refresh_result = ('cached' if self.query_cached else 'time_unknown' if incoming_time is None
-                                       else 'new' if previous_time is None or incoming_time > previous_time else 'unchanged')
+                self.refresh_result = ('cached' if self.query_cached else
+                                       'unchanged' if publication['change'] == 'repeat' else publication['change'])
                 self.error = None
                 return self.state()
         except ApiError as exc:

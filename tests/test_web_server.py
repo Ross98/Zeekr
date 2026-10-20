@@ -255,6 +255,19 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(cached['refresh_result'], 'cached')
         self.assertEqual(self.post('/api/refresh', {'vehicle': 2})[1]['refresh_result'], 'new')
 
+    def test_refresh_identifies_same_time_revision_and_new_time_same_values(self):
+        from unittest.mock import patch
+        self.post('/api/refresh', {'vehicle': 1})
+        raw = FakeClient({}).status('synthetic')
+        raw['additionalVehicleStatus']['electricVehicleStatus']['chargeLevel'] = 61
+        with patch.object(FakeClient, 'status', return_value=raw):
+            revised = self.post('/api/refresh', {'vehicle': 1})[1]
+        self.assertEqual(revised['refresh_result'], 'revision')
+        self.assertEqual(revised['model']['metrics']['battery'], '61%')
+        raw['updateTime'] += 60000
+        with patch.object(FakeClient, 'status', return_value=raw):
+            self.assertEqual(self.post('/api/refresh', {'vehicle': 1})[1]['refresh_result'], 'new')
+
     def test_recording_lifecycle_distinguishes_offline_paused_active(self):
         import time
         from zeekr_control.storage import save
@@ -283,7 +296,7 @@ class WebServerTests(unittest.TestCase):
     def test_missing_and_older_vehicle_time_never_claim_new_data(self):
         from unittest.mock import patch
         self.post('/api/refresh', {'vehicle': 1})
-        for timestamp, result in [(1704067191395, 'unchanged'), (None, 'time_unknown')]:
+        for timestamp, result in [(1704067191395, 'regression'), (None, 'time_unknown')]:
             with patch.object(FakeClient, 'status', return_value={'updateTime': timestamp}):
                 self.assertEqual(self.post('/api/refresh', {'vehicle': 1})[1]['refresh_result'], result)
 

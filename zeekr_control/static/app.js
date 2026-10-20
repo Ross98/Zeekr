@@ -127,7 +127,7 @@ let chargingAnalyticsLoadedKey = '', chargingAnalyticsLoadingKey = '';
 let connectionFailures = 0, polling = false;
 let refreshMessage = '';
 let samplingDraft = null;
-const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unchanged:'已读取云端，车辆数据未更新。',new:'已获得新车辆数据。',time_unknown:'已读取云端，车辆更新时间未知。'};
+const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unchanged:'已读取云端，返回重复缓存，车辆时间与内容均未变化。',revision:'已读取云端，同一车辆时间的状态内容有修订。',regression:'已读取云端，返回的车辆时间倒退，保留最后有效状态。',new:'已获得新车辆数据。',time_unknown:'已读取云端，车辆更新时间未知。'};
 
 const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,redraw:render,escape:esc,age,active:()=>page==='car'});
 
@@ -990,7 +990,11 @@ function overviewAttentionItems(){
     if(!Number.isFinite(timestamp))add('车辆更新时间未知','quality',false);
     else if(elapsed < -30000)add('车辆时间超前，请核对时钟','quality',false);
     // Same 180-second age window as monitor.MAX_AGE/start_evidence.MAX_GAP.
-    else if(elapsed>180000)add(`车况已 ${relativeTime(timestamp).replace(/前$/,'')}未更新`,'quality',false);
+    else if(elapsed>180000){
+      const age=relativeTime(timestamp).replace(/前$/,'');
+      add(monitor.status==='parked_waiting'&&monitor.online&&recording.active!==false?
+        `最后状态为停车 · ${age}未更新，等待车辆更新`:`车况已 ${age}未更新`,'quality',false);
+    }
   }
   return items;
 }
@@ -1065,10 +1069,13 @@ document.addEventListener('toggle',event=>{if(event.target.matches?.('[data-deta
 
 function monitoringPanel() {
   const monitor = state?.monitoring || {status:'not_started',events:[]};
-  const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',paused:'已暂停',unavailable:'状态暂不可用'};
+  const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',parked_waiting:'采集正常，等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',paused:'已暂停',unavailable:'状态暂不可用'};
   const activity = {waiting:'下电等待 10 分钟',driving:'行程记录中',idle:'暂无进行中的记录',charging:'充电记录中',unknown:'待确认'};
   const label = monitor.status === 'not_started' ? labels.not_started : monitor.online ? labels[monitor.status] || '运行中' : '监控未在线';
-  return `<section class="card section-gap"><div class="card-head"><h2>自动行程与充电通知</h2>${pill(label,monitor.online && !['blocked','stale'].includes(monitor.status)?'good':'warn')}</div><div class="card-body"><p class="subtle">后台正常每 ${esc(state?.recording?.interval || 30)} 秒检查，停车、行驶和充电均保持此频率；故障或限流时退避。确认下电后等待 10 分钟发送行程总结；充电开始、停止时发送通知。云端数据延迟或缺失时，确认和通知也会延后。</p>${row('行程',activity[monitor.trip] || '待确认')}${row('充电',activity[monitor.charge] || '待确认')}${row('通知渠道','Bark 状态提醒＋企业微信详细报告')}${monitor.error?`<p class="unknown">${esc(monitor.error)}</p>`:''}<p class="subtle">采集与投递分别在后台运行；关闭浏览器不停止。暂停会停止新采集和常规通知领取，存储巡检与已启用报表继续；发送中的请求仍会完成。服务重启后默认恢复采集。</p>${notificationHealthMarkup()}</div></section>`;
+  const changes={new:'新车辆状态',repeat:'重复缓存，车辆时间与内容均未变化',revision:'同一车辆时间的内容修订',regression:'车辆时间倒退，保留最后有效状态',time_unknown:'车辆更新时间未知'};
+  const observation=monitor.data_change?row('最近读取',changes[monitor.data_change]||'待确认'):'';
+  const parking=monitor.status==='parked_waiting'?'<p class="subtle">最后已知状态为停车。云端仍返回重复缓存，当前车况待更新；旧值不作为新样本或新提醒依据。</p>':'';
+  return `<section class="card section-gap"><div class="card-head"><h2>自动行程与充电通知</h2>${pill(label,monitor.online && !['blocked','stale'].includes(monitor.status)?'good':'warn')}</div><div class="card-body"><p class="subtle">后台正常每 ${esc(state?.recording?.interval || 30)} 秒检查，停车、行驶和充电均保持此频率；故障或限流时退避。确认下电后等待 10 分钟发送行程总结；充电开始、停止时发送通知。云端数据延迟或缺失时，确认和通知也会延后。</p>${observation}${parking}${row('行程',activity[monitor.trip] || '待确认')}${row('充电',activity[monitor.charge] || '待确认')}${row('通知渠道','Bark 状态提醒＋企业微信详细报告')}${monitor.error?`<p class="unknown">${esc(monitor.error)}</p>`:''}<p class="subtle">采集与投递分别在后台运行；关闭浏览器不停止。暂停会停止新采集和常规通知领取，存储巡检与已启用报表继续；发送中的请求仍会完成。服务重启后默认恢复采集。</p>${notificationHealthMarkup()}</div></section>`;
 }
 
 function releaseSummary(){

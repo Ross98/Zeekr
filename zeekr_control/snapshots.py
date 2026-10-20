@@ -47,6 +47,7 @@ class SnapshotStore:
         encoded = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
         digest = hashlib.sha256(encoded.encode()).hexdigest()
         state_time = _time(raw)
+        change = 'new' if state_time is not None else 'time_unknown'
         # Archive first, including unchanged/older/unknown-time successful reads.
         # If the archive fails, do not advance latest state or downstream events.
         # A later latest-store failure may leave an authentic archived read;
@@ -60,16 +61,20 @@ class SnapshotStore:
             if row:
                 old_time, revision, old_digest = row
                 if old_time is not None and (state_time is None or state_time < old_time):
-                    return {'changed': False, 'revision': revision}
+                    return {'changed': False, 'revision': revision,
+                            'change': 'time_unknown' if state_time is None else 'regression'}
                 if state_time == old_time and digest == old_digest:
-                    return {'changed': False, 'revision': revision}
+                    return {'changed': False, 'revision': revision,
+                            'change': 'repeat' if state_time is not None else 'time_unknown'}
+                if state_time is not None and state_time == old_time:
+                    change = 'revision'
                 revision += 1
             else:
                 revision = 1
             db.execute('INSERT OR REPLACE INTO snapshots VALUES (?,?,?,?,?,?,?,?)',
                        (scope_key, vehicle_key, state_time, fetched_at, observed_at,
                         revision, digest, encoded))
-            return {'changed': True, 'revision': revision}
+            return {'changed': True, 'revision': revision, 'change': change}
 
     def read(self, scope_key, vehicle_key, known_revision=None):
         """Read a changed snapshot without loading an already-rendered payload."""

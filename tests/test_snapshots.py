@@ -8,6 +8,21 @@ class SnapshotStoreTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
 
+    def test_publish_classifies_time_and_full_payload_independently(self):
+        from zeekr_control.snapshots import SnapshotStore
+        store = SnapshotStore(Path(self.temp.name) / 'snapshots.sqlite3')
+        cases = [({'updateTime': 200, 'value': 1}, 'new'),
+                 ({'value': 1, 'updateTime': 200}, 'repeat'),
+                 ({'updateTime': 200, 'value': 2}, 'revision'),
+                 ({'updateTime': 300, 'value': 2}, 'new'),
+                 ({'updateTime': 100, 'value': 3}, 'regression'),
+                 ({'value': 3}, 'time_unknown')]
+        for index, (raw, expected) in enumerate(cases):
+            with self.subTest(expected=expected):
+                result = store.publish('scope-a', 'vehicle-a', raw, 400 + index)
+                self.assertEqual(result['change'], expected)
+        self.assertEqual(store.read('scope-a', 'vehicle-a')['raw'], {'updateTime': 300, 'value': 2})
+
     def test_newer_snapshot_wins_and_same_time_can_be_revised(self):
         from zeekr_control.snapshots import SnapshotStore
         store = SnapshotStore(Path(self.temp.name) / 'snapshots.sqlite3')
