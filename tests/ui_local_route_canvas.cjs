@@ -48,6 +48,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   try{
     await page.getByRole('button',{name:'查询行程',exact:true}).click();
     await page.waitForFunction(()=>localTrips.queried&&!localTrips.listBusy&&localTrips.timeline);
+    await page.locator('#local-trip-details-disclosure>summary').click();
     await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).waitFor();
     assert.deepEqual(coordinateRequests,[],'querying trips before location consent must not request coordinates');
     assert.equal(await page.locator('#map').count(),0,'location stays hidden before consent');

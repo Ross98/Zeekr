@@ -19,6 +19,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     assert.equal(await page.locator('#map').count(),0);
     assert.equal(await page.locator('script[src="/history.js"]').count(),0);
     assert.ok((await page.evaluate(()=>localTrips.events)).some(row=>row.type==='trip'));
+    await page.locator('#local-trip-details-disclosure>summary').click();
     await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).click();
     await page.waitForFunction(()=>localTrips.route&&!localTrips.routeBusy);
     assert.equal(await page.locator('#map').count(),1);

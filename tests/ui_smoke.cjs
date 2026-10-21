@@ -62,6 +62,7 @@ const path = require('node:path');
     await page.locator('#local-trips').waitFor();
     assert.equal(await page.getByRole('button',{name:'本地记录',exact:true}).getAttribute('aria-pressed'),'true');
     assert.equal(await page.getByRole('button',{name:'云端历史',exact:true}).count(),0,'Retired cloud history has no entry');
+    await page.locator('#local-trip-details-disclosure>summary').click();
     await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).waitFor();
     assert.equal(await page.locator('#map').count(),0,'Entering local records keeps location hidden');
     await page.getByRole('button', { name: '设置', exact: true }).first().click();
@@ -108,6 +109,8 @@ const path = require('node:path');
     await page.getByRole('button', { name: '本地记录', exact: true }).click();
     // Fixture's cached sample is 20 minutes old; near midnight it belongs to yesterday.
     await page.getByLabel('轨迹日期').fill(await page.evaluate(() => new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(Date.now()-20*60*1000))));
+    if (!await page.locator('#local-trip-details-disclosure').evaluate(el=>el.open))
+      await page.locator('#local-trip-details-disclosure>summary').click();
     await page.getByRole('button', { name: '显示位置并加载地图', exact: true }).click();
     assert.equal(await page.locator('#local-trips').isVisible(),true);
     assert.equal(await page.getByRole('button',{name:'本地记录',exact:true}).getAttribute('aria-pressed'),'true');
