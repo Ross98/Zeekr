@@ -4,6 +4,7 @@
       "tests/test_overview_dashboard.cjs",
       "tests/books_overview.cjs",
       "tests/navigation_state.cjs",
+      "tests/local_trip_visuals.cjs",
       "tests/theme.cjs",
       "tests/vehicle.cjs",
       "tests/chart.cjs",
@@ -43,6 +44,7 @@
       "tests/ui_analysis_cancel.cjs",
       "tests/ui_overview_benchmark.cjs",
       "tests/ui_local_route_canvas.cjs",
+      "tests/ui_local_trip_visuals.cjs",
       "tests/ui_books_overview.cjs",
       "tests/ui_books_navigation.cjs",
       "tests/ui_books_safety.cjs",
@@ -65,7 +67,8 @@
       "tests/ui_history.cjs",
       "tests/ui_parking_observations.cjs",
       "tests/ui_trip_management.cjs",
-      "tests/ui_place_tag_rules.cjs"
+      "tests/ui_place_tag_rules.cjs",
+      "tests/ui_vehicle_login.cjs"
     ]
   },
   "exclusions": [

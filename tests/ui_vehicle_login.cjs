@@ -1,4 +1,5 @@
 const assert=require('node:assert/strict');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {fixture,contrast}=require('./ui_insight_helpers.cjs');
 (async()=>{
  let sends=0,verifies=0,fail=true;
@@ -41,7 +42,8 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   assert.equal(sends,1);assert.equal(verifies,2);
   await page.getByRole('button',{name:'重新连接车辆账号',exact:true}).click();
   assert.equal(await page.getByLabel('副账号手机号',{exact:true}).inputValue(),'');
-  await page.screenshot({path:'/private/tmp/zeekr-vehicle-login-preview.png'});
+  const screenshotDir=path.join(os.tmpdir(),'zeekr-desktop-previews');fs.mkdirSync(screenshotDir,{recursive:true});
+  await page.screenshot({path:path.join(screenshotDir,'zeekr-vehicle-login-preview.png')});
   await page.keyboard.press('Escape');
   await dialog.waitFor({state:'detached'});
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);

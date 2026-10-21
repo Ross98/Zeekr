@@ -1,6 +1,6 @@
 // Desktop only, isolated local evidence; no vehicle network requests.
 const {chromium}=require('playwright'),{spawn}=require('node:child_process');
-const assert=require('node:assert/strict'),path=require('node:path');
+const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),os=require('node:os');
 (async()=>{const server=spawn('python3',[path.join(__dirname,'recall_fixture.py')]);let browser;try{
  const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('fixture timeout')),30000);server.stdout.once('data',d=>{clearTimeout(timer);resolve(Number(String(d).trim()));});server.stderr.on('data',d=>process.stderr.write(d));});
  browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});
@@ -21,7 +21,8 @@ const assert=require('node:assert/strict'),path=require('node:path');
  const referenceRow=page.locator('#local-trip-list [data-local-trip^="parking_"]').filter({hasText:'测试参考地点'}).first();await referenceRow.click();assert.match(await referenceRow.innerText(),/推定地点/);assert.match(await page.locator('#local-trip-facts').innerText(),/不作为可信 GPS，不补算采样缺口/);assert.equal(routes.length,0);
  await page.locator('.tv-overview>summary').click();await page.locator('[data-trip-trend] svg').waitFor();
  for(const title of ['近 7 天里程','常走路线','常去地点'])await page.locator('#local-trip-overview-body').getByRole('heading',{name:title,exact:true}).waitFor();
- await page.screenshot({path:'/private/tmp/zeekr-local-trips-preview.png',fullPage:true});
+ const screenshotDir=path.join(os.tmpdir(),'zeekr-desktop-previews');fs.mkdirSync(screenshotDir,{recursive:true});
+ await page.screenshot({path:path.join(screenshotDir,'zeekr-local-trips-preview.png'),fullPage:true});
  // Explicit user naming remains possible when GPS is missing, with no false map point.
  await page.evaluate(()=>{localTrips.selected.end_place={key:null,label:'位置未知',source:'unknown',decision:'unresolved',issues:['missing_position']};localTrips.timeline.known_places=[{key:'place_name_'+'1'.repeat(64),name:'合成公司'}];renderLocalTripFacts();});
  await page.locator('[data-recall-correct="end"]').click();
