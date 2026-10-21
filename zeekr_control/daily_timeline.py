@@ -102,7 +102,8 @@ class DailyTimeline:
         # All event endpoints use the established 150m fixed-centre rule.
         named=[dict(e) for e in events]
         stats=TripPlaces(self.database).query(vehicle,named,names.regions(owner,vehicle),include_samples=True)
-        stats=names.apply(owner,vehicle,stats,CommuteTags(self.store,self.database).rule(owner,vehicle))
+        rule=CommuteTags(self.store,self.database).rule(owner,vehicle)
+        stats=names.apply(owner,vehicle,stats,rule)
         places={p['id']:p for p in stats['places']}
         corrections=self.store.read(owner,vehicle,'place_corrections')
         corrections['_regions']=names.regions(owner,vehicle)
@@ -128,8 +129,8 @@ class DailyTimeline:
                 'charging_phases','soc_drop','estimated_kwh')}
             aliases=['parking_'+digest(fragment['id'])[:32] for fragment in parked['sessions']
                      if fragment['start_time']>=row['start_time'] and fragment['end_time']<=row['end_time']]
-            # A parking sample itself must have a trusted endpoint; never borrow a trip's location.
-            point=None;observed_position=None
+            # Keep observed GPS separate from label-only references; never borrow a trip's location.
+            point=None;observed_position=None;reference_evidence=None
             with self.events.connect() as db:
                 if 'movement' not in row['reasons'] and db is not None and db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone():
                     from .trip_endpoints import endpoint
@@ -137,10 +138,18 @@ class DailyTimeline:
                     if match:
                         observed_position=dict(latitude=match[1][0],longitude=match[1][1],state_time=match[0])
                         point=self._parking_place(observed_position,stats['places'],corrections['_regions'])
+                    if point is None:
+                        from .parking_place_reference import parking_place_reference
+                        reference=parking_place_reference(db,vehicle,session,names,owner,corrections['_regions'],rule)
+                        if reference:
+                            point,reference_evidence=reference
             row['_position']=observed_position
             row.update(id='parking_'+digest(session['id'])[:32],type='parking',status='observed',partial=bool(session['reasons']),bill=None)
             row['start_place']=self._interpret(owner,vehicle,point,row['id'],'start',corrections,aliases)
             row['end_place']=self._interpret(owner,vehicle,point,row['id'],'end',corrections,aliases)
+            if reference_evidence:
+                for side in ('start','end'):
+                    row[side+'_place_evidence']=dict(reference_evidence)
             records.append(row)
         records.sort(key=lambda r:(r['start_time'] if r['start_time'] is not None else r['end_time'],r['id']))
         for row in records:

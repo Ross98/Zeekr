@@ -17,6 +17,7 @@ function recallParkingGapDuration(seconds){
 }
 function recallParkingEvidence(row,side){
   const evidence=row[side+'_place_evidence'];
+  if(evidence?.source==='parking_reference')return `<div data-recall-place-evidence="${side}"><p>推定地点：停车前可信定位与停车参考坐标匹配同一已保存地点。</p><p class="subtle">参考定位 ${esc(tripTime(evidence.reference_time))} · 距停车起点 ${esc(tripDuration(evidence.sampling_gap_seconds))} · 坐标相距 ${esc(tripNumber(evidence.distance_m,' 米'))}。不作为可信 GPS，不补算采样缺口。</p></div>`;
   if(evidence?.source!=='parking_inferred')return '';
   const label=side==='start'?'起点':'终点',when=side==='start'?'出发前':'到达后';
   const gap=evidence.sampling_gap_seconds;

@@ -48,6 +48,36 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(endpoint['statistics_key'],endpoint['key'])
         self.assertNotEqual(endpoint['statistics_key'],'region:'+key)
 
+    def test_parking_reference_is_label_only_and_preserves_gaps(self):
+        import json,sqlite3
+        from unittest.mock import patch
+        from zeekr_control.trip_place_names import anchor_key
+        start=self.start+4800000
+        key=anchor_key(dict(latitude=31.21,longitude=121.41))
+        self.tags.store.change('owner','car','place_names','save',key,
+                               dict(name='公司园区',latitude=31.21,longitude=121.41,radius_m=150),0)
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE observations SET location=json_set(location,'$.valid',json('true'))")
+            for stamp in (start,start+60000):
+                point=dict(valid=True,plottable=True,trusted=False,latitude=31.2104,longitude=121.41,coordinate_system='WGS84（社区解释）')
+                db.execute('INSERT INTO observations(vehicle,cache_key,state_time,observed_time,gap_seconds,location) VALUES(?,?,?,?,?,?)',
+                           ('car','park-'+str(stamp),stamp,stamp+2000,30,json.dumps(point)))
+        gap=dict(start_time=start+20000,end_time=start+50000)
+        event=dict(id='event',start_time=start,end_time=start+60000,duration_seconds=60,sample_count=2,
+                   reasons=['gap'],reason_labels=['数据缺口'],parking_status='parked',p_gear_samples=2,open=True,
+                   observation_quality=dict(unknown_seconds=30),observation_gaps=[gap],charging_phases=[],soc_drop=None,estimated_kwh=None)
+        with patch('zeekr_control.daily_timeline.ParkingAnalytics.query',return_value=dict(events=[event],sessions=[])):
+            result=self.day(positions=True)
+        parked=next(r for r in result['records'] if r['type']=='parking')
+        self.assertEqual(parked['end_place']['label'],'公司园区')
+        self.assertEqual(parked['end_place_evidence']['source'],'parking_reference')
+        self.assertEqual(parked['end_place_evidence']['sampling_gap_seconds'],30)
+        self.assertEqual(parked['observation_gaps'],[gap])
+        self.assertEqual(parked['observation_quality']['unknown_seconds'],30)
+        self.assertNotIn('position',parked,'A reference must never become a trusted map point')
+        with sqlite3.connect(self.db) as db:
+            self.assertFalse(json.loads(db.execute('SELECT location FROM observations WHERE state_time=?',(start,)).fetchone()[0])['trusted'])
+
     def test_summary_positions_opt_in_and_unknown_coverage(self):
         result=self.day()
         self.assertEqual(result['summary']['distance_km'],20)

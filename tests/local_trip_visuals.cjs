@@ -26,4 +26,7 @@ assert.equal(V.duration(null),'未知');
 assert.match(V.summary({summary:{actual_cents:1234},coverage:{}},'2026-10-20'),/12.34 元/);
 assert.match(V.clockChart([first,{...first,id:'duplicate'}],'2026-10-20','day'),/30 分钟/);
 assert.doesNotMatch(V.clockChart([first,{...first,id:'duplicate'}],'2026-10-20','day'),/1 小时/);
+const referenceParking={id:'ref',type:'parking',start_time:first.end_time,end_time:last.start_time,end_place:place('work'),end_place_evidence:{source:'parking_reference'},parking_status:'parked',observation_quality:{unknown_seconds:3600}};
+assert.match(V.chain([referenceParking],'day','2026-10-20'),/推定地点/);
+assert.match(V.chain([referenceParking],'day','2026-10-20'),/缺口 1 小时/);
 console.log('Local trip chain model passed.');
