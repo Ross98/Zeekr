@@ -49,6 +49,10 @@ Tailscale 模式仅在指定 HTTPS Origin、回环代理连接下接收单个 `X
 
 发布状态与耗时分别记录为运行根目录 `.macos-release.json`、`.release-timings.jsonl`；候选验证记录在准备包 `macos-validation.json`。Linux 的 cgroup CPU/内存指标不用于 macOS，也不能用 macOS 测试冒充 Linux 资源限制验收。
 
+## 资源监控
+
+独立 CPU／内存资源巡检与 Bark 见 [Mac mini 资源巡检](macos-resource-monitor.md)。首次安装随候选 `stage --resource-monitor` 执行；后续发布自动管理既有资源任务。
+
 ## 无人值守恢复与维护
 
 当前用户 LaunchAgents 是**登录后启动**，不保证机器停在登录界面时服务可用。`KeepAlive.SuccessfulExit=false` 只针对异常退出恢复。防睡眠、断电后开机、FileVault 解锁、Tailscale 恢复和应用启动是独立事项。

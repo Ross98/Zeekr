@@ -232,3 +232,46 @@ class MacReleaseTests(unittest.TestCase):
              patch.object(macos.subprocess,'run',side_effect=[None,subprocess.CalledProcessError(1,['launchctl'])]):
             with self.assertRaisesRegex(ValueError,'密码文件已更新.*重启失败'):
                 macos.change_password(self.password_host())
+
+    def test_resource_agent_preserves_service_home_and_keeps_credentials_out_of_arguments(self):
+        host=Mock(base=Path('/synthetic/server'),configs={macos.LABELS[1]:{
+            'EnvironmentVariables':{'HOME':'/synthetic/server/state','HTTPS_PROXY':'http://synthetic.proxy'},
+            'ProgramArguments':['/usr/bin/caffeinate','-s','/usr/bin/python3','-m','zeekr_control','monitor']}})
+        config=macos.resource_agent(host)
+        self.assertEqual(config['Label'],macos.RESOURCE_LABEL)
+        self.assertEqual(config['ProgramArguments'][-1],'zeekr_control.resource_monitor')
+        self.assertEqual(config['EnvironmentVariables']['HOME'],'/synthetic/server/state')
+        self.assertEqual(config['Nice'],10)
+        self.assertNotIn('bark',str(config['ProgramArguments']).lower())
+
+    def test_restore_agents_removes_only_new_resource_agent_on_rollback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);saved=root/'saved';saved.mkdir();agents=root/'agents';agents.mkdir()
+            for label in macos.LABELS:
+                (saved/(label+'.plist')).write_text('old '+label)
+                (agents/(label+'.plist')).write_text('new '+label)
+            resource=agents/(macos.RESOURCE_LABEL+'.plist');resource.write_text('new resource')
+            unrelated=agents/'unrelated.plist';unrelated.write_text('keep')
+            macos.restore_agents(agents,saved)
+            self.assertFalse(resource.exists());self.assertEqual(unrelated.read_text(),'keep')
+            for label in macos.LABELS:self.assertEqual((agents/(label+'.plist')).read_text(),'old '+label)
+
+    def test_restore_agents_retains_preexisting_resource_agent_on_later_rollbacks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);saved=root/'saved';saved.mkdir();agents=root/'agents';agents.mkdir()
+            for label in (*macos.LABELS,macos.RESOURCE_LABEL):
+                (saved/(label+'.plist')).write_text('original')
+                (agents/(label+'.plist')).write_text('new')
+            macos.restore_agents(agents,saved)
+            self.assertEqual((agents/(macos.RESOURCE_LABEL+'.plist')).read_text(),'original')
+
+    def test_stage_resource_installation_is_opt_in_and_does_not_touch_live_agents(self):
+        with tempfile.TemporaryDirectory() as folder:
+            host,bundle,_,_=self.candidate_fixture(Path(folder).resolve())
+            with patch.object(macos.workflow,'validate'):
+                macos.stage(host,bundle,resource_monitor=True)
+            ready=macos.read(bundle/'.mini-ready.json')
+            self.assertTrue(ready['resource_monitor'])
+            self.assertTrue(any(call.args[0][1:3]==['-m','zeekr_control.resource_monitor']
+                                for call in host.run.call_args_list))
+            host.stop.assert_not_called();host.start.assert_not_called()

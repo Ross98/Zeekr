@@ -26,6 +26,7 @@ import uuid
 import workflow
 
 LABELS = ('local.zeekr.web', 'local.zeekr.monitor', 'local.zeekr.reports')
+RESOURCE_LABEL = 'local.zeekr.resources'
 
 
 def require(condition, message):
@@ -92,7 +93,10 @@ class Host:
 
     def refresh(self):
         self.configs = {}
-        for label in LABELS:
+        labels = list(LABELS)
+        resource = self.agents/(RESOURCE_LABEL+'.plist')
+        if resource.exists() or resource.is_symlink():labels.append(RESOURCE_LABEL)
+        for label in labels:
             path = self.agents/(label+'.plist')
             require(path.is_file() and not path.is_symlink() and path.stat().st_uid == os.getuid(),
                     'Missing or unsafe launch agent: '+label)
@@ -105,6 +109,7 @@ class Host:
                     'Unsupported launch agent runtime')
             expected = (['zeekr_control','web','--port','18765'] if label.endswith('.web') else
                         ['zeekr_control','monitor'] if label.endswith('.monitor') else
+                        ['zeekr_control.resource_monitor'] if label == RESOURCE_LABEL else
                         ['zeekr_control.periodic_schedule'])
             require(config['ProgramArguments'][4:] == expected, 'Unexpected service command')
             self.configs[label] = config
@@ -125,7 +130,7 @@ class Host:
                     p.stat().st_mode & 0o777 == mode, 'Unsafe runtime state owner/mode')
 
     def signature(self):
-        return {label:digest(self.agents/(label+'.plist')) for label in LABELS}
+        return {label:digest(self.agents/(label+'.plist')) for label in self.configs}
 
     def job(self, label):
         result = subprocess.run(['launchctl','print',self.domain+'/'+label], capture_output=True, text=True)
@@ -151,12 +156,12 @@ class Host:
         # Track children as well: caffeinate is launchd's main PID, Python is its child.
         pairs = [tuple(map(int, line.split())) for line in
                  subprocess.check_output(['ps','-axo','pid=,ppid='], text=True).splitlines()]
-        tracked = {int(j['pid']) for label in LABELS for j in [self.job(label)] if j and 'pid' in j}
+        tracked = {int(j['pid']) for label in self.configs for j in [self.job(label)] if j and 'pid' in j}
         while True:
             children = {pid for pid, parent in pairs if parent in tracked}
             if children <= tracked:break
             tracked |= children
-        for label in LABELS:
+        for label in self.configs:
             if self.job(label) is not None:
                 subprocess.run(['launchctl','bootout',self.domain+'/'+label], check=True)
         deadline = time.monotonic()+90
@@ -177,23 +182,32 @@ class Host:
             time.sleep(.2)
 
     def start(self):
-        for label in LABELS:
+        for label in self.configs:
             if self.job(label) is None:
                 subprocess.run(['launchctl','bootstrap',self.domain,str(self.agents/(label+'.plist'))],check=True)
 
     def health(self, fresh=False):
         deadline = time.monotonic()+20
         while True:
-            if all((self.job(label) or {}).get('state') == 'running' for label in LABELS):break
+            if all((self.job(label) or {}).get('state') == 'running' for label in self.configs):break
             require(time.monotonic() < deadline, 'launchd services did not start')
             time.sleep(.2)
-        for label in LABELS:
+        for label in self.configs:
             info = self.job(label)
             if fresh:require(info.get('runs') == '1', 'Service restarted unexpectedly: '+label)
             pid = info['pid']
             result = subprocess.run(['/usr/sbin/lsof','-a','-p',pid,'-d','cwd','-Fn'],
                                     capture_output=True,text=True,check=True)
             require('n'+str(self.active()) in result.stdout.splitlines(), 'Process has wrong release: '+label)
+        if RESOURCE_LABEL in self.configs:
+            deadline = time.monotonic()+15
+            while True:
+                try:state=json.loads(read(self.data/'resource-health.json')['state'])
+                except (OSError,ValueError,KeyError):state={}
+                if (state.get('monitor_pid') == int(self.job(RESOURCE_LABEL)['pid']) and
+                        0 <= time.time()-state.get('checked_at',0) < 180):break
+                require(time.monotonic() < deadline, 'Resource monitor heartbeat unavailable')
+                time.sleep(.2)
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         for base in ('http://127.0.0.1:18765', self.origin):
             for route, expected in [('/',200),('/api/state',401),('/app.js',401)]:
@@ -287,7 +301,7 @@ def prepare(host, args):
     print('MACOS_BUNDLE_READY',output/'bundle')
 
 
-def stage(host, bundle, tailscale_ip=False):
+def stage(host, bundle, tailscale_ip=False, resource_monitor=False):
     ready=bundle/'.mini-ready.json'
     if ready.exists():ready.unlink()
     config=read(bundle/'.release-config.json');check_paths(host,config)
@@ -305,6 +319,8 @@ def stage(host, bundle, tailscale_ip=False):
         # Check the candidate API before changing any launch agent.
         host.run([host.python,'-c',
                   "from types import SimpleNamespace; from zeekr_control.web import make_server; s=make_server(SimpleNamespace(),0,tailscale_proxy=True); s.server_close()"],cwd=candidate)
+    if resource_monitor or RESOURCE_LABEL in baseline['agents']:
+        host.run([host.python,'-m','zeekr_control.resource_monitor','--help'],cwd=candidate,capture=True)
     code = ("from pathlib import Path; from zeekr_control.release_info import FEATURES,write_manifest,read_release; "
             "import sys,json; root=Path.cwd(); old=read_release(Path(sys.argv[2])); "
             "keys=[f['id'] for f in old['features']] if old['status']=='recorded' else list(FEATURES); "
@@ -327,7 +343,8 @@ def stage(host, bundle, tailscale_ip=False):
             workflow.validate(candidate,workflow.inputs(candidate),[[host.python,'-m','unittest','discover','-s','tests']],
                               bundle/'macos-validation.json',context='macos-service-user-candidate')
         finally:os.environ.clear();os.environ.update(env)
-    record=dict(config,baseline=baseline,candidate_hashes=public_hashes(candidate),tailscale_ip=tailscale_ip)
+    record=dict(config,baseline=baseline,candidate_hashes=public_hashes(candidate),tailscale_ip=tailscale_ip,
+                resource_monitor=resource_monitor)
     write(bundle/'.mini-ready.json',record)
     print('MACOS_CANDIDATE_READY')
 
@@ -350,25 +367,51 @@ def switch(link, target):
         if temporary.is_symlink():temporary.unlink()
 
 
+def resource_agent(host):
+    config=plistlib.loads(plistlib.dumps(host.configs[LABELS[1]]))
+    config.update(Label=RESOURCE_LABEL,WorkingDirectory=str(host.base/'current'),
+                  ProgramArguments=['/usr/bin/caffeinate','-s','/usr/bin/python3','-m','zeekr_control.resource_monitor'],
+                  RunAtLoad=True,KeepAlive={'SuccessfulExit':False},Nice=10,ThrottleInterval=30,
+                  StandardOutPath=str(host.base/'logs/resources.stdout.log'),
+                  StandardErrorPath=str(host.base/'logs/resources.stderr.log'))
+    return config
+
+
+def write_agent(path, config):
+    require(not path.is_symlink(),'Launch agent symlink rejected')
+    fd,name=tempfile.mkstemp(dir=path.parent,prefix='.zeekr-')
+    try:
+        with os.fdopen(fd,'wb') as stream:plistlib.dump(config,stream)
+        os.chmod(name,path.stat().st_mode & 0o777 if path.exists() else 0o644)
+        os.replace(name,path)
+    finally:
+        if os.path.exists(name):os.unlink(name)
+
+
+def restore_agents(agents, saved):
+    for label in LABELS:require((saved/(label+'.plist')).is_file(),'Incomplete launch agent backup')
+    for label in (*LABELS,RESOURCE_LABEL):
+        source=saved/(label+'.plist');target=agents/(label+'.plist')
+        require(not target.is_symlink(),'Launch agent symlink rejected')
+        if source.is_file():shutil.copy2(source,target)
+        elif label == RESOURCE_LABEL and target.exists():target.unlink()
+
+
 def cutover(host, record):
     host.stop()
     backup=Path(record['backup']);backup.mkdir(mode=0o700)
     backup_state(host.home,backup/'state')
     agents=backup/'agents';agents.mkdir(mode=0o700)
-    for label in LABELS:
+    for label in host.configs:
         shutil.copy2(host.agents/(label+'.plist'),agents/(label+'.plist'))
     (backup/'agents-complete').touch(mode=0o600)
     if record.get('tailscale_ip'):
         p=host.agents/(LABELS[0]+'.plist');config=plistlib.loads(p.read_bytes())
         config['EnvironmentVariables'].pop('ZEEKR_TRUST_PROXY_IP',None)
         config['EnvironmentVariables']['ZEEKR_TRUST_TAILSCALE_IP']='1'
-        # Atomic plist replacement, retaining permissions.
-        fd,name=tempfile.mkstemp(dir=p.parent,prefix='.zeekr-')
-        try:
-            with os.fdopen(fd,'wb') as stream:plistlib.dump(config,stream)
-            os.chmod(name,p.stat().st_mode & 0o777);os.replace(name,p)
-        finally:
-            if os.path.exists(name):os.unlink(name)
+        write_agent(p,config)
+    if record.get('resource_monitor'):
+        write_agent(host.agents/(RESOURCE_LABEL+'.plist'),resource_agent(host))
     switch(host.base/'current',Path(record['candidate']))
     host.refresh();host.start()
 
@@ -442,10 +485,7 @@ def rollback(host, record):
                   'import sys; normalize_preparation_for_rollback(Path(sys.argv[1]))',str(host.data)],cwd=candidate)
     saved=Path(record['backup'])/'agents'
     if (Path(record['backup'])/'agents-complete').is_file():
-        for label in LABELS:
-            source=saved/(label+'.plist')
-            require(source.is_file(),'Incomplete launch agent backup')
-        for label in LABELS:shutil.copy2(saved/(label+'.plist'),host.agents/(label+'.plist'))
+        restore_agents(host.agents,saved)
     switch(host.base/'current',Path(record['previous']))
     host.refresh();host.start();host.health(fresh=True);host.artwork(host.active())
     print('MACOS_ROLLBACK_PASS; latest business state retained')
@@ -499,7 +539,9 @@ def main(argv=None):
     for name in ('commit','paths','checks','output','name'):p.add_argument('--'+name,required=True)
     for action in ('stage','deploy'):
         p=sub.add_parser(action);p.add_argument('--bundle',type=Path,required=True)
-        if action=='stage':p.add_argument('--tailscale-ip',action='store_true')
+        if action=='stage':
+            p.add_argument('--tailscale-ip',action='store_true')
+            p.add_argument('--resource-monitor',action='store_true')
     sub.add_parser('verify');sub.add_parser('rollback');sub.add_parser('password')
     args=parser.parse_args(argv)
     require(sys.platform == 'darwin' and os.geteuid() != 0,'Run locally on macOS as the launch agent user, without sudo')
@@ -507,7 +549,7 @@ def main(argv=None):
     if args.action=='inspect':print(json.dumps(inspect(host),ensure_ascii=False,indent=2));return
     with lock(host):
         if args.action=='prepare':prepare(host,args)
-        elif args.action=='stage':stage(host,args.bundle.resolve(),args.tailscale_ip)
+        elif args.action=='stage':stage(host,args.bundle.resolve(),args.tailscale_ip,args.resource_monitor)
         elif args.action=='deploy':deploy(host,read(args.bundle/'.mini-ready.json'))
         elif args.action=='verify':verify(host,read(host.base/'.macos-release.json'))
         elif args.action=='rollback':rollback(host,read(host.base/'.macos-release.json'))
