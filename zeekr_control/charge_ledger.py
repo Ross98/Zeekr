@@ -161,6 +161,20 @@ class ChargeLedger:
         booked={row['event']['id']:row for row in entries if row.get('event') and not row['deleted']}
         choices=[dict(row,recorded=row['id'] in booked,bill_date=booked.get(row['id'],{}).get('date'))
                  for row in events if row['kind']=='charge_end']
+        # Reuse charging-review labels, including bills paid in a later month.
+        from .charging_places import ChargingPlaces
+        named={row['id']:row for row in choices}
+        for row in current:
+            if row.get('event'):named.setdefault(row['event']['id'],row['event'])
+        if named:
+            labels=[dict(row,mode=row.get('charge_mode') or 'unknown') for row in named.values()]
+            ChargingPlaces(self.events.path,self.store).apply(owner,vehicle,labels)
+            for label in labels:
+                named[label['id']].update({key:label.get(key) for key in ('station_name','place_label','place_source','place_reference')})
+            for row in current:
+                if row.get('event'):
+                    labels=named[row['event']['id']]
+                    row['event']=dict(row['event'],**{key:labels.get(key) for key in ('station_name','place_label','place_source','place_reference')})
         trend=[];period=window
         for _ in range(6):
             rows=[row for row in entries if row['date'].startswith(period['start_date'][:7]) and not row['deleted']]

@@ -25,6 +25,20 @@ class ChargeLedgerTests(unittest.TestCase):
                 db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',(identity,vehicle,kind,json.dumps(summary),self.start))
         self.db.chmod(0o600)
 
+    def test_ledger_labels_share_saved_station_names_across_bill_months(self):
+        self.personal.change('owner','car','charging_places','save','station',
+            dict(scope='single',event_id='charge',name='合成地点',station_name='合成充电站',
+                 point=None,anchor=None,radius_m=75,version=1),0)
+        pending=self.query()['events'][0]
+        self.assertEqual(pending['station_name'],'合成充电站')
+        self.assertEqual(pending['place_label'],'合成地点')
+        self.save(date='2026-10-02',amount='30')
+        bill=self.query('2026-10-02')['entries'][0]
+        self.assertEqual(bill['event']['station_name'],'合成充电站')
+        self.assertEqual(bill['event']['place_label'],'合成地点')
+        other=self.ledger.query('different','car','2026-09-20')['events'][0]
+        self.assertIsNone(other['station_name'])
+
     def save(self,revision=0,**changes):
         data={'action':'save','revision':revision,'event_id':'charge','date':'2026-09-20','source':'home',
               'amount':'','metered_kwh':'','unit_price':'','service_fee':'','note':''}

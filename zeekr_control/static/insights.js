@@ -327,7 +327,7 @@
       if(!tab){content.innerHTML='<section class="card insight-panel"><h2>选择子功能</h2><p>从上方快捷入口或这里的工具列表打开。</p></section>';return;}
       if(views[tab]){
         content.innerHTML=`${section==='books'?'<div id="books-summary"></div>':''}${['research','time'].includes(tab)&&researchReturn?'<div class="parameter-return"><button class="button secondary" data-insight="return-parameter">返回参数研究</button><span>查看完历史后，返回原参数与操作步骤。</span></div>':''}<div id="${tab}-workspace"></div>`;
-        if(section==='books')costsPage.mount(node.querySelector('#books-summary'));
+        if(section==='books'){const summary=node.querySelector('#books-summary');if(summary)summary.hidden=tab!=='costs';costsPage.mount(summary);}
         if(tab!=='costs')views[tab].mount(node.querySelector(`#${tab}-workspace`));
         restoreFocus(focus);
         return;
@@ -444,7 +444,7 @@
       node.classList.toggle('standalone-task',true);
       if(sectionChanged)node.innerHTML='';
       if(changed || remount || sectionChanged)paint();
-      if(section==='books')costsPage.mount(node.querySelector('#books-summary'));
+      if(section==='books'){const summary=node.querySelector('#books-summary');if(summary)summary.hidden=tab!=='costs';costsPage.mount(summary);}
       if(views[tab]&&tab!=='costs')views[tab].mount(node.querySelector(`#${tab}-workspace`));
     }
     function handle(event) {

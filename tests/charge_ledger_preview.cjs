@@ -29,7 +29,7 @@ setImmediate(()=>{
   assert.match(entries.innerHTML,/1790005400000/);
   assert.match(entries.innerHTML,/1 小时 30 分钟/);
   assert.match(entries.innerHTML,/23\.46 kWh/);
-  assert.match(entries.innerHTML,/20\.62 元/);
+  assert.match(entries.innerHTML,/20\.62 <small>元/);
   assert.match(entries.innerHTML,/<details/);
   assert.doesNotMatch(entries.innerHTML,/<details[^>]*open/);
   const preview=entries.innerHTML.match(/<summary class="ledger-preview">([\s\S]*?)<\/summary>/)?.[1];
