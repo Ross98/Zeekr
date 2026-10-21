@@ -19,6 +19,10 @@ def resolved(place):
             not set(place.get('issues', ())) & {'missing_name', 'missing_position', 'candidate_conflict', 'adjacent_conflict'})
 
 
+def statistics_key(place):
+    return place.get('statistics_key') or place['key']
+
+
 def union(intervals):
     result = []
     for start, end in sorted(intervals):
@@ -64,7 +68,7 @@ def summarize(records, date, now):
     distances = []
 
     def location(place):
-        key = place['key']
+        key = statistics_key(place)
         if key not in places:
             places[key] = dict(key=key, label=place.get('label') or '未命名地点', arrivals=0,
                                dates=set(), intervals=[], parking_incomplete=False)
@@ -112,9 +116,10 @@ def summarize(records, date, now):
         if not resolved(a) or not resolved(b):
             unknown_routes += 1
             continue
-        pair = tuple(sorted((a['key'], b['key'])))
+        a_key, b_key = statistics_key(a), statistics_key(b)
+        pair = tuple(sorted((a_key, b_key)))
         if pair not in routes:
-            labels = {a['key']: a.get('label') or '未命名地点', b['key']: b.get('label') or '未命名地点'}
+            labels = {a_key: a.get('label') or '未命名地点', b_key: b.get('label') or '未命名地点'}
             routes[pair] = dict(key=hashlib.sha256('|'.join(pair).encode()).hexdigest(),
                                 label=(' ↔ '.join(labels[k] for k in pair) if pair[0] != pair[1]
                                        else labels[pair[0]]+'出发并返回'),

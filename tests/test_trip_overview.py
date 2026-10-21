@@ -52,6 +52,24 @@ class OverviewTests(unittest.TestCase):
         self.assertEqual(route['median_duration_seconds'],120)
         self.assertEqual(route['dates'],['2026-10-20'])
 
+    def test_shared_statistics_identity_merges_manual_and_commute_routes_and_arrivals(self):
+        a=trip('a',T+10000,T+70000)
+        b=trip('b',T+80000,T+200000,a='work-other',b='home-other')
+        for row in (a,b):
+            for side,canonical,label in (('start','home' if row is a else 'work','家' if row is a else '公司'),
+                                         ('end','work' if row is a else 'home','公司' if row is a else '家')):
+                row[side+'_place'].update(statistics_key='region:'+canonical,label=label)
+        b['end_place']['source']='commute'
+        parking=parked('parking',T+70000,T+170000)
+        parking['end_place']['statistics_key']='region:work'
+        result=summarize([a,b,parking],'2026-10-20',T+DAY)
+        self.assertEqual(len(result['routes']),1)
+        self.assertEqual(result['routes'][0]['count'],2)
+        self.assertEqual(len(result['places']),2)
+        work=next(p for p in result['places'] if p['key']=='region:work')
+        self.assertEqual(work['arrivals'],1)
+        self.assertEqual(work['observed_parking_seconds'],100)
+
     def test_unknown_and_conflicting_places_excluded_from_routes(self):
         row=trip('x',T+10000,T+60000)
         row['start_place']=place(None,'未知')

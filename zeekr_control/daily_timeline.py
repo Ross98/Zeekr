@@ -36,7 +36,7 @@ class DailyTimeline:
         region=next((r for r in regions if r['id']==place['name_region_id']),None)
         if region:
             return dict(latitude=place['latitude'],longitude=place['longitude'],
-                        label=region['body']['name'],name_source='manual')
+                        label=region['body']['name'],name_source='manual',statistics_key='region:'+region['id'])
         # Automatic nearby context may be reused, but manual names only apply
         # inside their saved radius, as resolved by the shared endpoint matcher.
         nearby=[p for p in places if p['name_source']!='manual' and
@@ -50,6 +50,9 @@ class DailyTimeline:
         result=dict(key=anchor_key(place),label=place['label'] if place['name_source']!='reference' else '未命名地点',
                     source=place['name_source'],decision='automatic',issues=[],
                     latitude=place['latitude'],longitude=place['longitude'])
+        # Keep coordinate keys for correction/history; aggregates use the shared region identity.
+        statistics_key=place.get('statistics_key')
+        result['statistics_key']=statistics_key if isinstance(statistics_key,str) and statistics_key.startswith('region:') else result['key']
         if result['source']=='reference':result['source']='unknown'
         candidate=result['label']
         result['candidate']=candidate
@@ -82,6 +85,10 @@ class DailyTimeline:
             else:
                 target=next((r for r in regions if r['id']==chosen.get('target_key')),None)
                 result.update(label=target['body']['name'] if target else chosen['name'],source='manual',decision='confirmed')
+                if target:
+                    result['statistics_key']='region:'+target['id']
+                elif chosen['action']=='assign' or chosen['name']!=candidate:
+                    result['statistics_key']=chosen['key']
         if result['source']=='manual' or result['decision'] in ('confirmed','rejected'):result['issues']=[]
         if result['source']=='unknown' and result['decision']!='rejected':result['issues'].append('missing_name')
         return result

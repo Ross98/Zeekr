@@ -17,6 +17,37 @@ class TimelineTests(unittest.TestCase):
     def day(self, owner='owner', vehicle='car', **extra):
         return self.timeline.query('scope',vehicle,'2026-09-28',owner=owner,**extra)
 
+    def test_overview_uses_named_region_identity_for_commute_alias(self):
+        from zeekr_control.trip_place_names import anchor_key
+        from zeekr_control.trip_overview import TripOverview
+        fixtures.CommuteTagTests.save_rule(self)
+        for revision,(point,name) in enumerate([((31.2,121.4),'住所'),((31.21,121.41),'公司园区')]):
+            key=anchor_key(dict(latitude=point[0],longitude=point[1]))
+            self.tags.store.change('owner','car','place_names','save',key,
+                                   dict(name=name,latitude=point[0],longitude=point[1],radius_m=25),revision)
+        self.trip('return',self.start+7200000,(31.21,121.41),(31.2016,121.4))
+        rows=self.day()['records']
+        origin=next(r for r in rows if r['id']=='a')['start_place']
+        arrival=next(r for r in rows if r['id']=='return')['end_place']
+        self.assertEqual(origin['source'],'manual')
+        self.assertEqual(arrival['source'],'commute')
+        self.assertEqual(origin['label'],arrival['label'])
+        self.assertNotEqual(origin['key'],arrival['key'],'History/correction anchors remain distinct')
+        self.assertEqual(origin['statistics_key'],arrival['statistics_key'])
+        overview=TripOverview(self.timeline).query('scope','car','2026-09-28',owner='owner',now=self.start+86400000)
+        self.assertEqual(len(overview['routes']),1)
+        self.assertEqual(overview['routes'][0]['count'],2)
+
+    def test_statistics_identity_respects_single_record_assignment(self):
+        from zeekr_control.trip_place_names import anchor_key
+        key=anchor_key(dict(latitude=31.21,longitude=121.41))
+        self.tags.store.change('owner','car','place_names','save',key,
+                               dict(name='原地点',latitude=31.21,longitude=121.41,radius_m=150),0)
+        self.correction('assign',name='仅本次指定地点')
+        endpoint=self.day()['records'][0]['end_place']
+        self.assertEqual(endpoint['statistics_key'],endpoint['key'])
+        self.assertNotEqual(endpoint['statistics_key'],'region:'+key)
+
     def test_summary_positions_opt_in_and_unknown_coverage(self):
         result=self.day()
         self.assertEqual(result['summary']['distance_km'],20)
@@ -154,6 +185,7 @@ class TimelineTests(unittest.TestCase):
         preview=self.timeline.update('owner','car',dict(data,operation='preview'),scope='scope')
         self.timeline.update('owner','car',dict(data,operation='save',preview_token=preview['preview_token']),scope='scope')
         self.assertEqual(self.day()['records'][0]['end_place']['label'],'既有车库')
+        self.assertEqual(self.day()['records'][0]['end_place']['statistics_key'],'region:'+key)
         self.tags.store.change('owner','car','place_names','save',key,dict(name='改名后车库',latitude=31.21,longitude=121.41,radius_m=150),1)
         self.assertEqual(self.day()['records'][0]['end_place']['label'],'改名后车库')
 
