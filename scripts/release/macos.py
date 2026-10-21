@@ -508,7 +508,7 @@ def deploy(host, record):
 def inspect(host):
     return dict(platform='macos',active=str(host.active()),base=str(host.base),
                 state=str(host.home),origin=host.origin,
-                services={label:host.job(label) for label in LABELS},
+                services={label:host.job(label) for label in host.configs},
                 starts_at='user login',tailscale_ip=host.environment.get('ZEEKR_TRUST_TAILSCALE_IP')=='1')
 
 

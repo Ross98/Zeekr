@@ -275,3 +275,11 @@ class MacReleaseTests(unittest.TestCase):
             self.assertTrue(any(call.args[0][1:3]==['-m','zeekr_control.resource_monitor']
                                 for call in host.run.call_args_list))
             host.stop.assert_not_called();host.start.assert_not_called()
+
+    def test_inspect_includes_optional_resource_task(self):
+        labels=(*macos.LABELS,macos.RESOURCE_LABEL)
+        host=Mock(base=Path('/synthetic'),home=Path('/synthetic/state'),origin='https://synthetic.ts.net',
+                  environment={},configs=dict.fromkeys(labels,{}))
+        host.active.return_value=Path('/synthetic/releases/current')
+        host.job.return_value={'state':'running','pid':'123','runs':'1'}
+        self.assertEqual(set(macos.inspect(host)['services']),set(labels))
