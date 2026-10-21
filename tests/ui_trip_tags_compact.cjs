@@ -17,7 +17,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.locator('[data-tag-event]').first().waitFor();
   assert.equal(await page.getByLabel('家范围半径',{exact:true}).isVisible(),false,'Settings must not lengthen default page');
   assert.equal(await page.locator('#tag-comparison').isVisible(),false,'Comparison must not lengthen default page');
-  assert.ok((await page.locator('#trip-tags-workspace').boundingBox()).height<1150,'Default page stays bounded with many trips');
+  assert.ok((await page.locator('#trip-tags-workspace').boundingBox()).height<1500,'Default page stays bounded with many trips');
   const rows=page.locator('.tag-event-list');
   assert.ok(await rows.evaluate(el=>el.scrollHeight>el.clientHeight),'Trip records scroll inside bounded list');
   await page.getByRole('button',{name:'通勤设置',exact:true}).click();
@@ -47,8 +47,9 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.locator('[data-tag-event="compact-trip-0"] [data-tag="edit"]').click();
   assert.equal(await page.getByLabel('行程备注',{exact:true}).inputValue(),'尚未保存的备注草稿','Closing keeps annotation draft');
   await page.getByRole('button',{name:'取消标注',exact:true}).click();assert.equal(await panel.isVisible(),false);
-  await page.getByRole('button',{name:'下一页标签行程',exact:true}).click();
-  assert.equal(await page.locator('[data-tag-event]').first().getAttribute('data-tag-event'),'compact-trip-10');
+  await rows.evaluate(el=>el.scrollTop=el.scrollHeight);
+  assert.equal(await page.locator('[data-tag-event]').last().getAttribute('data-tag-event'),'compact-trip-29');
+  assert.ok(await rows.evaluate(el=>el.scrollTop>0),'All monthly trips remain reachable inside fixed list');
   for(const theme of ['light','dark']){
    await page.getByLabel('外观',{exact:true}).selectOption(theme);
    for(const width of [1440,1280,1024]){

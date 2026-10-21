@@ -54,6 +54,7 @@
       "tests/ui_parking_origin.cjs",
       "tests/ui_trip_place_panel.cjs",
       "tests/ui_trip_tags_compact.cjs",
+      "tests/ui_trip_tags_visual.cjs",
       "tests/ui_place_pair_statistics.cjs",
       "tests/ui_parameter_flow.cjs",
       "tests/ui_parameter_workspace.cjs",

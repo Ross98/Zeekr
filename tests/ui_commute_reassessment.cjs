@@ -43,6 +43,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'关闭工具面板',exact:true}).click();
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#tag-events')?.textContent.includes('起点距家中心 35'));
+    await page.locator('[data-tag-event] .tag-record-details summary').first().click();
     assert.match(await page.locator('#tag-events').innerText(),/去程[\s\S]*终点距公司中心 80[\s\S]*不能确认完整通勤/);
     await layouts(page,'commute-reassessment');
     assert.deepEqual(f.errors,[]);

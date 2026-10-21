@@ -84,7 +84,7 @@ async function saveRefreshRace(browser,seed){
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
     await page.locator('#tag-events').waitFor();
     await page.locator('[data-tag="load"]:not(:disabled)').waitFor();
-    assert.equal(await page.getByRole('heading',{name:'通勤自动标注'}).count(),1);
+    assert.equal(await page.getByRole('heading',{name:'通勤自动标注'}).count(),0);
     await page.getByRole('button',{name:'通勤设置',exact:true}).click();
     assert.equal(await page.getByLabel('家范围半径').inputValue(),'300');
     assert.equal(await page.getByLabel('公司范围半径').inputValue(),'300');
@@ -112,6 +112,7 @@ async function saveRefreshRace(browser,seed){
     await page.getByRole('button',{name:'关闭工具面板',exact:true}).click();
     await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
+    await page.locator('[data-tag-event="report-trip"] .tag-record-details summary').click();
     assert.match(await page.locator('[data-tag-event="report-trip"] .tag-trip-facts').innerText(),/开始[\s\S]*结束[\s\S]*里程[\s\S]*时长/);
     await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
     assert.equal(trackRequests.length,0);
@@ -171,6 +172,7 @@ async function saveRefreshRace(browser,seed){
     await page.waitForFunction(()=>document.querySelector('#tag-comparison')?.textContent.includes('片段 1'));
     assert.match(await page.locator('#tag-comparison').innerText(),/22.33/);
     await page.getByRole('button',{name:'关闭工具面板',exact:true}).click();
+    await page.locator('[data-tag-event="report-trip"] .tag-record-details summary').click();
     await page.locator('[data-tag-event="report-trip"] [data-tag="delete"]').click();
     await page.locator('.tag-trash-details summary').click();
     await page.getByRole('button',{name:'恢复行程标签',exact:true}).click();
