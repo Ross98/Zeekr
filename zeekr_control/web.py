@@ -912,7 +912,9 @@ class App:
             self.monitor_thread.join(timeout=60)
 
 
-def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=False):
+def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=False, tailscale_proxy=False):
+    if trusted_proxy and tailscale_proxy:
+        raise ValueError('Choose one trusted proxy mode')
     if public_origin and (not auth or not public_origin.startswith("https://") or urlsplit(public_origin).path):
         raise ValueError("Public origin requires HTTPS and authentication")
     class Handler(BaseHTTPRequestHandler):
@@ -947,10 +949,25 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
         def client_ip(self):
             peer = self.client_address[0]
             if public_origin and self.headers.get('Host') == urlsplit(public_origin).netloc:
-                # Opt-in only: the loopback proxy must overwrite X-Real-IP with
-                # its actual peer address. Never accept a caller's X-Forwarded-For.
-                if not trusted_proxy or not ipaddress.ip_address(peer).is_loopback:
+                # Explicit proxy modes only. Legacy proxies overwrite X-Real-IP;
+                # Tailscale Serve has its own strict forwarded-header contract.
+                if not (trusted_proxy or tailscale_proxy) or not ipaddress.ip_address(peer).is_loopback:
                     return ''
+                if tailscale_proxy:
+                    # Serve overwrites XFF with one source IP; never trust a chain,
+                    # X-Real-IP, duplicate headers, or an unencrypted proxy request.
+                    values = self.headers.get_all('X-Forwarded-For', [])
+                    if len(values) != 1 or self.headers.get_all('X-Forwarded-Proto', []) != ['https']:
+                        return ''
+                    try:
+                        address = ipaddress.ip_address(values[0])
+                    except ValueError:
+                        return ''
+                    if not any(address in network for network in (
+                            ipaddress.ip_network('100.64.0.0/10'),
+                            ipaddress.ip_network('fd7a:115c:a1e0::/48'))):
+                        return ''
+                    return str(address)
                 peer = self.headers.get('X-Real-IP', '')
             try:
                 return str(ipaddress.ip_address(peer))
@@ -1349,7 +1366,8 @@ def serve(port=8765):
             from .storage import load
             auth = WebAuth(load(auth_path), remembered_path=app.session_path.parent / 'web-remembered.sqlite3')
         server = make_server(app, port, auth=auth, public_origin=os.environ.get('ZEEKR_PUBLIC_ORIGIN'),
-                             trusted_proxy=os.environ.get('ZEEKR_TRUST_PROXY_IP') == '1')
+                             trusted_proxy=os.environ.get('ZEEKR_TRUST_PROXY_IP') == '1',
+                             tailscale_proxy=os.environ.get('ZEEKR_TRUST_TAILSCALE_IP') == '1')
         app.start_monitor()
         print('Zeekr Web：http://127.0.0.1:%d（仅本机；统一采集默认开启；Ctrl+C 退出）' % server.server_port, flush=True)
         try:

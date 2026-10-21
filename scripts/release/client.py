@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import time
 
@@ -101,8 +102,12 @@ print('UPLOAD_READY')
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == 'macos':
+        import macos
+        return macos.main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='action', required=True)
+    sub.add_parser('macos', help='Local launchd release adapter; macos --help for commands')
     prep = sub.add_parser('prepare')
     for name in ('transport', 'commit', 'paths', 'checks', 'output', 'name'):
         prep.add_argument('--'+name, required=True)
