@@ -485,3 +485,21 @@ main[data-page="overview"] .subtle,main[data-page="overview"] .metric-foot,main[
  .overview-detail-close{position:absolute;right:8px;top:6px;padding:4px 8px;background:transparent;color:var(--muted);font-size:22px;line-height:1}
  .overview-part-detail .overview-number strong{font-size:24px}
 }
+
+.vehicle-account-actions{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.vehicle-login-dialog{width:500px;max-width:calc(100vw - 80px);border:1px solid var(--line);border-radius:18px;background:var(--paper);color:var(--ink);padding:28px;box-shadow:0 18px 64px #0004}
+.vehicle-login-dialog::backdrop{background:#0008}
+.vehicle-login-form{display:grid;gap:14px}
+.vehicle-login-form p,.vehicle-login-form h2{margin:0}
+.vehicle-login-form p{line-height:1.6;color:var(--muted)}
+.vehicle-login-head{display:flex;align-items:center;justify-content:space-between;gap:24px}
+.vehicle-login-form label{display:block;font-weight:600}
+.vehicle-login-form input{width:100%;min-height:46px;background:var(--paper);color:var(--ink);border:1px solid var(--control-border);border-radius:8px;padding:10px;font:inherit;box-sizing:border-box}
+.vehicle-login-code{display:flex;align-items:flex-end;gap:12px}
+.vehicle-login-code>div{flex:1}
+.vehicle-login-code label{margin-bottom:10px}
+.vehicle-login-code button{white-space:nowrap;min-width:134px}
+.vehicle-login-form .vehicle-login-error{color:var(--ink);font-weight:600}
+.vehicle-login-form .vehicle-login-warning{color:var(--ink)}
+.vehicle-login-status:empty,.vehicle-login-error:empty{display:none}
+.vehicle-login-note{font-size:13px}

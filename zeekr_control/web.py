@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
 from .client import ApiError, Client
+from .vehicle_login import VehicleLogin
 from .query_policy import QueryPolicy
 from .cli import find_vins
 from .storage import DEFAULT_PATH, load, save
@@ -138,6 +139,7 @@ class App:
         self.request_key = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
         self.refresh_lock = threading.Lock()
+        self.vehicle_login = VehicleLogin(self.session_path, self.client_factory, self.lock)
         self.analysis_slots = threading.BoundedSemaphore(2)
         self.analysis_jobs = AnalysisJobs()
         self.stop = threading.Event()
@@ -1213,6 +1215,7 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/charge-management.js': ('charge-management.js', 'text/javascript; charset=utf-8'),
                           '/trips.css': ('trips.css', 'text/css; charset=utf-8'),
                           '/field-reviews.js': ('field-reviews.js', 'text/javascript; charset=utf-8'),
+                          '/vehicle-login.js': ('vehicle-login.js', 'text/javascript; charset=utf-8'),
                           '/app.js': ('app.js', 'text/javascript; charset=utf-8'),
                           '/storage-management.js': ('storage-management.js', 'text/javascript; charset=utf-8'),
                           '/storage-management.css': ('storage-management.css', 'text/css; charset=utf-8'),
@@ -1258,6 +1261,10 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                 data = self.read_json(limit)
                 if self.path.startswith('/api/analysis/') and self.path.endswith('/cancel'):
                     return self.send(*app.cancel_analysis(self.path.split('/')[-2]))
+                if self.path in ('/api/vehicle-login/sms', '/api/vehicle-login/verify'):
+                    owner = hashlib.sha256(self.token().encode()).hexdigest()
+                    operation = app.vehicle_login.send if self.path.endswith('/sms') else app.vehicle_login.verify
+                    return self.send(*operation(data, owner))
                 if self.path == '/api/refresh':
                     return self.send(200, app.refresh(data.get('vehicle', 1)))
                 if self.path in ('/api/trips/manage/preview','/api/trips/manage/execute'):
