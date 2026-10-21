@@ -68,7 +68,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
       }else if(view==='car'){
         await page.locator('.vehicle-table').waitFor();
       }else if(view==='energy'){
-        await page.locator('[data-action="charging-tab"][data-tab="summary"]').click();
+        await page.getByRole('tab',{name:'充电回顾',exact:true}).click();
       }else if(view==='statistics'){
         await page.waitForFunction(()=>!chargingAnalyticsBusy);
       }else if(view==='life'){
@@ -116,7 +116,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         const variants=section==='car'?[]:section==='energy'?['records']:section==='tracks'?['source:local','source:tags']:[];
         for(const tool of [null,...variants,...tools]){
           if(tool){
-            const selector=tool==='parameters'&&section==='car'?'[data-vehicle="parameters"]':tool==='records'?'[data-action="charging-tab"][data-tab="records"]':
+            const selector=tool==='parameters'&&section==='car'?'[data-vehicle="parameters"]':tool==='records'?'[data-review="manage-records"]':
               tool.startsWith('source:')?`[data-source="${tool.slice(7)}"]`:section==='insights'?`[data-insight-view="${tool}"]`:`[data-section-task="${tool}"]`;
             await navigate(selector);
           }
