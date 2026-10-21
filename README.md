@@ -202,6 +202,8 @@ HTTP 429 根据 `Retry-After` 建立共享冷却，无有效响应头时暂停 6
 
 ## 服务器部署与 Web 登录
 
+Mac mini 常驻部署使用 launchd + Tailscale Serve，开发、登录代理与固定发布步骤见 [macOS 开发与发布](docs/macos-development.md)。下方 systemd 模板用于 Linux。
+
 提供独立 Web、监控 systemd 服务和 Nginx 模板，见 [服务器部署说明](docs/server-deployment.md)。部署模板使用回环监听与独立服务用户，可通过 SSH 隧道访问。
 
 Web 密码登录通过 `ZEEKR_AUTH_FILE` 指定密码哈希文件；已指定但配置无效时启动失败。未设置时仍是本机开发模式，不得直接公开。HTTPS 域名入口还需设置 `ZEEKR_PUBLIC_ORIGIN` 并配置反向代理和证书。Web 登录与极氪账号登录是两套会话。

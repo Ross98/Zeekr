@@ -12,7 +12,7 @@ For non-trivial coding: explore intent/design, plan complex changes, write logic
 
 Read `handoff.md` and reconcile Git with production before a release. Commit, deploy and push require the user's explicit authorization; authorization in the active conversation persists. Stage named paths only.
 
-Use `scripts/release/client.py` and `docs/release-workflow.md` by default. Do not recreate task-specific release scripts in `/tmp` or copy old task-specific scripts. Temporary bundles and logs are fine.
+Use `scripts/release/client.py` and `docs/release-workflow.md` by default. On the Mac mini use its `macos` subcommand and `docs/macos-development.md`; do not run the Linux systemd release phases there. Do not recreate task-specific release scripts in `/tmp` or copy old task-specific scripts. Temporary bundles and logs are fine.
 
 Run focused checks during implementation. At release time validate the production-matching committed overlay, not the mixed workspace. Pure frontend: relevant browser checks plus exact candidate hashes; no unrelated Python full suite. Backend/auth/unknown changes: one full suite as the real service user in the final candidate. Repeat only after changed inputs, changed commands/environment, failed results or unresolved concrete concerns. Do not run full suites again solely because commit occurred.
 

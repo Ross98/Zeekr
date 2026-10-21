@@ -1,5 +1,7 @@
 # Linux 隔离部署模板
 
+Mac mini 已迁移到 launchd + Tailscale Serve 时，使用 [macOS 开发与发布](macos-development.md)。本页保留为 Linux 模板，不是 mini 的操作步骤。
+
 自动行程与充电通知使用独立的 `zeekr-monitor.service`，启用方法见 [监控说明](monitor-usage.md)。下文“采集默认关闭”“重启需手动恢复”指 Web 手动采集；已启用的自动监控会随服务器启动并恢复其持久化状态。
 
 通过 SSH 隧道访问，服务仅监听回环地址。以下为通用部署模板；实际服务器地址、账号和既有服务信息仅保存在本机。

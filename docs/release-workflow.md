@@ -1,5 +1,7 @@
 # 固定发布流程
 
+Mac mini 常驻环境：使用 `python3 scripts/release/client.py macos ...`，见 [macOS 开发与发布](macos-development.md)。下方 transport、systemd 和 `/opt` 操作用于 Linux，不可直接用于 mini。
+
 入口：`scripts/release/client.py`。替代每次在 `/tmp` 编写一套发布脚本。
 
 ## 执行规则
