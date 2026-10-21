@@ -12,6 +12,7 @@ const {contrast}=require('./ui_insight_helpers.cjs');
  await page.route('https://wprd0*.is.autonavi.com/**',r=>r.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e5ece6"/><path d="M0 128H256M128 0V256" stroke="#fff" stroke-width="8"/></svg>'}));
  await page.goto('http://127.0.0.1:'+port);
  // Overview and tracks have independent defaults; entering tracks is not map consent.
+ await page.getByRole('button',{name:'隐藏位置',exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'隐藏位置',exact:true}).count(),1);
  await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();await page.getByLabel('轨迹日期').fill('2026-09-20');await page.getByRole('button',{name:'查询行程',exact:true}).click();
  await page.locator('[data-local-trip="recall-charge"]').waitFor();assert.match(await page.locator('#recall-summary').innerText(),/27 km/);
