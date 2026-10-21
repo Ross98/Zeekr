@@ -136,3 +136,14 @@ class ResourceTests(unittest.TestCase):
         self.assertIsNone(sample['host_cpu_percent']);self.assertIsNone(sample['memory_pressure'])
         self.assertTrue(sample['sample_errors'])
         self.assertNotIn('synthetic private details',json.dumps(sample))
+
+    def test_restart_inside_sample_interval_refreshes_identity_without_extra_observation(self):
+        first=healthy(collector_pid=111)
+        self.monitor.tick(first,now=1000)
+        self.monitor=ResourceHealth(self.root,self.sender)
+        self.monitor.tick(healthy(collector_pid=222),now=1005)
+        state=self.state()
+        self.assertEqual(state['monitor_pid'],222)
+        self.assertEqual(state['checked_at'],1000)
+        self.assertEqual(state['streak'],1)
+        self.sender.assert_not_called()

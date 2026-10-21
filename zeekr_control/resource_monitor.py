@@ -157,7 +157,15 @@ class ResourceHealth:
     def tick(self,sample,now=None):
         now=time.time() if now is None else now
         state=self.cached();last=state.get('checked_at')
-        if last is not None and 0<=now-last<INTERVAL:return state
+        if last is not None and 0<=now-last<INTERVAL:
+            pid=sample.get('collector_pid')
+            if pid is not None and pid != state.get('monitor_pid'):
+                # A new task must prove it is alive immediately, without turning
+                # the same sampling interval into a second sustained observation.
+                state['monitor_pid']=pid
+                if state.get('notification_state')=='sending':state['notification_state']='uncertain'
+                self.save(state)
+            return state
         if state.get('notification_state')=='sending':state['notification_state']='uncertain'
         prior=state.get('level','healthy');level,reasons=classify(sample,prior)
         consecutive=last is not None and 0<now-last<=INTERVAL*1.5
