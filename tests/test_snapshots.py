@@ -23,6 +23,16 @@ class SnapshotStoreTests(unittest.TestCase):
                 self.assertEqual(result['change'], expected)
         self.assertEqual(store.read('scope-a', 'vehicle-a')['raw'], {'updateTime': 300, 'value': 2})
 
+    def test_publication_links_same_account_history_without_sharing_live_snapshot(self):
+        from zeekr_control.snapshots import SnapshotStore
+        from zeekr_control.archive_reader import ArchiveReader
+        store=SnapshotStore(Path(self.temp.name)/'snapshots.sqlite3')
+        store.publish('old','car',{'updateTime':1000},1000,owner_key='account')
+        store.publish('new','car',{'updateTime':2000},2000,owner_key='account')
+        self.assertEqual(store.read('new','car')['raw'],{'updateTime':2000})
+        self.assertEqual(store.read('old','car')['raw'],{'updateTime':1000})
+        self.assertEqual(len(list(ArchiveReader(Path(self.temp.name)/'snapshot-archive').iter_metadata('new','car',0,3000))),2)
+
     def test_newer_snapshot_wins_and_same_time_can_be_revised(self):
         from zeekr_control.snapshots import SnapshotStore
         store = SnapshotStore(Path(self.temp.name) / 'snapshots.sqlite3')

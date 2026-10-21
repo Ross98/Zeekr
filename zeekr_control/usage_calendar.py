@@ -97,6 +97,14 @@ class UsageCalendar:
                     event[side+'_label']=interpreted['label'] if interpreted['key'] else ('起点未知' if side=='start' else '终点未知')
                     event[side+'_place_key']=interpreted['key']
         if self.store:
+            from .charging_places import ChargingPlaces
+            charge_places=ChargingPlaces(self.events.path,self.store).timeline_places(owner,vehicle,[e for e in events if e['kind']=='charge_end'])
+            for event in events:
+                place=charge_places.get(event['id'])
+                if place:
+                    for side in ('start','end'):
+                        event[side+'_label']=place['label'];event[side+'_place_key']=place['key']
+        if self.store:
             for event in parking_events:
                 if event['place_source']=='unknown' or not window['start']<=event['end_time']<window['end']:continue
                 parking_places.append(dict(key=event['place_statistics_key'] or event['place_key'],

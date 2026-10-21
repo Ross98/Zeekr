@@ -22,6 +22,15 @@ const assert=require('node:assert/strict'),path=require('node:path');
  await page.locator('.tv-overview>summary').click();await page.locator('[data-trip-trend] svg').waitFor();
  for(const title of ['近 7 天里程','常走路线','常去地点'])await page.locator('#local-trip-overview-body').getByRole('heading',{name:title,exact:true}).waitFor();
  await page.screenshot({path:'/private/tmp/zeekr-local-trips-preview.png',fullPage:true});
+ // Explicit user naming remains possible when GPS is missing, with no false map point.
+ await page.evaluate(()=>{localTrips.selected.end_place={key:null,label:'位置未知',source:'unknown',decision:'unresolved',issues:['missing_position']};localTrips.timeline.known_places=[{key:'place_name_'+'1'.repeat(64),name:'合成公司'}];renderLocalTripFacts();});
+ await page.locator('[data-recall-correct="end"]').click();
+ assert.equal(await page.locator('#recall-decision option').count(),1);
+ assert.equal(await page.locator('#recall-decision').inputValue(),'assign');
+ assert.match(await page.locator('#recall-correction').innerText(),/人工确认本次地点/);
+ await page.locator('#recall-target').selectOption('place_name_'+'1'.repeat(64));
+ assert.equal(await page.locator('#recall-target').inputValue(),'place_name_'+'1'.repeat(64));
+ await page.locator('[data-recall-cancel]').click();
  // A crowded day must scroll within the equal-height card and keep position.
  await page.evaluate(()=>{const base=localTrips.events.find(r=>r.type==='trip');localTrips.events=Array.from({length:30},(_,i)=>({...base,id:'many-'+i,start_time:base.start_time+i*60000,end_time:base.end_time+i*60000}));renderLocalTripList();const list=document.querySelector('#local-trip-list');list.scrollTop=250;});
  assert.ok(await page.locator('#local-trip-list').evaluate(el=>el.scrollHeight>el.clientHeight));

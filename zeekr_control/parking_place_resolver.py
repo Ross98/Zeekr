@@ -21,12 +21,26 @@ class ParkingPlaceResolver:
         self.rule=CommuteTags(store,database).rule(owner,vehicle) if store else dict(deleted=True)
         self.corrections=store.read(owner,vehicle,'place_corrections') if store else dict(records=[])
         self.corrections['_regions']=self.regions
-        self.addresses={}
+        self.addresses={};self.charge_confirmations=[];self.arrival_confirmations=[]
         with UsageEvents(database).connect() as db:
             self.has_observations=db is not None and bool(db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone())
             if db is not None:
                 if history is None:history=UsageEvents(database).between(vehicle,0,32503680000001)['events']
                 self.addresses=cached_names(db,vehicle,history)
+        if store and history:
+            from .charging_places import ChargingPlaces
+            for record in self.corrections['records']:
+                body=record['body']
+                if record['deleted'] or body.get('label_only') is not True or body.get('action')!='assign' or body.get('side')!='end':continue
+                trip=next((e for e in history if e['id']==body['record_id'] and e['kind']=='trip_end'),None)
+                region=next((r for r in self.regions if r['id']==body.get('target_key')),None)
+                if trip and region:self.arrival_confirmations.append((trip,region))
+            charges=[e for e in history if e['kind']=='charge_end']
+            confirmed=ChargingPlaces(database,store)._resolved(owner,vehicle,charges)
+            for event in charges:
+                result=confirmed.get(event['id'])
+                matches=[r for r in self.regions if result and result['name_source']=='manual' and r['body']['name']==result['name']]
+                if len(matches)==1:self.charge_confirmations.append((event,matches[0]))
 
     def record_id(self, identity):
         return 'parking_'+self.digest(identity)[:32]
@@ -63,8 +77,18 @@ class ParkingPlaceResolver:
                     position=dict(latitude=archived['latitude'],longitude=archived['longitude'],state_time=stamp)
             if position:
                 point=self._name(position);confidence='observed';reason=None
+            elif (event.get('parking_status')=='parked' and (event.get('p_gear_samples') or 0)>=2 and
+                  any(e['end_time']==start for e,r in self.arrival_confirmations)):
+                matches=[(e,r) for e,r in self.arrival_confirmations if e['end_time']==start]
+                if len({r['id'] for e,r in matches})==1:
+                    trip,region=matches[0];body=region['body']
+                    point=dict(latitude=body['latitude'],longitude=body['longitude'],label=body['name'],name_source='manual',statistics_key='region:'+region['id'])
+                    evidence=dict(source='parking_arrival_confirmation',event_id=trip['id'])
+                    confidence='reference';reason=None
             elif self.names and self.has_observations:
-                reference=parking_place_reference(db,self.vehicle,event,self.names,self.owner,self.regions,self.rule)
+                candidates=[(r,e['id']) for e,r in self.charge_confirmations if e.get('start_time') is not None and start<=e['start_time']<e['end_time']<=end]
+                confirmed=candidates[0] if candidates and len({r['id'] for r,_ in candidates})==1 else None
+                reference=parking_place_reference(db,self.vehicle,event,self.names,self.owner,self.regions,self.rule,confirmed_region=confirmed)
                 if reference:
                     point,evidence=reference;confidence='reference';reason=None
         else:

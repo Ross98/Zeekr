@@ -92,6 +92,41 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(result['coverage']['coverage'],'missing')
         self.assertTrue(self.day(positions=True)['records'][0]['position'])
 
+    def test_unknown_endpoint_can_be_confirmed_for_this_record_without_promoting_gps(self):
+        import sqlite3
+        from zeekr_control.trip_place_names import anchor_key
+        with sqlite3.connect(self.db) as db:db.execute('DELETE FROM observations')
+        key=anchor_key(dict(latitude=31.21,longitude=121.41))
+        self.tags.store.change('owner','car','place_names','save',key,dict(name='公司园区',latitude=31.21,longitude=121.41,radius_m=150),0)
+        data=dict(date='2026-09-28',record_id='a',side='end',action='assign',target_key=key,revision=0)
+        with self.assertRaises(ValueError):
+            self.timeline.update('owner','car',dict(data,target_key=None,name='随意名称',operation='preview'),scope='scope')
+        with self.assertRaises(ValueError):
+            self.timeline.update('other','car',dict(data,operation='preview'),scope='scope')
+        preview=self.timeline.update('owner','car',dict(data,operation='preview'),scope='scope')
+        self.timeline.update('owner','car',dict(data,operation='save',preview_token=preview['preview_token']),scope='scope')
+        row=self.day(positions=True)['records'][0]
+        self.assertEqual(row['end_place']['label'],'公司园区')
+        self.assertEqual(row['end_place']['source'],'manual')
+        self.assertEqual(row['end_place']['evidence'],'user_confirmation')
+        self.assertNotIn('position',row)
+        self.assertEqual(self.day(owner='other')['records'][0]['end_place']['label'],'位置未知')
+        self.timeline.update('owner','car',dict(operation='undo',revision=1),scope='scope')
+        self.assertEqual(self.day()['records'][0]['end_place']['label'],'位置未知')
+
+    def test_charge_uses_confirmed_station_in_timeline_and_calendar_without_gps(self):
+        import sqlite3
+        with sqlite3.connect(self.db) as db:
+            db.execute('DELETE FROM observations')
+            db.execute("UPDATE monitor_events SET kind='charge_end' WHERE id='a'")
+        self.tags.store.change('owner','car','charging_places','save','confirmed',dict(event_id='a',scope='single',name='公司园区',station_name='公司充电站',point=None,radius_m=75,version=1),0)
+        row=self.day(positions=True)['records'][0]
+        self.assertEqual(row['end_place']['label'],'公司充电站')
+        self.assertEqual(row['end_place']['source'],'manual')
+        self.assertNotIn('position',row)
+        calendar=self.timeline.calendar.query('scope','car','2026-09-28',owner='owner')
+        self.assertEqual(calendar['events'][0]['end_label'],'公司充电站')
+
     def test_cross_midnight_shown_without_apportioning_distance(self):
         self.trip('night',self.start-600000,(31.2,121.4),(31.21,121.41))
         result=self.day()

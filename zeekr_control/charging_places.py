@@ -82,6 +82,24 @@ class ChargingPlaces:
                     revision=saved['revision'],can_undo=saved['can_undo'],correction_scope=result.get('correction_scope'),
                     radius_m=result.get('radius_m',RADIUS_M))
 
+    def timeline_places(self, owner, vehicle, events):
+        """Shared charge labels; user naming never creates trusted GPS evidence."""
+        from .trip_place_names import anchor_key
+        resolved=self._resolved(owner,vehicle,events)
+        keys=self._station_keys(events,resolved)
+        result={}
+        for event in events:
+            r=resolved.get(event['id'])
+            if not r or r['name_source']=='unknown':continue
+            label=r['station_name'] or r['name'];point=r['point']
+            key=anchor_key(dict(latitude=point[0],longitude=point[1])) if point else 'place_name_'+_key('charge:'+event['id'])
+            place=dict(key=key,statistics_key=keys.get(event['id']) or r['group_key'] or key,
+                       label=label,source=r['name_source'],decision='confirmed' if r['name_source']=='manual' else 'automatic',
+                       candidate=label,issues=[],label_only=point is None,evidence='charge_place_confirmation' if r['name_source']=='manual' else r['evidence']['source'])
+            if point:place.update(latitude=point[0],longitude=point[1])
+            result[event['id']]=place
+        return result
+
     def detail(self,owner,vehicle,identity):
         event=self.events.get(vehicle,identity)
         if event['kind']!='charge_end':raise ValueError('请选择已结束充电记录。')

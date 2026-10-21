@@ -24,6 +24,16 @@ class ReadonlyAnalysisTests(unittest.TestCase):
         save(self.path.parent / 'monitor-binding.json', {'vehicle_key': 'synthetic-car'})
         self.app.state()
 
+    def test_linked_archive_scope_changes_invalidate_cached_analysis(self):
+        context=self.app._read_context()
+        before=self.app._analysis_revision(context)
+        self.app.snapshot_store.bind_archive('recovered-session',context.vehicle,context.owner)
+        self.assertNotEqual(self.app._analysis_revision(context),before)
+        # Adding another account's session does not change this owner's history.
+        before=self.app._analysis_revision(context)
+        self.app.snapshot_store.bind_archive('unrelated-session',context.vehicle,'other-owner')
+        self.assertEqual(self.app._analysis_revision(context),before)
+
     def test_state_completes_while_calendar_is_still_computing(self):
         entered, release, state_done = threading.Event(), threading.Event(), threading.Event()
         errors = []

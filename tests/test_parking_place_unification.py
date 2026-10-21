@@ -85,6 +85,23 @@ class ParkingUnificationTests(unittest.TestCase):
         self.assertTrue(any(p['label']=='旧片段校正' for p in month['totals']['parking_places']))
         self.assertTrue(any(p['label']=='旧片段校正' for p in self.timeline.year('scope','car','2026',owner='owner')['frequent_parking_places']))
 
+    def test_user_confirmed_arrival_names_adjacent_parking_without_gps_promotion(self):
+        with sqlite3.connect(self.database) as db:
+            db.execute('DELETE FROM observations WHERE state_time=?',(self.lower+240000,))
+        from zeekr_control.usage_events import UsageEvents
+        event=next(e for e in UsageEvents(self.database).between('car',0,32503680000001)['events'] if e['end_time']==self.lower+300000)
+        from zeekr_control.trip_place_names import TripPlaceNames,anchor_key
+        region=TripPlaceNames(self.store).regions('owner','car')[0]
+        body=dict(record_id=event['id'],side='end',action='assign',target_key=region['id'],name=region['body']['name'],key=anchor_key(region['body']),latitude=region['body']['latitude'],longitude=region['body']['longitude'],candidate='位置未知',remember=False,label_only=True)
+        self.store.change('owner','car','place_corrections','save','manual-arrival',body,0)
+        analytics,row,month=self.results()
+        self.assertEqual(analytics['place_label'],'自家车库')
+        self.assertEqual(row['end_place_evidence']['source'],'parking_arrival_confirmation')
+        self.assertNotIn('position',row)
+        self.assertEqual(month['totals']['parking_places'][0]['confidence'],'reference')
+        self.store.change('owner','car','place_corrections','undo',None,None,1)
+        self.assertEqual(self.results()[0]['place_confidence'],'unknown')
+
     def test_calendar_observation_source_is_read_once_and_keeps_coverage(self):
         original=self.archive.iter_records;calls=[]
         def count(*args,**kwargs):

@@ -274,6 +274,7 @@ class App:
         snapshot = self.snapshot_store.read(session_scope(session), key, known_revision=self.snapshot_revision)
         if not snapshot:
             return
+        self.snapshot_store.bind_archive(session_scope(session),key,account_scope(session))
         self.vehicle_key = key
         self.raw = snapshot['raw']
         self.model = build_model(self.raw, vehicle=vehicle)
@@ -313,7 +314,7 @@ class App:
                 observed_at = int(time.time() * 1000)
                 publication = self.snapshot_store.publish(
                     scope, key, raw, observed_at,
-                    fetched_at=int((fetched_at if fetched_at is not None else time.time()) * 1000), source='manual')
+                    fetched_at=int((fetched_at if fetched_at is not None else time.time()) * 1000), source='manual', owner_key=account_scope(session))
                 self.vehicle, self.vehicle_key = vehicle, key
                 self.profile = vehicle_profile(key, vehicle, len(vehicles))
                 self.vehicles = [{'number': index, 'label': '车辆 %d' % index} for index in range(1, len(vehicles) + 1)]
@@ -505,7 +506,8 @@ class App:
                             encoded = str(value).encode()
                             digest.update(len(encoded).to_bytes(8,'big'));digest.update(encoded)
                     event_revision = ('legacy', digest.digest())
-        return (personal, event_revision, self.trip_manager.revision(context.vehicle),
+        from .snapshots import archive_aliases
+        return (archive_aliases(self.session_path.parent/'snapshots.sqlite3',context.scope,context.vehicle),personal, event_revision, self.trip_manager.revision(context.vehicle),
                 self.charge_manager.revision(context.vehicle))
 
     def _readonly_analysis(self, operation, args):

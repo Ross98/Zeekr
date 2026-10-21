@@ -341,6 +341,34 @@ class ArchiveReaderTests(unittest.TestCase):
         finally:
             stream.close()
 
+    def test_relogin_keeps_history_but_other_account_and_vehicle_stay_isolated(self):
+        from zeekr_control.snapshots import SnapshotStore
+        store=SnapshotStore(self.root.parent/'snapshots.sqlite3')
+        for scope,owner in [('old','account'),('new','account'),('foreign','other')]:
+            store.bind_archive(scope,'car',owner)
+        store.bind_archive('old','other-car','other')
+        for i,(scope,vehicle) in enumerate([('old','car'),('new','car'),('foreign','car'),('old','other-car')]):
+            self.append(i*1000,scope=scope,vehicle=vehicle)
+        rows=list(self.reader.iter_metadata('new','car',self.start,self.start+10000))
+        self.assertEqual(len(rows),2)
+        self.assertEqual(self.reader.time_bounds('new','car'),(self.start,self.start+1000))
+        self.assertEqual(len(self.reader.timeline('new','car','2026-09-20')['items']),2)
+        self.assertEqual(self.reader.read('new','car',rows[0]['key'])[0]['key'],rows[0]['key'])
+        self.assertEqual(len(list(self.reader.frozen('new','car',self.start+10000).iter_records('new','car',self.start,self.start+10000))),2)
+        with self.assertRaises(ValueError):self.reader.frozen('new','car',self.start+10000).read('foreign','car',rows[0]['key'])
+        self.assertEqual(len(list(self.reader.iter_metadata('foreign','car',self.start,self.start+10000))),1)
+        with self.assertRaises(ValueError):store.bind_archive('old','car','other')
+    def test_linked_scope_pagination_keeps_index_order_without_sorting_whole_history(self):
+        from zeekr_control.snapshots import SnapshotStore
+        store=SnapshotStore(self.root.parent/'snapshots.sqlite3')
+        for scope in ('old','new'):store.bind_archive(scope,'car','account')
+        self.append(scope='old');self.append(1000,scope='new')
+        with self.reader._scoped_connect('202609','new','car') as db:
+            plan=' '.join(str(row[3]) for row in db.execute('EXPLAIN QUERY PLAN SELECT id,observed_at FROM reads WHERE scope_key=? AND vehicle_key=? AND observed_at>=? ORDER BY observed_at,id LIMIT 512',('new','car',self.start)))
+            self.assertNotIn('TEMP B-TREE',plan)
+            with self.assertRaises(sqlite3.OperationalError):db.execute('DELETE FROM main.reads')
+
+
 
 if __name__ == '__main__':
     unittest.main()

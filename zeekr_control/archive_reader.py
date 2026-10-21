@@ -95,6 +95,8 @@ class ArchiveReader:
         _context(scope, vehicle)
         end_month = datetime.fromtimestamp((upper-1)/1000, BEIJING).strftime('%Y%m')
         reader = ArchiveReader(self.root)
+        from .snapshots import archive_aliases
+        reader._aliases=archive_aliases(self.root.parent/'snapshots.sqlite3',scope,vehicle)
         reader._frozen = (scope, vehicle, self._freeze(scope, vehicle, end_month))
         return reader
 
@@ -125,6 +127,24 @@ class ArchiveReader:
         finally:
             db.close()
 
+    @contextmanager
+    def _scoped_connect(self, month, scope, vehicle):
+        from .snapshots import archive_aliases
+        if self._frozen is not None and self._frozen[:2]!=(scope,vehicle):
+            raise ValueError('归档读取作用域已变化。')
+        aliases=getattr(self,'_aliases',None)
+        if aliases is None:aliases=archive_aliases(self.root.parent/'snapshots.sqlite3',scope,vehicle)
+        with self.connect(month) as db:
+            if db is not None and aliases!=(scope,):
+                # Main database remains mode=ro. A connection-local view preserves
+                # indexed scope/vehicle filtering; no original row is migrated.
+                quote=lambda value:"'"+value.replace("'","''")+"'"
+                db.execute('PRAGMA query_only=OFF')
+                projection='SELECT id,'+quote(scope)+' AS scope_key,vehicle_key,state_time,fetched_at,observed_at,source,digest FROM main.reads WHERE scope_key='
+                db.execute('CREATE TEMP VIEW reads AS '+' UNION ALL '.join(projection+quote(alias)+' AND vehicle_key='+quote(vehicle) for alias in aliases))
+                db.execute('PRAGMA query_only=ON')
+            yield db
+
     def _months(self):
         if not self.root.exists() and not self.root.is_symlink():
             return []
@@ -145,7 +165,7 @@ class ArchiveReader:
         _context(scope, vehicle)
         first, last = None, None
         for month in self._months():
-            with self.connect(month) as db:
+            with self._scoped_connect(month,scope,vehicle) as db:
                 if db is None:
                     continue
                 args = (scope, vehicle)
@@ -167,7 +187,7 @@ class ArchiveReader:
             if row:
                 return row
         for earlier in reversed([value for value in self._months() if value < month]):
-            with self.connect(earlier) as connection:
+            with self._scoped_connect(earlier,scope,vehicle) as connection:
                 if connection:
                     row = connection.execute(query, args).fetchone()
                     if row:
@@ -189,7 +209,7 @@ class ArchiveReader:
                 raise ValueError('归档游标不属于所选日期。')
         result = {'date': date, 'items': [], 'next_cursor': None,
                   'time_basis': '北京时间采集日期', 'gap_threshold_seconds': STALE_MS // 1000}
-        with self.connect(month) as db:
+        with self._scoped_connect(month,scope,vehicle) as db:
             if db is None:
                 if cursor:
                     raise ValueError('归档游标已失效。')
@@ -214,7 +234,7 @@ class ArchiveReader:
         """Private server-side raw access; public callers must use snapshot()."""
         _context(scope, vehicle)
         month, row_id = _selection(key)
-        with self.connect(month) as db:
+        with self._scoped_connect(month,scope,vehicle) as db:
             row = db.execute('SELECT reads.*,encoding,raw_bytes,substr(compressed_json,1,?) AS compressed_json FROM reads '
                              'JOIN payloads USING(digest) WHERE scope_key=? AND vehicle_key=? AND id=?',
                              (MAX_PAYLOAD_BYTES + 65537, scope, vehicle, row_id)).fetchone() if db is not None else None
@@ -312,7 +332,7 @@ class ArchiveReader:
         for month in reversed(list(frozen)):
             if month > start_month:
                 continue
-            with self.connect(month) as db:
+            with self._scoped_connect(month,scope,vehicle) as db:
                 if db is None or self._identity(month) != frozen[month][0]:
                     raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
                 previous = db.execute('SELECT '+READ_COLUMNS+' FROM reads WHERE scope_key=? AND vehicle_key=? '
@@ -323,7 +343,7 @@ class ArchiveReader:
         for month, (identity, high) in frozen.items():
             if not start_month <= month <= end_month:
                 continue
-            with self.connect(month) as db:
+            with self._scoped_connect(month,scope,vehicle) as db:
                 if db is None:
                     raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
                 # Materialize bounded metadata only, releasing the range cursor's
@@ -366,7 +386,7 @@ class ArchiveReader:
         frozen=self._freeze(scope,vehicle,end_month,start_month)
         observed=set()
         for month,(identity,high) in frozen.items():
-            with self.connect(month) as db:
+            with self._scoped_connect(month,scope,vehicle) as db:
                 if db is None:raise ArchiveChanged('归档在读取期间发生变化，请重新读取。')
                 cursor=lower
                 while cursor<upper:

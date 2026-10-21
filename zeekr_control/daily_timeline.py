@@ -30,6 +30,12 @@ class DailyTimeline:
 
     def _interpret(self, owner, vehicle, place, identity, side, saved, aliases=()):
         if place is None:
+            # A single-record user label is independent of GPS trust. Region
+            # coordinates support grouping only; _position remains untouched.
+            chosen=next((r['body'] for r in saved['records'] if not r['deleted'] and r['body'].get('record_id')==identity and r['body'].get('side')==side),None)
+            target=next((r for r in saved.get('_regions',[]) if chosen and r['id']==chosen.get('target_key')),None)
+            if chosen and chosen.get('label_only') is True and chosen.get('action')=='assign' and target:
+                return dict(key=chosen['key'],statistics_key='region:'+target['id'],label=target['body']['name'],source='manual',decision='confirmed',candidate='位置未知',issues=[],latitude=target['body']['latitude'],longitude=target['body']['longitude'],evidence='user_confirmation')
             return dict(key=None,label='位置未知',source='unknown',decision='unresolved',issues=['missing_position'])
         result=dict(key=anchor_key(place),label=place['label'] if place['name_source']!='reference' else '未命名地点',
                     source=place['name_source'],decision='automatic',issues=[],
@@ -63,6 +69,7 @@ class DailyTimeline:
                 if len(signatures)==1:chosen=inherited[0]
                 else:result['issues'].append('candidate_conflict')
         if chosen:
+            if chosen.get('label_only'):result['evidence']='user_confirmation'
             result['key']=chosen.get('target_key') or chosen['key']
             if chosen['action']=='reject':
                 if chosen['candidate']==candidate and result['source']!='manual':result.update(label='未命名地点',source='unknown',decision='rejected')
@@ -95,11 +102,16 @@ class DailyTimeline:
         booked={r['body']['event']['id']:dict(r['body'],id=r['id']) for r in bills['records']
                 if not r['deleted'] and isinstance(r['body'].get('event'),dict)}
         positions={(sample['event_id'],sample['side']):sample for sample in stats['_endpoints']}
+        from .charging_places import ChargingPlaces
+        charge_places=ChargingPlaces(self.database,self.store).timeline_places(owner,vehicle,[e for e in events if e['kind']=='charge_end'])
         records=[]
         for event in named:
             row=dict(event,type='trip' if event['kind']=='trip_end' else 'charge',status='ended')
             for side in ('start','end'):
                 row[side+'_place']=self._interpret(owner,vehicle,places.get(event.get(side+'_place')),event['id'],side,corrections)
+            if row['type']=='charge' and event['id'] in charge_places:
+                for side in ('start','end'):
+                    if row[side+'_place']['decision'] in ('automatic','unresolved'):row[side+'_place']=dict(charge_places[event['id']])
             point=positions.get((event['id'],'end')) or positions.get((event['id'],'start'))
             row['_position']=dict(latitude=point['point'][0],longitude=point['point'][1],state_time=point['time']) if point else None
             row['bill']=booked.get(event['id']) if row['type']=='charge' else None
@@ -165,7 +177,6 @@ class DailyTimeline:
         side=data.get('side')
         if row is None or side not in ('start','end'):raise ValueError('记录已变化，请重新读取。')
         place=row[side+'_place']
-        if not place['key']:raise ValueError('没有可信位置，不能确认地点归属。')
         action=data.get('action')
         if action=='confirm' and place['source']=='unknown':raise ValueError('名称未知，请先填写地点名称。')
         if action=='reject' and place['source']=='manual':raise ValueError('人工名称请改归属，不作为自动匹配拒绝。')
@@ -175,12 +186,18 @@ class DailyTimeline:
         if target_key:
             target=next((r for r in TripPlaceNames(self.store).regions(owner,vehicle) if r['id']==target_key),None)
             if target is None:raise ValueError('目标地点已变化，请重新读取。')
+        if not place['key'] and not (action=='assign' and target):raise ValueError('没有可信位置时，请仅为本次记录选择已有地点。')
+        label_only=not place['key'] or 'latitude' not in place or place.get('evidence')=='user_confirmation'
+        if label_only:
+            if target is None:raise ValueError('人工地点确认请为本次记录选择已有地点。')
+            place=dict(place,key=anchor_key(target['body']),latitude=target['body']['latitude'],longitude=target['body']['longitude'])
         name=target['body']['name'] if target else data.get('name') if action=='assign' else place['label']
         if action!='reject' and (not isinstance(name,str) or not 1<=len(name.strip())<=40 or any(ord(c)<32 for c in name)):
             raise ValueError('地点名称需为 1–40 字，不能含控制字符。')
         if data.get('revision')!=saved['revision']:raise ValueError('地点修正已更新，请重新读取。')
         body=dict(record_id=row['id'],side=side,action=action,name=name.strip(),candidate=place.get('candidate',place['label']),
                   key=place['key'],target_key=target_key,latitude=place['latitude'],longitude=place['longitude'],remember=action=='reject' and data.get('remember') is True)
+        if label_only:body['label_only']=True
         affected=[r['id'] for r in records if r['id']==row['id'] or body['remember'] and any(
             p['key'] and p.get('candidate')==body['candidate'] and _distance((p['latitude'],p['longitude']),
             (body['latitude'],body['longitude']))<=150 for p in (r['start_place'],r['end_place']))]

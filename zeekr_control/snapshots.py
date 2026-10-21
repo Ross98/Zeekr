@@ -34,7 +34,18 @@ class SnapshotStore:
         db.commit()
         return db
 
-    def publish(self, scope_key, vehicle_key, raw, observed_at, fetched_at=None, source='unknown'):
+    def bind_archive(self, scope_key, vehicle_key, owner_key):
+        """Associate a verified account/vehicle with a session, without rewriting reads."""
+        if not all(isinstance(v,str) and 0<len(v)<=256 for v in (scope_key,vehicle_key,owner_key)):
+            raise ValueError('归档账户关联无效。')
+        with closing(self.connect()) as db, db:
+            db.execute('CREATE TABLE IF NOT EXISTS archive_accounts (scope_key TEXT NOT NULL,vehicle_key TEXT NOT NULL,owner_key TEXT NOT NULL,PRIMARY KEY(scope_key,vehicle_key))')
+            db.execute('CREATE INDEX IF NOT EXISTS archive_accounts_owner ON archive_accounts(owner_key,vehicle_key,scope_key)')
+            db.execute('INSERT OR IGNORE INTO archive_accounts VALUES (?,?,?)',(scope_key,vehicle_key,owner_key))
+            if db.execute('SELECT owner_key FROM archive_accounts WHERE scope_key=? AND vehicle_key=?',(scope_key,vehicle_key)).fetchone()[0]!=owner_key:
+                raise ValueError('归档会话已属于其他账户，不能重新归属。')
+
+    def publish(self, scope_key, vehicle_key, raw, observed_at, fetched_at=None, source='unknown', owner_key=None):
         if not all(isinstance(value, str) and value for value in (scope_key, vehicle_key)):
             raise ValueError('快照作用域或车辆无效。')
         if not isinstance(raw, dict) or type(observed_at) is not int:
@@ -52,6 +63,7 @@ class SnapshotStore:
         # If the archive fails, do not advance latest state or downstream events.
         # A later latest-store failure may leave an authentic archived read;
         # retries are idempotent and never delete that evidence.
+        if owner_key is not None:self.bind_archive(scope_key,vehicle_key,owner_key)
         SnapshotArchive(self.path.parent / 'snapshot-archive').append(
             scope_key, vehicle_key, encoded, state_time, observed_at, fetched_at, source)
         with closing(self.connect()) as db, db:
@@ -103,3 +115,18 @@ def session_scope(session):
     if not isinstance(session, dict):
         raise ValueError('车辆会话无效。')
     return hashlib.sha256(json.dumps(session, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def archive_aliases(path, scope, vehicle):
+    """Only explicitly registered sessions of this account and vehicle are readable."""
+    path=Path(path)
+    if not path.exists() and not path.is_symlink():return (scope,)
+    from .archive_reader import _private
+    _private(path)
+    with closing(sqlite3.connect(path.absolute().as_uri()+'?mode=ro',uri=True)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='archive_accounts'").fetchone():return (scope,)
+        owner=db.execute('SELECT owner_key FROM archive_accounts WHERE scope_key=? AND vehicle_key=?',(scope,vehicle)).fetchone()
+        if owner is None:return (scope,)
+        rows=db.execute('SELECT scope_key FROM archive_accounts WHERE owner_key=? AND vehicle_key=? ORDER BY scope_key LIMIT 257',(owner[0],vehicle)).fetchall()
+        if len(rows)>256:raise ValueError('账户历史会话过多，需要整理归档关联。')
+        return tuple(r[0] for r in rows)

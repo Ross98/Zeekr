@@ -9,7 +9,7 @@ MAX_DISTANCE_M = 300
 MAX_ROWS = 128
 
 
-def parking_place_reference(db, vehicle, event, names, owner, regions, rule):
+def parking_place_reference(db, vehicle, event, names, owner, regions, rule, confirmed_region=None):
     """Use only prior trusted data plus a fresh, stable parked coordinate.
 
     Both coordinates must resolve to the same unambiguous saved naming region,
@@ -60,11 +60,20 @@ def parking_place_reference(db, vehicle, event, names, owner, regions, rule):
     distance = _distance(point, anchor)
     if distance > MAX_DISTANCE_M:
         return None
+    selected=None
+    if confirmed_region:
+        candidate,charge_id=confirmed_region
+        # Caller provides an owner-scoped, single-charge manual confirmation.
+        selected=next((r for r in regions if r['id']==candidate['id']),None)
+        if selected is None or not all(contains(selected['body'],p) for p in (point,anchor)):return None
     probes = []
     for identity, coordinate in (('trusted',point),('parking',anchor)):
-        if sum(contains(r['body'], coordinate) for r in regions) > 1:
+        if selected is None and sum(contains(r['body'], coordinate) for r in regions) > 1:
             return None
         probes.append(dict(id=identity,latitude=coordinate[0],longitude=coordinate[1],label='未命名地点'))
+    if selected:
+        return (dict(latitude=anchor[0],longitude=anchor[1],label=selected['body']['name'],name_source='manual',statistics_key='region:'+selected['id']),
+                dict(source='parking_reference',reference_time=stamp,sampling_gap_seconds=(start-stamp)/1000,distance_m=round(distance,1),confirmation_event_id=charge_id))
     resolved = names.apply(owner, vehicle, dict(places=probes), rule)['places']
     a, b = resolved
     key = a.get('statistics_key') or ''

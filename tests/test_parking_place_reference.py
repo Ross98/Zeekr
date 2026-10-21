@@ -50,6 +50,20 @@ class ParkingReferenceTests(unittest.TestCase):
     def test_overlapping_regions_are_rejected(self):
         self.store.change('owner','car','place_names','save','overlap',dict(name='隔壁',latitude=31.2,longitude=121.4,radius_m=100),1)
         self.assertIsNone(self.result())
+    def test_charge_confirmation_disambiguates_only_its_region_without_relaxing_gps(self):
+        # Two circles cover both coordinates; an explicit charge confirmation can
+        # select one, while automatic naming remains ambiguous.
+        self.store.change('owner','car','place_names','save','home',dict(name='住所',latitude=31.2007,longitude=121.4,radius_m=150),1)
+        self.store.change('owner','car','place_names','save','overlap',dict(name='隔壁',latitude=31.2007,longitude=121.4,radius_m=150),2)
+        self.assertIsNone(self.result())
+        regions=self.names.regions('owner','car')
+        point,evidence=parking_place_reference(self.db,'car',self.event,self.names,'owner',regions,self.rule,confirmed_region=(next(r for r in regions if r['id']=='home'),'confirmed-charge'))
+        self.assertEqual(point['label'],'住所')
+        self.assertEqual(evidence['confirmation_event_id'],'confirmed-charge')
+        self.assertEqual(evidence['source'],'parking_reference')
+        self.db.execute('UPDATE observations SET state_time=? WHERE state_time=?',(T-181000,T-120000))
+        self.assertIsNone(parking_place_reference(self.db,'car',self.event,self.names,'owner',regions,self.rule,confirmed_region=(next(r for r in regions if r['id']=='home'),'confirmed-charge')))
+
     def test_missing_unplottable_stale_or_changing_parking_coordinates_are_rejected(self):
         self.db.execute('DELETE FROM observations WHERE state_time>=?',(T,));self.assertIsNone(self.result())
         self.add(T,31.2014,False,plottable=False);self.assertIsNone(self.result())
