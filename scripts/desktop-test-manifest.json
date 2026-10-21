@@ -64,7 +64,8 @@
       "tests/ui_refresh_scroll.cjs",
       "tests/ui_history.cjs",
       "tests/ui_parking_observations.cjs",
-      "tests/ui_trip_management.cjs"
+      "tests/ui_trip_management.cjs",
+      "tests/ui_place_tag_rules.cjs"
     ]
   },
   "exclusions": [

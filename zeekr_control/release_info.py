@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 FEATURES={
+ 'place-tag-rules':dict(label='地点关联行程自动标注',files=['zeekr_control/place_tag_rules.py','zeekr_control/trip_tags.py','zeekr_control/monitor_runtime.py','zeekr_control/web.py','zeekr_control/static/place-tag-rules.js','zeekr_control/static/trip-tags.js','zeekr_control/static/insights.css','zeekr_control/static/index.html']),
  'energy-cost':dict(label='每日用电成本估算',files=['zeekr_control/energy_costs.py','zeekr_control/usage_calendar.py','zeekr_control/static/usage-calendar.js','zeekr_control/static/navigation-state.js','zeekr_control/static/insights.css']),
  'calendar-review':dict(label='日历用车回顾与充电对账',files=['zeekr_control/usage_calendar.py','zeekr_control/static/usage-calendar.js','zeekr_control/static/insights.css','zeekr_control/static/navigation-state.js','zeekr_control/static/app.js','zeekr_control/web.py']),
  'overview-layout':dict(label='桌面总览与记录待办',files=['zeekr_control/web.py','zeekr_control/static/overview-dashboard.js','zeekr_control/static/app.js','zeekr_control/static/app.css','zeekr_control/static/index.html']),

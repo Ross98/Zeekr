@@ -208,6 +208,30 @@ def seed_automatic(app, session):
     app.automatic_cache.success(session_scope(session), vehicle, now, report)
 
 
+def seed_place_tag_rules(app, session):
+    """Real private-store and timeline inputs for the place-rule browser regression."""
+    owner=account_scope(session);vehicle=hashlib.sha256(b'insights-fixture-car').hexdigest()
+    app.personal_store.change(owner,vehicle,'place_names','save','rule_test_station',
+        dict(name='合成充电站',shape='circle',latitude=31.21,longitude=121.41,radius_m=150),0)
+    day,_=day_bounds('2026-09-22')
+    rows=[('rules-arrival',day+18*3600000+10*60000,day+18*3600000+38*60000,'trip_end',(31.2,121.4),(31.21,121.41)),
+          ('rules-departure',day+19*3600000+20*60000,day+19*3600000+48*60000,'trip_end',(31.21,121.41),(31.2,121.4)),
+          ('rules-charge',day+18*3600000+42*60000,day+19*3600000+10*60000,'charge_end',None,None),
+          ('rules-pending',day+86400000+10*3600000+40*60000,day+86400000+11*3600000+12*60000,'trip_end',(31.2,121.4),(31.21,121.41))]
+    with Monitor(app.database_path).tracks.connect() as db:
+        for identity,start,end,kind,a,b in rows:
+            raw=dict(start_time=start,end_time=end,duration_seconds=(end-start)/1000,distance_km=20,
+                     start_soc=40 if kind=='charge_end' else 80,end_soc=70 if kind=='charge_end' else 75,
+                     soc_delta=30 if kind=='charge_end' else -5,partial=False)
+            db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
+                       (identity,vehicle,kind,json.dumps(raw),'SYNTHETIC',end))
+            if a:
+                for suffix,stamp,point in [('a',start+1000,a),('b',end-1000,b)]:
+                    location=dict(latitude=point[0],longitude=point[1],trusted=True,plottable=True,coordinate_system='WGS84（社区解释）')
+                    db.execute('INSERT INTO observations(vehicle,cache_key,state_time,observed_time,gap_seconds,location) VALUES(?,?,?,?,?,?)',
+                               (vehicle,identity+suffix,stamp,stamp,0,json.dumps(location)))
+
+
 if __name__ == '__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--demo',action='store_true',help='Preload synthetic bills, tags, tasks and an experiment.')
@@ -215,6 +239,7 @@ if __name__ == '__main__':
     parser.add_argument('--automatic',action='store_true',help='Preload synthetic automatic analysis results.')
     parser.add_argument('--charging-intervals',action='store_true',help='Preload synthetic interval boundaries.')
     parser.add_argument('--charging-places',action='store_true',help='Preload synthetic charging venues and station candidates.')
+    parser.add_argument('--place-tag-rules',action='store_true',help='Seed synthetic place rule timelines.')
     parser.add_argument('--port',type=int,default=0,help='Loopback port; default chooses an available port.')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
@@ -227,6 +252,8 @@ if __name__ == '__main__':
         seed(app, session)
         seed_events(app,args.partial_charge)
         seed_reminders(app,session)
+        if args.place_tag_rules:
+            seed_place_tag_rules(app,session)
         if args.charging_intervals:
             seed_charging_intervals(app,session)
         seed_charge_curves(app)

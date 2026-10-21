@@ -25,6 +25,7 @@ from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
 from .personal_store import PersonalStore, account_scope
 from .commute_tags import CommuteTags
+from .place_tag_rules import PlaceTagRules
 from .custom_reminders import Reminders
 from .tyre_notifications import TyreNotifications, ObservationCancelled
 from .sampling import read_settings, save_settings
@@ -210,6 +211,7 @@ class Runner:
         self.reminders = Reminders(PersonalStore(self.root / 'personal.sqlite3'))
         self.tyre_notifications = TyreNotifications(self.reminders.store)
         self.commute_tags = CommuteTags(self.reminders.store, self.root / 'tracks.sqlite3')
+        self.place_tag_rules = PlaceTagRules(self.reminders.store, self.root / 'tracks.sqlite3')
         self.blocked_fingerprint = None
         self.failures = 0
         self.analysis_input = None
@@ -333,6 +335,7 @@ class Runner:
                 except ObservationCancelled:
                     pass
                 self.commute_tags.collect(account_scope(session), binding, observed, guard=reminder_guard)
+                self.place_tag_rules.collect(account_scope(session), binding, observed, guard=reminder_guard)
                 self.analysis_input = (session_scope(session), binding, observed)
         except RateLimited as exc:
             delay = max(60, exc.seconds)

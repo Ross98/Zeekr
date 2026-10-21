@@ -8,6 +8,7 @@ from .usage_reports import period_window
 from .commute_tags import CommuteTags
 from .trip_places import TripPlaces
 from .trip_place_names import TripPlaceNames
+from .place_tag_rules import PlaceTagRules
 
 
 def describe(values):
@@ -33,10 +34,12 @@ def comparison(tag,events):
 
 class TripTags:
     def __init__(self,store,database):
-        self.store=store;self.events=UsageEvents(database);self.commute=CommuteTags(store,database);self.places=TripPlaces(database);self.place_names=TripPlaceNames(store)
+        self.store=store;self.events=UsageEvents(database);self.commute=CommuteTags(store,database);self.places=TripPlaces(database);self.place_names=TripPlaceNames(store);self.place_rules=PlaceTagRules(store,database)
 
     def update(self,owner,vehicle,data,guard=None):
         action=data.get('action');identity=data.get('id');body=None
+        if isinstance(action,str) and action.startswith('place-rule-'):
+            return self.place_rules.update(owner,vehicle,data,guard=guard)
         if isinstance(action,str) and action.startswith('place-name-'):
             stats=None
             if action!='place-name-undo':
@@ -89,6 +92,7 @@ class TripTags:
         saved=self.store.read(owner,vehicle,'tags')
         annotations={r['body']['event_id']:r for r in saved['records']}
         automatic=self.commute.decisions(owner,vehicle,events,guard=guard)
+        place_automatic=self.place_rules.decisions(owner,vehicle,events,guard=guard)
         rows=[];trash=[]
         for event in events:
             record=annotations.get(event['id']);body=record['body'] if record and not record['deleted'] else {}
@@ -97,7 +101,10 @@ class TripTags:
             auto=bool(decision and decision[0]=='matched' and not decision[1])
             tags=list(manual)
             if auto and '通勤' not in tags:tags.append('通勤')
-            rows.append(dict(event,tags=tags,manual_tags=manual,note=body.get('note',''),
+            place_tags=place_automatic.get(event['id'],[])
+            for matched in place_tags:
+                if matched['result']=='matched' and not matched['excluded'] and matched['tag'] not in tags:tags.append(matched['tag'])
+            rows.append(dict(event,automatic_place_tags=place_tags,tags=tags,manual_tags=manual,note=body.get('note',''),
                              commute_evidence=decision[2] if decision else None,
                              automatic_commute=auto,commute_excluded=bool(decision and decision[1]),
                              commute_reason=decision[0] if decision and decision[0]!='matched' else None,
@@ -112,4 +119,5 @@ class TripTags:
                     suggested_tags=sorted({tag for record in saved['records'] if not record['deleted']
                                            for tag in record['body']['tags']}),
                     untagged_count=sum(not row['tags'] for row in rows),trash=trash,
-                    commute_rule=self.commute.rule(owner,vehicle),place_statistics=place_statistics)
+                    commute_rule=self.commute.rule(owner,vehicle),place_statistics=place_statistics,
+                    place_rules=self.place_rules.rules(owner,vehicle))

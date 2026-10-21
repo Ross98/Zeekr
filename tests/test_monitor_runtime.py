@@ -45,6 +45,38 @@ class RuntimeTests(unittest.TestCase):
         from zeekr_control.monitor_runtime import Runner
         return Runner(self.root / 'session.json', client_factory=client, sender=lambda message: None)
 
+    def test_place_tags_are_collected_without_a_web_query(self):
+        import hashlib
+        import sqlite3
+        from zeekr_control.personal_store import account_scope
+        class Client:
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):return sample(0)
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        runner.tick(BASE)
+        owner=account_scope({'accessToken':'synthetic'})
+        vehicle=hashlib.sha256(b'L6T79X2Z0NP000001').hexdigest()
+        engine=runner.place_tag_rules;store=engine.store
+        store.change(owner,vehicle,'place_names','save','runtime_station',dict(name='合成站点',latitude=31.21,longitude=121.41,radius_m=150),0)
+        from datetime import datetime,timezone
+        date=datetime.fromtimestamp(BASE/1000,timezone.utc).strftime('%Y-%m-%d')
+        body=dict(action='place-rule-preview',date=date,revision=0,region_id='runtime_station',tag='充电',direction='arrive',require_charge=False,enabled=True)
+        with patch('zeekr_control.place_tag_rules.time.time',return_value=BASE/1000):
+            preview=engine.update(owner,vehicle,body)
+            engine.update(owner,vehicle,dict(body,action='place-rule-save',preview_token=preview['token']))
+        start,end=BASE+1000,BASE+121000
+        with sqlite3.connect(self.root/'tracks.sqlite3') as db:
+            encoded=json.dumps(dict(start_time=start,end_time=end,duration_seconds=120,distance_km=2,start_soc=80,end_soc=79,partial=False))
+            db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',('runtime-arrival',vehicle,'trip_end',encoded,'',end))
+            for stamp,lat,lon in [(start+1000,31.2,121.4),(end-1000,31.21,121.41)]:
+                location=json.dumps(dict(latitude=lat,longitude=lon,trusted=True,plottable=True,coordinate_system='WGS84（社区解释）'))
+                db.execute('INSERT INTO observations(vehicle,cache_key,state_time,observed_time,gap_seconds,location) VALUES(?,?,?,?,?,?)',(vehicle,'runtime-'+str(stamp),stamp,stamp,30,location))
+        runner.tick(BASE+180000)
+        with store.connect() as db:
+            row=db.execute('SELECT body FROM place_tag_decisions WHERE owner=? AND vehicle=? AND event_id=?',(owner,vehicle,'runtime-arrival')).fetchone()
+        self.assertIsNotNone(row);self.assertEqual(json.loads(row[0])['result'],'matched')
+
     def test_runner_uses_private_offline_networks_for_focused_trip_images(self):
         from zeekr_control.monitor_runtime import Runner
         from zeekr_control.focused_trip_image import FocusedTripImage

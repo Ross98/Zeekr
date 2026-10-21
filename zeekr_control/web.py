@@ -240,9 +240,15 @@ class App:
                     ('charging_places','place_names','charges'),include_commute=True) if authenticated and self.vehicle_key else None)
             except Exception:
                 charging_places_revision=None
+            try:
+                place_rules=self.trip_tags.place_rules.rules(account_scope(session),self.vehicle_key) if authenticated and self.vehicle_key else None
+                place_rules_revision=[place_rules['revision'],place_rules['decision_revision']] if place_rules else None
+            except Exception:
+                place_rules_revision=None
             return {'release':read_release(), 'field_reviews': field_reviews, 'request_key': self.request_key, 'authenticated': authenticated,
                     'insights_context': self._insights_context(),
                     'trip_records_revision': trip_revision,
+                    'place_tag_rules_revision': place_rules_revision,
                     'charge_records_revision': charge_revision,
                     'charging_places_revision': charging_places_revision,
                     'model': self.model, 'vehicle': self.vehicle, 'vehicles': self.vehicles,
@@ -1197,6 +1203,7 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/books-overview.js': ('books-overview.js', 'text/javascript; charset=utf-8'),
                           '/books.css': ('books.css', 'text/css; charset=utf-8'),
                           '/custom-reminders.js': ('custom-reminders.js', 'text/javascript; charset=utf-8'),
+                          '/place-tag-rules.js': ('place-tag-rules.js', 'text/javascript; charset=utf-8'),
                           '/trip-tags.js': ('trip-tags.js', 'text/javascript; charset=utf-8'),
                           '/travel-insights.js':('travel-insights.js','text/javascript; charset=utf-8'),
                           '/navigation-state.js':('navigation-state.js','text/javascript; charset=utf-8'),
