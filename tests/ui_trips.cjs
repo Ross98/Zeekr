@@ -47,8 +47,9 @@ const fs = require('node:fs');
     assert.match(await page.locator('.route-density').innerText(),/中位 60 秒/);
     assert.match(await page.locator('.route-density').innerText(),/可信连线跨度.*直线距离/s);
     assert.match(await page.locator('.route-density-note').innerText(),/4 段稀疏示意线/);
-    assert.equal(await page.locator('path.route-sparse-line').count(),2,'Preserve the two original source segments');
-    assert.equal(await page.locator('path.route-sparse-line').first().getAttribute('stroke-dasharray'),'7 7');
+    const sparse=await page.evaluate(()=>localTrips.layers.getLayers().filter(layer=>layer.options.className==='route-sparse-line').map(layer=>layer.options.dashArray));
+    assert.equal(sparse.length,2,'Preserve the two original source segments, including canvas rendering');
+    assert.equal(sparse[0],'7 7');
     assert.equal(await page.evaluate(()=>localTrips.route.count),7,'No original sampling point is discarded');
     assert.match(await page.locator('#map').innerText(),/首个采样点/);
     assert.match(await page.locator('#map').innerText(),/末个采样点/);
@@ -114,7 +115,7 @@ const fs = require('node:fs');
     await page.getByLabel('轨迹回看位置').waitFor();
     fs.mkdirSync('/tmp/zeekr-trips-qa',{recursive:true});
     await page.screenshot({path:`/tmp/zeekr-trips-qa/desktop-${process.env.UI_COLOR_SCHEME||'light'}.png`,fullPage:true});
-    for(const width of [390,320]){
+    for(const width of (process.env.DESKTOP_ONLY ? [1280,1024] : [390,320])){
       await page.setViewportSize({width,height:920});
       await page.getByRole('button',{name:'查看全程',exact:true}).click();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`No overflow at ${width}`);
@@ -122,7 +123,7 @@ const fs = require('node:fs');
         let loading=false;map.eachLayer(layer=>{if(layer instanceof L.TileLayer&&layer.isLoading())loading=true;});return !loading;
       });
       await page.evaluate(()=>{document.activeElement?.blur();window.scrollTo(0,0);});
-      await page.screenshot({path:`/tmp/zeekr-trips-qa/mobile-${width}-${process.env.UI_COLOR_SCHEME||'light'}.png`,fullPage:true});
+      await page.screenshot({path:`/tmp/zeekr-trips-qa/${process.env.DESKTOP_ONLY?'desktop':'mobile'}-${width}-${process.env.UI_COLOR_SCHEME||'light'}.png`,fullPage:true});
     }
     await page.getByRole('button',{name:'全天总览',exact:true}).click();
     await page.getByLabel('轨迹回看位置').waitFor();

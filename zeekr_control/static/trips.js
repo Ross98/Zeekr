@@ -15,9 +15,10 @@ function syncLocalTrips() {
   const context = [state?.request_key,state?.insights_context,state?.field_reviews?.vehicle || state?.vehicle,trackDate].join('|');
   if (!localTrips || localTrips.context !== context) {
     stopLocalPlayback();
+    localTrips?.overviewObserver?.disconnect();
     localTrips = {context,events:null,active:null,nextCursor:null,cursor:null,previous:[],listBusy:false,
       queried:false,listError:'',listRequest:0,selection:'day',selected:null,route:null,routeError:'',routeBusy:false,
-      routeRequest:0,index:0,speed:1,timer:null,layers:null,viewport:null,notice:''};
+      routeRequest:0,index:0,speed:1,timer:null,layers:null,viewport:null,notice:'',overview:null,overviewBusy:false,overviewError:''};
   }
   return localTrips;
 }
@@ -29,22 +30,12 @@ function localTripsPage() {
     ${tripManagementOpen?'<div id="trip-management"></div>':''}
     <div id="local-trip-activity" class="notice info" role="status"></div>
     <div id="recall-summary">${recallSummary()}</div>${recallYearPanel()}
-    <div class="local-trip-layout"><section class="card local-trip-list-card"><div class="card-head"><h2>当天时间线</h2><span class="subtle">北京时间</span></div><div id="local-trip-list"></div></section>
-    <section class="card local-trip-detail" id="local-trip-detail"></section></div>
+    <div class="tv-day-cards"><section class="card local-trip-list-card tv-chain-card"><div class="card-head"><h2>当天出行</h2><span class="subtle">按时间顺序</span></div><div id="local-trip-list" class="tv-chain-scroll" role="region" aria-label="当天出行链，可滚动" tabindex="0"></div></section>
+    <section class="card tv-rhythm-card"><div class="card-head"><h2>一天的出行节奏</h2><span class="subtle">24 小时</span></div><div id="local-trip-clock" class="tv-clock-wrapper"></div></section></div>
+    <section class="card local-trip-detail section-gap" id="local-trip-detail"></section>
+    <details class="tv-overview section-gap" data-detail="local-trip-overview"><summary><strong>出行汇总</strong><span>近 7 天里程、常走路线与常去地点</span></summary><div id="local-trip-overview-body"></div></details>
     <p class="section-note local-trip-note">本地采样仅覆盖后台记录期间。时间线显示跨日记录；里程按结束日期归档。单趟详情保留全程采样。道路线为算法推断；未匹配处保留采样点连线，实际走法仍需核对。</p>
   </div>`;
-}
-
-function localTripRow(trip) {
-  const selected = localTrips.selection === trip.id;
-  if(trip.type)return `<button class="local-trip-row ${selected?'selected':''}" data-local-trip="${esc(trip.id)}" aria-pressed="${selected}"><span class="local-trip-row-head"><strong>${recallTypes[trip.type]}</strong><span>${trip.cross_midnight?'跨午夜 · ':''}${trip.type==='parking'?recallParkingStatus(trip):trip.partial?'部分记录':'已结束'}${recallNeedsReview(trip)?' · 地点待核对':''}</span></span><span>${esc(tripTime(trip.start_time))} — ${esc(tripTime(trip.end_time))}</span><span>${esc(trip.end_place?.label||'位置未知')}</span><span>${trip.type==='trip'?esc(tripNumber(trip.distance_km,' km'))+' · ':''}${esc(tripDuration(trip.duration_seconds))}</span></button>`;
-  const status = tripStatusLabels[trip.status] || '已结束';
-  return `<button class="local-trip-row ${selected?'selected':''}" data-local-trip="${esc(trip.id)}" aria-pressed="${selected}" aria-label="查看行程 ${esc(tripTime(trip.start_time))}，${esc(tripNumber(trip.distance_km,' km'))}">
-    <span class="local-trip-row-head"><strong>${esc(tripTime(trip.start_time))}</strong>${pill(status,trip.status==='driving'?'good':trip.status==='waiting'?'warn':'')}</span>
-    <span class="local-trip-row-end">${trip.status==='ended'?'结束':'最近记录'} ${esc(tripTime(trip.end_time))}</span>
-    <span class="local-trip-row-values"><b>${esc(tripNumber(trip.distance_km,' km'))}</b><span>${esc(tripDuration(trip.duration_seconds))}</span></span>
-    <span class="subtle">电量 ${esc(tripNumber(trip.start_soc,'%'))} → ${esc(tripNumber(trip.end_soc,'%'))}${trip.partial?' · 部分行程记录':''}</span>
-  </button>`;
 }
 
 function renderLocalTripList(){
@@ -53,14 +44,40 @@ function renderLocalTripList(){
 function renderLocalTripListContent(){
   const h = localTrips, target = $('#local-trip-list');
   if (!target) return;
-  const compact=false;
-  target.closest('.local-trip-layout')?.classList.toggle('compact',compact);
   const focusId = document.activeElement?.dataset.localTrip;
-  const current = h.active ? `<div class="local-trip-list-label">当前记录</div>${localTripRow(h.active)}` : '';
-  const records = h.events?.length ? h.events.map(localTripRow).join('') : h.events === null ? (h.listError ? '' : h.queried ? '<p class="card-body subtle">正在读取行程…</p>' : '<p class="card-body subtle">选择日期，点击查询行程后显示记录。</p>') : '<p class="card-body subtle">未记录到行程、停车或充电；不代表当天没用车。</p>';
-  target.innerHTML = `<button class="local-trip-day ${h.selection==='day'?'selected':''}" data-local-trip="day" aria-pressed="${h.selection==='day'}">${icon('map')}<span>全天总览</span>${icon('arrow')}</button>${current}<div class="local-trip-list-label">按记录时间排列</div>${h.listError?`<p class="card-body unknown" role="alert">${esc(h.listError)} ${action('重试','local-reload','quiet')}</p>`:''}${records}
+  const rows=localVisualRecords(h);
+  const records = rows.length ? window.LocalTripVisuals.chain(rows,h.selection,trackDate) : h.events === null ? (h.listError ? '' : h.queried ? '<p class="card-body subtle">正在读取行程…</p>' : '<p class="card-body subtle">选择日期，点击查询行程后显示记录。</p>') : '<p class="card-body subtle">未记录到行程、停车或充电；不代表当天没用车。</p>';
+  target.innerHTML = `<button class="local-trip-day ${h.selection==='day'?'selected':''}" data-local-trip="day" aria-pressed="${h.selection==='day'}">${icon('map')}<span>全天总览</span>${icon('arrow')}</button>${h.listError?`<p class="card-body unknown" role="alert">${esc(h.listError)} ${action('重试','local-reload','quiet')}</p>`:''}${records}
     ${h.timeline?.correction_can_undo?'<button class="button quiet" data-recall-undo>撤销最近地点修正</button>':''}${h.nextCursor||h.previous.length?`<div class="event-pagination local-trip-pagination"><button class="button secondary" data-action="local-prev" ${!h.previous.length||h.listBusy?'disabled':''}>上一页</button><span>第 ${h.previous.length+1} 页</span><button class="button secondary" data-action="local-next" ${!h.nextCursor||h.listBusy?'disabled':''}>下一页</button></div>`:''}`;
   if (focusId) [...target.querySelectorAll('[data-local-trip]')].find(button=>button.dataset.localTrip===focusId)?.focus({preventScroll:true});
+  const clockTarget=$('#local-trip-clock');
+  if(clockTarget)clockTarget.innerHTML=rows.length?window.LocalTripVisuals.clockChart(rows,trackDate,h.selection):'<p class="card-body subtle">查询当天记录后，显示已观测行驶时段。空白不表示车辆未移动。</p>';
+  renderLocalTripOverview();
+}
+
+function localVisualRecords(h){
+  const rows=[...(h.events||[])];
+  if(h.active&&!rows.some(r=>r.id==='current'))rows.push({...h.active,type:'trip'});
+  return rows;
+}
+function renderLocalTripOverview(){
+  const target=$('#local-trip-overview-body'),h=localTrips;if(!target||!h)return;
+  const signature=JSON.stringify([h.overview,h.overviewBusy,h.overviewError]);
+  if(target.dataset.signature!==signature){
+    h.overviewObserver?.disconnect();
+    target.innerHTML=`${h.overviewBusy?'<p role="status" class="subtle">正在读取近 7 天汇总…</p>':''}${h.overviewError?`<p role="alert" class="unknown">${esc(h.overviewError)} ${action('重试汇总','local-overview-retry','quiet')}</p>`:''}${h.overview?window.LocalTripVisuals.overview(h.overview,trackDate):!h.overviewBusy?'<p class="subtle">展开后读取当前车辆近 7 天本地记录。</p>':''}`;
+    target.dataset.signature=signature;
+  }
+  const plot=target.querySelector('[data-trip-trend]');
+  if(plot){window.LocalTripVisuals.drawTrend(plot,h.overview,trackDate);if(!plot.dataset.observed){plot.dataset.observed='1';h.overviewObserver=new ResizeObserver(()=>{if(plot.isConnected&&localTrips===h)window.LocalTripVisuals.drawTrend(plot,h.overview,trackDate);});h.overviewObserver.observe(plot);}}
+}
+async function loadLocalTripOverview(force=false){
+  const h=syncLocalTrips();if(h.overviewBusy||h.overview&&!force)return;
+  const revision=h.revision,personalRevision=window.recallPersonalRevision;
+  h.overviewBusy=true;h.overviewError='';renderLocalTripOverview();
+  try{const data=await api('/api/trip-overview?date='+encodeURIComponent(trackDate));if(localTrips!==h||data.context!==state?.insights_context||h.revision!==revision||window.recallPersonalRevision!==personalRevision)return;h.overview=data;}
+  catch(error){if(localTrips===h)h.overviewError=error.message;}
+  finally{h.overviewBusy=false;if(localTrips===h){renderLocalTripOverview();if((h.revision!==revision||window.recallPersonalRevision!==personalRevision)&&$('.tv-overview')?.open)loadLocalTripOverview(true);}}
 }
 
 function renderLocalTripActivity(){
@@ -138,6 +155,7 @@ async function fetchLocalTrips(h) {
     result.events=timeline.records;result.next_cursor=null;result.revision=timeline.revision;
     if (localTrips!==h || request!==h.listRequest) return;
     if(h.revision!==undefined&&h.revision!==result.revision){recallHistory=null;if(recallCorrection){recallCorrection.preview=null;recallCorrection.message='记录已更新，请重新预览后保存。';}}
+    if(h.overview&&(h.revision!==result.revision||h.personalRevision!==window.recallPersonalRevision)){h.overview=null;if($('.tv-overview')?.open)loadLocalTripOverview(true);}
     h.revision=result.revision;h.timeline=timeline;h.personalRevision=window.recallPersonalRevision;
     if(h.restoreSelection){h.selection=h.restoreSelection;h.restoreSelection=null;}
     h.events=result.events || [];h.active=result.active;h.nextCursor=result.next_cursor;
@@ -169,6 +187,7 @@ function mountLocalTrips() {
   $('#local-trip-list').scrollTop=h.listScroll||0;
   if(tripManagementOpen)tripManager.mount($('#trip-management'));
   recallPaintYear();
+  if($('.tv-overview')?.open)loadLocalTripOverview();
   if(h.queried&&h.personalRevision!==window.recallPersonalRevision)loadLocalTrips(true);
   if(h.queried&&showTrackPosition&&!h.route)loadLocalRoute();
 }
@@ -376,19 +395,25 @@ function prepareLocalTripRender() {
   if (!showTrackPosition) {for(const row of localTrips.events||[])delete row.position;localTrips.routeRequest++;localTrips.route=null;localTrips.routeBusy=false;localTrips.routeError='';localTrips.index=0;localTrips.viewport=null;}
 }
 
+function locateLocalChain(selection){
+ const container=$('#local-trip-list'),row=[...container.querySelectorAll('[data-chain-record]')].find(el=>el.dataset.chainRecord===selection);
+ if(row)container.scrollTop+=row.getBoundingClientRect().top-container.getBoundingClientRect().top-18;
+}
 function handleLocalTripAction(target) {
   if (page!=='tracks'||trackSource!=='local') return false;
   const h=localTrips;
-  if (target.dataset.localTrip) {
-    const selection=target.dataset.localTrip;
-    if(h.selection===selection)return true;
+  if (target.dataset.localTrip||target.dataset.localSelect) {
+    const selection=target.dataset.localTrip||target.dataset.localSelect;
+    if(h.selection===selection){if(target.dataset.localSelect)locateLocalChain(selection);return true;}
     const trip=selection==='current'?h.active:h.events?.find(event=>event.id===selection);
     if(selection!=='day'&&!trip)return true;
     clearLocalRoute();h.selection=selection;h.selected=trip || null;h.notice='';recallCorrection=null;recallHistory=null;
     renderLocalTripList();renderLocalTripDetail();
+    if(target.dataset.localSelect)locateLocalChain(selection);
     persistNavigation();if(showTrackPosition)loadLocalRoute();return true;
   }
   switch(target.dataset.action) {
+    case 'local-overview-retry':loadLocalTripOverview(true);return true;
     case 'local-manage':tripManagementOpen=!tripManagementOpen;stopLocalPlayback();render();return true;
     case 'local-fit': stopLocalPlayback();fitLocalRoute();return true;
     case 'local-play': h.timer?stopLocalPlayback():startLocalPlayback();return true;
@@ -408,3 +433,5 @@ function handleLocalTripAction(target) {
 }
 
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopLocalPlayback();});
+document.addEventListener('toggle',event=>{if(event.target.matches?.('.tv-overview')&&event.target.open)loadLocalTripOverview();},true);
+document.addEventListener('click',event=>{const arc=event.target.closest?.('.tv-clock-hit');if(arc){event.preventDefault();handleLocalTripAction(arc);}});

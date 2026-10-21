@@ -5,8 +5,7 @@ let recallCorrection=null,recallHistory=null,recallYear=null,recallYearSerial=0,
 function recallNeedsReview(row){return ['start','end'].some(side=>row[side+'_place']?.issues?.some(i=>['adjacent_conflict','candidate_conflict','missing_position'].includes(i)));}
 function recallSummary(){
   const d=localTrips?.timeline;if(!d)return '';
-  const s=d.summary,c=d.coverage;
-  return `<div class="recall-summary" aria-label="当天摘要"><span>结束行程里程 <strong>${esc(tripNumber(s.distance_km,' km'))}</strong></span><span>观测驾驶时长 <strong>${esc(tripDuration(s.duration_seconds))}</strong></span><span>充电 <strong>${s.charge_count} 次</strong></span><span>已填账单 <strong>${esc(tripNumber(s.actual_cents===null?null:s.actual_cents/100,' 元'))}</strong></span><span>待补账 <strong>${s.pending_count} 次</strong></span>${d.records.some(recallNeedsReview)?`<button class="button quiet" data-recall-review>地点待核对 ${d.records.filter(recallNeedsReview).length} 条</button>`:''}</div><p class="section-note">${{missing:'无归档观测；不代表当天没用车。',limited:'仅重复或异常观测，覆盖受限。',observed:'有有效车辆时刻；不表示全天覆盖。',future:'未来日期。'}[c.coverage]||'覆盖未知。'}跨日里程归结束日；费用按账单日。</p>`;
+  return window.LocalTripVisuals.summary(d,trackDate)+(d.records.some(recallNeedsReview)?`<button class="button quiet" data-recall-review>地点待核对 ${d.records.filter(recallNeedsReview).length} 条</button>`:'');
 }
 // Place names and coordinate provenance are separate: a confirmed name can
 // still refer to an endpoint inferred from parking evidence.

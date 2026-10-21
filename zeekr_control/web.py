@@ -61,6 +61,7 @@ from .charge_comparison import ChargeComparison
 from .parameter_experiments import ParameterExperiments
 from .usage_calendar import UsageCalendar
 from .daily_timeline import DailyTimeline
+from .trip_overview import TripOverview
 from .vehicle_life import VehicleLife
 from .data_quality import DataQuality
 from .vehicle_research import VehicleResearch, ResearchInputError, PUBLIC
@@ -94,7 +95,7 @@ class ReadContext:
 
 
 READ_ANALYSES = frozenset(('charging-place', 'charging-review', 'calendar', 'report', 'day-timeline', 'place-history',
-                          'year-review', 'quality', 'timeline', 'snapshot', 'compare', 'costs'))
+                          'year-review', 'quality', 'timeline', 'snapshot', 'compare', 'costs', 'trip-overview'))
 
 
 class App:
@@ -130,6 +131,7 @@ class App:
         self.charging_review = ChargingReview(self.database_path, self.personal_store)
         self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader, store=self.personal_store)
         self.daily_timeline = DailyTimeline(self.database_path,self.archive_reader,self.personal_store)
+        self.trip_overview = TripOverview(self.daily_timeline)
         self.vehicle_life = VehicleLife(self.personal_store)
         self.data_quality = DataQuality(self.archive_reader)
         self.vehicle_research = VehicleResearch(self.archive_reader, self.database_path)
@@ -517,6 +519,7 @@ class App:
             'charging-review': lambda s,v,*a:self.charging_review.query(context.owner,v,*a,now=context.now),
             'calendar': lambda s,v,*a:self.usage_calendar.query(s,v,*a,now=context.now,owner=context.owner),
             'quality': self.data_quality.query,
+            'trip-overview': lambda s,v,date:self.trip_overview.query(s,v,date,owner=context.owner,now=context.now),
             'day-timeline': lambda s,v,date,positions=False:self.daily_timeline.query(s,v,date,owner=context.owner,positions=positions),
             'place-history': lambda s,v,*a:self.daily_timeline.history(s,v,*a,owner=context.owner),
             'year-review': lambda s,v,*a:self.daily_timeline.year(s,v,*a,owner=context.owner),
@@ -1140,6 +1143,9 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     query = parse_qs(url.query, keep_blank_values=True)
                     return self.send(200, app.tracks(query.get('date', [''])[0], query.get('vehicle', [None])[0],
                                                      trip=query.get('trip', [None])[0]))
+                if url.path == '/api/trip-overview':
+                    query = parse_qs(url.query)
+                    return self.send_analysis(lambda:app.insights('trip-overview',query.get('date',[''])[0]))
                 if url.path in ('/api/timeline','/api/place-history','/api/year-review','/api/place-corrections'):
                     query=parse_qs(url.query,keep_blank_values=True)
                     get=lambda key,default='':query.get(key,[default])[0]
@@ -1207,6 +1213,7 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                           '/vehicle.css': ('vehicle.css', 'text/css; charset=utf-8'),
                           '/amap-maps.js': ('amap-maps.js', 'text/javascript; charset=utf-8'),
                           '/route-quality.js': ('route-quality.js', 'text/javascript; charset=utf-8'),
+                          '/local-trip-visuals.js': ('local-trip-visuals.js', 'text/javascript; charset=utf-8'),
                           '/trips.js': ('trips.js', 'text/javascript; charset=utf-8'),
                           '/trip-management.js': ('trip-management.js', 'text/javascript; charset=utf-8'),
                           '/charging-places.js': ('charging-places.js', 'text/javascript; charset=utf-8'),
