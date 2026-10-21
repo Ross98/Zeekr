@@ -200,7 +200,8 @@ class Host:
                                     capture_output=True,text=True,check=True)
             require('n'+str(self.active()) in result.stdout.splitlines(), 'Process has wrong release: '+label)
         if RESOURCE_LABEL in self.configs:
-            deadline = time.monotonic()+15
+            # Older rollback targets publish identity only on the next 60s tick.
+            deadline = time.monotonic()+75
             while True:
                 try:state=json.loads(read(self.data/'resource-health.json')['state'])
                 except (OSError,ValueError,KeyError):state={}

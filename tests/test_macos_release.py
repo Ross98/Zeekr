@@ -283,3 +283,29 @@ class MacReleaseTests(unittest.TestCase):
         host.active.return_value=Path('/synthetic/releases/current')
         host.job.return_value={'state':'running','pid':'123','runs':'1'}
         self.assertEqual(set(macos.inspect(host)['services']),set(labels))
+
+    def test_health_allows_legacy_watchdog_to_publish_on_next_minute(self):
+        from types import SimpleNamespace
+        from contextlib import nullcontext
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            host=object.__new__(macos.Host);host.configs={macos.RESOURCE_LABEL:{}}
+            host.data=root;host.origin='https://synthetic.ts.net'
+            host.active=Mock(return_value=Path('/synthetic/releases/old'))
+            host.job=Mock(return_value={'state':'running','pid':'7','runs':'1'})
+            clock=[1000.0]
+            path=root/'resource-health.json'
+            path.write_text(json.dumps({'state':json.dumps({'monitor_pid':6,'checked_at':1000})}))
+            def wait(_):
+                clock[0]+=10
+                if clock[0]>=1060:
+                    path.write_text(json.dumps({'state':json.dumps({'monitor_pid':7,'checked_at':clock[0]})}))
+            opener=Mock()
+            opener.open.side_effect=lambda url,**_:nullcontext(SimpleNamespace(status=200 if url.endswith('/') else 401))
+            with patch.object(macos.time,'monotonic',side_effect=lambda:clock[0]), \
+                 patch.object(macos.time,'time',side_effect=lambda:clock[0]), \
+                 patch.object(macos.time,'sleep',side_effect=wait), \
+                 patch.object(macos.subprocess,'run',return_value=SimpleNamespace(stdout='n/synthetic/releases/old\n')), \
+                 patch.object(macos.urllib.request,'build_opener',return_value=opener):
+                host.health(fresh=True)
+            self.assertEqual(clock[0],1060)
