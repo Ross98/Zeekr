@@ -1,6 +1,6 @@
 // Desktop only, isolated local evidence; no vehicle network requests.
 const {chromium}=require('playwright'),{spawn}=require('node:child_process');
-const assert=require('node:assert/strict'),path=require('node:path');
+const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),os=require('node:os');
 (async()=>{const server=spawn('python3',[path.join(__dirname,'recall_fixture.py')]);let browser;try{
  const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('fixture timeout')),30000);server.stdout.once('data',d=>{clearTimeout(timer);resolve(Number(String(d).trim()));});server.stderr.on('data',d=>process.stderr.write(d));});
  browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});
@@ -21,7 +21,8 @@ const assert=require('node:assert/strict'),path=require('node:path');
  const referenceRow=page.locator('#local-trip-list [data-local-trip^="parking_"]').filter({hasText:'测试参考地点'}).first();await referenceRow.click();assert.match(await referenceRow.innerText(),/推定地点/);assert.match(await page.locator('#local-trip-facts').innerText(),/不作为可信 GPS，不补算采样缺口/);assert.equal(routes.length,0);
  await page.locator('.tv-overview>summary').click();await page.locator('[data-trip-trend] svg').waitFor();
  for(const title of ['近 7 天里程','常走路线','常去地点'])await page.locator('#local-trip-overview-body').getByRole('heading',{name:title,exact:true}).waitFor();
- await page.screenshot({path:'/private/tmp/zeekr-local-trips-preview.png',fullPage:true});
+ const screenshotDir=path.join(os.tmpdir(),'zeekr-desktop-previews');fs.mkdirSync(screenshotDir,{recursive:true});
+ await page.screenshot({path:path.join(screenshotDir,'zeekr-local-trips-preview.png'),fullPage:true});
  // A crowded day must scroll within the equal-height card and keep position.
  await page.evaluate(()=>{const base=localTrips.events.find(r=>r.type==='trip');localTrips.events=Array.from({length:30},(_,i)=>({...base,id:'many-'+i,start_time:base.start_time+i*60000,end_time:base.end_time+i*60000}));renderLocalTripList();const list=document.querySelector('#local-trip-list');list.scrollTop=250;});
  assert.ok(await page.locator('#local-trip-list').evaluate(el=>el.scrollHeight>el.clientHeight));
