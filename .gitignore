@@ -40,3 +40,6 @@ node_modules/
 *.zip
 *.tar
 *.gz
+
+# macOS AppleDouble metadata from external volumes
+._*

@@ -2,6 +2,8 @@
 
 当前常驻服务为 macOS launchd + Tailscale Serve HTTPS。Linux 部署模板保留给旧环境，不再作为 mini 的操作步骤。不能在 mini 上调用 systemctl、Linux 发布阶段或旧云端启动入口。
 
+双击管理入口源文件纳入 `scripts/macos-management/`，测试在 `tests/test_macos_manager.py`；安装同步方式见该目录的 `使用说明.md`。入口独立于运行版本，更新入口不需要切换服务。回退在取得发布锁后重新核对完整发布记录和用户确认时的当前版本，变化则取消。
+
 ## 目录与版本边界
 
 - 运行根目录默认 `~/Library/Application Support/ZeekrServer`，`current` 指向 `releases/<版本>`。
