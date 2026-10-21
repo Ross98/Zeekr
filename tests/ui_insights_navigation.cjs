@@ -11,6 +11,8 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     await page.getByRole('button', {name:'充电账本',exact:true}).click();
     await page.getByRole('button',{name:'读取账本',exact:true}).click();
     await page.getByRole('button',{name:'新增账单',exact:true}).click();
+    assert.equal(await page.locator('#ledger-note').isVisible(),false,'Optional bill fields default to collapsed');
+    await page.locator('[data-detail="ledger-extras"] > summary').click();
     await page.locator('#ledger-note').fill('本地未保存草稿');
     await page.evaluate(() => render());
     assert.equal(await page.locator('#ledger-note').inputValue(), '本地未保存草稿');

@@ -23,20 +23,32 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'行程标签',exact:true}).click();
     await page.getByLabel('标签月份',{exact:true}).fill('2026-09');
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
-    const note=page.locator('#tag-events').getByText('起点由出发前停车位置推定，非可信 GPS 定位。',{exact:true});
+    const card=page.locator('#tag-events [data-tag-event]').first();
+    const details=card.locator('.tag-record-details');
+    async function openDetails(){
+      await page.locator('[data-tag="load"]:not(:disabled)').waitFor();
+      if(!await details.evaluate(el=>el.open))await details.locator('summary').click();
+    }
+    async function checkGaps(start,end){
+      const gaps=details.locator('p').filter({hasText:/定位采样缺口约/});
+      await gaps.nth(1).waitFor();
+      assert.deepEqual(await gaps.allTextContents(),[start,end].map(value=>`定位采样缺口约 ${value}，间隔内移动情况未知。`),'Both endpoint gaps retain their order and precision');
+    }
+    await page.locator('[data-tag="load"]:not(:disabled)').waitFor();
+    assert.equal(await details.evaluate(el=>el.open),false,'Tag record evidence defaults collapsed');
+    await openDetails();
+    const note=details.getByText('起点由相邻停车位置推定，非可信 GPS 定位。',{exact:true});
     await note.waitFor();
-    await page.locator('#tag-events').getByText('定位采样缺口约 4 小时 34 分钟，间隔内移动情况未知。',{exact:true}).waitFor();
-    const endNote=page.locator('#tag-events').getByText('终点由到达后停车位置推定，非可信 GPS 定位。',{exact:true});
+    const endNote=details.getByText('终点由相邻停车位置推定，非可信 GPS 定位。',{exact:true});
     await endNote.waitFor();
-    await page.locator('#tag-events').getByText('采样缺口约 19.84 分钟，间隔内移动情况未知。',{exact:true}).waitFor();
-    const card=note.locator('xpath=..');
-    assert.match(await card.innerText(),/参考地点：合成停车地点/);
+    await checkGaps('4 小时 34 分钟','19.84 分钟');
+    assert.match(await card.innerText(),/合成停车地点\s*→\s*合成停车地点/);
     assert.match(await card.innerText(),/观测片段/);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     automatic=true;
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
-    await page.locator('#tag-events').getByText('定位采样缺口约 33.57 秒，间隔内移动情况未知。',{exact:true}).waitFor();
-    await page.locator('#tag-events').getByText('采样缺口约 30 秒，间隔内移动情况未知。',{exact:true}).waitFor();
+    await openDetails();
+    await checkGaps('33.57 秒','30 秒');
     assert.match(await card.innerText(),/完整记录/);
     assert.doesNotMatch(await card.innerText(),/观测片段/);
     assert.equal(await note.count(),1);
@@ -44,12 +56,13 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     for(const [seconds,display] of [[0.25,'0.25 秒'],[59.9,'59.9 秒'],[60,'1 分钟']]){
       startGap=endGap=seconds;
       await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
-      await page.locator('#tag-events').getByText(`定位采样缺口约 ${display}，间隔内移动情况未知。`,{exact:true}).waitFor();
-      await page.locator('#tag-events').getByText(`采样缺口约 ${display}，间隔内移动情况未知。`,{exact:true}).waitFor();
+      await openDetails();
+      await checkGaps(display,display);
     }
     inferred=false;
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
     await page.locator('[data-tag="load"]:not(:disabled)').waitFor();
+    await openDetails();
     assert.equal(await note.count(),0);
     assert.equal(await page.locator('#tag-events').getByText(/定位采样缺口约/).count(),0);
     assert.equal(await endNote.count(),0);

@@ -84,6 +84,8 @@ const assert=require('node:assert/strict');
     await ledger.getByRole('button',{name:'充电账本',exact:true}).click();
     await ledger.locator('#ledger-range').waitFor();
     await ledger.getByRole('button',{name:'新增账单',exact:true}).click();
+    assert.equal(await ledger.getByLabel('账单备注',{exact:true}).isVisible(),false,'Optional bill fields default to collapsed');
+    await ledger.locator('[data-detail="ledger-extras"] > summary').click();
     await ledger.getByLabel('账单备注',{exact:true}).fill('回收行程时保留这个草稿');
     const restored=await post('/api/trips/manage/execute',{token:preview.token});
     await ledger.evaluate(()=>pollState(true));await ledger.locator('#ledger-range').waitFor();
