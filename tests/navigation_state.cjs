@@ -32,3 +32,9 @@ console.log('NAVIGATION_STATE_PASS');
 
 for(const old of ['?p=energy&energyTab=process','?p=energy&energyTab=statistics','?p=energy&t=charge-comparison'])assert.deepEqual({...nav.read(old)},{energyTab:'summary',p:'energy'});
 assert.equal(nav.read('?p=energy&energyTab=summary&month=2026-09').month,'2026-09');
+
+for(const query of ['?p=tracks&t=routes&month=2026-09','?p=insights&t=routes&date=2026-09-19&q=1']){
+ const result=nav.read(query);assert.equal(result.p,'tracks');assert.equal(result.s,'local');assert.equal(result.t,undefined);
+ if(query.includes('month='))assert.equal(result.month,'2026-09');
+ else assert.equal(result.date,'2026-09-19');
+}

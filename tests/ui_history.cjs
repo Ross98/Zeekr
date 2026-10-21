@@ -11,7 +11,13 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   try{
     await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();
     const navigation=page.getByRole('navigation',{name:'行程与轨迹子功能',exact:true});
-    assert.deepEqual(await navigation.locator('button').allTextContents(),['本地记录','行程标签','常走路线对比']);
+    assert.deepEqual(await navigation.locator('button').allTextContents(),['本地记录','行程标签']);
+    const retiredRequests=[];page.on('request',request=>{if(/\/(?:travel-insights\.js|api\/insights\/routes)(?:\?|$)/.test(request.url()))retiredRequests.push(request.url());});
+    await page.goto(f.origin+'/?p=tracks&t=routes&month=2026-09');
+    await page.getByLabel('轨迹日期').waitFor();
+    assert.equal(new URL(page.url()).searchParams.get('t'),null);
+    assert.equal(await page.locator('#route-comparison').count(),0);
+    assert.deepEqual(retiredRequests,[]);
     await page.goto(f.origin+'/?p=tracks&s=cloud&date=2026-09-19&q=1');
     await page.waitForFunction(()=>localTrips?.queried&&!localTrips.listBusy&&localTrips.events?.length);
     assert.equal(await page.getByLabel('轨迹日期').inputValue(),'2026-09-19');

@@ -12,7 +12,7 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     const groups = [
       ['能源与充电', []],
       ['用车账本', ['费用总览', '充电账本', '生活账本']],
-      ['行程与轨迹', ['常走路线对比']],
+      ['行程与轨迹', []],
       ['车辆', []],
       ['设置', ['自定义提醒', '数据质量雷达']],
       ['用车研究', ['参数研究与核实']]
@@ -49,14 +49,13 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     assert.equal(await page.locator('#navigation [data-page="insights"]').getAttribute('aria-current'),'page');
     await page.getByRole('button', {name:'行程与轨迹',exact:true}).first().click();
     const trackNavigation=page.getByRole('navigation',{name:'行程与轨迹子功能',exact:true});
-    assert.deepEqual(await trackNavigation.locator('button').allTextContents(),['本地记录','行程标签','常走路线对比']);
-    await trackNavigation.getByRole('button',{name:'常走路线对比',exact:true}).click();
-    assert.equal(await trackNavigation.getByRole('button',{name:'常走路线对比',exact:true}).getAttribute('aria-pressed'),'true');
+    assert.deepEqual(await trackNavigation.locator('button').allTextContents(),['本地记录','行程标签']);
+    assert.equal(await page.getByRole('button',{name:'常走路线对比',exact:true}).count(),0);
     assert.equal(await page.locator('.track-toolbar [data-source]').count(),0);
     await trackNavigation.getByRole('button',{name:'本地记录',exact:true}).click();
     assert.equal(await trackNavigation.getByRole('button',{name:'本地记录',exact:true}).getAttribute('aria-pressed'),'true');
     await page.locator('.related-tools [data-track-tags]').click();
-    assert.equal(await page.getByRole('heading',{name:'通勤自动标注'}).count(),1);
+    await page.getByLabel('标签月份',{exact:true}).waitFor();
     assert.equal(await page.evaluate(()=>scrollY),0,'task navigation remains available after opening tags');
     await page.getByRole('button', {name:'能源与充电', exact:true}).first().click();
     await page.getByLabel('充电月份',{exact:true}).waitFor();

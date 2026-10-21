@@ -4,29 +4,7 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
  const f=await fixture(),{page}=f;
  try{
   await page.getByRole('button',{name:'行程与轨迹',exact:true}).click();
-  await page.getByRole('button',{name:'常走路线对比',exact:true}).click({timeout:1500});
-  await page.getByLabel('路线月份',{exact:true}).fill('2026-09');
-  await page.getByRole('button',{name:'读取路线',exact:true}).click();
-  await page.getByText(/本月尚无两端都有可信定位的行程/).waitFor();
-  await page.route('**/api/insights/routes?*',async route=>{
-   const response=await route.fetch(),data=await response.json();
-   data.trip_count=2;data.unknown_route_count=0;
-   const stats={samples:1,mean:20,median:20,minimum:20,maximum:20};
-   data.routes=[{start_place:'place_1',end_place:'place_2',start_label:'家',end_label:'公司',count:2,complete_count:1,partial_count:1,
-    distance_km:stats,duration_seconds:{...stats,samples:2,mean:1200,median:1200},estimated_kwh:{...stats,mean:4.3,median:4.3},
-    events:[{id:'one',end_time:1790000000000,partial:false,duration_seconds:1200,distance_km:20,estimated_kwh:4.3},{id:'two',end_time:1790000001000,partial:true,duration_seconds:1200,distance_km:null,estimated_kwh:null}]}];
-   await route.fulfill({json:data});
-  });
-  await page.getByRole('button',{name:'读取路线',exact:true}).click();
-  await page.locator('#route-comparison').waitFor();
-  assert.match(await page.locator('#route-comparison').innerText(),/家 → 公司/);
-  assert.match(await page.locator('#route-comparison').innerText(),/1 \/ 2 条有效样本/);
-  assert.match(await page.locator('#route-comparison').innerText(),/观测片段.*未知 km.*未知 kWh/s);
-  await layouts(page,'route-comparison');
-  assert.match(page.url(),/p=tracks/);assert.match(page.url(),/t=routes/);assert.match(page.url(),/month=2026-09/);
-  await page.reload();await page.getByLabel('路线月份',{exact:true}).waitFor();
-  await page.locator('#route-comparison').waitFor();
-  assert.equal(await page.getByLabel('路线月份',{exact:true}).inputValue(),'2026-09');
+  assert.equal(await page.getByRole('button',{name:'常走路线对比',exact:true}).count(),0);
   await page.getByRole('button',{name:'能源与充电',exact:true}).first().click();
   await page.getByLabel('充电记录查询方式',{exact:true}).selectOption('range');
   await page.locator('#charge-date').fill('2026-09-01');await page.locator('#charge-end-date').fill('2026-09-30');

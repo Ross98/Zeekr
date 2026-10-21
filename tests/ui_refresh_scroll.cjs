@@ -88,11 +88,6 @@ const {fixture}=require('./ui_insight_helpers.cjs');
         await page.locator('#tag-month').evaluate(el=>el.blur());
         await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
         await page.waitForSelector('[data-tag-event]');
-      }else if(view==='routes'){
-        await page.locator('#routes-month').fill('2026-09');
-        await page.evaluate(()=>document.activeElement?.blur());
-        await page.locator('[data-travel="load"]').click();
-        await page.waitForSelector('#routes-results');
       }else if(view==='review'){
         await page.locator('#review-date').fill('2026-09-20');
         await page.evaluate(()=>document.activeElement?.blur());

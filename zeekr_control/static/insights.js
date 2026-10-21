@@ -20,7 +20,6 @@
       {id:'rules',label:'自定义提醒',description:'电量条件、提醒规则与触发记录'},
       {id:'quality',label:'数据质量雷达',description:'采集诊断：覆盖、延迟、重复缓存与缺口'}
     ]},
-    {name:'行程',page:'tracks',tools:[{id:'routes',label:'常走路线对比',description:'方向、用时、里程与有效耗电样本'}]},
     {name:'用车日历',page:'calendar',tools:[{id:'calendar',label:'用车日历',description:'按日期查看行程、充电与停车'}]},
     {name:'用车周报',page:'report',tools:[{id:'report',label:'用车周报',description:'周期里程、能耗估算、日趋势与样本'}]}
   ];
@@ -235,11 +234,10 @@
     const calendarPage=lazyPage([['UsageCalendarPage','usage-calendar.js']],()=>root.UsageCalendarPage.create({getState,request,escape:esc,active:()=>active() && tab==='calendar',time,navigate:openDate}),{getState,active:()=>active()&&tab==='calendar'});
     const lifePage=lazyPage([['VehicleLifePage','vehicle-life.js']],()=>root.VehicleLifePage.create({getState,request,escape:esc,active:()=>active() && tab==='life',time}),{getState,active:()=>active()&&tab==='life'});
     const qualityPage=lazyPage([['DataQualityPage','data-quality.js']],()=>root.DataQualityPage.create({getState,request,escape:esc,active:()=>active() && tab==='quality',time,navigate:openDate}),{getState,active:()=>active()&&tab==='quality'});
-    const routesPage=lazyPage([['TravelInsightsPage','travel-insights.js']],()=>root.TravelInsightsPage.create({kind:'routes',getState,request,escape:esc,active:()=>active()&&tab==='routes',time,navigate}),{getState,active:()=>active()&&tab==='routes'});
 
     const costsPage=lazyPage([['BooksOverview','books-overview.js']],()=>root.BooksOverview.create({getState,request,escape:esc,active:()=>active()&&section==='books',getView:()=>tab,navigate:(view,date,filter)=>{navigate('books',view,date);if(view==='ledger')ledgerPage.setFilter(filter);}}),{getState,active:()=>active()&&section==='books'});
     root.updateBooksSummary=()=>{if(active()&&section==='books')costsPage.refresh();};
-    const views={costs:costsPage,parameters:parameterPage,routes:routesPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
+    const views={costs:costsPage,parameters:parameterPage,research:researchPage,report:reportPage,ledger:ledgerPage,rules:rulesPage,calendar:calendarPage,life:lifePage,quality:qualityPage};
     let node=null, owner='', date=today(), loadedDate='', records=[], cursor=null, index=0;
     let detail=null, baseline=null, comparison=null, loading=false, detailLoading=false, compareLoading=false;
     let error='', detailError='', compareError='', query='', fieldPage=0;
@@ -266,7 +264,7 @@
       if(view==='time'){date=target;reset();paint();}
       else{
         paint();
-        const identity=context(),apply=()=>{if(!active()||tab!==view||identity!==context())return;const field=node.querySelector({ledger:'#ledger-month',routes:'#routes-month',review:'#review-date',report:'#report-date',calendar:'#calendar-month'}[view]||'input[type="date"]');
+        const identity=context(),apply=()=>{if(!active()||tab!==view||identity!==context())return;const field=node.querySelector({ledger:'#ledger-month',review:'#review-date',report:'#report-date',calendar:'#calendar-month'}[view]||'input[type="date"]');
         if(field){field.value=field.type==='month'?target.slice(0,7):target;field.dispatchEvent(new Event('input',{bubbles:true}));}};
         if(views[view]?.loaded())apply();else views[view]?.ready().then(apply);
       }

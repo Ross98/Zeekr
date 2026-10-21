@@ -1095,7 +1095,7 @@ function more() {
 }
 function relatedTools() {
   if(!['energy','books','tracks','settings'].includes(page))return '';
-  if(page==='tracks')return `<nav class="related-tools task-navigation" aria-label="行程与轨迹子功能">${[['local','本地记录'],['tags','行程标签']].map(([source,label])=>`<button class="button secondary" data-source="${source}" ${source==='tags'?'data-track-tags="true"':''} aria-pressed="${!sectionTask&&trackSource===source}">${label}</button>`).join('')}<button class="button secondary" data-section-task="routes" aria-pressed="${sectionTask==='routes'}">常走路线对比</button></nav>`;
+  if(page==='tracks')return `<nav class="related-tools task-navigation" aria-label="行程与轨迹子功能">${[['local','本地记录'],['tags','行程标签']].map(([source,label])=>`<button class="button secondary" data-source="${source}" ${source==='tags'?'data-track-tags="true"':''} aria-pressed="${!sectionTask&&trackSource===source}">${label}</button>`).join('')}</nav>`;
   if(page==='energy'&&!sectionTask)return '';
   const base={car:'车辆状态',energy:'充电状态',settings:'采集与设置'}[page];
   const item=(id,label)=>`<button class="button secondary" data-section-task="${id}" aria-pressed="${sectionTask===id}">${label}</button>`;
@@ -1416,13 +1416,13 @@ let navigationReady=false,navigationRestoring=false,restoringQuery=null,navigati
 const navigationQueries={
   costs:['#books-totals','[data-costs=load]'],
   calendar:['#calendar-result-month','[data-calendar=load]'],
-  ledger:['#ledger-range','#ledger-load'],routes:['#routes-results','[data-travel="load"]'],
+  ledger:['#ledger-range','#ledger-load'],
   review:['#usage-review','[data-travel="load"]'],report:['#report-observations','[data-report="load"]'],
   life:['#life-rows','[data-life="load"]'],quality:['#quality-totals','[data-quality="load"]']
 };
 const navigationFields={
   range:'#charge-query-mode',
-  month:'#charging-review-month,#ledger-month,#books-month,#life-month,#tag-month,#routes-month,#calendar-month',
+  month:'#charging-review-month,#ledger-month,#books-month,#life-month,#tag-month,#calendar-month',
   date:'#calendar-selected,#track-date,#report-date,#insight-date,#review-date,#charge-date',
   start:'#quality-start,#research-start,#life-start,#trip-manage-start,#charge-manage-start',
   end:'#quality-end,#research-end,#life-end,#trip-manage-end,#charge-manage-end,#charge-end-date',
