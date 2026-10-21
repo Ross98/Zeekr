@@ -5,8 +5,7 @@ import time
 from .snapshot_archive import BEIJING
 from .usage_events import UsageEvents, total
 from .usage_reports import DAY, date_label, period_window
-from .vehicle_state import decode
-from .parking_analytics import analyze_parking
+from .parking_analytics import ParkingAnalytics
 from .energy_costs import attach, summarize
 from .analysis_work import TimeMap
 
@@ -42,35 +41,34 @@ class UsageCalendar:
                     day['trip_count' if event['kind']=='trip_end' else 'charge_count']+=1
                     day['partial_count']+=int(event['partial'])
         upper=min(window['end'],now+1)
-        def samples():
-            if upper<=window['start']:return
-            for record,raw in self.archive.iter_records(scope,vehicle,max(0,window['start']-DAY),min(window['end']+DAY,now+1),limit=None):
-                day=by_date.get(date_label(record['observed_at']))
-                if day is not None:
-                    day['reads']+=1
-                    if day['first_read'] is None:day['first_read']=record['observed_at']
-                    day['last_read']=record['observed_at']
-                state=decode(raw)
-                stamp=record['state_time']
-                if day is not None and not record['flags'] and stamp is not None and stamp<=now and record['change'] not in ('repeat','regression'):
-                    parked=state['off'] is True and state['speed']==0 and state['charging'] is False
-                    observations.set(stamp,day['date'],parked)
-                if stamp is not None and stamp>now:
-                    record=dict(record,flags=record['flags']+['future_time'])
-                yield dict(record=record,state=state)
+        def observe(sample):
+            record,state=sample['record'],sample['state']
+            day=by_date.get(date_label(record['observed_at']))
+            if day is not None:
+                day['reads']+=1
+                if day['first_read'] is None:day['first_read']=record['observed_at']
+                day['last_read']=record['observed_at']
+            stamp=record['state_time']
+            if day is not None and not record['flags'] and stamp is not None and stamp<=now and record['change'] not in ('repeat','regression'):
+                parked=state['off'] is True and state['speed']==0 and state['charging'] is False
+                observations.set(stamp,day['date'],parked)
         with TimeMap() as observations:
-            parking=analyze_parking(samples(),window['start'],upper)['sessions']
+            if upper>window['start']:
+                analyzed=ParkingAnalytics(self.archive,self.events.path,store=self.store,owner=owner or scope).query(
+                    scope,vehicle,date_label(window['start']),date_label(window['end']-1),context_days=1,observe=observe,now=now)
+                parking=analyzed['sessions'];parking_events=analyzed.get('events',[])
+            else:parking=[];parking_events=[]
             for observed_date,count,parked,first,last in observations.daily():
                 day=by_date[observed_date]
                 day.update(effective_states=count,parked_samples=parked,parking_first=first,parking_last=last)
         for day in days:
             if day['reads']:day['coverage']='observed' if day['effective_states'] else 'limited'
-        totals,revision=self.enrich(owner or scope,vehicle,window,days,events,now,parking)
+        totals,revision=self.enrich(owner or scope,vehicle,window,days,events,now,parking,parking_events)
         return dict(window=window,as_of=now,weekday_offset=datetime.fromtimestamp(window['start']/1000,BEIJING).weekday(),
                     days=days,events=events,totals=totals,ledger_revision=revision,
                     history_quality={'unreadable_or_undated':found['unreadable_or_undated']})
 
-    def enrich(self,owner,vehicle,window,days,events,now,parking):
+    def enrich(self,owner,vehicle,window,days,events,now,parking,parking_events=()):
         saved=self.store.read(owner,vehicle,'charges') if self.store else dict(records=[],revision=0)
         entries=[dict(r['body'],id=r['id']) for r in saved['records'] if not r['deleted']]
         booked={r['event']['id']:r for r in entries if isinstance(r.get('event'),dict)}
@@ -98,27 +96,13 @@ class UsageCalendar:
                     interpreted=interpreter._interpret(owner,vehicle,places.get(event.pop(side+'_place',None)),event['id'],side,corrections)
                     event[side+'_label']=interpreted['label'] if interpreted['key'] else ('起点未知' if side=='start' else '终点未知')
                     event[side+'_place_key']=interpreted['key']
-        if self.store and parking:
-            from .trip_endpoints import endpoint
-            from .trip_place_names import TripPlaceNames
-            from .daily_timeline import DailyTimeline
-            interpreter=DailyTimeline(self.events.path,self.archive,self.store)
-            corrections=self.store.read(owner,vehicle,'place_corrections')
-            corrections['_regions']=TripPlaceNames(self.store).regions(owner,vehicle)
-            named_places=stats['places'] if trips else []
-            with self.events.connect() as db:
-                if db is not None and db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone():
-                    for session in parking:
-                        match=endpoint(db,vehicle,session['start_time'],min(session['end_time'],session['start_time']+180000),True)
-                        if not match:continue
-                        point=interpreter._parking_place(dict(latitude=match[1][0],longitude=match[1][1]),
-                                                         named_places,corrections['_regions'])
-                        from .daily_timeline import digest
-                        identity='parking_'+digest(session['id'])[:32]
-                        place=interpreter._interpret(owner,vehicle,point,identity,'end',corrections)
-                        if place['source']!='unknown' and window['start']<=session['end_time']<window['end']:
-                            parking_places.append(dict(key=place['key'],label=place['label'],date=date_label(session['end_time']),
-                                                       record_id=identity,duration_seconds=session['duration_seconds']))
+        if self.store:
+            for event in parking_events:
+                if event['place_source']=='unknown' or not window['start']<=event['end_time']<window['end']:continue
+                parking_places.append(dict(key=event['place_statistics_key'] or event['place_key'],
+                                           label=event['place_label'],date=date_label(event['end_time']),
+                                           record_id=event['place_record_id'],duration_seconds=event['duration_seconds'],
+                                           confidence=event['place_confidence'],evidence=event['place_evidence']))
         consumption,quality=attach(self.events,vehicle,window,now,events,booked,parking)
         for day in days:
             day['energy_cost']=summarize([e for e in consumption if date_label(e['end_time'])==day['date']])

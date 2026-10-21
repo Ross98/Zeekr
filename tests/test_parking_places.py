@@ -117,20 +117,20 @@ class ParkingPlaceTests(unittest.TestCase):
             body.update(extra)
             db.execute("UPDATE monitor_events SET summary=? WHERE id='a'", (json.dumps(body),))
 
-    def test_nearby_arrival_reference_names_untrusted_stop_and_preserves_energy(self):
+    def test_legacy_arrival_reference_alone_is_not_sufficient_and_preserves_energy(self):
         self.save_name()
         original = self.query()
         self.raw['position']['posCanBeTrusted'] = False
         self.arrival_reference()
         row = self.query()
-        self.assertEqual(row['place_label'], '自家车库')
-        self.assertEqual(row['place_confidence'], 'reference')
-        self.assertEqual(row['place_reference_age_seconds'], 120)
+        self.assertEqual(row['place_label'], '位置未知')
+        self.assertEqual(row['place_confidence'], 'unknown')
+        self.assertIsNone(row['place_reference_age_seconds'])
         for key in ('id','start_time','end_time','duration_seconds','status','soc_drop','estimated_kwh','reasons'):
             self.assertEqual(row[key], original[key])
         self.assertFalse(any(key.startswith('_') for key in row))
         self.assertNotIn('latitude', row)
-        self.assertEqual(self.query(owner='another')['place_label'], '示例商场附近')
+        self.assertEqual(self.query(owner='another')['place_label'], '位置未知')
 
     def test_trusted_parking_position_wins_over_arrival_reference(self):
         self.save_name()
@@ -149,7 +149,7 @@ class ParkingPlaceTests(unittest.TestCase):
                 self.assertEqual(row['place_label'], '位置未知')
                 self.assertTrue(row['place_reason'])
         self.arrival_reference(age=300)
-        self.assertEqual(self.query()['place_confidence'], 'reference')
+        self.assertEqual(self.query()['place_confidence'], 'unknown')
 
     def test_arrival_reference_time_must_match_its_saved_age(self):
         self.raw['position']['posCanBeTrusted'] = False
@@ -160,17 +160,17 @@ class ParkingPlaceTests(unittest.TestCase):
             db.execute("UPDATE monitor_events SET summary=? WHERE id='a'",(json.dumps(body),))
         row = self.query()
         self.assertEqual(row['place_label'], '位置未知')
-        self.assertIn('时间', row['place_reason'])
+        self.assertTrue(row['place_reason'])
 
-    def test_trusted_arrival_endpoint_is_a_reference_not_parking_gps(self):
+    def test_trusted_arrival_endpoint_without_parking_corroboration_stays_unknown(self):
         self.save_name()
         self.raw['position']['posCanBeTrusted'] = False
         self.arrival_reference(end_location=dict(latitude=30,longitude=120,valid=True,
                                trusted=True,coordinate_system='WGS84（社区解释）'))
         row = self.query()
-        self.assertEqual(row['place_label'], '自家车库')
-        self.assertEqual(row['place_confidence'], 'reference')
-        self.assertEqual(row['place_reference_age_seconds'], 0)
+        self.assertEqual(row['place_label'], '位置未知')
+        self.assertEqual(row['place_confidence'], 'unknown')
+        self.assertIsNone(row['place_reference_age_seconds'])
 
     def test_reference_never_overrides_movement_or_partial_arrival(self):
         self.raw['position']['posCanBeTrusted'] = False
@@ -188,13 +188,13 @@ class ParkingPlaceTests(unittest.TestCase):
         self.raw['position'] = {}
         self.assertEqual(self.query()['place_label'], '位置未知')
 
-    def test_reference_location_can_be_named_despite_stale_soc_observations(self):
+    def test_stale_observations_and_legacy_reference_cannot_establish_place(self):
         self.save_name()
         self.raw['position']['posCanBeTrusted'] = False
         self.flags = ['stale']
         self.arrival_reference()
         row = self.query()
-        self.assertEqual(row['place_label'], '自家车库')
+        self.assertEqual(row['place_label'], '位置未知')
         self.assertEqual(row['status'], 'uncertain')
         self.assertIsNone(row['estimated_kwh'])
 

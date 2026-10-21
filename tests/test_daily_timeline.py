@@ -66,7 +66,12 @@ class TimelineTests(unittest.TestCase):
         event=dict(id='event',start_time=start,end_time=start+60000,duration_seconds=60,sample_count=2,
                    reasons=['gap'],reason_labels=['数据缺口'],parking_status='parked',p_gear_samples=2,open=True,
                    observation_quality=dict(unknown_seconds=30),observation_gaps=[gap],charging_phases=[],soc_drop=None,estimated_kwh=None)
-        with patch('zeekr_control.daily_timeline.ParkingAnalytics.query',return_value=dict(events=[event],sessions=[])):
+        from zeekr_control.parking_analytics import ParkingAnalytics
+        original_query=ParkingAnalytics.query
+        def query(analyzer,*args,**kwargs):
+            if kwargs.get('include_place_resolution'):return dict(events=[event],sessions=[])
+            return original_query(analyzer,*args,**kwargs)
+        with patch('zeekr_control.daily_timeline.ParkingAnalytics.query',new=query):
             result=self.day(positions=True)
         parked=next(r for r in result['records'] if r['type']=='parking')
         self.assertEqual(parked['end_place']['label'],'公司园区')
@@ -298,7 +303,7 @@ class RecallEvidenceTests(unittest.TestCase):
         self.assertTrue(all(r['end_place']['label']=='停车车库' for r in confirmed))
         month=self.timeline.calendar.query(self.scope,vehicle,'2026-09-20',owner=self.owner)
         self.assertTrue(month['totals']['parking_places'])
-        self.assertTrue(all(p['key']==key for p in month['totals']['parking_places']))
+        self.assertTrue(all(p['key']=='region:'+key for p in month['totals']['parking_places']))
         foreign=self.timeline.query(self.scope,vehicle,'2026-09-20',owner='other')
         self.assertTrue(all(r['end_place']['label']!='停车车库' for r in foreign['records']))
 

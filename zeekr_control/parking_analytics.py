@@ -1,6 +1,4 @@
 """Parking SOC observations, never joined across charging or uncertain gaps."""
-import json
-import math
 from bisect import bisect_left
 from datetime import datetime
 
@@ -8,11 +6,8 @@ from .snapshot_archive import BEIJING
 from .tracks import day_bounds
 from .vehicle_state import decode, numeric
 from .parking_events import build_events, time_advances, observation_time
-from .usage_events import UsageEvents, MAX_SUMMARY_BYTES
+from .usage_events import UsageEvents
 from .web_model import parse_location
-from .commute_tags import CommuteTags, _distance
-from .trip_place_names import TripPlaceNames, cached_names
-from .geocoding import is_trusted_location
 from .analysis_work import ResultRows, SampleStore
 from .archive_reader import ArchiveReader
 
@@ -172,44 +167,6 @@ def analyze_parking(samples, lower, upper, capacity=None):
             'gap_threshold_seconds': MAX_GAP_MS//1000, 'capacity_kwh': capacity}
 
 
-def arrival_position(db, vehicle, event, anchor):
-    """A recent trusted arrival point is a labelled reference, never a GPS repair."""
-    if event.get('parking_status') != 'parked' or 'movement' in event.get('reasons', []):
-        return None, None, '有移动或位置冲突证据，不能推断停车地点'
-    if not anchor:
-        return None, None, '缺少同坐标系的停车位置，无法核对参考定位'
-    if db is None or not event.get('start_trip_id'):
-        return None, None, '缺少到达行程的可信定位'
-    row = db.execute('SELECT summary FROM monitor_events WHERE vehicle=? AND id=? '
-                     'AND length(CAST(summary AS BLOB))<=?',
-                     (vehicle, event['start_trip_id'], MAX_SUMMARY_BYTES)).fetchone()
-    try:
-        body = json.loads(row[0]) if row else {}
-    except (ValueError, TypeError, RecursionError):
-        body = {}
-    if (not isinstance(body, dict) or body.get('end_time') != event['start_time']
-            or body.get('partial') is not False):
-        return None, None, '到达边界不完整或停车位置已变化'
-    position, age = body.get('end_location'), 0
-    if not is_trusted_location(position):
-        reference = body.get('end_location_reference')
-        if not isinstance(reference, dict):
-            return None, None, '到达前 5 分钟内没有可信定位'
-        position, age = reference.get('location'), reference.get('age_seconds')
-        if type(age) not in (int, float) or not math.isfinite(age) or not 0 <= age <= 300:
-            return None, None, '到达参考定位超过 5 分钟或时间无效'
-        stamp = reference.get('state_time')
-        if (type(stamp) not in (int, float) or not math.isfinite(stamp)
-                or abs((event['start_time']-stamp)/1000-age) > 1):
-            return None, None, '到达参考定位时间与行程边界不一致'
-    if not is_trusted_location(position) or position['coordinate_system'] != anchor.get('coordinate_system'):
-        return None, None, '到达参考定位不可信或坐标系不一致'
-    if _distance((anchor['latitude'], anchor['longitude']),
-                 (position['latitude'], position['longitude'])) > 150:
-        return None, None, '到达参考定位距停车坐标超过 150 米'
-    return position, age, None
-
-
 class ParkingAnalytics:
     def __init__(self, archive, database=None, *, store=None, owner=None):
         self.archive = archive
@@ -217,43 +174,27 @@ class ParkingAnalytics:
         self.store = store
         self.owner = owner
 
-    def _name_events(self, result, vehicle, history, owner):
-        places = []
+    def _name_events(self, result, vehicle, history, owner, include_resolution=False, fragments=None):
+        from .parking_place_resolver import ParkingPlaceResolver
+        resolver=ParkingPlaceResolver(self.database,self.store,owner,vehicle,history)
         with UsageEvents(self.database).connect() as db:
-            addresses = cached_names(db, vehicle, history) if db is not None else {}
             for event in result['events']:
-                position = event.pop('_location', None)
-                anchor = event.pop('_position', None)
-                confidence, age, reason = 'observed', None, None
-                if position is None:
-                    position, age, reason = arrival_position(db, vehicle, event, anchor)
-                    confidence = 'reference' if position else 'unknown'
-                event.update(place_label='未命名地点' if position else '位置未知', place_source='unknown',
-                             place_confidence=confidence, place_reason=reason,
-                             place_reference_age_seconds=age)
-                if position:
-                    places.append(dict(id=event['id'], latitude=position['latitude'],
-                                       longitude=position['longitude'], label='未命名地点'))
-        if not self.store or not places:
-            return
-        for place in places:
-            nearby = min(((_distance((place['latitude'], place['longitude']), value['point']), value['label'])
-                          for value in addresses.values()), default=None)
-            if nearby and nearby[0] <= 150:
-                place['address_label'] = nearby[1]
-        named = TripPlaceNames(self.store).apply(owner, vehicle, dict(places=places),
-                                               CommuteTags(self.store, self.database).rule(owner, vehicle))
-        by_id = {place['id']: place for place in named['places']}
-        for event in result['events']:
-            place = by_id.get(event['id'])
-            if place and place['name_source'] != 'reference':
-                event.update(place_label=place['label'], place_source=place['name_source'])
+                resolved=resolver.resolve(db,event,result['sessions'] if fragments is None else fragments)
+                place=resolved['end_place']
+                event.pop('_location',None);event.pop('_position',None)
+                event.update(place_label=place['label'],place_source=place['source'],
+                             place_key=place['key'],place_statistics_key=place.get('statistics_key') or place['key'],
+                             place_record_id=resolved['record_id'],place_confidence=resolved['confidence'],
+                             place_reason=resolved['reason'],place_evidence=resolved['evidence'],
+                             place_reference_age_seconds=(resolved['evidence'] or {}).get('sampling_gap_seconds'))
+                if include_resolution:event['_place_resolution']=resolved
 
-    def query(self, scope, vehicle, start, end, capacity=None, *, context_days=0):
+    def query(self, scope, vehicle, start, end, capacity=None, *, context_days=0, include_place_resolution=False, observe=None, now=None):
         lower, _ = day_bounds(start)
         _, upper = day_bounds(end)
         if not 0 < upper-lower <= 31*86400000:
             raise ValueError('请选择不超过 31 天的停车观察范围。')
+        if now is not None:upper=min(upper,now+1)
         padding=context_days*86400000 if context_days else MAX_GAP_MS
         read_lower, read_upper = max(0, lower-padding), upper+padding
         events, triples, charges = [], [], []
@@ -288,6 +229,9 @@ class ParkingAnalytics:
             while cursor < read_upper:
                 chunk_end = min(int(read_upper), cursor+33*86400000)
                 for record, raw in archive.iter_records(scope, vehicle, cursor, chunk_end, limit=None, **options):
+                    if now is not None and record['observed_at']>now:continue
+                    if now is not None and record['state_time'] is not None and record['state_time']>now:
+                        record=dict(record,flags=[*record['flags'],'future_time'])
                     # Omitted bodies belong only to windows excluded by build_events.
                     # Keep timing/freshness for canonicalization and quality reads.
                     if raw is None:
@@ -297,13 +241,21 @@ class ParkingAnalytics:
                     climate = climate.get('climateStatus', {}) if isinstance(climate, dict) else {}
                     inside = numeric(climate.get('interiorTemp'), -80, 100) if isinstance(climate, dict) else None
                     inside_time = numeric(climate.get('temperatureUpdateTime'), 1, 9999999999999) if isinstance(climate, dict) else None
-                    yield {'record': record, 'state': decode(raw), 'location': parse_location(raw), 'inside_temp': inside, 'inside_time': inside_time}
+                    sample={'record': record, 'state': decode(raw), 'location': parse_location(raw), 'inside_temp': inside, 'inside_time': inside_time}
+                    if observe is not None:observe(sample)
+                    yield sample
                 cursor = chunk_end
         with SampleStore(samples(), compact=True) as base_samples:
             result = analyze_parking(base_samples.raw('r.observed>=? AND r.observed<?',
                                       (max(0, lower-padding), upper+padding)), lower, upper, capacity)
             if self.database is not None:
                 result.update(build_events(triples, charges, base_samples, lower, upper, capacity))
+            name_fragments=None
+            if self.store and any(not r['deleted'] and str(r['body'].get('record_id','')).startswith('parking_')
+                                  for r in self.store.read(self.owner or scope,vehicle,'place_corrections')['records']):
+                # Reconstruct old fragment IDs from complete available boundaries,
+                # independent of the day/month display window. No archive reread.
+                name_fragments=analyze_parking(base_samples.raw(),read_lower,read_upper,capacity)['sessions']
         if self.database is not None:
             result['orphan_sessions'] = [row for row in result['sessions'] if not any(
                 # Events use collection time; legacy sessions use vehicle time.
@@ -314,6 +266,6 @@ class ParkingAnalytics:
                  row['start_time'] in (event['start_time'], event['end_time']))
                 for event in result['events'])]
             result['orphan_count'] = len(result['orphan_sessions'])
-            self._name_events(result, vehicle, events, self.owner or scope)
+            self._name_events(result, vehicle, events, self.owner or scope,include_place_resolution,name_fragments)
         result.update(start_date=start, end_date=end)
         return result

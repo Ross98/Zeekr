@@ -9,7 +9,7 @@ from .commute_tags import CommuteTags, _distance
 from .parking_analytics import ParkingAnalytics
 from .trip_place_names import TripPlaceNames, anchor_key
 from .place_regions import contains
-from .trip_places import TripPlaces, cluster_endpoints
+from .trip_places import TripPlaces
 from .tracks import day_bounds
 from .usage_calendar import UsageCalendar
 from .usage_events import UsageEvents, total
@@ -27,22 +27,6 @@ class DailyTimeline:
         self.archive=archive
         self.store=store
         self.calendar=UsageCalendar(database,archive,store=store)
-
-    @staticmethod
-    def _parking_place(position,places,regions):
-        point=(position['latitude'],position['longitude'])
-        grouped=cluster_endpoints([dict(event_id='parking',side='end',time=0,point=point)],regions)
-        place=grouped['places'][0]
-        region=next((r for r in regions if r['id']==place['name_region_id']),None)
-        if region:
-            return dict(latitude=place['latitude'],longitude=place['longitude'],
-                        label=region['body']['name'],name_source='manual',statistics_key='region:'+region['id'])
-        # Automatic nearby context may be reused, but manual names only apply
-        # inside their saved radius, as resolved by the shared endpoint matcher.
-        nearby=[p for p in places if p['name_source']!='manual' and
-                _distance(point,(p['latitude'],p['longitude']))<=150]
-        if nearby:return min(nearby,key=lambda p:_distance(point,(p['latitude'],p['longitude'])))
-        return dict(latitude=point[0],longitude=point[1],label='未命名地点',name_source='reference')
 
     def _interpret(self, owner, vehicle, place, identity, side, saved, aliases=()):
         if place is None:
@@ -121,35 +105,23 @@ class DailyTimeline:
             row['bill']=booked.get(event['id']) if row['type']=='charge' else None
             records.append(row)
         parked=ParkingAnalytics(self.archive,self.database,store=self.store,owner=owner).query(
-            scope,vehicle,start_date,end_date,context_days=1)
+            scope,vehicle,start_date,end_date,context_days=1,include_place_resolution=True)
         for session in parked['events']:
             if session['end_time']>now:continue
             row={k:session[k] for k in ('start_time','end_time','duration_seconds','sample_count','reasons','reason_labels',
                 'parking_status','p_gear_samples','open','observation_quality','observation_gaps',
                 'charging_phases','soc_drop','estimated_kwh')}
-            aliases=['parking_'+digest(fragment['id'])[:32] for fragment in parked['sessions']
-                     if fragment['start_time']>=row['start_time'] and fragment['end_time']<=row['end_time']]
-            # Keep observed GPS separate from label-only references; never borrow a trip's location.
-            point=None;observed_position=None;reference_evidence=None
-            with self.events.connect() as db:
-                if 'movement' not in row['reasons'] and db is not None and db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone():
-                    from .trip_endpoints import endpoint
-                    match=endpoint(db,vehicle,row['start_time'],min(row['end_time'],row['start_time']+180000),True)
-                    if match:
-                        observed_position=dict(latitude=match[1][0],longitude=match[1][1],state_time=match[0])
-                        point=self._parking_place(observed_position,stats['places'],corrections['_regions'])
-                    if point is None:
-                        from .parking_place_reference import parking_place_reference
-                        reference=parking_place_reference(db,vehicle,session,names,owner,corrections['_regions'],rule)
-                        if reference:
-                            point,reference_evidence=reference
-            row['_position']=observed_position
-            row.update(id='parking_'+digest(session['id'])[:32],type='parking',status='observed',partial=bool(session['reasons']),bill=None)
-            row['start_place']=self._interpret(owner,vehicle,point,row['id'],'start',corrections,aliases)
-            row['end_place']=self._interpret(owner,vehicle,point,row['id'],'end',corrections,aliases)
-            if reference_evidence:
-                for side in ('start','end'):
-                    row[side+'_place_evidence']=dict(reference_evidence)
+            resolved=session.get('_place_resolution')
+            if resolved is None:
+                # Synthetic/legacy providers still enter the same resolver.
+                from .parking_place_resolver import ParkingPlaceResolver
+                resolver=ParkingPlaceResolver(self.database,self.store,owner,vehicle)
+                with self.events.connect() as db:resolved=resolver.resolve(db,session,parked['sessions'])
+            row['_position']=resolved['position']
+            row.update(id=resolved['record_id'],type='parking',status='observed',partial=bool(session['reasons']),bill=None)
+            row['start_place']=resolved['start_place'];row['end_place']=resolved['end_place']
+            if resolved['evidence']:
+                for side in ('start','end'):row[side+'_place_evidence']=dict(resolved['evidence'])
             records.append(row)
         records.sort(key=lambda r:(r['start_time'] if r['start_time'] is not None else r['end_time'],r['id']))
         for row in records:
@@ -250,13 +222,14 @@ class DailyTimeline:
 
     def year(self,scope,vehicle,year,owner=None):
         if not isinstance(year,str) or not re.fullmatch(r'20\d{2}',year):raise ValueError('年份无效。')
-        months=[];days=[];places=Counter();parking_counts=Counter();parking_info={}
+        months=[];days=[];places=Counter();parking_counts=Counter();parking_info={};parking_references=Counter()
         for month in range(1,13):
             result=self.calendar.query(scope,vehicle,f'{year}-{month:02d}-01',owner=owner or scope)
             months.append(dict(month=f'{year}-{month:02d}',**result['totals']))
             days.extend(result['days'])
             for p in result['totals'].get('parking_places',[]):
                 parking_counts[p['key']]+=1;parking_info[p['key']]=p
+                parking_references[p['key']]+=p.get('confidence')=='reference'
             for row in result['events']:
                 if row['kind']=='trip_end' and row['end_date'].startswith(f'{year}-{month:02d}') and row.get('end_label') not in (None,'终点未知','未命名地点'):
                     places[row['end_label']]+=1
@@ -266,5 +239,5 @@ class DailyTimeline:
                       pending_count=sum(m['pending_count'] for m in months))
         return dict(year=year,days=days,months=months,totals=totals,
                     frequent_places=[dict(label=k,arrivals=v) for k,v in places.most_common(10)],
-                    frequent_parking_places=[dict(parking_info[k],count=v) for k,v in parking_counts.most_common(10)],
+                    frequent_parking_places=[dict(parking_info[k],count=v,reference_count=parking_references[k],confidence='reference' if parking_references[k] else parking_info[k].get('confidence','unknown')) for k,v in parking_counts.most_common(10)],
                     correction_revision=self.store.read(owner or scope,vehicle,'place_corrections')['revision'])

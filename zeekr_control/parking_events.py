@@ -194,7 +194,7 @@ def _run_event(before, after, within, reads, start, end, open_end, clipped, char
             last_fresh=row;p_gear_samples+=state.get('gear')=='P'
             if (trusted_position is None and is_trusted_location(row.get('location')) and
                     row['location']['coordinate_system']=='WGS84（社区解释）'):
-                trusted_position=row['location']
+                trusted_position=dict(row['location'],state_time=record['state_time'])
         km=state.get('km')
         if km is not None:
             if first_km is None:first_km=km

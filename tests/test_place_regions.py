@@ -136,7 +136,8 @@ class RegionNamingTests(unittest.TestCase):
         self.assertEqual(far['start_place']['label'],'园区')
         location=dict(valid=True,trusted=True,latitude=31.204,longitude=121.403,coordinate_system='WGS84（社区解释）')
         self.assertEqual(current_location_name(location,self.tags.place_names.regions('owner','car'),{},{}),'园区附近')
-        parked=timeline._parking_place(location,[],self.tags.place_names.regions('owner','car'))
+        from zeekr_control.parking_place_resolver import ParkingPlaceResolver
+        parked=ParkingPlaceResolver(self.db,self.tags.store,'owner','car')._name(location)
         self.assertEqual(parked['label'],'园区')
 
     def test_edit_preserves_region_identity_and_preview_accounts_for_old_area(self):

@@ -184,7 +184,7 @@ class ParkingEventTests(unittest.TestCase):
                     stamp = rows[-1]['record']['state_time'] - 60000
                 elif kind == 'inside_trip':
                     stamp += 600000
-                events = {'events': [{'start_time': stamp, 'end_time': stamp + 60000}]}
+                events = {'events': [{'id': 'parking-test', 'start_time': stamp, 'end_time': stamp + 60000}]}
                 with patch('zeekr_control.parking_analytics.decode', side_effect=lambda raw: raw['state']), patch('zeekr_control.parking_analytics.parse_location', side_effect=lambda raw: raw['location']), patch('zeekr_control.parking_analytics.build_events', return_value=events):
                     result = ParkingAnalytics(Archive(), path).query('scope', 'car', '2026-10-03', '2026-10-03')
                 self.assertEqual(result['orphan_count'], orphan_count)
