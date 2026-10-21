@@ -32,7 +32,7 @@ function localTripsPage() {
     <div id="recall-summary">${recallSummary()}</div>${recallYearPanel()}
     <div class="tv-day-cards"><section class="card local-trip-list-card tv-chain-card"><div class="card-head"><h2>当天出行</h2><span class="subtle">按时间顺序</span></div><div id="local-trip-list" class="tv-chain-scroll" role="region" aria-label="当天出行链，可滚动" tabindex="0"></div></section>
     <section class="card tv-rhythm-card"><div class="card-head"><h2>一天的出行节奏</h2><span class="subtle">24 小时</span></div><div id="local-trip-clock" class="tv-clock-wrapper"></div></section></div>
-    <section class="card local-trip-detail section-gap" id="local-trip-detail"></section>
+    <details class="card local-trip-disclosure section-gap" id="local-trip-details-disclosure" data-detail="local-trip-details" ${localTrips.detailsOpen?'open':''}><summary>采样轨迹与详情<span>按需展开</span></summary><section class="local-trip-detail" id="local-trip-detail"></section></details>
     <details class="tv-overview section-gap" data-detail="local-trip-overview"><summary><strong>出行汇总</strong><span>近 7 天里程、常走路线与常去地点</span></summary><div id="local-trip-overview-body"></div></details>
     <p class="section-note local-trip-note">本地采样仅覆盖后台记录期间。时间线显示跨日记录；里程按结束日期归档。单趟详情保留全程采样。道路线为算法推断；未匹配处保留采样点连线，实际走法仍需核对。</p>
   </div>`;
@@ -157,7 +157,7 @@ async function fetchLocalTrips(h) {
     if(h.revision!==undefined&&h.revision!==result.revision){recallHistory=null;if(recallCorrection){recallCorrection.preview=null;recallCorrection.message='记录已更新，请重新预览后保存。';}}
     if(h.overview&&(h.revision!==result.revision||h.personalRevision!==window.recallPersonalRevision)){h.overview=null;if($('.tv-overview')?.open)loadLocalTripOverview(true);}
     h.revision=result.revision;h.timeline=timeline;h.personalRevision=window.recallPersonalRevision;
-    if(h.restoreSelection){h.selection=h.restoreSelection;h.restoreSelection=null;}
+    if(h.restoreSelection){h.selection=h.restoreSelection;h.restoreSelection=null;if(h.selection!=='day')openLocalTripDetails();}
     h.events=result.events || [];h.active=result.active;h.nextCursor=result.next_cursor;
     if (h.selection==='current' && (!h.active || h.active.start_time!==h.selected?.start_time)) {
       const completed=h.events.find(event=>event.start_time===h.selected?.start_time);
@@ -395,6 +395,9 @@ function prepareLocalTripRender() {
   if (!showTrackPosition) {for(const row of localTrips.events||[])delete row.position;localTrips.routeRequest++;localTrips.route=null;localTrips.routeBusy=false;localTrips.routeError='';localTrips.index=0;localTrips.viewport=null;}
 }
 
+function openLocalTripDetails(){
+ const disclosure=$('#local-trip-details-disclosure');if(disclosure){localTrips.detailsOpen=true;disclosure.open=true;}
+}
 function locateLocalChain(selection){
  const container=$('#local-trip-list'),row=[...container.querySelectorAll('[data-chain-record]')].find(el=>el.dataset.chainRecord===selection);
  if(row)container.scrollTop+=row.getBoundingClientRect().top-container.getBoundingClientRect().top-18;
@@ -404,9 +407,10 @@ function handleLocalTripAction(target) {
   const h=localTrips;
   if (target.dataset.localTrip||target.dataset.localSelect) {
     const selection=target.dataset.localTrip||target.dataset.localSelect;
-    if(h.selection===selection){if(target.dataset.localSelect)locateLocalChain(selection);return true;}
+    if(h.selection===selection){openLocalTripDetails();if(target.dataset.localSelect)locateLocalChain(selection);return true;}
     const trip=selection==='current'?h.active:h.events?.find(event=>event.id===selection);
     if(selection!=='day'&&!trip)return true;
+    openLocalTripDetails();
     clearLocalRoute();h.selection=selection;h.selected=trip || null;h.notice='';recallCorrection=null;recallHistory=null;
     renderLocalTripList();renderLocalTripDetail();
     if(target.dataset.localSelect)locateLocalChain(selection);
@@ -435,3 +439,5 @@ function handleLocalTripAction(target) {
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopLocalPlayback();});
 document.addEventListener('toggle',event=>{if(event.target.matches?.('.tv-overview')&&event.target.open)loadLocalTripOverview();},true);
 document.addEventListener('click',event=>{const arc=event.target.closest?.('.tv-clock-hit');if(arc){event.preventDefault();handleLocalTripAction(arc);}});
+
+document.addEventListener('toggle',event=>{if(event.target.id!=='local-trip-details-disclosure'||!event.target.isConnected)return;localTrips.detailsOpen=event.target.open;if(!event.target.open)stopLocalPlayback();else if(map)requestAnimationFrame(()=>{if(event.target.open&&map)map.invalidateSize({pan:false});});},true);

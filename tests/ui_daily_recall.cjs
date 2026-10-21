@@ -17,6 +17,8 @@ const {contrast}=require('./ui_insight_helpers.cjs');
  await page.locator('[data-local-trip="recall-charge"]').waitFor();assert.match(await page.locator('#recall-summary').innerText(),/27 km/);
  assert.ok(await page.locator('[data-local-trip^="parking_"]').count());assert.equal(await page.locator('#map').count(),0);
  assert.equal(routeQueries.length,0,'default trip queries must not load coordinates');
+ assert.equal(await page.locator('#local-trip-details-disclosure').evaluate(el=>el.open),false);
+ await page.locator('#local-trip-details-disclosure>summary').click();
  await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).waitFor();
  const hidden=await page.evaluate(()=>localTrips.events);assert.ok(hidden.every(r=>!r.position));
  const parking=hidden.find(r=>r.parking_status==='parked'&&r.duration_seconds===6000);
