@@ -190,8 +190,9 @@ class PlaceTagRules:
             for charge in charges:
                 first,last=charge.get('start_time'),charge['end_time']
                 if first is None or not lower<=first<last<=upper:continue
-                # Any intervening movement, including a fragment, breaks the stop.
-                if any((r.get('start_time') is None and lower<r['end_time']<=last) or
+                # A fragment without a start cannot prove that charging preceded its movement.
+                # Keep the whole apparent stop uncertain until a known departure boundary.
+                if any((r.get('start_time') is None and lower<r['end_time']<=upper) or
                        (r.get('start_time') is not None and r['start_time']<last and r['end_time']>lower)
                        for r in trips):continue
                 evidence['charge_ids'].append(charge['id'])

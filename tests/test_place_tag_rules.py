@@ -197,6 +197,13 @@ class PlaceTagRuleTests(unittest.TestCase):
             db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',('fragment','car','trip_end',json.dumps(dict(end_time=self.future+1800000,partial=True)),self.future+1800000))
         self.assertEqual(self.rows()['arrival']['tags'],[])
 
+    def test_unknown_start_fragment_ending_after_charge_does_not_prove_continuous_parking(self):
+        self.rule(require_charge=True);self.trip('arrival',self.future,(31.2,121.4),(31.21,121.41))
+        self.charge('charge',self.future+1300000,self.future+1700000)
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',('fragment','car','trip_end',json.dumps(dict(end_time=self.future+1800000,partial=True)),self.future+1800000))
+        self.assertEqual(self.rows()['arrival']['tags'],[])
+
     def test_history_apply_guard_rolls_back_automatic_decisions(self):
         rule=self.rule()['rule'];self.trip('old',self.start+1000,(31.2,121.4),(31.21,121.41))
         body=dict(action='place-rule-history-preview',id=rule['id'],revision=1,date='2026-09-28')
