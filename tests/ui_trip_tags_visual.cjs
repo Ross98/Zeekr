@@ -43,8 +43,17 @@ async function batchIntegration(){
 
 (async()=>{const f=await fixture({initialResearch:false}),{page}=f;try{
  page.setDefaultTimeout(10000);
- await page.route('**/api/insights/trip-tags?*',async route=>{const res=await route.fetch(),d=await res.json(),seed=d.events[0];d.events=Array.from({length:30},(_,i)=>({...seed,id:'visual-'+i,tags:i<20?(i<4?['通勤','接送']:['通勤']):[],manual_tags:i<20?(i<4?['通勤','接送']:['通勤']):[],note:i===0?'保留备注':''}));await route.fulfill({json:d});});
+ await page.route('**/api/insights/trip-tags?*',async route=>{const res=await route.fetch(),d=await res.json(),seed=d.events[0];d.suggested_tags=[...(d.suggested_tags||[]),'出差'];d.events=Array.from({length:30},(_,i)=>({...seed,id:'visual-'+i,tags:i<20?(i<4?['通勤','接送']:['通勤']):[],manual_tags:i<20?(i<4?['通勤','接送']:['通勤']):[],note:i===0?'保留备注':''}));await route.fulfill({json:d});});
  await page.getByRole('button',{name:'行程与轨迹',exact:true}).click();await page.getByRole('button',{name:'行程标签',exact:true}).click();await page.getByLabel('标签月份',{exact:true}).fill('2026-09');await page.getByRole('button',{name:'读取行程标签',exact:true}).click();await page.locator('[data-tag-event]').first().waitFor();
+ await page.locator('.tag-share-strip').waitFor();
+ assert.equal(await page.locator('.tag-share-strip').getAttribute('data-tag-occurrences'),'24','Overlapping labels count as separate assignments, not disjoint trips');
+ assert.equal(await page.locator('.tag-share-strip [data-id="通勤"]').getAttribute('data-count'),'20');
+ assert.equal(await page.locator('.tag-share-strip [data-id="接送"]').getAttribute('data-count'),'4');
+ assert.match(await page.locator('.tag-analysis-tabs [data-id="出差"]').innerText(),/0 趟/);
+ const widths=await page.locator('.tag-share-strip button').evaluateAll(items=>items.map(el=>[el.dataset.id,el.getBoundingClientRect().width]));const lengths=Object.fromEntries(widths);assert.ok(Math.abs(lengths['通勤']/lengths['接送']-5)<.01,'Segment widths encode tag counts accurately');
+ assert.equal(await page.locator('.tag-share-strip [data-count="0"]').count(),0,'Zero labels do not get a visible segment');
+ assert.match(await page.locator('.tag-analysis-tabs [data-id="通勤"]').innerText(),/66.67%/,'Legend preserves all-trip share');
+ await page.locator('.tag-share-strip [data-id="接送"]').click();assert.equal(await page.locator('[data-tag-analysis-title]').innerText(),'接送分析');
  await page.locator('[data-tag="analysis-select"][data-id="通勤"]').click();
  assert.equal(await page.locator('[data-tag-analysis-title]').innerText(),'通勤分析');
  const pair=page.locator('.tag-work-grid');const baseline=await pair.evaluate(e=>[...e.children].map(c=>c.getBoundingClientRect().height));assert.ok(Math.abs(baseline[0]-baseline[1])<1);
@@ -53,6 +62,9 @@ async function batchIntegration(){
  await page.locator('[data-tag="overlap-select"][data-id="接送"]').click();assert.equal(await page.locator('[data-tag-event]').count(),4);
  const after=await pair.evaluate(e=>[...e.children].map(c=>c.getBoundingClientRect().height));assert.deepEqual(after,baseline,'Filtering must not resize either card');
  await page.locator('[data-tag="overlap-select"][data-id="alone"]').click();assert.equal(await page.locator('[data-tag-event]').count(),16);
- for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1280,1024]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'desktop overflow');}}
+ for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1280,1024]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'desktop overflow');
+ assert.ok(await page.locator('.tag-analysis-tabs').evaluate(el=>el.scrollHeight<=el.clientHeight),'Legend must wrap without its own scrollbar');
+ const layout=await page.locator('.tag-analysis-charts').first().evaluate(el=>[...el.children].map(c=>c.getBoundingClientRect().width));assert.ok(layout[0]>layout[1]*1.9,'Weekly charts get at least twice the departure chart width');
+ const gap=await page.locator('.tag-analysis-tabs button').first().evaluate(el=>el.querySelector('span').getBoundingClientRect().left-el.querySelector('strong').getBoundingClientRect().right);assert.ok(gap>=8&&gap<=12,'Keep each label close to its figures');}}
  fs.mkdirSync('/tmp/zeekr-insights-qa',{recursive:true});await page.screenshot({path:'/tmp/zeekr-insights-qa/trip-tags-visual-desktop.png',fullPage:true});await batchIntegration();await contrast(page,'#trip-tags-workspace');await batchOwnerIsolation(f.browser,await page.evaluate(async()=>{const r=await fetch('/api/insights/trip-tags?date=2026-09-01');return r.json();}));assert.deepEqual(f.errors,[]);console.log('UI_TRIP_TAGS_VISUAL_PASS: real metrics, tag switch, overlap, fixed cards, scrolling, batch persistence/conflict/owner isolation, desktop themes/contrast');
 }finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
