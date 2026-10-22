@@ -12,7 +12,8 @@ from zeekr_control.resource_monitor import ResourceHealth, cpu_seconds, parse_pr
 def healthy(**changes):
     sample=dict(host_cpu_percent=10, memory_pressure='normal', app_cpu_percent=5,
                 app_cpu_complete=True, app_rss_bytes=60*1024**2, process_count=4,
-                missing_services=[], sample_errors=[])
+                missing_services=[], sample_errors=[], endpoints={'local':True,'https':True},
+                collection_health={'enabled':True,'online':True})
     sample.update(changes);return sample
 
 
@@ -31,8 +32,8 @@ class ResourceTests(unittest.TestCase):
         self.ticks(healthy());self.sender.assert_not_called()
         self.assertEqual(self.state()['level'],'healthy')
 
-    def test_sustained_app_memory_alert_and_confirmed_recovery(self):
-        high=healthy(app_rss_bytes=700*1024**2)
+    def test_sustained_service_alert_and_confirmed_recovery(self):
+        high=healthy(endpoints={'local':False,'https':True})
         self.ticks(high,count=2);self.sender.assert_not_called()
         self.monitor.tick(high,now=1120);self.assertEqual(self.sender.call_count,1)
         self.assertEqual(self.state()['notification_state'],'sent')
@@ -41,13 +42,13 @@ class ResourceTests(unittest.TestCase):
         self.assertIn('恢复',self.sender.call_args.args[0])
 
     def test_rapid_repeats_and_long_gap_do_not_fake_persistence(self):
-        high=healthy(host_cpu_percent=99)
+        high=healthy(endpoints={'local':False,'https':True})
         for t in (1000,1001,1002,2000,2060):self.monitor.tick(high,now=t)
         self.sender.assert_not_called()
         self.monitor.tick(high,now=2120);self.assertEqual(self.sender.call_count,1)
 
     def test_restart_keeps_streak_but_does_not_resend_confirmed_alert(self):
-        high=healthy(memory_pressure='warning')
+        high=healthy(endpoints={'local':False,'https':True})
         self.ticks(high,count=2)
         self.monitor=ResourceHealth(self.root,self.sender);self.monitor.tick(high,now=1120)
         self.assertEqual(self.sender.call_count,1)
@@ -56,7 +57,7 @@ class ResourceTests(unittest.TestCase):
 
     def test_ambiguous_send_and_interrupted_intent_never_auto_retry(self):
         self.sender.side_effect=DeliveryError('synthetic',ambiguous=True)
-        high=healthy(app_cpu_percent=250)
+        high=healthy(endpoints={'local':False,'https':True})
         self.ticks(high);self.assertEqual(self.state()['notification_state'],'uncertain')
         self.monitor=ResourceHealth(self.root,self.sender)
         self.ticks(high,start=1180);self.ticks(high,start=90000)
@@ -68,7 +69,7 @@ class ResourceTests(unittest.TestCase):
 
     def test_definite_failure_retries_after_delay_without_relabeling_success(self):
         self.sender.side_effect=DeliveryError('rejected',permanent=False)
-        high=healthy(app_rss_bytes=2*1024**3);self.ticks(high)
+        high=healthy(endpoints={'local':False,'https':True});self.ticks(high)
         self.assertEqual(self.state()['notification_state'],'failed')
         self.monitor.tick(high,now=1180);self.assertEqual(self.sender.call_count,1)
         self.sender.side_effect=None;self.monitor.tick(high,now=2020)
@@ -76,15 +77,15 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(self.state()['notification_state'],'sent')
 
     def test_failed_intent_save_prevents_network_send(self):
-        high=healthy(app_rss_bytes=2*1024**3);self.ticks(high,count=2)
+        high=healthy(endpoints={'local':False,'https':True});self.ticks(high,count=2)
         with patch.object(self.monitor,'save',side_effect=OSError('disk full')):
             with self.assertRaises(OSError):self.monitor.tick(high,now=1120)
         self.sender.assert_not_called()
 
     def test_sampling_failure_does_not_clear_alarm_or_turn_into_zero(self):
-        self.assertEqual(classify(healthy(memory_pressure=None,sample_errors=['memory_pressure']))[0],'unknown')
-        self.assertEqual(classify(healthy(app_cpu_percent=None,app_cpu_complete=False))[0],'unknown')
-        self.assertEqual(classify(healthy(memory_pressure='critical'))[0],'critical')
+        self.assertEqual(classify(healthy(memory_pressure=None,sample_errors=['memory_pressure']))[0],'healthy')
+        self.assertEqual(classify(healthy(app_cpu_percent=None,app_cpu_complete=False))[0],'healthy')
+        self.assertEqual(classify(healthy(memory_pressure='critical'))[0],'healthy')
         self.assertEqual(classify(healthy(missing_services=['local.zeekr.web']))[0],'critical')
 
     def test_process_tree_includes_detached_children_and_excludes_other_apps(self):
@@ -108,7 +109,7 @@ class ResourceTests(unittest.TestCase):
         with self.assertRaises(ValueError):parse_processes('malformed')
 
     def test_confirmed_daily_reminder_and_short_spike_recovery(self):
-        high=healthy(host_cpu_percent=90)
+        high=healthy(endpoints={'local':False,'https':True})
         self.ticks(high,count=1);self.ticks(healthy(),start=1060)
         self.sender.assert_not_called()
         self.ticks(high,start=1240);self.assertEqual(self.sender.call_count,1)

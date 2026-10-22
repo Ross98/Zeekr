@@ -22,13 +22,12 @@ from urllib.parse import urlsplit
 from .delivery_state import DeliveryBusy, delivery_lock
 from .notifications import BarkSender, DeliveryError
 from .storage import DEFAULT_PATH, load, save
-from .resource_conditions import observations, advance, active_conditions, signature, overall
+from .resource_conditions import observations, advance, active_conditions, signature, overall, notifiable
 
 INTERVAL = 60
 CONFIRMATIONS = 3
 REMINDER = 86400
 SERVICE_LABELS = ('local.zeekr.web', 'local.zeekr.monitor', 'local.zeekr.reports')
-MIB = 1024**2
 
 
 def cpu_seconds(value):
@@ -199,12 +198,47 @@ def observer_sample(root,now):
     return dict(observer_health=fresh)
 
 
+def collection_health(root, now=None):
+    from .sampling import read_settings
+    from .notification_health import service
+    enabled, _ = read_settings(root)
+    health = service(Path(root), 'monitor-health.json', int((time.time() if now is None else now)*1000))
+    return dict(enabled=enabled, online=health['online'])
+
+
+def resource_status(root, now=None):
+    """Read saved scalar diagnostics only; no sampling, writes or private data."""
+    try:
+        state=ResourceHealth(root).cached()
+        if not isinstance(state,dict):state={}
+    except Exception:state={}
+    sample=state.get('sample')
+    if not isinstance(sample,dict):sample={}
+    def number(value):
+        return value if type(value) in (int,float) and math.isfinite(value) and value>=0 else None
+    checked=number(state.get('checked_at'));now=time.time() if now is None else now
+    fresh=checked is not None and 0<=now-checked<=3*INTERVAL
+    pressure=sample.get('memory_pressure')
+    conditions=state.get('conditions')
+    if not isinstance(conditions,dict):conditions={}
+    conditions={key:value for key,value in conditions.items() if isinstance(value,dict)}
+    return dict(checked_at=checked,fresh=fresh,
+                alert_level=overall(conditions) if fresh else 'unknown',
+                host=dict(cpu_percent=number(sample.get('host_cpu_percent')),
+                          memory_pressure=pressure if pressure in ('normal','warning','critical') else None,
+                          physical_memory_bytes=number(sample.get('physical_memory_bytes'))),
+                application=dict(cpu_percent=number(sample.get('app_cpu_percent')),
+                                 cpu_complete=sample.get('app_cpu_complete') is True,
+                                 rss_bytes=number(sample.get('app_rss_bytes'))))
+
+
 class NativeSampler:
-    def __init__(self, run=native, host_reader=host_cpu_ticks, probe=probe_origin, origin_reader=configured_origin,usage_reader=process_cpu):
+    def __init__(self, run=native, host_reader=host_cpu_ticks, probe=probe_origin, origin_reader=configured_origin,usage_reader=process_cpu,collection_reader=None):
         self.run=run;self.previous=None;self.checked=None
         self.host_reader=host_reader;self.host_previous=None;self.host_checked=None
         self.probe=probe;self.origin_reader=origin_reader
         self.usage_reader=usage_reader
+        self.collection_reader=collection_reader
 
     def measure(self):
         sample=dict(collector_pid=os.getpid(),host_cpu_percent=None,memory_pressure=None,app_cpu_percent=None,
@@ -247,15 +281,18 @@ class NativeSampler:
         sample['endpoints']={'local':self.probe('http://127.0.0.1:18765')}
         try:sample['endpoints']['https']=self.probe(self.origin_reader())
         except (OSError,ValueError,KeyError,TypeError):sample['endpoints']['https']=False
+        if self.collection_reader is not None:
+            try:sample['collection_health']=self.collection_reader()
+            except Exception:sample['collection_health']=None
         return sample
 
 
 def classify(sample, previous='healthy'):
     records = observations(sample)
-    levels = [item['observed'] for item in records.values()]
+    levels = [item['observed'] for key,item in records.items() if notifiable(key)]
     for level in ('critical', 'warning', 'unknown', 'warming_up'):
         if level in levels:
-            return level, [item['reason'] for item in records.values() if item['observed'] == level]
+            return level, [item['reason'] for key,item in records.items() if notifiable(key) and item['observed'] == level]
     return 'healthy', []
 
 
@@ -297,33 +334,18 @@ class ResourceHealth:
         state['incident']=signature(records)
 
     def message(self,state):
-        sample=state['sample'];active=active_conditions(state['conditions'])
+        active=active_conditions(state['conditions'])
         supported={k:v for k,v in active.items() if v.get('observed')==v['level']}
         categories={item['category'] for item in supported.values()}
         if not active:title='✅ Zeekr 已确认异常恢复'
         elif 'availability' in categories:title='⚠️ Zeekr 服务可用性异常'
-        elif 'system' in categories:title='⚠️ Zeekr 系统资源压力'
-        elif 'monitoring' in categories:title='⚠️ Zeekr 资源监测失效'
-        else:title='⚠️ Zeekr 进程预算提醒'
+        else:title='⚠️ Zeekr 服务巡检失效'
         body=[item['reason'] for item in supported.values()]
         if state.get('recovered_conditions'):
             body.append('已恢复：'+'；'.join(state['recovered_conditions']))
             if active:title+='（部分异常恢复）'
         if len(supported)!=len(active):body.append('另有此前异常尚未证实恢复；当前读数不支持重新断言其仍在超限。')
-        for key,label,scale,unit in [('host_cpu_percent','主机 CPU',1,'%'),
-                                    ('app_cpu_percent','Zeekr CPU（100%=一核）',1,'%'),
-                                    ('app_rss_bytes','Zeekr 进程树 RSS',MIB,' MiB')]:
-            if 'observer_health' in sample:break
-            value=sample.get(key)
-            body.append(label+'：'+('暂不可用' if value is None else '%.1f%s'%(value/scale,unit)))
-        if 'observer_health' not in sample:
-            labels={'normal':'正常','warning':'升高','critical':'严重'}
-            body.append('系统内存压力：'+labels.get(sample.get('memory_pressure'),'暂不可用'))
-            if sample.get('host_cpu_window_seconds') is not None:
-                body.append('主机 CPU 为最近 %.0f 秒平均值。'%sample['host_cpu_window_seconds'])
-            if sample.get('logical_cpus') and sample.get('app_cpu_percent') is not None:
-                body.append('主机 %d 个逻辑核；进程 CPU 占全机约 %.1f%%。'%(sample['logical_cpus'],sample['app_cpu_percent']/sample['logical_cpus']))
-            body.append('RSS 含共享页重复统计，超预算不等于系统内存不足；预算不是系统硬限制。')
+        body.append('仅报告极氪服务异常；CPU、内存及整机压力只作页面参考，不触发 Bark。')
         body.append('各原因分别连续巡检确认；未自动停止服务或清理数据。')
         return title,'\n'.join(body)
 
@@ -339,6 +361,15 @@ class ResourceHealth:
             return state
         if state.get('notification_state')=='sending':state['notification_state']='uncertain'
         self.migrate(state)
+        if state.get('notification_scope') != 'zeekr-service-v1':
+            # Retire removed causes without a false recovery, stale retry or
+            # daily reminder. Preserve delivery outcomes for retained incidents.
+            state.update(notification_scope='zeekr-service-v1', incident=signature(state['conditions']),
+                         level=overall(state['conditions']))
+            state.pop('recovered_conditions',None)
+            if not state['incident']:
+                state['notification_state']='suppressed'
+                state.pop('retry_at',None)
         prior=state['incident'];records=state['conditions']
         old_active={key:dict(value) for key,value in active_conditions(records).items()}
         consecutive=last is not None and 0<now-last<=INTERVAL*1.5
@@ -387,7 +418,7 @@ def main(argv=None):
     if args.inspect:
         print(json.dumps(monitor.cached(),ensure_ascii=False,indent=2));return
     if sys.platform!='darwin':raise ValueError('Native resource monitor requires macOS')
-    sampler=NativeSampler()
+    sampler=NativeSampler(collection_reader=lambda:collection_health(args.root))
     if args.sample:
         print(json.dumps(sampler.measure(),ensure_ascii=False,indent=2));return
     stop=threading.Event()

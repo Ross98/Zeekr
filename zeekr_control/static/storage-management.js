@@ -11,6 +11,16 @@ window.StorageManagement = (() => {
   const label={healthy:'正常',warning:'容量提醒',critical:'容量严重不足',unknown:'巡检异常',not_checked:'待首次巡检'};
   const delivery={none:'尚无预警',sending:'发送中',sent:'已发送',uncertain:'发送结果待确认',failed:'发送失败'};
   const button=(text,action,target='',disabled=false,danger=false)=>`<button type="button" class="button ${danger?'storage-danger':'secondary'}" data-storage-action="${action}" data-target="${escape(target)}" ${disabled?'disabled':''}>${text}</button>`;
+  function resourceReference(){
+    const r=status?.resources,host=r?.host,app=r?.application;
+    const percent=value=>Number.isFinite(value)?value.toFixed(1)+'%':'未知';
+    const pressure={normal:'正常',warning:'升高',critical:'严重'}[host?.memory_pressure]||'未知';
+    return `<section aria-label="极氪服务与资源参考"><h3>极氪服务与资源参考</h3>
+      <p>${!r?.fresh?'巡检记录已过期或尚无记录，无法确认当前服务状态。':`极氪服务：${{healthy:'正常',critical:'异常',unknown:'巡检异常'}[r.alert_level]||'状态待确认'}`}</p>
+      <p class="subtle">主机资源仅供参考，不触发 Bark。极氪 CPU／内存超预算只作诊断；服务退出、网页异常或采集心跳停摆另行确认告警。</p>
+      <div class="storage-observations"><p>主机 CPU：${percent(host?.cpu_percent)}</p><p>主机内存压力：${pressure}</p><p>主机物理内存：${bytes(host?.physical_memory_bytes)}</p><p>极氪 CPU：${app?.cpu_complete?percent(app.cpu_percent):'预热或暂不可用'}（100%=一核）</p><p>极氪进程树 RSS：${bytes(app?.rss_bytes)}</p><p>记录时间：${date(r?.checked_at)}</p></div>
+      <p class="subtle">以上是后台保存的最近读数，刷新页面不重新采样。RSS 含共享页重复统计，不等于应用独占内存。</p></section>`;
+  }
   function list(items,recycled){
     if(!items.length)return `<p class="subtle">${recycled?'回收区为空。':'尚无完整快照归档。'}</p>`;
     return items.map(item=>`<article class="storage-archive-row"><div><strong>${escape(item.partition)}</strong><p>${bytes(item.bytes)} · ${Number.isFinite(item.reads)?`${item.reads} 次读取`:'记录数未知'}${item.manageable?'':' · 受保护 / 暂不可操作'}</p></div><div class="storage-actions">${recycled?button('恢复','restore',item.id,!item.manageable||busy)+button('永久删除','purge',item.id,!item.manageable||busy,true):button('移入回收区','trash',item.id,!item.manageable||busy)}</div></article>`).join('');
@@ -32,7 +42,7 @@ window.StorageManagement = (() => {
       ${Number.isFinite(capacity)?`<p class="subtle">告警口径使用率：${capacity.toFixed(1)}% · ${mac?'按macOS估算可用空间判断':'按文件系统空闲空间判断'}</p><div class="storage-progress" role="meter" aria-label="告警口径使用率" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100,Math.max(0,capacity))}"><span style="width:${Math.min(100,Math.max(0,capacity))}%"></span></div>`:'<p class="subtle" role="status">告警口径读取失败；即时占用率不代表macOS可用空间。</p>'}
       <div class="storage-observations"><p>inode 使用：${Number.isFinite(c.inode_used_percent)?c.inode_used_percent.toFixed(1)+'%':'不支持 / 未知'}</p><p>数据日净增长：${Number.isFinite(m?.data_growth_bytes_per_day)?bytes(m.data_growth_bytes_per_day)+'/天':'至少 6 小时样本后估算'}</p><p>预计磁盘剩余天数：${sameBasis&&Number.isFinite(m?.estimated_disk_days)?m.estimated_disk_days.toFixed(1)+' 天（按同口径可用空间净减少估算）':'样本不足、口径已变更或没有净增长'}</p><p>后台巡检：${date(m?.checked_at)}${m?.monitor_fresh?'':' · 尚未更新，请检查后台'}</p><p>Bark 提醒：${delivery[m?.alert_notification_state]||'未知'} · 企业微信详情：${delivery[m?.notification_state]||'未知'}</p></div>`:'<p class="subtle" role="status">正在读取存储状态…</p>'}
       <p class="subtle">每 5 分钟巡检；macOS按系统估算可用空间（含预计可回收空间），其他系统按文件系统空闲空间判断。告警口径使用率 80% / 90%，可用 5 / 2 GiB，inode 80% / 90% 分级提醒；即时已分配比例不单独触发macOS容量告警。同级最多每日一次，升级与恢复另报。后台暂停车辆采集不暂停磁盘巡检。</p>
-      <hr><h3>历史完整快照</h3><p class="subtle">范围：全部车辆的完整快照归档。当前月份、凭据、最新车况、轨迹、事件和部署备份不可删除。按北京时间分年保留，无自动清理。</p>
+      <hr>${resourceReference()}<hr><h3>历史完整快照</h3><p class="subtle">范围：全部车辆的完整快照归档。当前月份、凭据、最新车况、轨迹、事件和部署备份不可删除。按北京时间分年保留，无自动清理。</p>
       ${inventory?list(inventory.archives,false):'<p class="subtle">正在读取归档列表…</p>'}
       <h3 class="storage-subhead">回收区</h3>${inventory?list(inventory.trash,true):''}
       ${plan?`<section class="storage-confirm" aria-label="操作预览"><h3>${{trash:'移入回收区',restore:'恢复归档',purge:'永久删除归档'}[plan.action]} · ${escape(plan.partition)}</h3><p>全部车辆 · ${Number.isFinite(plan.reads)?plan.reads+' 次读取':'记录数未知'} · ${bytes(plan.bytes)}</p><p>${plan.action==='purge'?'不可恢复。只删除该回收文件，不删除其他备份；预计释放 '+bytes(plan.released_bytes)+'，实际以文件系统为准。':plan.action==='trash'?'可从回收区恢复；不会释放磁盘空间。':'恢复到原月份；不会覆盖已存在的数据。'}</p><p class="subtle">预览有效 5 分钟；文件变化后须重新预览。</p><label>输入「${escape(plan.confirmation)}」确认<input id="storage-confirm-input" autocomplete="off" value="${escape(draft)}" ${busy?'disabled':''}></label><div class="storage-actions">${button('取消','cancel','',busy)}${button(plan.action==='purge'?'确认永久删除':'确认执行','execute','',busy||draft!==plan.confirmation,plan.action==='purge')}</div></section>`:''}

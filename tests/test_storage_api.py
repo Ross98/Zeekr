@@ -67,6 +67,21 @@ class StorageAPITests(unittest.TestCase):
         self.assertEqual(self.request('POST', '/api/storage/execute', command)[0], 200)
         self.assertEqual(self.request('POST', '/api/storage/execute', command)[0], 400)
 
+    def test_resource_reference_is_authenticated_cached_and_sanitized(self):
+        from unittest.mock import patch
+        from zeekr_control.resource_monitor import ResourceHealth
+        health=ResourceHealth(self.app.session_path.parent)
+        health.save(dict(checked_at=1000, sample=dict(host_cpu_percent=99,memory_pressure='critical',
+            app_rss_bytes=0,private_token='PRIVATE-RESOURCE'),conditions={}))
+        with patch('zeekr_control.resource_monitor.NativeSampler.measure',side_effect=AssertionError('must use cache')):
+            code,body=self.request('GET','/api/storage')
+        self.assertEqual(code,200)
+        data=json.loads(body)['resources']
+        self.assertFalse(data['fresh'])
+        self.assertEqual(data['host']['memory_pressure'],'critical')
+        self.assertEqual(data['application']['rss_bytes'],0)
+        self.assertNotIn('PRIVATE-RESOURCE',body)
+
     def test_arbitrary_paths_and_raw_archive_download_forbidden(self):
         self.assertEqual(self.request('POST', '/api/storage/preview', {'action':'trash','target':'../session.json'})[0], 400)
         self.assertEqual(self.request('GET', '/snapshot-archive/2024/12.sqlite3')[0], 404)

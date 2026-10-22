@@ -12,7 +12,8 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     page.on('pageerror',error=>errors.push(error.message));
     const GiB=1024**3;
     let sample={status:'healthy',checked_at:Date.now()/1000,capacity_basis:'macos_important_usage',capacity_available_bytes:110*GiB,capacity_used_percent:(1-110/230)*100,reclaimable_bytes:95*GiB,disk_total_bytes:230*GiB,disk_used_bytes:215*GiB,disk_used_percent:215/230*100,disk_free_bytes:15*GiB,inode_used_percent:.8,data_bytes:100,archive_bytes:50,trash_bytes:0};
-    await page.route('**/api/storage',route=>route.fulfill({json:{current:sample,monitor:{...sample,monitor_fresh:true}}}));
+    let resources={checked_at:Date.now()/1000,fresh:true,alert_level:'healthy',host:{cpu_percent:99,memory_pressure:'critical',physical_memory_bytes:16*GiB},application:{cpu_percent:0,cpu_complete:true,rss_bytes:0}};
+    await page.route('**/api/storage',route=>route.fulfill({json:{current:sample,monitor:{...sample,monitor_fresh:true},resources}}));
 
     await page.goto(`http://127.0.0.1:${port}`);
     await page.locator('[data-page="settings"]').first().click();
@@ -23,6 +24,11 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     assert.match(await panel.locator('.storage-health-heading').innerText(),/正常/);
     assert.ok(Number(await panel.getByRole('meter').getAttribute('aria-valuenow'))<60);
     assert.match(await panel.innerText(),/Bark 提醒.*企业微信详情.*每 5 分钟/s);
+    const reference=panel.getByRole('region',{name:'极氪服务与资源参考'});
+    assert.match(await reference.innerText(),/极氪服务：正常/);
+    assert.match(await reference.innerText(),/主机 CPU：99.0%.*内存压力：严重/s);
+    assert.match(await reference.innerText(),/极氪 CPU：0.0%.*RSS：0 B/s);
+    assert.match(await reference.innerText(),/不触发 Bark/);
     const current=panel.locator('.storage-archive-row').filter({hasText:'受保护'});
     assert.equal(await current.getByRole('button').isDisabled(),true);
     const preview=async(action)=>{await old.getByRole('button',{name:action,exact:true}).click();await panel.locator('#storage-confirm-input').waitFor();};
@@ -49,11 +55,14 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await preview('永久删除');assert.match(await panel.locator('.storage-confirm').innerText(),/不可恢复/);
     await confirm('永久删除 2024/12');
     assert.equal(await old.count(),0);assert.equal(await current.count(),1);
+    resources={...resources,fresh:false,host:{cpu_percent:null,memory_pressure:null},application:{cpu_percent:null,cpu_complete:false,rss_bytes:null}};
     sample={...sample,status:'unknown',capacity_basis:'unavailable',capacity_available_bytes:null,capacity_used_percent:null,reclaimable_bytes:null};
     await panel.getByRole('button',{name:'刷新存储状态'}).click();
     await page.waitForFunction(()=>document.querySelector('#storage-management').innerText.includes('macOS可用空间读取失败'));
     assert.match(await panel.locator('.storage-health-heading').innerText(),/巡检异常/);
     assert.equal(await panel.getByRole('meter').count(),0);
+    assert.match(await reference.innerText(),/巡检记录已过期/);
+    assert.match(await reference.innerText(),/主机 CPU：未知.*内存压力：未知/s);
     assert.deepEqual(errors,[]);
     console.log('Storage UI passed: health, protection, cancel, session render, trash/restore/purge, desktop1440/1100 widths, macOS effective/raw capacities and native-failure state. Synthetic data only.');
   }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();server.kill('SIGTERM');}

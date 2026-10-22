@@ -880,11 +880,13 @@ class App:
             return self.event_store.query(self.vehicle_key, date, kind, cursor=cursor, end_date=end_date)
 
     def storage_status(self):
+        from .resource_monitor import resource_status
         health = StorageHealth(self.session_path.parent)
         previous = health.cached()
         current = health.measure()
         current['status'] = severity(current, previous.get('status'))
-        return {'current': current, 'monitor': previous}
+        return {'current': current, 'monitor': previous,
+                'resources': resource_status(self.session_path.parent)}
 
     def charging_session(self, selection):
         return self._charging_read('session', selection)

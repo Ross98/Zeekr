@@ -6,6 +6,12 @@ MIB = 1024**2
 RANK = {'healthy': 0, 'unknown': 1, 'warning': 2, 'critical': 3}
 
 
+def notifiable(key):
+    """Only Zeekr availability and its observer can create push incidents."""
+    return (key in ('observer', 'collector', 'sensor:collector') or
+            key.startswith(('service:', 'endpoint:')))
+
+
 def observations(sample, previous=None):
     previous = previous or {}
     result = {}
@@ -48,15 +54,25 @@ def observations(sample, previous=None):
         add('service:'+label, 'critical' if label in sample.get('missing_services', []) else 'healthy', label+' 服务任务不可用', 'availability')
     for endpoint, ok in sample.get('endpoints', {}).items():
         add('endpoint:'+endpoint, 'healthy' if ok else 'critical', ('本机网页' if endpoint == 'local' else 'HTTPS 入口')+'访问或认证边界异常', 'availability')
+    if 'collection_health' in sample:
+        collection = sample['collection_health']
+        if not isinstance(collection, dict):
+            level = 'unknown'
+        else:
+            level = 'healthy' if collection.get('enabled') is False or collection.get('online') is True else 'critical'
+        add('collector', level, '车辆采集心跳停摆或无法确认', 'availability')
     # A sensor's failure has its own confirmation, independently of a previous
     # pressure alarm. Warm-up is not failure and cannot clear that alarm.
     for key, observation in list(result.items()):
         if observation['category']=='monitoring':continue
         if observation['observed'] in ('unknown', 'warming_up'):
             failed = observation['observed'] == 'unknown'
-            add('sensor:'+key, 'unknown' if failed else 'healthy', key+' 指标不可用，不能判断压力或恢复', 'monitoring')
+            reason='车辆采集心跳状态不可读，无法确认服务状态' if key=='collector' else key+' 指标不可用，不能判断压力或恢复'
+            add('sensor:'+key, 'unknown' if failed else 'healthy', reason, 'monitoring')
         else:
             add('sensor:'+key, 'healthy', key+' 指标不可用，不能判断压力或恢复', 'monitoring')
+    for key, item in result.items():
+        if not notifiable(key):item['category'] = 'reference'
     return result
 
 
@@ -77,7 +93,7 @@ def advance(records, current, consecutive, confirmations):
 
 
 def active_conditions(records):
-    return {key: value for key, value in records.items() if value.get('level') in ('warning', 'critical', 'unknown')}
+    return {key: value for key, value in records.items() if notifiable(key) and value.get('level') in ('warning', 'critical', 'unknown')}
 
 
 def signature(records):
@@ -85,4 +101,4 @@ def signature(records):
 
 
 def overall(records):
-    return max((record.get('level', 'healthy') for record in records.values()), key=lambda level: RANK.get(level, 0), default='healthy')
+    return max((record.get('level', 'healthy') for key, record in records.items() if notifiable(key)), key=lambda level: RANK.get(level, 0), default='healthy')
