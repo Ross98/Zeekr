@@ -26,6 +26,11 @@ This is a read-only view of cached data, never vehicle control.
   are not independently interpreted. A temperature level is not pack temperature.
 - Remaining charging time is shown only during confirmed charging with a valid
   0–2046 minute value. Sentinel 2047 is not a valid duration.
+- `dcChargeIAct` is battery-side current: positive means discharge, negative
+  means charging or regenerative energy recovery, based on this vehicle’s history.
+  Startup transition frames may contain unsynchronized battery/pile readings;
+  use subsequent samples, external current and SOC changes together. The note
+  does not change raw signs, charging detection or power calculations.
 - Target SOC, stop reason, pack temperature, charging-pile billing and scheduling
   times remain unavailable until reliable API evidence exists. Do not turn a
   screenshot's one-time values into persistent vehicle settings.

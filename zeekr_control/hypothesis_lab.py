@@ -159,7 +159,7 @@ def value_meanings(row):
                 amps=float(code)
                 direction='放电' if amps>0 else '充电／能量回收' if amps<0 else '无净电流'
                 meaning=str(abs(amps))+' A（电池侧'+direction+'）'
-                source='跨字段符号对照推断'
+                source='本车历史符号对照；起充过渡帧可能不同步'
             except (ValueError,TypeError):pass
         elif key in ('chargeSts','statusOfChargerConnection','ptReady') and normalized=='0':
             meaning='本车该协议下的固定兼容码0（不单独判断活动状态）'

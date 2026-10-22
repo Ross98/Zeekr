@@ -1,5 +1,8 @@
 """Explicit, numeric-only charging projection for current and saved observations."""
 import math
+from .parameter_dictionary import definition
+
+PACK_CURRENT = definition('additionalVehicleStatus.electricVehicleStatus.dcChargeIAct')
 
 
 # key, label, unit, group. Unknown enums are observations, never interpretations.
@@ -11,7 +14,7 @@ PARAMETERS = (
     ('chargeIAct', '充电电流', 'A', '电压与电流'),
     ('dcChargePileUAct', '直流桩侧电压', 'V', '电压与电流'),
     ('dcChargePileIAct', '直流桩侧电流', 'A', '电压与电流'),
-    ('dcChargeIAct', '直流充电电流', 'A', '电压与电流'),
+    ('dcChargeIAct', PACK_CURRENT['name'], 'A', '电压与电流'),
     ('chargeSts', '充电状态码', '', '状态与连接'),
     ('chargerState', '充电器工作状态码', '', '状态与连接'),
     ('statusOfChargerConnection', '充电枪连接状态码', '', '状态与连接'),
@@ -69,6 +72,8 @@ def snapshot_details(snapshot):
         if key == 'timeToFullyCharged':
             if snapshot.get('charging') is not True or value is None or not 0 <= value <= 2046:
                 value, note = None, '仅充电中且有效时展示；2047 不代表剩余时间'
+        elif key == 'dcChargeIAct':
+            note = PACK_CURRENT['note']
         elif key in ('chargeLidAcStatus', 'chargeLidDcAcStatus'):
             note = {1: '已打开', 2: '已关闭'}.get(value, '原始状态码，含义未确认')
         elif key in ('averPowerConsumption', 'indPowerConsumption', 'timeToTargetDisCharged'):
