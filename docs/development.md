@@ -20,10 +20,10 @@ Chromium 仅用于本机合成测试，不作为服务器运行依赖。Linux �
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_cost_summary.py -v
 
 npm run check:desktop-manifest # 桌面测试文件逐项归类
-npm run check:js       # 第一方 JS 语法
+npm run check:js       # 应用、scripts 和 tests 的 JS/CJS 语法
 npm run test:unit      # 无浏览器逻辑
 npm run test:smoke     # 桌面主要页面
-npm test              # 费用、焦点、懒加载、通知展示及相关桌面回归
+npm test              # unit + smoke + review，完整桌面检查
 npm run test:desktop   # smoke + review，按需运行
 ```
 
@@ -33,9 +33,11 @@ npm run test:desktop   # smoke + review，按需运行
 
 `npm run check:desktop-manifest` 递归扫描 `tests/**/*.cjs`，包含无浏览器逻辑、浏览器脚本、性能工具和共享辅助文件；Python 测试不在本清单范围。扫描范围固化在校验代码中，不能通过修改清单缩小扫描范围。新增子目录也会自动纳入，符号链接拒绝处理。
 
-`scripts/desktop-test-manifest.json` 是执行器与校验器的共同来源：`groups.unit`、`groups.smoke`、`groups.review` 使用完整相对文件路径；`exclusions` 每项只登记一个实际存在的文件，并写明非空 `reason`。未归类、同组/跨组重复、执行和排除重叠、排除重复、路径不存在、目录/通配符/路径别名、错误分组及空理由均失败。`desktop` 是 smoke + review 的派生顺序，不另行重复登记。`ui_overview_dashboard` 仅在 smoke 登记，合并执行仍执行一次；单独 `npm test` 的 review 不再重复执行它，需运行 smoke 或 desktop 获取该覆盖。
+`scripts/desktop-test-manifest.json` 是执行器与校验器的共同来源：`groups.unit`、`groups.smoke`、`groups.review` 使用完整相对文件路径；`exclusions` 每项只登记一个实际存在的文件，并写明非空 `reason`、生命周期 `kind`（helper / benchmark / manual-artifact / retired-mobile / coverage-debt）和非空复核条件 `review_when`。未归类、同组/跨组重复、执行和排除重叠、排除重复、路径不存在、目录/通配符/路径别名、错误分组及空理由均失败。`desktop` 是 smoke + review，默认 `npm test` 是 unit + desktop，均不另行重复登记。`ui_overview_dashboard` 仅在 smoke 登记，合并执行一次；若只需 review 可执行 `node scripts/test-desktop.cjs review`。
 
-所有本地执行组（含 syntax）先校验，失败时不启动测试进程。CI 在安装浏览器前显式运行同一校验，unit 组继续运行校验器的合成 CLI 回归。校验器只读文件名和清单，不执行被排除脚本。
+所有本地执行组（含 syntax）先校验，失败时不启动测试进程。执行器默认每文件 180 秒，单项失败仍继续独立脚本，最后任何失败或超时都非零退出；可用 DESKTOP_TEST_TIMEOUT_MS 明确设置 100–1200000 毫秒。按同 UID 与创建时间核对后清理该用例的进程组及已跟踪后代，包括自行脱离进程组的浏览器。结果保存到 test-results/desktop 的 JSON，DESKTOP_RESULT_DIR 可改变结果目录。CI 在安装浏览器前显式运行同一校验，unit 组继续运行校验器的合成 CLI 回归。校验器只读文件名和清单，不执行被排除脚本。
+
+执行器默认解析项目 Playwright 对应 Chromium，尊重显式 CHROMIUM_EXECUTABLE；不要求系统 Chrome。常规产品浏览器测试必须在 finally 销毁页面前捕获失败证据，共享合成 fixture 自动提供 recorder，测试 catch 调用 f.fail；直接 fixture 显式 startEvidence。browser_evidence_coverage 检查接入，browser_failure_evidence 验证真实失败仍非零、PNG/诊断可读和隐私边界。不得用捕获异常后返回成功的方式“生成证据”。
 
 新增测试流程：确认桌面视口与合成数据边界，将文件登记在一个基础执行组；暂不纳入常规执行时，在 exclusions 单独写明当前原因和后续准入条件。删除测试时同时删除对应登记。历史脚本没有因本次登记而通过验证；排除仅说明现存覆盖缺口，不等同退役、运行成功或生产验收。不得使用整个目录的排除项，也不要批量将遗留脚本加入执行组。
 
@@ -72,3 +74,7 @@ JSON 仅含测试标识、运行标识、时间、错误类别、仓库内测试
 CI 只上传上述统一目录内允许的文件名，不上传 stdout/stderr 或历史 `/tmp` 截图。上传步骤使用 `if: ${{ !cancelled() }}`，前置测试失败仍执行；未发现文件时忽略，保留 7 天，artifact 名含 GitHub run ID 和 attempt。未使用 `continue-on-error`，不会把测试失败变成成功。取消任务及服务端上传效果仍需实际 Actions 运行确认；本地检查不能替代远端验证。
 
 官方依据：[状态检查表达式](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions)、[upload-artifact 配置](https://github.com/actions/upload-artifact/tree/v4.6.2#usage)。
+
+### CI 与发布门禁
+
+工作流四项为 Python tests、Desktop tests、macOS native tests、Workflow checks。macOS 原生读取使用 GitHub 托管环境的合成数据，不接生产账户或通知。actionlint 固定 v1.7.12。主分支必要检查及发布前确切 SHA 规则见 [Mac mini 开发](macos-development.md#ci-与发布前置条件)。

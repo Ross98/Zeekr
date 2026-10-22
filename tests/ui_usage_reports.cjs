@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');
 const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
-  const f=await fixture(),{page}=f;
+  const f=await fixture({reportNow:'2026-10-05'}),{page}=f;
   try{
     await page.getByRole('button',{name:'用车周报',exact:true}).click();
     await page.getByLabel('报告周期',{exact:true}).selectOption('month');
@@ -36,9 +36,12 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByLabel('事件类型',{exact:true}).selectOption('all');
     await layouts(page,'usage-report');
     await page.getByRole('button',{name:'上一周期',exact:true}).click();
+    assert.equal(await page.locator('#report-title').count(),0,'changing period invalidates the old result without starting analysis');
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
     await page.getByRole('heading',{name:'2026-08-01 — 2026-08-31',exact:true}).waitFor();
     assert.match(await page.locator('#report-distance').innerText(),/30/);
     await page.getByRole('button',{name:'下一周期',exact:true}).click();
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
     await page.getByRole('heading',{name:'2026-09-01 — 2026-09-30',exact:true}).waitFor();
     await page.getByLabel('报告周期',{exact:true}).selectOption('week');
     await page.getByRole('button',{name:'查看报告',exact:true}).click();
@@ -53,7 +56,8 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'查看报告',exact:true}).click();
     await page.getByText(/合成报告失败/).waitFor();
     assert.match(await page.locator('#report-title').innerText(),/2026-10-05/);
-    assert.deepEqual(f.posts,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
-    console.log('UI_USAGE_REPORTS_PASS: week/month, sample counts, complete/partial, midnight, period navigation, day/type filters, preserved form/errors, light/dark/mobile/zoom/contrast; no writes or cloud');
-  }finally{await f.close();}
+    assert.ok(f.posts.every(url=>{const request=new URL(url);return request.origin===f.origin&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(request.pathname);}), 'report only cancels read analyses; never writes business data');
+    assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
+    console.log('UI_USAGE_REPORTS_PASS: frozen report clock, week/month, sample counts, complete/partial, midnight, manual period query, day/type filters, preserved form/errors, desktop themes/zoom/contrast; no business writes or cloud');
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

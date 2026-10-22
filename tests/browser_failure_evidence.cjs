@@ -37,6 +37,17 @@ const {startEvidence} = require('../scripts/browser-failure-evidence.cjs');
     assert.equal(fs.readFileSync(path.join(directory, 'trace.zip')).subarray(0, 2).toString(), 'PK');
     assert.equal(fs.readFileSync(path.join(output, 'keep.txt'), 'utf8'), 'existing evidence');
     assert.ok(!JSON.stringify(diagnostic).includes('DO_NOT_RECORD'));
+    const sharedOutput=path.join(root,'shared');
+    const shared=spawnSync(process.execPath,[path.join(__dirname,'fixtures/shared_failure_probe.cjs')],{
+      env:{...process.env,BROWSER_ARTIFACT_DIR:sharedOutput,DESKTOP_ONLY:'1'},encoding:'utf8',timeout:30000
+    });
+    assert.equal(shared.status,1,shared.stderr);
+    const sharedDir=path.join(sharedOutput,fs.readdirSync(sharedOutput)[0]);
+    const sharedDiagnostic=JSON.parse(fs.readFileSync(path.join(sharedDir,'diagnostic.json'),'utf8'));
+    assert.equal(sharedDiagnostic.testId,'shared_failure_probe');
+    assert.equal(sharedDiagnostic.captureErrors.length,0);
+    assert.ok(fs.statSync(path.join(sharedDir,'page.png')).size>0);
+    assert.ok(!JSON.stringify(sharedDiagnostic).includes('DO_NOT_RECORD'));
     const {chromium} = require('playwright');
     const browser = await chromium.launch({headless: true, ...(process.env.CHROMIUM_EXECUTABLE ? {executablePath: process.env.CHROMIUM_EXECUTABLE} : {})});
     try {

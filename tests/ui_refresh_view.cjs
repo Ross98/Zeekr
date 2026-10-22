@@ -1,9 +1,11 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {chromium}=require('playwright');
-(async()=>{
- const browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{channel:'chrome'})});
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
+(async()=>{let evidence;
+ const browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})});
  try{
   const page=await browser.newPage({viewport:{width:900,height:600}});
+  evidence=await startEvidence(page,{testId:'ui_refresh_view',synthetic:true});
   await page.setContent('<main id="main"></main>');
   await page.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../zeekr_control/static/navigation-state.js'),'utf8')});
   const result=await page.evaluate(()=>{
@@ -43,5 +45,5 @@ const {chromium}=require('playwright');
   await page.evaluate(()=>{window.finishLate=RefreshView.guard(()=>scrollTo(0,0));RefreshView.context=()=> 'new-view';});
   await page.evaluate(()=>finishLate());assert.equal(await page.evaluate(()=>scrollY),newerPosition,'late response must respect navigation');
   console.log('UI_REFRESH_VIEW_PASS: synchronous/nested replacement, disclosures, focus/caret, inner scroll, exceptions and account/navigation isolation');
- }finally{await browser.close();}
+ }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

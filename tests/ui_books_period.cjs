@@ -113,4 +113,4 @@ async function ledgerSaveRaces(browser,seed){
   await ledgerSaveRaces(f.browser,ledgerSeed);
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   console.log('BOOKS_PERIOD_PASS: shared month, real merged records, totals, retained drafts, reload, desktop layouts and delayed calendar save/refresh context isolation');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});

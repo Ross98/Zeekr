@@ -240,6 +240,7 @@ if __name__ == '__main__':
     parser.add_argument('--charging-intervals',action='store_true',help='Preload synthetic interval boundaries.')
     parser.add_argument('--charging-places',action='store_true',help='Preload synthetic charging venues and station candidates.')
     parser.add_argument('--place-tag-rules',action='store_true',help='Seed synthetic place rule timelines.')
+    parser.add_argument('--report-now',help='Fixed report-only Beijing date for deterministic current-period assertions.')
     parser.add_argument('--port',type=int,default=0,help='Loopback port; default chooses an available port.')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
@@ -263,6 +264,12 @@ if __name__ == '__main__':
             seed_charging_places(app,session)
         if args.automatic:
             seed_automatic(app,session)
+        if args.report_now:
+            fixed_report_now,_=day_bounds(args.report_now)
+            query=app.usage_reports.query
+            # The web read context supplies now explicitly; setting only the
+            # module clock cannot freeze this real HTTP/analysis path.
+            app.usage_reports.query=lambda scope,vehicle,period,date,now=None:query(scope,vehicle,period,date,now=fixed_report_now)
         server = make_server(app, args.port)
         print(server.server_port, flush=True)
         try:

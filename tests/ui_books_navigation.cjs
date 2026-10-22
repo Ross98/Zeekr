@@ -19,4 +19,4 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
  await page.screenshot({path:require('node:path').join(require('node:os').tmpdir(),'zeekr-bill-hub-desktop.png'),fullPage:true});
  await page.getByRole('button',{name:'生活账本',exact:true}).click();await page.locator('#life-total').waitFor();await page.locator('.life-category-chart').waitFor();for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1024,1280,1440]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await contrast(page,'.life-visual-summary');}}
  assert.deepEqual(f.errors,[]);console.log('BOOKS_NAVIGATION_PASS: unified calendar entry, locked association, cross-month original bill, zero amount, delete/restore/undo, category filter and desktop themes');
-}finally{await f.close()}})().catch(e=>{console.error(e);process.exitCode=1});
+}catch(error){await f.fail(error);throw error;}finally{await f.close()}})().catch(e=>{console.error(e);process.exitCode=1});

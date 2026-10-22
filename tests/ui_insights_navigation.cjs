@@ -27,5 +27,5 @@ const {fixture} = require('./ui_insight_helpers.cjs');
     assert.equal(await page.locator('#search').inputValue(), '');
     assert.deepEqual(f.errors, []);
     console.log('UI_INSIGHTS_NAVIGATION_PASS: desktop grouping, search, section switching, draft preservation and account isolation');
-  } finally {await f.close();}
+  }catch(error){await f.fail(error);throw error;} finally {await f.close();}
 })().catch(error => {console.error(error);process.exitCode=1;});

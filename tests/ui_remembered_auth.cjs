@@ -4,6 +4,7 @@ const readline=require('node:readline');
 const path=require('node:path'),fs=require('node:fs');
 const {chromium}=require('playwright');
 const {contrast}=require('./ui_insight_helpers.cjs');
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 
 (async()=>{
  const server=spawn('python3',[path.join(__dirname,'remembered_auth_fixture.py')]);
@@ -13,11 +14,12 @@ const {contrast}=require('./ui_insight_helpers.cjs');
   const ready=line=>{clearTimeout(timer);resolve(line);};lines.once('line',ready);
  });
  server.stderr.on('data',data=>process.stderr.write(data));
- let browser;
+ let browser,evidence;
  try{
   const port=Number(await nextLine()),origin=`http://127.0.0.1:${port}`;
-  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{channel:'chrome'})});
+  browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})});
   const context=await browser.newContext(),page=await context.newPage(),errors=[];
+  evidence=await startEvidence(page,{testId:'ui_remembered_auth',synthetic:true});
   page.on('pageerror',error=>errors.push(error.message));
   await page.goto(origin);
   assert.equal(await page.locator('#remember').inputValue(),'0');
@@ -25,7 +27,7 @@ const {contrast}=require('./ui_insight_helpers.cjs');
   const directory='/tmp/zeekr-remembered-auth-qa';fs.mkdirSync(directory,{recursive:true});
   for(const theme of ['light','dark']){
    await page.getByLabel('外观',{exact:true}).selectOption(theme);
-   for(const width of [1440,390,320]){
+   for(const width of [1440,1100]){
     await page.setViewportSize({width,height:900});
     for(const days of ['0','7','30']){
      await page.getByLabel('下次免输密码').selectOption(days);
@@ -83,5 +85,5 @@ const {contrast}=require('./ui_insight_helpers.cjs');
   assert.equal(await page.getByRole('button',{name:'登录',exact:true}).isEnabled(),true);
   assert.deepEqual(errors,[]);
   console.log('Remembered login: real cookies, restart, logout, browser isolation, default expiry, error recovery and layouts PASS');
- }finally{if(browser)await browser.close();lines.close();server.stdin.end();server.kill();}
+ }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();lines.close();server.stdin.end();server.kill();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

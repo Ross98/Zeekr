@@ -67,5 +67,5 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     assert.deepEqual(f.posts.filter(url=>!url.startsWith(f.origin+'/api/insights/rules')&&!/^\/api\/analysis\/[a-f0-9]+\/cancel$/.test(new URL(url).pathname)),[],'Only rule writes and navigation analysis cancellation are allowed');
     assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
     console.log('UI_CUSTOM_REMINDERS_PASS: preview/create/edit/enable/disable/undo/delete/restore, verified-window enablement, synthetic history, persistence, XSS, form preservation, themes/desktop/zoom/contrast');
-  }finally{await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

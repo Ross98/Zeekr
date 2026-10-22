@@ -74,4 +74,4 @@ async function sharedTheme(page){
  assert.equal(await page.getByLabel('关联充电记录',{exact:true}).inputValue(),'curve-gap');
  await page.getByRole('button',{name:'返回来源页面',exact:true}).click();await page.getByLabel('充电月份',{exact:true}).waitFor();assert.equal(await page.getByLabel('充电月份',{exact:true}).inputValue(),'2026-07');
  assert.deepEqual(f.errors,[]);console.log('CHARGING_REVIEW_BROWSER_PASS: monthly real saved APIs; no current state; equal numbers; curves; URL/month; empty months; desktop themes');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

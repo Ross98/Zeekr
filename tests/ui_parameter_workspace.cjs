@@ -120,5 +120,5 @@ const {fixture,contrast,parameterStage}=require('./ui_insight_helpers.cjs');
     await page.screenshot({path:'/tmp/zeekr-parameter-workspace-qa/overview.png',fullPage:true});
     assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
     console.log('DESKTOP_PARAMETER_WORKSPACE_PASS shared selection, full catalog, hypothesis, experiment evidence, guarded review, missing fields, context reset, six layouts');
-  }finally{await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

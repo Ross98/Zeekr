@@ -23,6 +23,12 @@ python3 scripts/release/client.py macos inspect
 
 改网页密码只在 mini 本机交互终端运行 `scripts/change-web-password.command`；它使用实际运行代码和认证文件，只重启 Web，不停止监控与报表。密码不进入参数、日志或 Git。密码文件更新成功而服务重启失败时，用新密码文件排查服务，不能误报密码未改变。
 
+## CI 与发布前置条件
+
+切换前先提交并 push 指定 SHA，等待该 SHA 的 push CI 全部成功。`macos deploy` 在停服和写发布记录之前只读查询 GitHub：核对最新 Tests 运行、精确 head SHA、run attempt，以及 Python tests、Desktop tests、macOS native tests、Workflow checks 四项必要任务。pending、failure、cancelled、skipped、任务缺失或 GitHub 不可读都阻止切换，不回退寻找旧绿色运行。需要已登录的 `gh` 与仓库 origin，凭据不进 bundle。可单独运行 `python3 scripts/release/ci_gate.py --commit <完整SHA>` 核对。
+
+这不替代生产匹配候选的测试、备份、认证、图片与数据保留门禁。紧急回滚不依赖 GitHub，避免恢复被外部网络阻塞。主分支保护应要求四项必要检查、保持分支最新；须在新任务确已于 GitHub 成功后启用远端设置。
+
 ## 候选流程
 
 入口仍是固定 `scripts/release/client.py`，本机加 `macos` 子命令；Linux transport 流程不变。以 LaunchAgent 用户运行，不能 sudo。

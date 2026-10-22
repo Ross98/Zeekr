@@ -15,21 +15,23 @@ function check(name,files,manifest,status,pattern){
     assert.match(run.stdout+run.stderr,pattern,name);count++;
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 }
+const excluded=(file,reason)=>({path:file,reason,kind:'coverage-debt',review_when:'When the affected feature changes.'});
 const base=()=>({groups:{unit:['tests/a.cjs'],smoke:[],review:[]},exclusions:[]});
 check('new nested file cannot disappear from inventory',['tests/a.cjs','tests/nested/new.cjs'],base(),1,/unclassified.*tests\/nested\/new.cjs/);
 check('same-group duplicate',['tests/a.cjs'],{...base(),groups:{unit:['tests/a.cjs','tests/a.cjs'],smoke:[],review:[]}},1,/duplicate.*tests\/a.cjs/);
 check('cross-group duplicate',['tests/a.cjs'],{...base(),groups:{unit:['tests/a.cjs'],smoke:['tests/a.cjs'],review:[]}},1,/duplicate.*tests\/a.cjs/);
 check('missing listed path',['tests/a.cjs'],{...base(),groups:{unit:['tests/a.cjs','tests/typo.cjs'],smoke:[],review:[]}},1,/missing.*tests\/typo.cjs/);
-check('reasoned exclusion passes without executing',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[{path:'tests/old.cjs',reason:'Legacy mobile viewports need desktop migration.'}]},0,/2 files classified/);
-check('blank exclusion fails',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[{path:'tests/old.cjs',reason:'  '}]},1,/reason.*tests\/old.cjs/);
-check('excluded missing path',['tests/a.cjs'],{...base(),exclusions:[{path:'tests/deleted.cjs',reason:'Retired'}]},1,/missing.*tests\/deleted.cjs/);
-check('executed and excluded overlap',['tests/a.cjs'],{...base(),exclusions:[{path:'tests/a.cjs',reason:'Already runs'}]},1,/duplicate.*tests\/a.cjs/);
-check('duplicate exclusions',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[{path:'tests/old.cjs',reason:'Legacy'},{path:'tests/old.cjs',reason:'Legacy again'}]},1,/duplicate.*tests\/old.cjs/);
-check('directory exemption rejected',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[{path:'tests/',reason:'Legacy'}]},1,/invalid path/);
+check('reasoned exclusion passes without executing',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[excluded('tests/old.cjs','Legacy mobile viewports need desktop migration.')]},0,/2 files classified/);
+check('blank exclusion fails',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[excluded('tests/old.cjs','  ')]},1,/reason.*tests\/old.cjs/);
+check('excluded missing path',['tests/a.cjs'],{...base(),exclusions:[excluded('tests/deleted.cjs','Retired')]},1,/missing.*tests\/deleted.cjs/);
+check('executed and excluded overlap',['tests/a.cjs'],{...base(),exclusions:[excluded('tests/a.cjs','Already runs')]},1,/duplicate.*tests\/a.cjs/);
+check('duplicate exclusions',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[excluded('tests/old.cjs','Legacy'),excluded('tests/old.cjs','Legacy again')]},1,/duplicate.*tests\/old.cjs/);
+check('directory exemption rejected',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[excluded('tests/','Legacy')]},1,/invalid path/);
 check('path alias rejected',['tests/a.cjs'],{...base(),groups:{unit:['tests/../tests/a.cjs'],smoke:[],review:[]}},1,/invalid path/);
 check('unknown groups rejected',['tests/a.cjs'],{...base(),groups:{...base().groups,typo:[]}},1,/groups/);
 check('malformed exclusions rejected',['tests/a.cjs'],{...base(),exclusions:{}},1,/exclusions/);
 check('non-CJS files outside scope',['tests/a.cjs','tests/test_backend.py'],base(),0,/1 files classified/);
+check('missing exclusion lifecycle',['tests/a.cjs','tests/old.cjs'],{...base(),exclusions:[{path:'tests/old.cjs',reason:'Legacy'}]},1,/kind|review_when/);
 // Exercise runner in an isolated project; successful files record actual order/env.
 const project=fs.mkdtempSync(path.join(os.tmpdir(),'zeekr-manifest-runner-'));
 try{

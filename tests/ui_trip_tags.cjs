@@ -212,5 +212,5 @@ async function saveRefreshRace(browser,seed){
     assert.ok(f.external.every(url=>/^https:\/\/wprd0[1-4]\.is\.autonavi\.com\//.test(url)));
     assert.deepEqual(f.errors,[]);
     console.log('UI_TRIP_TAGS_PASS: custom/multiple tags, notes escaping/preservation, group comparison and denominators, filters, delete/restore, persistence, desktop themes/zoom/contrast, deferred save refresh context and serial isolation');
-  }finally{await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

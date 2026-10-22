@@ -2,8 +2,8 @@ const {chromium}=require('playwright');
 const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 const {spawn}=require('node:child_process');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
-async function fixture({placeTagRules=false,chargingPlaces=false,chargingIntervals=false,demo=false,partialCharge=false,automatic=false,initialResearch=true,beforeGoto,evidenceTestId}={}){
-  const server=spawn('python3',[path.join(__dirname,'insights_fixture.py'),...(demo?['--demo']:[]),...(partialCharge?['--partial-charge']:[]),...(automatic?['--automatic']:[]),...(chargingIntervals?['--charging-intervals']:[]),...(chargingPlaces?['--charging-places']:[]),...(placeTagRules?['--place-tag-rules']:[])]);
+async function fixture({placeTagRules=false,chargingPlaces=false,chargingIntervals=false,demo=false,partialCharge=false,automatic=false,initialResearch=true,beforeGoto,evidenceTestId,reportNow}={}){
+  const server=spawn('python3',[path.join(__dirname,'insights_fixture.py'),...(demo?['--demo']:[]),...(partialCharge?['--partial-charge']:[]),...(automatic?['--automatic']:[]),...(chargingIntervals?['--charging-intervals']:[]),...(chargingPlaces?['--charging-places']:[]),...(placeTagRules?['--place-tag-rules']:[]),...(reportNow?['--report-now',reportNow]:[])]);
   let browser,evidence;
   try{
     const port=await new Promise((resolve,reject)=>{
@@ -15,7 +15,7 @@ async function fixture({placeTagRules=false,chargingPlaces=false,chargingInterva
     });
     browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})});
     const page=await browser.newPage({viewport:{width:1440,height:1000}}),origin=`http://127.0.0.1:${port}`;
-    if(evidenceTestId)evidence=await startEvidence(page,{testId:evidenceTestId,synthetic:true});
+    evidence=await startEvidence(page,{testId:evidenceTestId||path.basename(process.argv[1],'.cjs'),synthetic:true});
     const errors=[],posts=[],external=[];
     page.on('pageerror',e=>{errors.push(e.message);console.error('Browser script error:',e.message);});
     page.on('request',r=>{if(r.method()==='POST')posts.push(r.url());if(!r.url().startsWith(origin)&&!r.url().startsWith('data:'))external.push(r.url());});

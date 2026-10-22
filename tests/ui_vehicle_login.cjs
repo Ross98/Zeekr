@@ -48,5 +48,5 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   await dialog.waitFor({state:'detached'});
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   console.log('Desktop vehicle login flow passed.');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

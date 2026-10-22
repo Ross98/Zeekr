@@ -48,5 +48,5 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await layouts(page,'commute-reassessment');
     assert.deepEqual(f.errors,[]);
     console.log('UI_COMMUTE_REASSESSMENT_PASS: independent settings, save without month load, historical preview/apply, month invalidation, endpoint explanation, partial warning, desktop layouts');
-  }finally{await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

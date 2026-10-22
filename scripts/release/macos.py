@@ -24,6 +24,7 @@ import urllib.request
 import uuid
 
 import workflow
+import ci_gate
 
 LABELS = ('local.zeekr.web', 'local.zeekr.monitor', 'local.zeekr.reports')
 RESOURCE_LABEL = 'local.zeekr.resources'
@@ -357,6 +358,7 @@ def preflight(host, record):
     check_hashes(host.active(),record['baseline']['manifest'])
     check_hashes(Path(record['candidate']),record['candidate_hashes'])
     require(not Path(record['backup']).exists(), 'Backup already exists')
+    record['ci']=ci_gate.verify_commit(record['commit'])
     host.health()
 
 

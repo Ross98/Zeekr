@@ -67,5 +67,5 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   assert.deepEqual(f.errors,[]);
   assert.deepEqual(f.posts.filter(url=>!/\/api\/analysis\/[^/]+\/cancel$/.test(url)),[]);
   console.log('UI_TRIP_TAGS_COMPACT_PASS: bounded default, tool panels, pagination, drafts, refresh, Escape, desktop themes');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

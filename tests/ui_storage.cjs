@@ -1,12 +1,14 @@
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 const {chromium}=require('playwright');
 const {spawn}=require('node:child_process');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
 (async()=>{
-  const server=spawn('python3',[path.join(__dirname,'storage_fixture.py')]);let browser;
+  const server=spawn('python3',[path.join(__dirname,'storage_fixture.py')]);let browser,evidence;
   try{
     const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('fixture timeout')),10000);server.stdout.once('data',data=>{clearTimeout(timer);resolve(Number(String(data).trim()));});server.once('error',reject);});
     browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})});
     const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];
+ evidence=await startEvidence(page,{testId:"ui_storage",synthetic:true});
     page.on('pageerror',error=>errors.push(error.message));
     const GiB=1024**3;
     let sample={status:'healthy',checked_at:Date.now()/1000,capacity_basis:'macos_important_usage',capacity_available_bytes:110*GiB,capacity_used_percent:(1-110/230)*100,reclaimable_bytes:95*GiB,disk_total_bytes:230*GiB,disk_used_bytes:215*GiB,disk_used_percent:215/230*100,disk_free_bytes:15*GiB,inode_used_percent:.8,data_bytes:100,archive_bytes:50,trash_bytes:0};
@@ -54,5 +56,5 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     assert.equal(await panel.getByRole('meter').count(),0);
     assert.deepEqual(errors,[]);
     console.log('Storage UI passed: health, protection, cancel, session render, trash/restore/purge, desktop1440/1100 widths, macOS effective/raw capacities and native-failure state. Synthetic data only.');
-  }finally{if(browser)await browser.close();server.kill('SIGTERM');}
+  }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(error=>{console.error(error);process.exitCode=1;});

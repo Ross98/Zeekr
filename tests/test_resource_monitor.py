@@ -125,7 +125,7 @@ class ResourceTests(unittest.TestCase):
                 return '\tstate = running\n\tpid = %d\n'%pid
             return '\n'.join('%d %d 1 100 0:01.00 00:20'%(os.getuid(),pid) for pid in (10,20,30))
         ticks=iter([(100,100,800,0),(130,130,940,0)])
-        sampler=NativeSampler(command,host_reader=lambda:next(ticks),probe=lambda origin:True,origin_reader=lambda:'https://example.test')
+        sampler=NativeSampler(command,host_reader=lambda:next(ticks),probe=lambda origin:True,origin_reader=lambda:'https://example.test',usage_reader=lambda pid:(1.0,pid))
         sample=sampler.measure()
         self.assertIsNone(sample['host_cpu_percent'])
         with patch('zeekr_control.resource_monitor.time.monotonic',return_value=sampler.host_checked+60):

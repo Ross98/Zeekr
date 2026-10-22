@@ -1,3 +1,4 @@
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 // Real local APIs, synthetic charging event only. No vehicle or external requests.
 const {chromium}=require('playwright');
 const {spawn}=require('node:child_process');
@@ -5,7 +6,7 @@ const path=require('node:path');
 const assert=require('node:assert/strict');
 
 (async()=>{
-  const server=spawn('python3',[path.join(__dirname,'web_fixture.py')]);let browser;
+  const server=spawn('python3',[path.join(__dirname,'web_fixture.py')]);let browser,evidence;
   try{
     const port=await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('Fixture timeout')),10000);
@@ -14,7 +15,8 @@ const assert=require('node:assert/strict');
     });
     browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});
     const context=await browser.newContext({viewport:{width:1440,height:1080},timezoneId:'Asia/Shanghai'});
-    const page=await context.newPage();page.setDefaultTimeout(7000);
+    const page=await context.newPage();
+ evidence=await startEvidence(page,{testId:"ui_charge_management",synthetic:true});page.setDefaultTimeout(7000);
     const errors=[];page.on('pageerror',error=>{errors.push(error.message);process.stderr.write(`pageerror: ${error.message}\n`);});
     await page.goto(`http://127.0.0.1:${port}`);
     await page.getByRole('button',{name:'刷新状态',exact:true}).click();
@@ -45,5 +47,5 @@ const assert=require('node:assert/strict');
     }
     assert.deepEqual(errors,[]);
     console.log('Charge management browser: trash, exclusion, restore and target widths passed.');
-  }finally{if(browser)await browser.close();server.kill('SIGTERM');}
+  }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(error=>{console.error(error);process.exitCode=1;});

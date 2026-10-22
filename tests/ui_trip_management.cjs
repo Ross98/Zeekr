@@ -1,10 +1,11 @@
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 // Real local APIs, synthetic trips only. No vehicle or external requests.
 const {chromium}=require('playwright');
 const {spawn}=require('node:child_process');
 const path=require('node:path');
 const assert=require('node:assert/strict');
 (async()=>{
-  const server=spawn('python3',[path.join(__dirname,'trips_fixture.py'),'--management']);let browser;
+  const server=spawn('python3',[path.join(__dirname,'trips_fixture.py'),'--management']);let browser,evidence;
   try{
     const port=await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('Fixture timeout')),10000);
@@ -14,6 +15,7 @@ const assert=require('node:assert/strict');
     browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});
     const context=await browser.newContext({viewport:{width:1440,height:1080},timezoneId:'America/Los_Angeles'});
     const page=await context.newPage();
+ evidence=await startEvidence(page,{testId:"ui_trip_management",synthetic:true});
     page.setDefaultTimeout(7000);
     const queryManagement=async()=>{
       await page.evaluate(()=>document.activeElement?.blur());
@@ -156,5 +158,5 @@ const assert=require('node:assert/strict');
     assert.deepEqual(historyRequests,[],'Local section returns never request retired cloud history');
     assert.deepEqual(errors,[]);
     console.log('Trip management browser: batch preview/cancel/trash/restore, polling, concurrency, privacy and desktop passed.');
-  }finally{if(browser)await browser.close();server.kill('SIGTERM');}
+  }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(error=>{console.error(error);process.exitCode=1;});

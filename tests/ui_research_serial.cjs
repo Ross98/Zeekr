@@ -59,4 +59,4 @@ const {fixture}=require('./ui_insight_helpers.cjs');
  gates.shift()();await page.locator('#parameter-changes').filter({hasText:'RETURNED_VISIT_ONLY'}).waitFor();
  assert.doesNotMatch(await page.locator('#parameter-changes').innerText(),/OLD_VISIT_ONLY/);
  assert.deepEqual(f.errors,[]);console.log('UI_RESEARCH_SERIAL_PASS: single in-flight read, latest selection, stale result exclusion, leave and immediate return before completion');
-}finally{gates.forEach(release=>release());await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+}catch(error){await f.fail(error);throw error;}finally{gates.forEach(release=>release());await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

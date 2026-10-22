@@ -33,4 +33,4 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   }
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   console.log('ANALYSIS_CANCEL_PASS: desktop duplicate click, explicit stop, navigation cancellation');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

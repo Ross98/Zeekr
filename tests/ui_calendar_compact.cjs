@@ -41,5 +41,5 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
   await layouts(page,'calendar-compact');
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);assert.ok(f.posts.every(url=>/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(new URL(url).pathname)),'calendar never writes bills');
   console.log('CALENDAR_COMPACT_PASS: summary, warnings, inline toggle, render preservation, bill draft, unknown/future and desktop themes');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

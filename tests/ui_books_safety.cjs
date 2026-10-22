@@ -18,4 +18,4 @@ await page.getByRole('button',{name:'保养与到期待办',exact:true}).click()
 await page.reload();await page.getByLabel('待办名称',{exact:true}).waitFor();assert.equal(await page.getByLabel('待办名称',{exact:true}).inputValue(),'刷新保留草稿');
 let reads=0;page.on('request',r=>{if(r.url().includes('/api/insights/life?'))reads++});await page.evaluate(async()=>{const real=Date.now;Date.now=()=>real()+61000;try{await pollState(true)}finally{Date.now=real}});await page.waitForFunction(()=>document.querySelector('#life-form'));
 assert.ok(reads>0,'reminders update during polling');assert.deepEqual(f.errors,[]);console.log('BOOKS_SAFETY_PASS');
-}finally{await f.close()}})().catch(e=>{console.error(e);process.exitCode=1});
+}catch(error){await f.fail(error);throw error;}finally{await f.close()}})().catch(e=>{console.error(e);process.exitCode=1});

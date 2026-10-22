@@ -55,5 +55,5 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.getByRole('button',{name:'隐藏位置',exact:true}).click();assert.equal(await marker().count(),0,'hide position hides marker');
   valid=true;mode='ok';revision='visible-again';await page.getByRole('button',{name:'显示位置并加载地图',exact:true}).click();await marker().waitFor();
   assert.deepEqual(f.errors,[]);console.log('PASS vehicle marker: centered cover without blank bands, eight desktop themes/widths, unchanged nodes, pending/error retention, vehicle switch, invalid coordinates');
- }finally{release?.();await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{release?.();await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

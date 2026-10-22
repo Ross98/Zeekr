@@ -81,5 +81,5 @@ const fs=require('node:fs'),path=require('node:path');
       fs.writeFileSync(output,json);
     }
     console.log(json);
-  }finally{if(release)release();await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{if(release)release();await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -2,6 +2,7 @@
 """Independent macOS resource observer. No vehicle queries, killing or deletion."""
 import argparse
 import ctypes
+from functools import lru_cache
 import json
 import math
 import os
@@ -52,12 +53,17 @@ def parse_processes(text):
     return result
 
 
-def process_sample(rows, roots, previous, elapsed):
+def process_group(rows,roots):
     group=set(roots)&set(rows)
     while True:
         children={pid for pid,row in rows.items() if row['parent'] in group}
         if children<=group:break
         group |= children
+    return group
+
+
+def process_sample(rows, roots, previous, elapsed):
+    group=process_group(rows,roots)
     current={pid:dict(rows[pid], is_root=pid in roots) for pid in group}
     valid=bool(previous) and 0<elapsed<=3*INTERVAL
     complete=valid and {pid for pid in current if current[pid]['is_root']}=={pid for pid in (previous or {}) if previous[pid].get('is_root')}
@@ -65,11 +71,11 @@ def process_sample(rows, roots, previous, elapsed):
         old=(previous or {}).get(pid)
         if old is None:
             if row['age']>elapsed+3:complete=False
-        elif abs(row['age']-old['age']-elapsed)>3 or row['cpu']<old['cpu']:
+        elif abs(row['age']-old['age']-elapsed)>3 or row['cpu']<old['cpu'] or row.get('start')!=old.get('start'):
             complete=False
     if any(pid in rows for pid in set(previous or {})-group):complete=False
-    # ps -S includes reaped children in their parent. Compare aggregate counters,
-    # not per-PID deltas, to avoid counting an exited child twice.
+    # Native cumulative counters include waited children. Compare aggregate
+    # counters, not per-PID deltas, to avoid counting an exited child twice.
     increment=sum(row['cpu'] for row in current.values())-sum(row['cpu'] for row in (previous or {}).values())
     cpu=increment/elapsed*100 if complete and increment>=0 else None
     complete=complete and increment>=0
@@ -80,6 +86,50 @@ def process_sample(rows, roots, previous, elapsed):
 def native(command):
     return subprocess.check_output(command,text=True,stderr=subprocess.DEVNULL,
                                    timeout=5,env=dict(os.environ,LC_ALL='C'))
+
+
+class RUsageInfoV1(ctypes.Structure):
+    # SDK sys/resource.h: UUID + ten base uint64 fields + six child fields.
+    _fields_=[('uuid',ctypes.c_uint8*16),('values',ctypes.c_uint64*16)]
+
+
+@lru_cache(maxsize=1)
+def mach_timebase():
+    class Info(ctypes.Structure):
+        _fields_=[('numer',ctypes.c_uint32),('denom',ctypes.c_uint32)]
+    info=Info();lib=ctypes.CDLL('/usr/lib/libSystem.B.dylib')
+    lib.mach_timebase_info.argtypes=[ctypes.POINTER(Info)];lib.mach_timebase_info.restype=ctypes.c_int
+    if lib.mach_timebase_info(ctypes.byref(info))!=0 or not info.numer or not info.denom:raise OSError('Mach timebase unavailable')
+    return info.numer,info.denom
+
+
+def mach_seconds(ticks):
+    numer,denom=mach_timebase()
+    return ticks*numer/denom/1e9
+
+
+def process_cpu(pid):
+    lib=ctypes.CDLL('/usr/lib/libproc.dylib',use_errno=True)
+    lib.proc_pid_rusage.argtypes=[ctypes.c_int,ctypes.c_int,ctypes.c_void_p]
+    lib.proc_pid_rusage.restype=ctypes.c_int
+    usage=RUsageInfoV1()
+    if lib.proc_pid_rusage(pid,1,ctypes.byref(usage))!=0:raise OSError('Process CPU unavailable')
+    values=usage.values
+    return mach_seconds(values[0]+values[1]+values[10]+values[11]),values[8]
+
+
+def process_inventory(roots,run=native,usage_reader=process_cpu):
+    command=['/bin/ps','-axo','uid=,pid=,ppid=,rss=,time=,etime=']
+    rows=parse_processes(run(command));group=process_group(rows,roots)
+    for pid in group:
+        if rows[pid]['uid']!=os.getuid():raise ValueError('Process owner changed')
+        rows[pid]['cpu'],rows[pid]['start']=usage_reader(pid)
+    # Membership must stay stable while reading counters. A child reaped after
+    # its read could otherwise also appear in its parent's child total.
+    after=parse_processes(run(command))
+    if group!=process_group(after,roots) or any(after[pid]['uid']!=rows[pid]['uid'] or after[pid]['age']<rows[pid]['age'] for pid in group):
+        raise ValueError('Process inventory changed during sample')
+    return rows
 
 
 def host_cpu_ticks():
@@ -150,10 +200,11 @@ def observer_sample(root,now):
 
 
 class NativeSampler:
-    def __init__(self, run=native, host_reader=host_cpu_ticks, probe=probe_origin, origin_reader=configured_origin):
+    def __init__(self, run=native, host_reader=host_cpu_ticks, probe=probe_origin, origin_reader=configured_origin,usage_reader=process_cpu):
         self.run=run;self.previous=None;self.checked=None
         self.host_reader=host_reader;self.host_previous=None;self.host_checked=None
         self.probe=probe;self.origin_reader=origin_reader
+        self.usage_reader=usage_reader
 
     def measure(self):
         sample=dict(collector_pid=os.getpid(),host_cpu_percent=None,memory_pressure=None,app_cpu_percent=None,
@@ -186,7 +237,7 @@ class NativeSampler:
                 roots.append(int(pid[1]))
             except (ValueError,OSError,subprocess.SubprocessError):sample['missing_services'].append(label)
         try:
-            rows=parse_processes(self.run(['/bin/ps','-S','-axo','uid=,pid=,ppid=,rss=,time=,etime=']))
+            rows=process_inventory(roots,self.run,self.usage_reader)
             if any(pid not in rows or rows[pid]['uid']!=os.getuid() for pid in roots):raise ValueError()
             now=time.monotonic();elapsed=now-self.checked if self.checked is not None else 0
             metrics,self.previous=process_sample(rows,roots,self.previous,elapsed)

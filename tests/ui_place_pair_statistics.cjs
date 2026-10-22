@@ -48,5 +48,5 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   assert.equal(posted.home.latitude,31.2,'Selecting current home label preserves centre');assert.equal(posted.home.radius_m,300);assert.equal(posted.work.latitude,31.23);assert.equal(posted.work.radius_m,300);
   await page.getByRole('button',{name:'关闭工具面板',exact:true}).click();await page.getByLabel('标签月份',{exact:true}).fill('2026-10');await page.getByRole('button',{name:'读取行程标签',exact:true}).click();await page.getByRole('button',{name:'查看与管理地点',exact:true}).click();await page.getByRole('button',{name:'两地点统计',exact:true}).click();assert.equal(await page.getByLabel('统计地点 A',{exact:true}).inputValue(),'');assert.equal(await page.getByLabel('统计地点 B',{exact:true}).inputValue(),'');
   assert.deepEqual(f.errors,[]);console.log('UI_PLACE_PAIR_STATISTICS_PASS');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

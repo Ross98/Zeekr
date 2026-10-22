@@ -152,5 +152,5 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     assert.deepEqual(f.errors,[]);
     assert.deepEqual(failures,[],failures.join('\n'));
     console.log(`UI_REFRESH_SCROLL_PASS: ${checks} desktop page and tool refresh checks`);
-  }finally{await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

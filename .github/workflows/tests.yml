@@ -19,6 +19,27 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
+  workflow:
+    name: Workflow checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Validate Actions configuration with pinned actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
+
+  macos:
+    name: macOS native tests
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Test native macOS interfaces and release adapter
+        run: python -m unittest discover -s tests -p 'test_macos*.py'
+
   python:
     name: Python tests
     runs-on: ubuntu-24.04
@@ -60,7 +81,7 @@ jobs:
         run: npm run test:unit
       - name: Run desktop browser checks
         run: npm run test:desktop
-      - name: Upload browser failure evidence
+      - name: Upload browser evidence and per-file results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -69,6 +90,7 @@ jobs:
             test-results/browser-failures/*/page.png
             test-results/browser-failures/*/diagnostic.json
             test-results/browser-failures/*/trace.zip
+            test-results/desktop/*.json
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0

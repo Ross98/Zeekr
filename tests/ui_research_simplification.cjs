@@ -34,4 +34,4 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
  assert.equal(await page.locator('#report-automatic details > summary').innerText(),'近期能耗趋势');
  await page.locator('#report-automatic details > summary').click();await page.getByRole('button',{name:'读取最新结论',exact:true}).click();await page.locator('#auto-generated').waitFor();
  assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);assert.ok(f.posts.every(url=>{const target=new URL(url);return target.origin===f.origin&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(target.pathname)&&url===f.origin+target.pathname;}),JSON.stringify(f.posts));console.log('UI_RESEARCH_SIMPLIFICATION_PASS');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

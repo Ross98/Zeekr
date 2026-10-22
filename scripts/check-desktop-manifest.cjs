@@ -32,6 +32,8 @@ function validate(rootDirectory,manifest){
     if(!exclusion||typeof exclusion!=='object')throw new Error('exclusions entries must contain path and reason');
     register(exclusion.path,'exclusion');
     if(typeof exclusion.reason!=='string'||!exclusion.reason.trim())errors.push(`reason required: ${exclusion.path}`);
+    if(!['helper','benchmark','manual-artifact','retired-mobile','coverage-debt'].includes(exclusion.kind))errors.push(`kind required: ${exclusion.path}`);
+    if(typeof exclusion.review_when!=='string'||!exclusion.review_when.trim())errors.push(`review_when required: ${exclusion.path}`);
   }
   for(const file of files)if(!seen.has(file))errors.push(`unclassified: ${file}`);
   if(errors.length)throw new Error(errors.join('\n'));

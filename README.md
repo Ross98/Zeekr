@@ -232,8 +232,7 @@ Web 密码登录通过 `ZEEKR_AUTH_FILE` 指定密码哈希文件；已指定但
 ```bash
 npm ci
 npm run browser:install
-npm run test:unit
-npm test
+npm test # unit + smoke + review
 ```
 
 统一入口强制桌面覆盖，使用合成账号与临时数据；不访问真实车辆。按改动选择相关测试，发布时按 [发布流程](docs/release-workflow.md) 验证最终候选。

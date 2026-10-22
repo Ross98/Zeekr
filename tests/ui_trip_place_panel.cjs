@@ -62,5 +62,5 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   assert.equal(await page.locator('#tag-place-panel').count(),0);
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.posts.filter(url=>!/\/api\/analysis\/[^/]+\/cancel$/.test(url)),[]);
   console.log('UI_TRIP_PLACE_PANEL_PASS: compact default, pagination, categories, refresh, keyboard, endpoint map, desktop themes');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

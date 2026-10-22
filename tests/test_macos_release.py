@@ -13,6 +13,27 @@ import macos
 
 
 class MacReleaseTests(unittest.TestCase):
+    def test_preflight_records_exact_ci_receipt_for_deployment(self):
+        with tempfile.TemporaryDirectory() as folder:
+            host=Mock(base=Path(folder));host.active.return_value=Path(folder)/'old';host.signature.return_value={}
+            record=dict(commit='a'*40,previous=str(host.active()),candidate=folder+'/new',backup=folder+'/backup',
+                        baseline=dict(active=str(host.active()),agents={},manifest={}),candidate_hashes={})
+            receipt=dict(commit='a'*40,run_id=123,attempt=2)
+            with patch.object(macos,'check_paths'),patch.object(macos,'check_hashes'),patch.object(macos.ci_gate,'verify_commit',return_value=receipt):
+                macos.preflight(host,record)
+            self.assertEqual(record.get('ci'),receipt)
+
+    def test_ci_failure_blocks_cutover_and_release_record_write(self):
+        with tempfile.TemporaryDirectory() as folder:
+            host=Mock(base=Path(folder));host.active.return_value=Path(folder)/'old';host.signature.return_value={}
+            record=dict(commit='a'*40,previous=str(host.active()),candidate=folder+'/new',backup=folder+'/backup',
+                        baseline=dict(active=str(host.active()),agents={},manifest={}),candidate_hashes={})
+            with patch.object(macos,'check_paths'),patch.object(macos,'check_hashes'), \
+                 patch.object(macos.ci_gate,'verify_commit',side_effect=ValueError('CI failed')),patch.object(macos,'cutover') as cutover:
+                with self.assertRaises(ValueError):macos.deploy(host,record)
+            cutover.assert_not_called();host.stop.assert_not_called()
+            self.assertFalse((host.base/'.macos-release.json').exists())
+
     def test_names_and_paths_cannot_escape_host(self):
         for name in ('../outside', '', '/tmp/a', 'a/b', '.', '..'):
             with self.subTest(name=name), self.assertRaises(ValueError):

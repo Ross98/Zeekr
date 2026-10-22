@@ -117,5 +117,5 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     assert.ok(tiles>0);assert.deepEqual(f.errors,[]);assert.deepEqual(f.posts,[]);
     assert.ok(f.external.every(url=>/^https:\/\/wprd0[1-4]\.is\.autonavi\.com\//.test(url)));
     console.log('LOCAL_ROUTE_CANVAS_PASS: 4001 exact samples, endpoints, 301s gap, keyboard playback, selection, theme, privacy, parking inference and sampling gaps');
-  }finally{await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

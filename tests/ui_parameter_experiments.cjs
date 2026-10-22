@@ -72,5 +72,5 @@ const {fixture,layouts,parameterStage}=require('./ui_insight_helpers.cjs');
     assert.ok(f.posts.every(url=>url===f.origin+'/api/insights/experiments'||/^\/api\/analysis\/[a-f0-9]+\/cancel$/.test(new URL(url).pathname)),'Never promote field review or send vehicle actions: '+JSON.stringify(f.posts));
     assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
     console.log('UI_PARAMETER_EXPERIMENTS_PASS: before/after samples, field filtering, action/time/notes, save/review/edit/delete/restore, frozen research status, XSS, persistence, themes/desktop/zoom/contrast; no vehicle actions or evidence promotion');
-  }finally{await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

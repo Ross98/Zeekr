@@ -58,4 +58,4 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   assert.deepEqual(f.posts,[f.origin+job+'/cancel',f.origin+cancelJob+'/cancel',f.origin+timeoutJob+'/cancel']);
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   console.log('ASYNC_ANALYSIS_PASS: Prefer, short polling, same-origin guard, capacity error, account cancellation');
-}finally{await f.close();}})().catch(error=>{console.error(error);process.exitCode=1;});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(error=>{console.error(error);process.exitCode=1;});

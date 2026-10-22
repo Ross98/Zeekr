@@ -5,7 +5,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "browser:install": "playwright install chromium",
-    "test": "node scripts/test-desktop.cjs review",
+    "test": "node scripts/test-desktop.cjs all",
     "test:unit": "node scripts/test-desktop.cjs unit",
     "test:smoke": "node scripts/test-desktop.cjs smoke",
     "test:desktop": "node scripts/test-desktop.cjs desktop",

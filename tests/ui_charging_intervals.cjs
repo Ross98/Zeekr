@@ -49,5 +49,5 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   assert.match(await cost.innerText(),/样本不足/);assert.doesNotMatch(await cost.innerText(),/0.00/);
   assert.deepEqual(f.errors,[]);
   console.log('CHARGING_INTERVALS_BROWSER_PASS: weighted consumption, cross-month, late starts, free reference fees, disclosures, empty months and desktop contrast');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

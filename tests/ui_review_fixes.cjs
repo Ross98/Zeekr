@@ -45,4 +45,4 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   }),'Only same-origin analysis cancellation; no business POST');assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1440,1280,1024]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);}}
   console.log('REVIEW_UI_PASS: focus, shared costs, empty ledger, draft, sampling and read-only notification health');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});

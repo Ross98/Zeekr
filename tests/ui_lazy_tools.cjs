@@ -34,4 +34,4 @@ const {fixture}=require('./ui_insight_helpers.cjs');
     return target.origin===f.origin&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(target.pathname)&&url===f.origin+target.pathname;
   }),'Only same-origin analysis cancellation; no business POST');
   console.log('LAZY_TOOLS_PASS: overview resources, failure/retry, late completion, single load, URL reload and account isolation');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1});

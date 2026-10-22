@@ -1,6 +1,11 @@
 const assert=require('node:assert/strict');
 const {fixture,contrast}=require('./ui_insight_helpers.cjs');
 (async()=>{const requests=[];const f=await fixture({demo:true,chargingPlaces:true,initialResearch:false,beforeGoto:async p=>{
+ // Control only the autonomous timer at gesture boundaries. The forced polls
+ // below still use the real HTTP path and must preserve the held DOM node.
+ await p.addInitScript(()=>{const interval=window.setInterval;window.setInterval=(callback,delay,...args)=>interval(()=>{
+   if(callback.name!=='pollState'||!window.__pauseStatePoll)callback(...args);
+ },delay);});
  p.on('request',r=>requests.push(new URL(r.url()).pathname));
  // Keep synthetic desktop tests independent of the public tile service.
  await p.route('https://wprd0*.is.autonavi.com/**',r=>r.fulfill({status:200,contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#e8eeeb"/><path d="M0 48H256M0 180H256M60 0V256M200 0V256" stroke="#fff" stroke-width="14"/><path d="M0 115H256" stroke="#cedad2" stroke-width="4"/><text x="75" y="138" font-size="11" fill="#536b5c">合成测试底图</text></svg>' }));
@@ -57,6 +62,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
  await page.locator('.cr-place-map.leaflet-container').waitFor();
  const map=page.locator('.cr-place-map');await map.click({position:{x:350,y:160}});
  assert.match(await page.locator('.cr-place-editor').innerText(),/地图位置已调整/);
+ await page.evaluate(()=>{window.__pauseStatePoll=true;});
  await page.waitForFunction(()=>!polling);await page.locator('.cr-map-pin').hover();
  const beforeDrag=await page.getByLabel('经度（WGS84）',{exact:true}).inputValue(),pin=await page.locator('.cr-map-pin').boundingBox();
  const originalPin=await page.locator('.cr-map-pin').elementHandle();
@@ -68,6 +74,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
  assert.equal(await originalPin.evaluate(el=>el.isConnected),true,'polling must keep the held correction marker connected');
  await page.mouse.move(pin.x+pin.width/2+24,pin.y+pin.height/2+8,{steps:6});await page.mouse.up();
  await page.waitForFunction(el=>!el.isConnected,originalPin,{timeout:5000}); // deferred refresh resumes after release
+ await page.evaluate(()=>{window.__pauseStatePoll=false;});
 
  assert.notEqual(await page.getByLabel('经度（WGS84）',{exact:true}).inputValue(),beforeDrag,'dragging the correction marker updates the WGS84 point');
  const draggedPoint={latitude:Number(await page.getByLabel('纬度（WGS84）',{exact:true}).inputValue()),longitude:Number(await page.getByLabel('经度（WGS84）',{exact:true}).inputValue())};
@@ -160,13 +167,15 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
  for(const boundary of ['owner','navigation']){
   await page.locator('[data-review-record="report-charge"] [data-review="place"]').click();await page.getByLabel('场所名称',{exact:true}).waitFor();
   await page.getByRole('button',{name:'查看并校正地图位置',exact:true}).click();
+  await page.evaluate(()=>{window.__pauseStatePoll=true;});await page.waitForFunction(()=>!polling);
   await page.locator('.cr-map-pin').hover();const heldPin=await page.locator('.cr-map-pin').elementHandle();
-  await page.waitForFunction(()=>!polling);await page.mouse.down();
+  await page.mouse.down();
   await page.evaluate(async()=>{state.snapshot_revision='charging-boundary-before-poll';await pollState(true);});
   assert.equal(await heldPin.evaluate(el=>el.isConnected),true);
   await page.evaluate(boundary=>{if(boundary==='owner')state.insights_context='synthetic-other-owner';else page='overview';render();},boundary);
   assert.equal(await heldPin.evaluate(el=>el.isConnected),false,boundary+' change immediately removes the old marker');
   await page.mouse.up();await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>resolve())));
+  await page.evaluate(()=>{window.__pauseStatePoll=false;});
   assert.equal(await page.getByLabel('经度（WGS84）',{exact:true}).count(),0,'queued refresh must not revive the old editor');
   if(boundary==='owner'){
    await page.evaluate(()=>pollState(true));
@@ -174,4 +183,4 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   }
  }
  assert.deepEqual(f.errors,[]);console.log('CHARGING_PLACES_BROWSER_PASS: station list, known-cost shares, pending/free costs, whole-row filtering; evidence, preview, polling during drag, saved/reopened WGS84 coordinates, owner/navigation cancellation, undo, desktop themes and confirmed station merging');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

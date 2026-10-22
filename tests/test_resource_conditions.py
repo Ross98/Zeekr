@@ -10,6 +10,27 @@ from test_resource_monitor import healthy
 
 
 class ConditionTests(unittest.TestCase):
+    def test_process_cpu_uses_actual_mach_timebase(self):
+        from zeekr_control.resource_monitor import mach_seconds
+        with patch('zeekr_control.resource_monitor.mach_timebase',return_value=(125,3)):
+            self.assertEqual(mach_seconds(24000000),1)
+
+    def test_process_inventory_rejects_membership_race(self):
+        import os
+        from zeekr_control.resource_monitor import process_inventory
+        before='%d 10 1 100 0:01 00:10'%os.getuid()
+        after=before+'\n%d 11 10 100 0:00 00:00'%os.getuid()
+        run=Mock(side_effect=[before,after]);reader=Mock(return_value=(1.0,123))
+        with self.assertRaises(ValueError):process_inventory([10],run,reader)
+
+    def test_process_inventory_records_native_birth_and_cpu(self):
+        import os
+        from zeekr_control.resource_monitor import process_inventory
+        rows='%d 10 1 100 0:01 00:10'%os.getuid()
+        result=process_inventory([10],Mock(return_value=rows),Mock(return_value=(1.25,123456)))
+        self.assertEqual(result[10]['cpu'],1.25)
+        self.assertEqual(result[10]['start'],123456)
+
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)

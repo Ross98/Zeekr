@@ -1,3 +1,4 @@
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 // Synthetic state only; catches snapshot fallback, missing trip states and disclosure loss.
 const {chromium} = require('playwright');
 const {spawn} = require('node:child_process');
@@ -6,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 (async () => {
   const server = spawn('python3', [path.join(__dirname, 'web_fixture.py')]);
-  let browser;
+  let browser,evidence;
   try {
     const port = await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(Error('Fixture did not start')), 10000);
@@ -15,6 +16,7 @@ const path = require('node:path');
     });
     browser = await chromium.launch({headless:true, ...(process.env.CHROMIUM_EXECUTABLE ? {executablePath:process.env.CHROMIUM_EXECUTABLE} : {})});
     const page = await browser.newPage({colorScheme:process.env.UI_COLOR_SCHEME || 'light',viewport:{width:1440,height:1050}});
+ evidence=await startEvidence(page,{testId:"ui_energy",synthetic:true});
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     const chargeQueries = [];
@@ -201,5 +203,5 @@ const path = require('node:path');
     assert.equal(await page.locator('.energy-top,.energy-achievement').count(),0);
     assert.deepEqual(errors,[]);
     console.log('Energy UI passed: charging history/detail/states, selection, errors, trip attainment, keyboard, refresh, target widths.');
-  } finally { if(browser) await browser.close(); server.kill('SIGTERM'); }
+  }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish(); if(browser) await browser.close(); server.kill('SIGTERM'); }
 })().catch(error=>{console.error(error);process.exitCode=1;});

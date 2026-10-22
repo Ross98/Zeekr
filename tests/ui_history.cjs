@@ -44,5 +44,5 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     assert.deepEqual(historyRequests,[]);
     assert.deepEqual(f.errors,[]);
     console.log('CLOUD_HISTORY_REMOVAL_DESKTOP_PASS: local links, explicit maps, navigation, settings, no cloud requests');
-  }finally{await f.close();}
+  }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

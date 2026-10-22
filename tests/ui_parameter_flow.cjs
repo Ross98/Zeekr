@@ -169,4 +169,4 @@ async function reviewSaveRaces(browser,path,field){
   assert.equal(await page.locator('#lab-title').inputValue(),'');
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   console.log('DESKTOP_PARAMETER_FLOW_PASS ordered steps, shared conclusion, drafts, experiment entry, history return, context isolation, delayed saves/conflict refreshes across account/vehicle/return, six layouts');
-}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+}catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

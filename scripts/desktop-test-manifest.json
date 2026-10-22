@@ -18,7 +18,9 @@
       "tests/test_place_pair_statistics.cjs",
       "tests/ui_field_review_rules.cjs",
       "tests/parameter_research_focus.cjs",
-      "tests/desktop_manifest.cjs"
+      "tests/desktop_manifest.cjs",
+      "tests/desktop_runner.cjs",
+      "tests/browser_evidence_coverage.cjs"
     ],
     "smoke": [
       "tests/ui_smoke.cjs",
@@ -68,217 +70,307 @@
       "tests/ui_parking_observations.cjs",
       "tests/ui_trip_management.cjs",
       "tests/ui_place_tag_rules.cjs",
-      "tests/ui_vehicle_login.cjs"
+      "tests/ui_vehicle_login.cjs",
+      "tests/ui_storage.cjs",
+      "tests/ui_calendar_compact.cjs",
+      "tests/ui_usage_reports.cjs",
+      "tests/ui_remembered_auth.cjs"
     ]
   },
   "exclusions": [
     {
       "path": "tests/benchmark_daily_recall.cjs",
-      "reason": "Opt-in recall performance workload (4181 map observations, 366 yearly trips); measured latency and long-task budgets require dedicated capacity validation rather than routine regression."
+      "reason": "Opt-in recall performance workload (4181 map observations, 366 yearly trips); measured latency and long-task budgets require dedicated capacity validation rather than routine regression.",
+      "kind": "benchmark",
+      "review_when": "When the renderer, query volume or capacity acceptance changes; retain strict timing assertions."
     },
     {
       "path": "tests/benchmark_overview.cjs",
-      "reason": "5000-event benchmark implementation invoked by registered ui_overview_benchmark; exclude standalone invocation to avoid running the same workload twice."
+      "reason": "5000-event benchmark implementation invoked by registered ui_overview_benchmark; exclude standalone invocation to avoid running the same workload twice.",
+      "kind": "benchmark",
+      "review_when": "When the renderer, query volume or capacity acceptance changes; retain strict timing assertions."
     },
     {
       "path": "tests/insights_demo.cjs",
-      "reason": "Rebuilds docs/vehicle-insights-demo gallery and writes documentation assets; manual artifact generator, not routine regression."
+      "reason": "Rebuilds docs/vehicle-insights-demo gallery and writes documentation assets; manual artifact generator, not routine regression.",
+      "kind": "manual-artifact",
+      "review_when": "Only when documentation assets need regeneration."
     },
     {
       "path": "tests/ui_automatic_insights.cjs",
-      "reason": "Legacy automatic insights suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
-    },
-    {
-      "path": "tests/ui_calendar_compact.cjs",
-      "reason": "Legacy compact calendar suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy automatic insights suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_calendar_duration.cjs",
-      "reason": "Legacy calendar duration suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy calendar duration suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_calendar_energy.cjs",
-      "reason": "Legacy calendar energy suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy calendar energy suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_calendar_heatmap.cjs",
-      "reason": "Legacy calendar heatmap suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy calendar heatmap suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_calendar_review.cjs",
-      "reason": "Legacy calendar review suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy calendar review suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_charge_comparison.cjs",
-      "reason": "Legacy charge comparison suite contains unconditional narrow viewports; needs desktop-only migration before routine execution."
+      "reason": "Legacy charge comparison suite contains unconditional narrow viewports; needs desktop-only migration before routine execution.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_charge_ledger.cjs",
-      "reason": "Legacy charge ledger suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy charge ledger suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_charging_dates.cjs",
-      "reason": "Legacy charging dates suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy charging dates suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_charging_progress.cjs",
-      "reason": "Legacy charging progress suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy charging progress suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_daily_recall.cjs",
-      "reason": "Legacy daily recall suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy daily recall suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_daily_recall_benchmark.cjs",
-      "reason": "Recall benchmark CLI isolation check runs the capacity workload twice; keep opt-in until its separate latency/resource budget is admitted to routine desktop CI."
+      "reason": "Recall benchmark CLI isolation check runs the capacity workload twice; keep opt-in until its separate latency/resource budget is admitted to routine desktop CI.",
+      "kind": "benchmark",
+      "review_when": "When the renderer, query volume or capacity acceptance changes; retain strict timing assertions."
     },
     {
       "path": "tests/ui_data_quality.cjs",
-      "reason": "Legacy data quality suite contains unconditional narrow viewports; needs desktop-only migration before routine execution."
+      "reason": "Legacy data quality suite contains unconditional narrow viewports; needs desktop-only migration before routine execution.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_date_keyboard.cjs",
-      "reason": "Legacy date keyboard suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy date keyboard suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_field_reviews.cjs",
-      "reason": "Legacy field reviews suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy field reviews suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_hypothesis_lab.cjs",
-      "reason": "Legacy hypothesis lab suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy hypothesis lab suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_image_delivery.cjs",
-      "reason": "Legacy image delivery suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy image delivery suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_insight_helpers.cjs",
-      "reason": "Shared Playwright fixture and layout helpers; imported by executable suites, not standalone assertions."
+      "reason": "Shared Playwright fixture and layout helpers; imported by executable suites, not standalone assertions.",
+      "kind": "helper",
+      "review_when": "When the invoking fixture or evidence contract changes."
     },
     {
       "path": "tests/ui_insights.cjs",
-      "reason": "Legacy insights API integration suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy insights API integration suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_insights_startup.cjs",
-      "reason": "Legacy concurrent asset startup suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy concurrent asset startup suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_overview.cjs",
-      "reason": "Legacy overview acceptance suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy overview acceptance suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_overview_attention.cjs",
-      "reason": "Legacy overview attention suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy overview attention suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_overview_layout.cjs",
-      "reason": "Legacy overview layout suite contains unconditional narrow viewports; needs desktop-only migration before routine execution."
+      "reason": "Legacy overview layout suite contains unconditional narrow viewports; needs desktop-only migration before routine execution.",
+      "kind": "retired-mobile",
+      "review_when": "Mobile assertions remain retired; migrate any unique desktop business assertions before deleting the file."
     },
     {
       "path": "tests/ui_overview_location.cjs",
-      "reason": "Legacy overview location suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy overview location suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_overview_performance.cjs",
-      "reason": "Legacy overview performance suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy overview performance suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_parameter_flow_missing.cjs",
-      "reason": "Legacy missing parameter flow suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy missing parameter flow suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_partial_charging.cjs",
-      "reason": "Legacy partial charging suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy partial charging suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_pending_ledger.cjs",
-      "reason": "Legacy pending ledger suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy pending ledger suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_place_label_jump.cjs",
-      "reason": "Legacy place label jump suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy place label jump suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_place_regions.cjs",
-      "reason": "Legacy place regions suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy place regions suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_primary_reviews.cjs",
-      "reason": "Legacy primary reviews suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy primary reviews suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_remaining_dashboard.cjs",
-      "reason": "Legacy remaining dashboard suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
-    },
-    {
-      "path": "tests/ui_remembered_auth.cjs",
-      "reason": "Remembered-auth integration starts separate synthetic service; authentication scope needs dedicated review before adding routine browser coverage."
+      "reason": "Legacy remaining dashboard suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_research_workbench.cjs",
-      "reason": "Legacy research workbench suite contains unconditional narrow viewports; needs desktop-only migration before routine execution."
+      "reason": "Legacy research workbench suite contains unconditional narrow viewports; needs desktop-only migration before routine execution.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_start_timing.cjs",
-      "reason": "Legacy trip start timing suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
-    },
-    {
-      "path": "tests/ui_storage.cjs",
-      "reason": "Legacy storage suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy trip start timing suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_task_layout.cjs",
-      "reason": "Legacy task layout suite contains unconditional narrow viewports; needs desktop-only migration before routine execution."
+      "reason": "Legacy task layout suite contains unconditional narrow viewports; needs desktop-only migration before routine execution.",
+      "kind": "retired-mobile",
+      "review_when": "Mobile assertions remain retired; migrate any unique desktop business assertions before deleting the file."
     },
     {
       "path": "tests/ui_theme.cjs",
-      "reason": "Legacy theme suite contains unconditional narrow viewports; needs desktop-only migration before routine execution."
+      "reason": "Legacy theme suite contains unconditional narrow viewports; needs desktop-only migration before routine execution.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_trip_place_names.cjs",
-      "reason": "Legacy trip place names suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy trip place names suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_trip_places.cjs",
-      "reason": "Legacy trip places suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy trip places suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_trips.cjs",
-      "reason": "Legacy trips suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy trips suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_tyre_display.cjs",
-      "reason": "Legacy tyre display suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy tyre display suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_tyre_notifications.cjs",
-      "reason": "Legacy tyre notifications suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy tyre notifications suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_usage_calendar.cjs",
-      "reason": "Legacy usage calendar suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
-    },
-    {
-      "path": "tests/ui_usage_reports.cjs",
-      "reason": "Legacy usage reports suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy usage calendar suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_vehicle_life.cjs",
-      "reason": "Legacy vehicle life suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy vehicle life suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_vehicle_life_history.cjs",
-      "reason": "Legacy vehicle life history suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy vehicle life history suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/ui_vehicle_research.cjs",
-      "reason": "Legacy vehicle research suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed."
+      "reason": "Legacy vehicle research suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
+      "kind": "coverage-debt",
+      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },
     {
       "path": "tests/fixtures/browser_failure_probe.cjs",
-      "reason": "Synthetic intentional-failure child process invoked serially by browser_failure_evidence; standalone fail mode must exit nonzero, so exclude duplicate routine invocation."
+      "reason": "Synthetic intentional-failure child process invoked serially by browser_failure_evidence; standalone fail mode must exit nonzero, so exclude duplicate routine invocation.",
+      "kind": "helper",
+      "review_when": "When the invoking fixture or evidence contract changes."
+    },
+    {
+      "path": "tests/fixtures/shared_failure_probe.cjs",
+      "reason": "Synthetic intentional failure invoked by browser_failure_evidence; proves shared fixture capture before teardown.",
+      "kind": "helper",
+      "review_when": "When the invoking fixture or evidence contract changes."
     }
   ]
 }

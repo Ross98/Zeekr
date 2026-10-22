@@ -1,10 +1,11 @@
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 // Desktop-only synthetic vehicle. Catches historical charts leaking into current
 // status, eager history/management reads, and stale responses after tab changes.
 const {chromium}=require('playwright');
 const {spawn}=require('node:child_process');
 const path=require('node:path'),fs=require('node:fs'),assert=require('node:assert/strict');
 (async()=>{
-  const server=spawn('python3',[path.join(__dirname,'web_fixture.py')]);let browser;
+  const server=spawn('python3',[path.join(__dirname,'web_fixture.py')]);let browser,evidence;
   try{
     const port=await new Promise((resolve,reject)=>{
       const timeout=setTimeout(()=>reject(Error('Fixture timeout')),10000);
@@ -12,7 +13,8 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
       server.once('error',reject);
     });
     browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});
-    const page=await browser.newPage({viewport:{width:1440,height:1000}});page.setDefaultTimeout(5000);
+    const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ evidence=await startEvidence(page,{testId:"ui_energy_workspace",synthetic:true});page.setDefaultTimeout(5000);
     const errors=[],reads=[];page.on('pageerror',error=>errors.push(error.message));
     page.on('request',request=>{if(/\/api\/(events|charging\/manage|charging\/process)/.test(request.url()))reads.push(request.url());});
     let releaseHistory,currentActive=false;
@@ -123,5 +125,5 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     }
     assert.deepEqual(errors,[]);
     console.log('Energy workspace passed: desktop tabs, recent record, lazy queries, review/history isolation, late response, disclosures and themes.');
-  }finally{if(browser)await browser.close();server.kill('SIGTERM');}
+  }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(error=>{console.error(error);process.exitCode=1;});

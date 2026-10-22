@@ -127,4 +127,4 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'eight categories at desktop 1024 fit');
  await page.locator('.books-chart-top').screenshot({path:'/tmp/zeekr-insights-qa/books-ring-polished-dark.png'});
  assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);console.log('BOOKS_OVERVIEW_UI_PASS: totals, estimates, duplicate hints, unknown bills, safe discard, month navigation, collapsed life editor, desktop layouts');
-}finally{await f.close()}})().catch(e=>{console.error(e);process.exitCode=1});
+}catch(error){await f.fail(error);throw error;}finally{await f.close()}})().catch(e=>{console.error(e);process.exitCode=1});

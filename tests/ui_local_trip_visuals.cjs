@@ -1,10 +1,12 @@
+const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
 // Desktop only, isolated local evidence; no vehicle network requests.
 const {chromium}=require('playwright'),{spawn}=require('node:child_process');
 const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),os=require('node:os');
-(async()=>{const server=spawn('python3',[path.join(__dirname,'recall_fixture.py')]);let browser;try{
+(async()=>{const server=spawn('python3',[path.join(__dirname,'recall_fixture.py')]);let browser,evidence;try{
  const port=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('fixture timeout')),30000);server.stdout.once('data',d=>{clearTimeout(timer);resolve(Number(String(d).trim()));});server.stderr.on('data',d=>process.stderr.write(d));});
  browser=await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_EXECUTABLE});
  const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[],routes=[];
+ evidence=await startEvidence(page,{testId:"ui_local_trip_visuals",synthetic:true});
  page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>{if(new URL(r.url()).pathname==='/api/tracks')routes.push(r.url());});
  await page.goto('http://127.0.0.1:'+port);
  await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();await page.getByLabel('轨迹日期').fill('2026-09-20');await page.getByRole('button',{name:'查询行程',exact:true}).click();
@@ -41,4 +43,4 @@ const assert=require('node:assert/strict'),path=require('node:path'),fs=require(
  for(const width of [1440,1280,1024]){await page.setViewportSize({width,height:1050});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));}
  assert.equal(routes.length,0);assert.deepEqual(errors,[]);
  console.log('Desktop local travel visuals passed: equal cards, clock, overview, crowded-day scrolling, selection and map privacy.');
-}finally{if(browser)await browser.close();server.kill();}})().catch(e=>{console.error(e);process.exitCode=1;});
+}catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();server.kill();}})().catch(e=>{console.error(e);process.exitCode=1;});

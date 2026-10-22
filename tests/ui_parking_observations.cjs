@@ -42,5 +42,5 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   }
   assert.deepEqual(f.errors,[]);assert.ok(f.posts.every(url=>/^\/api\/analysis\/[^/]+\/cancel$/.test(new URL(url).pathname)),'navigation may only cancel local analysis jobs');
   console.log('UI_PARKING_RETIREMENT_PASS: entry removed; old URLs/reload; calendar evidence; parking API; desktop themes');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
