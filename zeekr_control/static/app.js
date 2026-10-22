@@ -1540,7 +1540,7 @@ async function pollState(force = false) {
     if(restarted) { transientError='';refreshMessage='';samplingDraft=null; }
     if(changed) {
       if(page==='tracks' && !sectionTask && trackSource==='local' && refreshLocalTrips()) {updateConnection();updateClock();}
-      else render();
+      else if(!chargingReview.deferRefresh(render))render();
     }
     else { if(insightSections.includes(page))insightsPage.mount($('#insights-workspace'),page);if(page==='tracks'&&!sectionTask&&trackSource==='tags')tripTagsPage.mount($('#trip-tags-workspace'));updateHeartbeat(); }
   } catch(error) {
