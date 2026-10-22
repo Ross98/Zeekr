@@ -1,7 +1,7 @@
 """Versioned, conservative report telemetry. Pure: no I/O or network."""
 from .summary import section
 from .vehicle_state import decode, numeric
-from .charging_details import capture_parameters
+from .charging_details import capture_parameters, remaining_charge_minutes
 
 DECODER_VERSION = 'we86-v2-ac'
 SIDES = ('Driver', 'Passenger', 'DriverRear', 'PassengerRear')
@@ -100,5 +100,5 @@ def normalize(raw, observed_at, capabilities=(), active_codes=(), stopped_codes=
                       for side, name in zip(SIDES, POSITIONS)],
             'voltage': voltage, 'current': current, 'power_kw': power, 'power_source': power_source,
             'ac_voltage': ac_voltage, 'ac_current': ac_current,
-            'remaining_minutes': numeric(electric.get('timeToFullyCharged'), 0, 2046) if point['charging'] is True else None,
+            'remaining_minutes': remaining_charge_minutes(electric.get('timeToFullyCharged')) if point['charging'] is True else None,
             'capabilities': {name: ('enabled' if name in enabled else 'pending_evidence') for name in PENDING_CAPABILITIES}}

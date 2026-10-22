@@ -46,6 +46,12 @@ def number(value):
     return value if type(value) in (int, float) and math.isfinite(value) else None
 
 
+def remaining_charge_minutes(value):
+    """Usable estimate only; 2046 startup candidate and 2047 stay raw observations."""
+    from .vehicle_state import numeric
+    return numeric(value, 0, 2045)
+
+
 def capture_parameters(extra, electric):
     """Persist only listed numeric scalars; no raw payload, strings or identifiers."""
     from .vehicle_state import numeric
@@ -70,8 +76,8 @@ def snapshot_details(snapshot):
         value = number(saved.get(key, fallback.get(key)))
         note = '' if unit else '原始状态码，含义未确认'
         if key == 'timeToFullyCharged':
-            if snapshot.get('charging') is not True or value is None or not 0 <= value <= 2046:
-                value, note = None, '仅充电中且有效时展示；2047 不代表剩余时间'
+            if snapshot.get('charging') is not True or remaining_charge_minutes(value) is None:
+                value, note = None, '暂不可用；仅充电中且有有效估计时展示'
         elif key == 'dcChargeIAct':
             note = PACK_CURRENT['note']
         elif key in ('chargeLidAcStatus', 'chargeLidDcAcStatus'):

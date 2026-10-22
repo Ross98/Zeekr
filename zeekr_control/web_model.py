@@ -3,7 +3,7 @@ from .summary import SIDES, POSITIONS, display, number, section, updated_at
 from .vehicle_state import decode, GEAR_LABELS
 from .parameter_dictionary import definition, reference
 from .report_telemetry import normalize
-from .charging_details import snapshot_details
+from .charging_details import snapshot_details, remaining_charge_minutes
 from .vehicle_parameters import raw_text
 
 
@@ -116,8 +116,10 @@ def fields_for(data):
                     elif key in ('dcChargePileUAct', 'dcChargePileIAct'):
                         unit, minimum, maximum = (' V', 0, 1500) if key.endswith('UAct') else (' A', -2000, 2000)
                         calibrated = (display(item, unit, minimum, maximum), '本车已核对')
+                    elif key == 'timeToFullyCharged' and numeric == 2046:
+                        calibrated = ('暂不可用', '本车历史观察；起充估计未就绪候选')
                     elif key == 'timeToFullyCharged' and numeric != 2047:
-                        calibrated = (display(item, ' 分钟', 0, 2046) if state['charging'] is True else '未知', '本车已核对')
+                        calibrated = (display(remaining_charge_minutes(item), ' 分钟') if state['charging'] is True else '未知', '本车已核对')
                 elif path == 'additionalVehicleStatus.drivingSafetyStatus':
                     locked = number(value.get('centralLockingStatus')) == 2 and all(
                         number(value.get('doorLockStatus' + side)) == 1 for side in SIDES)
@@ -219,9 +221,11 @@ def build_model(data, vehicle=None):
     stopped = vehicle_state['charging_phase'] == 'stopped'
     dc_charging = charging is True and vehicle_state['charging_mode'] == 'dc'
     ac_charging = charging is True and vehicle_state['charging_mode'] == 'ac'
-    remaining = number(electric.get('timeToFullyCharged'), 0, 2046)
-    remaining_time = ('暂无有效时间估计' if number(electric.get('timeToFullyCharged')) == 2047
-                      else display(electric.get('timeToFullyCharged'), ' 分钟') if charging is True and remaining is not None else '未知')
+    remaining_raw = electric.get('timeToFullyCharged')
+    remaining = remaining_charge_minutes(remaining_raw)
+    remaining_time = ('暂不可用' if number(remaining_raw) == 2046
+                      else '暂无有效时间估计' if number(remaining_raw) == 2047
+                      else display(remaining, ' 分钟') if charging is True and remaining is not None else '未知')
     status_time = timestamp(data.get('updateTime'))
     temperature_time = timestamp(climate.get('temperatureUpdateTime'))
     return {

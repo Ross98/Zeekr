@@ -170,6 +170,9 @@ def value_meanings(row):
         elif key in ('brakeFluidLevelStatus','engineCoolantLevelStatus') and normalized=='3':
             meaning='固定液位码3（正常/未知枚举尚未区分）'
             source='常量液位字段，未标定'
+        elif key == 'timeToFullyCharged' and normalized=='2046':
+            meaning='时间估计暂不可用（起充估计未就绪候选，原值2046）'
+            source='本车历史起充序列；非厂家协议确认'
         elif key in ('timeToFullyCharged','timeToTargetDisCharged') and normalized=='2047':
             meaning='暂无有效时间估计（哨兵2047）'
             source='既有字典哨兵解释'

@@ -9,6 +9,7 @@ import sqlite3
 from .start_evidence import from_summary as start_evidence
 from .trip_visibility import visible_clause
 from .usage_events import project, total
+from .charging_details import remaining_charge_minutes
 
 
 BEIJING = timezone(timedelta(hours=8))
@@ -93,7 +94,7 @@ class ChargingAnalytics:
         start, end, metrics = item.pop('start'), item.pop('end'), item.pop('metrics')
         item.update({'start_soc': _number(start.get('soc')), 'end_soc': _number(end.get('soc')),
                      'power_kw': _number(end.get('power_kw')),
-                     'remaining_minutes': _number(end.get('remaining_minutes')),
+                     'remaining_minutes': remaining_charge_minutes(end.get('remaining_minutes')),
                      'range_km': _number(end.get('range_km')),
                      'sampled_peak_kw': _number(metrics.get('sampled_peak_kw')),
                      'average_power_kw': _number(metrics.get('average_power_kw')),

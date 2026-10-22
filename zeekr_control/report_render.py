@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 import re
 from .start_evidence import project as project_start
 from .notification_location import reference_suffix
+from .charging_details import remaining_charge_minutes
 
 TARGET_BYTES = 1900
 HARD_BYTES = 2048
@@ -219,9 +220,10 @@ def render(kind, report, event_id, address=None, target=TARGET_BYTES, references
         elif start.get('power_kw') is not None:
             lines += ['桩侧观测电压：%s V' % _num(start['voltage']['value']), '桩侧观测电流：%s A' % _num(start['current']['value']),
                       '按电压×电流计算功率：%s kW' % _num(start['power_kw'])]
-        if start.get('remaining_minutes') is not None:
-            lines.append('截至%s，车辆估计剩余%s分钟。' % (_time(start.get('state_time')).split()[-1], _num(start['remaining_minutes'], 0)))
-            estimated_end = start.get('state_time') + start['remaining_minutes']*60000
+        remaining = remaining_charge_minutes(start.get('remaining_minutes'))
+        if remaining is not None:
+            lines.append('截至%s，车辆估计剩余%s分钟。' % (_time(start.get('state_time')).split()[-1], _num(remaining, 0)))
+            estimated_end = start.get('state_time') + remaining*60000
             age = report.get('event_created_at', start.get('observed_at')) - start.get('state_time')
             if -30000 <= age <= 180000 and estimated_end > report.get('event_created_at', 0):
                 lines.append('按本次估计约%s结束，估计可能变化。' % _time(estimated_end).split()[-1])

@@ -94,6 +94,17 @@ class ChargingAnalyticsTests(unittest.TestCase):
         self.assertEqual(process['session']['status'], 'active')
         self.assertEqual(process['series']['raw_count'], 2)
 
+    def test_legacy_session_remaining_minutes_exclude_startup_placeholder(self):
+        for minutes in (2046, 2047, 33, 0):
+            end = sample(BASE, 40, 6)
+            end['remaining_minutes'] = minutes
+            state = {'charge': {'report_start': end, 'samples': [end], 'partial': True}}
+            with Monitor(self.path).tracks.connect() as db:
+                db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)',
+                           ('car-a', json.dumps(state)))
+            self.assertEqual(self.analytics.session('car-a', 'current')['remaining_minutes'],
+                             None if minutes in (2046, 2047) else minutes)
+
     def test_statistics_include_partial_observations_and_retain_complete_subtotal(self):
         day = 86400000
         complete = {'duration_seconds': 3600, 'soc_delta': 60, 'estimated_kwh': 51.6,

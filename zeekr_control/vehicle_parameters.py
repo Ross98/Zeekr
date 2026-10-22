@@ -119,6 +119,10 @@ def parameters(raw, model):
             status, display = 'pending', '疑似占位值（5 V）'
             evidence = '停车休眠场景的疑似无效读数；未确认占位含义'
             note += ' 原值保留，但排除电压数值统计；不能据此判定低压电池亏电。'
+        if (path == 'additionalVehicleStatus.electricVehicleStatus.timeToFullyCharged'
+                and number(value) == 2046):
+            status, display, value_validity = 'pending', '暂不可用', 'suspect'
+            evidence = '本车历史起充序列；估计未就绪为候选含义'
         rows.append({'path': path, 'name': entry['name'], 'group': group_for(path),
                      'value': str(display)[:160],
                      'raw': field.get('raw_json', raw_text(value)) if metadata and field else raw_text(value),
