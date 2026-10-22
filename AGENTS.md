@@ -8,6 +8,14 @@ This project targets desktop only (user confirmed 2026-10-05). Do not design, ad
 
 For non-trivial coding: explore intent/design, plan complex changes, write logic tests first, verify before claiming completion, then simplify. Debug systematically; review relevant evidence. Use named workflow skills when available. Preserve unrelated modifications and private files.
 
+# Parameter research
+
+Start with a concrete product problem or requested capability, its user-visible acceptance criterion, and the minimum fields required. Use `docs/parameter-product-backlog.md` as the current work list. The full field catalogue is reference material, not a requirement to decode every field.
+
+Before analysis, name the evidence that could change the implementation decision. If existing data cannot distinguish the candidates and no independent evidence is available, defer the item with an explicit reopening condition. Do not repeatedly re-query unchanged archives, re-slice previously inspected data, or search equivalent community mappings to report activity. New sample counts or correlations alone are not product progress.
+
+End each investigation with an implemented and verified fix, an implementation recommendation tied to acceptance criteria, or a deferred item stating exactly what evidence is missing. Separate explanation changes from decoding changes and from deployed behavior. Do not invent new product requirements to justify continued research. Create or change recurring research tasks only when explicitly requested.
+
 # Commit and deployment
 
 Read `handoff.md` and reconcile Git with production before a release. Commit, deploy and push require the user's explicit authorization; authorization in the active conversation persists. Stage named paths only.
