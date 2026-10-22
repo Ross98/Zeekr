@@ -83,7 +83,7 @@ class ResourceTests(unittest.TestCase):
 
     def test_sampling_failure_does_not_clear_alarm_or_turn_into_zero(self):
         self.assertEqual(classify(healthy(memory_pressure=None,sample_errors=['memory_pressure']))[0],'unknown')
-        self.assertEqual(classify(healthy(app_cpu_percent=None,app_cpu_complete=False))[0],'warming_up')
+        self.assertEqual(classify(healthy(app_cpu_percent=None,app_cpu_complete=False))[0],'unknown')
         self.assertEqual(classify(healthy(memory_pressure='critical'))[0],'critical')
         self.assertEqual(classify(healthy(missing_services=['local.zeekr.web']))[0],'critical')
 
@@ -124,15 +124,21 @@ class ResourceTests(unittest.TestCase):
                 pid={'web':10,'monitor':20,'reports':30}[argv[-1].split('.')[-1]]
                 return '\tstate = running\n\tpid = %d\n'%pid
             return '\n'.join('%d %d 1 100 0:01.00 00:20'%(os.getuid(),pid) for pid in (10,20,30))
-        sampler=NativeSampler(command);sample=sampler.measure()
-        self.assertEqual(sample['host_cpu_percent'],30)
+        ticks=iter([(100,100,800,0),(130,130,940,0)])
+        sampler=NativeSampler(command,host_reader=lambda:next(ticks),probe=lambda origin:True,origin_reader=lambda:'https://example.test')
+        sample=sampler.measure()
+        self.assertIsNone(sample['host_cpu_percent'])
+        with patch('zeekr_control.resource_monitor.time.monotonic',return_value=sampler.host_checked+60):
+            measured=sampler.measure()
+        self.assertEqual(measured['host_cpu_percent'],30)
         self.assertEqual(sample['memory_pressure'],'warning')
         self.assertEqual(sample['missing_services'],[])
         self.assertEqual(sample['sample_errors'],[])
         self.assertEqual(sample['app_rss_bytes'],300*1024)
         self.assertIsNone(sample['app_cpu_percent'])
         def failed(argv):raise OSError('synthetic private details')
-        sample=NativeSampler(failed).measure()
+        def failed_host():raise OSError('synthetic private details')
+        sample=NativeSampler(failed,host_reader=failed_host,probe=lambda origin:False,origin_reader=lambda:'https://example.test').measure()
         self.assertIsNone(sample['host_cpu_percent']);self.assertIsNone(sample['memory_pressure'])
         self.assertTrue(sample['sample_errors'])
         self.assertNotIn('synthetic private details',json.dumps(sample))

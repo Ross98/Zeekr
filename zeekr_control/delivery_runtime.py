@@ -21,6 +21,7 @@ from .custom_reminders import Reminders
 from .tyre_notifications import TyreNotifications
 from .storage_health import StorageHealth
 from .system_notifications import AuthFailureAlert
+from .resource_monitor import ResourceHealth, observer_enabled, observer_sample
 
 _DEFAULT=object()
 
@@ -37,6 +38,7 @@ class DeliveryWorker:
         self.tyres=TyreNotifications(self.reminders.store)
         self.storage=StorageHealth(self.root,self.sender,self.alert_sender)
         self.auth_alert=AuthFailureAlert(self.root,self.alert_sender)
+        self.resource_watchdog=ResourceHealth(self.root,self.alert_sender,'resource-watchdog.json') if observer_enabled(self.root) else None
         self.status='running';self.error='';self.deadline=None
 
     def guard(self,scope=None,vehicle=None):
@@ -56,6 +58,13 @@ class DeliveryWorker:
             except Exception:
                 self.error='storage_health_unavailable'
                 print('存储巡检或预警状态无法保存，请检查存储。',flush=True)
+            try:
+                if self.resource_watchdog is not None:
+                    self.resource_watchdog.tick(observer_sample(self.root,now/1000),now/1000,
+                        can_send=lambda:not self.stop.is_set() and (self.deadline is None or time.monotonic()<self.deadline))
+            except Exception:
+                self.error='resource_watchdog_unavailable'
+                print('资源巡检心跳检查失败，请检查存储与权限。',flush=True)
             if not read_settings(self.root)[0]:
                 self.status='paused';return
             self.status='running'
