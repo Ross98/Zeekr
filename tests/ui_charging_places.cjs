@@ -50,16 +50,40 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
  assert.equal(await page.locator('[data-review-record="report-charge"] .cr-station-name').innerText(),'验收广场');
  assert.equal(await page.locator('[data-review-record]').filter({hasText:'验收广场'}).count(),2);
  assert.match(await page.locator('[data-review-record="report-charge"]').innerText(),/测试快充站/);
+ await page.getByRole('button',{name:'撤销最近地点修改',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('[data-review-record="report-charge"] .cr-place')?.textContent.includes('测试广场'));
  await page.locator('[data-review-record="report-charge"] [data-review="place"]').click();await page.getByLabel('场所名称',{exact:true}).waitFor();
  await page.getByRole('button',{name:'查看并校正地图位置',exact:true}).click();
  await page.locator('.cr-place-map.leaflet-container').waitFor();
  const map=page.locator('.cr-place-map');await map.click({position:{x:350,y:160}});
  assert.match(await page.locator('.cr-place-editor').innerText(),/地图位置已调整/);
+ await page.waitForFunction(()=>!polling);await page.locator('.cr-map-pin').hover();
  const beforeDrag=await page.getByLabel('经度（WGS84）',{exact:true}).inputValue(),pin=await page.locator('.cr-map-pin').boundingBox();
- await page.mouse.move(pin.x+pin.width/2,pin.y+pin.height/2);await page.mouse.down();await page.mouse.move(pin.x+pin.width/2+24,pin.y+pin.height/2+8,{steps:6});await page.mouse.up();
+ const originalPin=await page.locator('.cr-map-pin').elementHandle();
+ await page.mouse.down();
+ // Force a changed-state poll through the real HTTP path while the pointer is held.
+ // The old snapshot value makes this deterministic, independent of the 5 s timer.
+ await page.evaluate(async()=>{state.snapshot_revision='charging-drag-before-poll';await pollState(true);});
+ assert.notEqual(await page.evaluate(()=>state.snapshot_revision),'charging-drag-before-poll','poll response was applied during the drag');
+ assert.equal(await originalPin.evaluate(el=>el.isConnected),true,'polling must keep the held correction marker connected');
+ await page.mouse.move(pin.x+pin.width/2+24,pin.y+pin.height/2+8,{steps:6});await page.mouse.up();
+ await page.waitForFunction(el=>!el.isConnected,originalPin,{timeout:5000}); // deferred refresh resumes after release
+
  assert.notEqual(await page.getByLabel('经度（WGS84）',{exact:true}).inputValue(),beforeDrag,'dragging the correction marker updates the WGS84 point');
+ const draggedPoint={latitude:Number(await page.getByLabel('纬度（WGS84）',{exact:true}).inputValue()),longitude:Number(await page.getByLabel('经度（WGS84）',{exact:true}).inputValue())};
+ assert.ok(Number.isFinite(draggedPoint.latitude)&&Math.abs(draggedPoint.latitude)<=90);
+ assert.ok(Number.isFinite(draggedPoint.longitude)&&Math.abs(draggedPoint.longitude)<=180);
+ assert.ok(Math.abs(draggedPoint.longitude-Number(beforeDrag))>1e-6,'drag moves a meaningful WGS84 distance');
  await page.getByLabel('场所名称',{exact:true}).fill('单次校正');await page.getByLabel('地点修改范围',{exact:true}).selectOption('single');
  await page.getByRole('button',{name:'预览地点修改',exact:true}).click();assert.match(await page.locator('[data-place-preview]').innerText(),/1 条/);
+ await page.getByRole('button',{name:'保存地点修改',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('[data-review-record="report-charge"] .cr-place')?.textContent==='单次校正');
+ const savedPoint=await (await page.request.get(f.origin+'/api/insights/charging-place?event=report-charge')).json();
+ assert.deepEqual(savedPoint.location,draggedPoint,'dragged WGS84 coordinates persist in the saved record');
+ await page.locator('[data-review-record="report-charge"] [data-review="place"]').click();await page.getByLabel('场所名称',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'查看并校正地图位置',exact:true}).click();
+ assert.equal(Number(await page.getByLabel('纬度（WGS84）',{exact:true}).inputValue()),draggedPoint.latitude);
+ assert.equal(Number(await page.getByLabel('经度（WGS84）',{exact:true}).inputValue()),draggedPoint.longitude);
  await page.getByRole('button',{name:'关闭地点详情',exact:true}).click();
  await page.getByRole('button',{name:'撤销最近地点修改',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('[data-review-record="report-charge"] .cr-place')?.textContent.includes('测试广场'));
@@ -130,5 +154,24 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
  await page.getByLabel('充电月份',{exact:true}).fill('2026-08');await page.getByRole('button',{name:'刷新充电回顾',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('#charging-review')?.dataset.loadedMonth==='2026-08');
  assert.equal(await page.locator('.cr-footprint-toggle').getAttribute('aria-expanded'),'false');
- assert.deepEqual(f.errors,[]);console.log('CHARGING_PLACES_BROWSER_PASS: station list, known-cost shares, pending/free costs, whole-row filtering; evidence, preview, map, undo, desktop themes and confirmed station merging');
+ // Pending background refreshes must never retain an editor across owner/navigation changes.
+ await page.getByLabel('充电月份',{exact:true}).fill('2026-09');await page.getByRole('button',{name:'刷新充电回顾',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#charging-review')?.dataset.loadedMonth==='2026-09');
+ for(const boundary of ['owner','navigation']){
+  await page.locator('[data-review-record="report-charge"] [data-review="place"]').click();await page.getByLabel('场所名称',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'查看并校正地图位置',exact:true}).click();
+  await page.locator('.cr-map-pin').hover();const heldPin=await page.locator('.cr-map-pin').elementHandle();
+  await page.waitForFunction(()=>!polling);await page.mouse.down();
+  await page.evaluate(async()=>{state.snapshot_revision='charging-boundary-before-poll';await pollState(true);});
+  assert.equal(await heldPin.evaluate(el=>el.isConnected),true);
+  await page.evaluate(boundary=>{if(boundary==='owner')state.insights_context='synthetic-other-owner';else page='overview';render();},boundary);
+  assert.equal(await heldPin.evaluate(el=>el.isConnected),false,boundary+' change immediately removes the old marker');
+  await page.mouse.up();await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>resolve())));
+  assert.equal(await page.getByLabel('经度（WGS84）',{exact:true}).count(),0,'queued refresh must not revive the old editor');
+  if(boundary==='owner'){
+   await page.evaluate(()=>pollState(true));
+   await page.waitForFunction(()=>document.querySelector('#charging-review')?.dataset.loadedMonth==='2026-09');
+  }
+ }
+ assert.deepEqual(f.errors,[]);console.log('CHARGING_PLACES_BROWSER_PASS: station list, known-cost shares, pending/free costs, whole-row filtering; evidence, preview, polling during drag, saved/reopened WGS84 coordinates, owner/navigation cancellation, undo, desktop themes and confirmed station merging');
 }finally{await f.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

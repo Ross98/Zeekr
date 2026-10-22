@@ -81,3 +81,25 @@ assert.equal(points[1].partial,true);
 assert.equal(points[2].value,null,'future months remain empty even if future-dated entries exist');
 assert.equal(chartPoints([{year:'2026',actual_cents:200}],stamp,true)[0].partial,true);
 assert.equal(chartPoints([{year:'2024',actual_cents:0}],stamp,true)[0].inferred,false);
+
+const {categoryAmount,pieSegments}=require('../zeekr_control/static/books-overview.js');
+assert.equal(typeof categoryAmount,'function');
+assert.equal(categoryAmount({kind:'charge',actual_cents:2000,parking_cents:500},'充电'),2000);
+assert.equal(categoryAmount({kind:'charge',actual_cents:2000,parking_cents:500},'充电停车费'),500);
+assert.equal(categoryAmount({kind:'charge',actual_cents:null,parking_cents:500},'充电'),null);
+assert.equal(categoryAmount({kind:'charge',actual_cents:0,parking_cents:500},'充电'),0);
+assert.equal(categoryAmount({kind:'charge',actual_cents:2000,parking_cents:500},''),2500);
+assert.equal(categoryAmount({kind:'life',actual_cents:900,parking_cents:null},'充电停车费'),900);
+assert.deepEqual(pieSegments([{category:'免费',amount_cents:0},{category:'未知',amount_cents:null}]),[]);
+const slices=pieSegments([{category:'保险',amount_cents:7500},{category:'充电',amount_cents:2500},{category:'免费',amount_cents:0}]);
+assert.equal(slices.length,2);assert.equal(slices[0].ratio,.75);assert.equal(slices[1].ratio,.25);
+assert.equal(slices[0].start,0);assert.equal(slices[1].end,Math.PI*2);
+assert.equal(pieSegments([{category:'保险',amount_cents:500}])[0].ratio,1);
+console.log('BOOKS_CATEGORY_PIE_PASS');
+
+const {formatShare}=require('../zeekr_control/static/books-overview.js');
+assert.equal(formatShare(6,4890000),'<0.1%','positive small amounts must not look like zero');
+assert.equal(formatShare(0,1000),'0.0%');
+assert.equal(formatShare(1,1000),'0.1%');
+assert.equal(formatShare(100,1000),'10.0%');
+assert.equal(formatShare(0,0),'占比不适用');

@@ -66,7 +66,7 @@
         return `<path d="M${a.x+a.width/2-bounds.x} 0 L${b.x+b.width/2-bounds.x} 14"/>`;
       }).join('');
     }
-    function paint(){if(!node?.isConnected||!active())return;return root.RefreshView?root.RefreshView.preserve(node,draw):draw();}
+    function paint(){if(!node?.isConnected||!active()||places.deferRefresh(paint))return;return root.RefreshView?root.RefreshView.preserve(node,draw):draw();}
     function draw(){
       if(root.deferDateRender?.(paint))return;
       places.removeMap();
@@ -126,7 +126,7 @@
       return true;
     }
     root.addEventListener('resize',()=>{if(active()&&node?.isConnected)guides();});
-    return {mount,handle,suspend};
+    return {mount,handle,suspend,deferRefresh:places.deferRefresh};
   }
   root.ChargingReviewPage={create};
 })(window);

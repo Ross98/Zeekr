@@ -6,7 +6,26 @@
     let id='',identity='',detail=null,draft=null,preview=null,candidates=null,error='',busy=false,loading=false,shown=false,map=null,marker=null,serial=0,page=0,moved=false;
     const button=(text,action,attrs='')=>`<button type="button" data-place-action="${action}" ${busy||loading?'disabled':''} ${attrs}>${text}</button>`;
     const valid=(token,owner)=>serial===token&&identity===owner&&context()===owner&&active();
-    function removeMap(){if(map){map.remove();map=null;marker=null;}}
+    let pointerHeld=false;
+    const deferredRefreshes=new Set();
+    function finishInteraction(refresh){
+      pointerHeld=false;root.removeEventListener('mouseup',releasePointer);root.removeEventListener('blur',releasePointer);
+      const callbacks=[...deferredRefreshes];deferredRefreshes.clear();
+      if(refresh&&callbacks.length){const token=serial,owner=identity;queueMicrotask(()=>{for(const callback of callbacks)if(valid(token,owner))callback();});}
+    }
+    // Leaflet handles mouseup on document first; flush only after its dragend.
+    function releasePointer(){finishInteraction(true);}
+    function holdPointer(event){
+      if(event.button!==0||event.shiftKey)return;
+      pointerHeld=true;root.addEventListener('mouseup',releasePointer);root.addEventListener('blur',releasePointer);
+    }
+    // Keep the marker alive through the entire gesture, including before dragstart.
+    // Context changes and navigation bypass this guard and cancel queued refreshes.
+    function deferRefresh(callback){
+      if(!pointerHeld||identity!==context()||!active())return false;
+      deferredRefreshes.add(callback);return true;
+    }
+    function removeMap(){finishInteraction(false);if(map){map.remove();map=null;marker=null;}}
     function close(redraw=true){serial++;removeMap();id='';identity='';detail=draft=preview=candidates=null;error='';busy=loading=shown=moved=false;if(redraw)paint();}
     async function open(eventId){
       close(false);id=eventId;identity=context();const owner=identity,token=++serial;loading=true;paint();
@@ -53,12 +72,16 @@
         <div class="cr-place-tools">${button('预览地点修改','preview')}${button('保存地点修改','save',!preview?'disabled':'')}${detail.can_undo?button('撤销最近地点修改','undo'):''}${busy?'<span role="status">正在处理…</span>':''}</div>`:''}</section>`;
     }
     function selectPoint(p){
-      if(busy)return;draft.latitude=Number(p.lat.toFixed(7));draft.longitude=Number(p.lng.toFixed(7));moved=true;invalidate();paint();
+      if(busy||!draft||identity!==context()||!active())return;draft.latitude=Number(p.lat.toFixed(7));draft.longitude=Number(p.lng.toFixed(7));moved=true;invalidate();paint();
     }
     function setPin(point){
       if(!map)return;
       if(marker)marker.setLatLng(point);
-      else{marker=root.L.marker(point,{draggable:true,icon:root.L.divIcon({className:'cr-map-pin',html:'<span></span>',iconSize:[24,24],iconAnchor:[12,12]})}).addTo(map);marker.on('dragend',()=>selectPoint(marker.getLatLng()));}
+      else{
+        marker=root.L.marker(point,{draggable:true,icon:root.L.divIcon({className:'cr-map-pin',html:'<span></span>',iconSize:[24,24],iconAnchor:[12,12]})});
+        marker.on('add',event=>event.target.getElement().addEventListener('mousedown',holdPointer,{capture:true}));
+        marker.on('dragend',event=>selectPoint(event.target.getLatLng()));marker.addTo(map);
+      }
     }
     function mount(node){
       const element=node?.querySelector('.cr-place-map');if(!element||map||!draft||!root.AmapMaps||!root.L)return;
@@ -92,7 +115,7 @@
       if(action==='undo')undo(detail.revision);
       return true;
     }
-    return {open,html,mount,handle,close,removeMap,undo};
+    return {open,html,mount,handle,close,removeMap,undo,deferRefresh};
   }
   root.ChargingPlaceEditor={create};
 })(window);
