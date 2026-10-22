@@ -21,6 +21,39 @@
   function matchesCategory(row,category){
     return !category||row.category===category||(row.kind==='charge'&&category==='充电停车费'&&row.parking_cents>0);
   }
+  function categoryAmount(row,category){
+    if(row.kind==='charge'&&category==='充电')return row.actual_cents;
+    if(row.kind==='charge'&&category==='充电停车费')return row.parking_cents;
+    return recordedAmount(row);
+  }
+  function pieSegments(groups){
+    const positive=groups.filter(g=>Number.isFinite(g.amount_cents)&&g.amount_cents>0);
+    const total=positive.reduce((sum,g)=>sum+g.amount_cents,0);let angle=0;
+    return positive.map((group,i)=>{const start=angle,ratio=group.amount_cents/total;
+      angle=i===positive.length-1?Math.PI*2:angle+ratio*Math.PI*2;
+      return {...group,ratio,start,end:angle};});
+  }
+  function formatShare(amount,total){
+    if(!(total>0)||!Number.isFinite(amount))return '占比不适用';
+    const share=amount/total*100;
+    return share>0&&share<.1?'<0.1%':share.toFixed(1)+'%';
+  }
+  function pieChart(groups,category,tone,money,esc){
+    const segments=pieSegments(groups);
+    if(!segments.length)return '<p class="books-pie-empty">暂无可绘制的已录金额</p>';
+    const total=segments.reduce((sum,g)=>sum+g.amount_cents,0);
+    const selected=groups.find(g=>g.category===category);
+    const amount=money(selected?selected.amount_cents:total).replace(' 元','');
+    const circumference=2*Math.PI*84;
+    const label=category||'已录总额';
+    const labelParts=label.length>10?[label.slice(0,12),label.slice(12)]:[label];
+    return `<svg class="books-pie" viewBox="0 0 220 220" aria-label="已录支出分类环图"><circle class="books-pie-track" cx="110" cy="110" r="84"/>${segments.map(g=>{
+      const length=g.ratio*circumference,gap=g.ratio===1?0:Math.min(2.5,length*.18);
+      const shape=`<circle cx="110" cy="110" r="84" transform="rotate(-90 110 110)" stroke-dasharray="${length-gap} ${circumference-length+gap}" stroke-dashoffset="${-g.start*84-gap/2}"/>`;
+      return `<a href="#costs-workspace" data-costs="category" data-cost-category="${esc(g.category)}" class="books-pie-slice books-tone-${tone(g.category)}" aria-label="饼图分类 ${esc(g.category)} ${money(g.amount_cents)}" aria-current="${category===g.category?'true':'false'}"><title>${esc(g.category)} · ${money(g.amount_cents)} · ${esc(formatShare(g.amount_cents,total))}</title>${shape}</a>`;
+    }).join('')}<g class="books-pie-center" text-anchor="middle"><text class="books-pie-label" x="110" y="${labelParts.length>1?80:93}">${labelParts.map((part,i)=>`<tspan x="110" dy="${i?14:0}">${esc(part)}</tspan>`).join('')}</text><text class="books-pie-total" x="110" y="123" style="font-size:${amount.length>10?18:24}px">${esc(amount)}</text><text class="books-pie-unit" x="110" y="147">元${selected&&total>0?' · '+esc(formatShare(selected.amount_cents,total)):''}</text></g></svg>`;
+  }
+
   function chartPoints(rows,asOf,annual=false){
     const current=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit'}).format(new Date(Number.isFinite(asOf)?asOf:Date.now()));
     const boundary=annual?current.slice(0,4):current;
@@ -44,11 +77,11 @@
     let node=null,owner='',month=todayMonth,scope='month',chartYear='',recordPage=null;
     const allHistory=()=>getView()==='costs'&&scope==='all';
     let data=null,records=null,loading=false,recordsLoading=false,error='',recordsError='',serial=0,recordSerial=0,page=0;
-    let summaryAttempted=false,recordsAttempted=false,summaryPending=null,recordsPending=null,category='',expanded=false;
+    let summaryAttempted=false,recordsAttempted=false,summaryPending=null,recordsPending=null,category='';
     const context=()=>getState()?.insights_context||'';
     const money=v=>Number.isFinite(v)?(v/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})+' 元':'金额待补';
     const preserve=(container,fn)=>root.RefreshView?root.RefreshView.preserve(container,fn):fn();
-    function reset(){serial++;recordSerial++;data=null;records=null;loading=false;recordsLoading=false;error='';recordsError='';summaryAttempted=false;recordsAttempted=false;summaryPending=null;recordsPending=null;page=0;category='';expanded=false;recordPage=null;}
+    function reset(){serial++;recordSerial++;data=null;records=null;loading=false;recordsLoading=false;error='';recordsError='';summaryAttempted=false;recordsAttempted=false;summaryPending=null;recordsPending=null;page=0;category='';recordPage=null;}
     function sync(){
       if(getView()!=='costs'&&scope==='all'){scope='month';chartYear='';reset();}
       const identity=context();
@@ -74,14 +107,20 @@
       const pages=allHistory()?(recordPage?.pages||1):Math.max(1,Math.ceil(total/10));if(!allHistory()||recordPage)page=Math.min(page,pages-1);
       preserve(workspace,()=>{
         const groups=data?.charts.categories||[],months=data?.charts.months||[];
-        const names=[...new Set(months.flatMap(row=>row.categories.map(c=>c.category)).concat(groups.map(c=>c.category)))].sort();
-        const tone=name=>names.includes(name)?names.indexOf(name)%6:4;
-        const maxCategory=Math.max(1,...groups.map(c=>c.amount_cents));
-        const largest=data?.charts.largest;
-        const share=largest&&data?.total>0?(recordedAmount(largest)/data.total*100).toFixed(1)+'%':null;
-        const rowHtml=row=>`<article class="books-timeline-row" data-books-record="${esc(row.kind+':'+row.id)}"><time datetime="${esc(row.date)}">${esc(allHistory()?row.date:row.date.slice(5).replace('-',' / '))}</time><i class="books-timeline-dot books-tone-${tone(row.category)}" aria-hidden="true"></i><div><strong>${esc(row.title)}</strong><span>${esc(row.category)} · ${esc(row.source)}${row.parking_cents>0?' · 含充电停车费 '+money(row.parking_cents):''}${row.actual_cents==null&&row.parking_cents>0?' · 充电金额待补':''}</span></div><strong class="books-timeline-amount">${row.actual_cents==null&&row.parking_cents>0?'已知 ':''}${money(recordedAmount(row))}</strong></article>`;
-        const count=expanded?10:4;
-        workspace.innerHTML=`<div class="books-chart-top"><section class="card insight-panel" data-books-panel="categories"><h2>钱花在哪里</h2>${groups.length?groups.map(g=>`<div class="books-category-row"><button class="books-category-button" data-costs="category" data-cost-category="${esc(g.category)}" aria-label="筛选分类 ${esc(g.category)}" aria-pressed="${category===g.category}">${esc(g.category)}</button><div class="books-category-track"><div class="books-category-fill books-tone-${tone(g.category)}" style="width:${g.amount_cents/maxCategory*100}%"></div></div><div class="books-category-money">${money(g.amount_cents)}<span>${data.total>0?(g.amount_cents/data.total*100).toFixed(1)+'%':'占比不适用'}</span></div></div>`).join(''):'<p class="insight-note">暂无已录分类金额。</p>'}</section><section class="card insight-panel books-largest" data-books-panel="largest"><h2>${allHistory()?'历史最大单笔':'本月最大单笔'}</h2>${largest?`<div class="books-largest-main"><span>${esc(largest.date)} · ${esc(largest.category)}</span><strong>${money(recordedAmount(largest))}</strong><p>${esc(largest.title)}</p><span>${share?'占已录花费 '+share:'已录免费支出'}${largest.actual_cents==null?' · 仅已知部分':''}</span></div><div class="books-largest-footer">其余已录金额 ${money(Math.max(0,(data?.total||0)-recordedAmount(largest)))}</div>`:`<p class="insight-note">${recordsLoading?'正在读取记录…':recordsError?'记录读取失败，暂无法确定。':'暂无已录实际金额。'}</p>`}</section></div><section class="card insight-panel books-trend" data-books-panel="trend"><div class="insight-heading"><h2>${allHistory()?'月度花费':'近半年花费'}</h2>${allHistory()?`<label class="books-year-control">花费年份<select data-books-year aria-label="花费年份">${(data?.charts.years?.length?data.charts.years:[chartYear||month.slice(0,4)]).map(year=>`<option value="${esc(year)}" ${year===(data?.charts.year||chartYear)?'selected':''}>${esc(year)} 年</option>`).join('')}</select></label>`:''}</div><div class="books-line-chart" data-books-line="months"></div><div class="books-line-data">${months.map(m=>`<span data-cost-month="${esc(m.month)}">${esc(m.month)}</span>`).join('')}</div><p class="insight-note">按已录账目统计，无账目月份按 0 显示；未来月份留空。悬停查看精确金额，空心点及虚线表示未结束期间。</p></section>${allHistory()?`<section class="card insight-panel books-annual" data-books-panel="annual"><h2>年度花费</h2><div class="books-line-chart" data-books-line="annual"></div><div class="books-line-data">${(data?.charts.annual||[]).map(row=>`<span data-cost-year="${esc(row.year)}">${esc(row.year)} ${money(row.actual_cents??0)}</span>`).join('')}</div><p class="insight-note">各年已录金额，非累计；本年截至目前，不直接计算全年同比。</p></section>`:''}<section class="card insight-panel books-timeline ${allHistory()?'books-timeline-all':''}" data-books-panel="timeline"><div class="insight-heading"><h2>${allHistory()?'历史支出足迹':'本月支出足迹'}</h2><button class="button secondary" data-costs="load" ${loading||recordsLoading||!owner?'disabled':''}>读取费用总览</button></div><div class="books-timeline-heading"><span>${allHistory()?'全部历史':esc(month)} · ${total} 笔${category?' · '+esc(category):''} · 新记录在前</span>${category?'<button class="button secondary" data-costs="all">全部分类</button>':''}</div>${recordsLoading&&!records?'<p role="status">正在读取费用记录…</p>':''}${recordsError?`<p class="notice error" role="alert">${esc(recordsError)}</p>`:''}${records?filtered.length?filtered.slice(allHistory()?0:page*10,(allHistory()?0:page*10)+count).map(rowHtml).join(''):`<p class="insight-empty">${allHistory()?'当前范围':'本月'}暂无已录费用；不代表没有支出。</p>`:''}${total>4?`<div class="insight-pagination"><button class="button secondary" data-costs="expand">${expanded?'收起支出足迹':'展开更多支出'}</button>${expanded&&pages>1?`<button class="button secondary" data-costs="previous" ${page===0?'disabled':''}>上一页费用</button><span>${page+1} / ${pages}</span><button class="button secondary" data-costs="next" ${page+1===pages?'disabled':''}>下一页费用</button>`:''}</div>`:''}</section>`;
+        const names=[...new Set(groups.map(c=>c.category).concat(months.flatMap(row=>row.categories.map(c=>c.category))))];
+        const tone=name=>names.includes(name)?names.indexOf(name)%8:4;
+        const selectedGroup=groups.find(g=>g.category===category);
+        const detailAmount=category?selectedGroup?.amount_cents:data?.total;
+        const busy=loading||recordsLoading;
+        const rowHtml=row=>{
+          const partial=!category&&row.actual_cents==null&&row.parking_cents>0;
+          const parking=row.parking_cents>0?(category==='充电'?' · 另录停车费 ':category==='充电停车费'?' · 对应充电金额 ':' · 含充电停车费 '):'';
+          const related=category==='充电停车费'?row.actual_cents:row.parking_cents;
+          return `<article class="books-timeline-row" data-books-record="${esc(row.kind+':'+row.id)}"><time datetime="${esc(row.date)}">${esc(row.date)}</time><div><strong>${esc(row.title)}</strong><span>${category?'':esc(row.category)+' · '}${esc(row.source)}${parking?parking+money(related):''}${partial?' · 充电金额待补':''}</span></div><strong class="books-timeline-amount">${partial?'已知 ':''}${money(categoryAmount(row,category))}</strong></article>`;
+        };
+        const categories=`<section class="card insight-panel" data-books-panel="categories"><h2>钱花在哪里</h2><p class="insight-note">点击扇区或分类，查看右侧明细。</p>${pieChart(groups,category,tone,money,esc)}<div class="books-category-legend">${groups.map(g=>`<button class="books-category-button" data-costs="category" data-cost-category="${esc(g.category)}" aria-label="筛选分类 ${esc(g.category)}" aria-pressed="${category===g.category}"><i class="books-category-swatch books-tone-${tone(g.category)}" aria-hidden="true"></i><span>${esc(g.category)}</span><span class="books-category-money">${money(g.amount_cents)}<small>${esc(formatShare(g.amount_cents,data.total))}</small></span></button>`).join('')}</div></section>`;
+        const details=`<section class="card insight-panel books-details" data-books-panel="details" aria-busy="${busy}"><div class="insight-heading"><h2>${category?esc(category)+'明细':'支出明细'}</h2>${category?'<button class="button secondary" data-costs="all">全部分类</button>':''}</div><div class="books-details-summary"><span>${allHistory()?'全部历史':esc(month)} · ${records?total+' 笔':'正在读取'} · 新记录在前</span><strong>已录 ${money(detailAmount)}</strong></div><div class="books-detail-list" aria-live="polite">${busy&&!records?'<p role="status">正在读取支出明细…</p>':''}${recordsError||(!busy&&!records&&error)?`<p class="notice error" role="alert">${esc(recordsError||error)}</p>`:''}${records?(filtered.length?filtered.slice(allHistory()?0:page*10,(allHistory()?0:page*10)+10).map(rowHtml).join(''):`<p class="insight-empty">${category?'该分类':allHistory()?'当前范围':'本月'}暂无费用记录；不代表没有支出。</p>`):''}</div><div class="books-details-footer"><button class="button secondary" data-costs="load" ${busy||!owner?'disabled':''}>读取费用总览</button>${pages>1?`<div class="insight-pagination"><button class="button secondary" data-costs="previous" ${busy||page===0?'disabled':''}>上一页费用</button><span>${page+1} / ${pages}</span><button class="button secondary" data-costs="next" ${busy||page+1===pages?'disabled':''}>下一页费用</button></div>`:''}</div></section>`;
+        workspace.innerHTML=`<div class="books-chart-top">${categories}${details}</div><section class="card insight-panel books-trend" data-books-panel="trend"><div class="insight-heading"><h2>${allHistory()?'月度花费':'近半年花费'}</h2>${allHistory()?`<label class="books-year-control">花费年份<select data-books-year aria-label="花费年份">${(data?.charts.years?.length?data.charts.years:[chartYear||month.slice(0,4)]).map(year=>`<option value="${esc(year)}" ${year===(data?.charts.year||chartYear)?'selected':''}>${esc(year)} 年</option>`).join('')}</select></label>`:''}</div><div class="books-line-chart" data-books-line="months"></div><div class="books-line-data">${months.map(m=>`<span data-cost-month="${esc(m.month)}">${esc(m.month)}</span>`).join('')}</div><p class="insight-note">按已录账目统计，无账目月份按 0 显示；未来月份留空。悬停查看精确金额，空心点及虚线表示未结束期间。</p></section>${allHistory()?`<section class="card insight-panel books-annual" data-books-panel="annual"><h2>年度花费</h2><div class="books-line-chart" data-books-line="annual"></div><div class="books-line-data">${(data?.charts.annual||[]).map(row=>`<span data-cost-year="${esc(row.year)}">${esc(row.year)} ${money(row.actual_cents??0)}</span>`).join('')}</div><p class="insight-note">各年已录金额，非累计；本年截至目前，不直接计算全年同比。</p></section>`:''}`;
       });
       paintLineCharts();
       if(chartObserver){chartObserver.disconnect();chartObserver.observe(workspace);}
@@ -120,7 +159,7 @@
       }catch(e){if(token===recordSerial&&identity===context()&&selected===month){records=null;recordsError=e.message;}}
       finally{if(token===recordSerial){recordsLoading=false;recordsPending=null;paintRecords();}}})();return recordsPending;
     }
-    function refresh(){sync();const previousData=data,previousRecords=records;reset();data=previousData;records=previousRecords;paint();return Promise.all([loadSummary(),loadRecords()]);}
+    function refresh(){sync();const previousData=data,previousRecords=records,previousCategory=category;reset();data=previousData;records=previousRecords;category=previousCategory;paint();return Promise.all([loadSummary(),loadRecords()]);}
     function mount(container){const remount=node&&node!==container;node=container;sync();if(remount)return refresh();paint();if(!summaryAttempted)loadSummary();if(getView()==='costs'&&!recordsAttempted)loadRecords();}
     function selectMonth(value){if(!validMonth(value))return false;scope='month';chartYear='';month=value;root.BookSession?.setMonth(owner,month);reset();paint();return true;}
     function reloadAll(){serial++;loading=false;summaryPending=null;records=null;recordPage=null;return loadSummary();}
@@ -132,14 +171,13 @@
       const action=button.dataset.costs;
       if(action==='load')refresh();
       else if(action==='scope-all'||action==='scope-month'){scope=action==='scope-all'?'all':'month';chartYear='';reset();paint();loadSummary();loadRecords();}
-      else if(action==='category'){category=button.dataset.costCategory;page=0;if(allHistory())reloadAll();else paintRecords();}
+      else if(action==='category'){event.preventDefault?.();category=button.dataset.costCategory;page=0;if(allHistory())reloadAll();else paintRecords();}
       else if(action==='all'){category='';page=0;if(allHistory())reloadAll();else paintRecords();}
-      else if(action==='expand'){const previous=page;expanded=!expanded;page=0;if(allHistory()&&previous)reloadAll();else paintRecords();}
       else if(action==='previous'||action==='next'){page+=action==='previous'?-1:1;if(allHistory())reloadAll();else paintRecords();}
       else navigate(action==='life'||action==='duplicates'?'life':'ledger',month+'-01',action==='unknown'?'unknown':'all');
       return true;
     }
     return {mount,handle,refresh,openDate:date=>{if(selectMonth(date.slice(0,7)))return Promise.all([loadSummary(),loadRecords()]);}};
   }
-  if(typeof module!=='undefined'&&module.exports)module.exports={summarize,mergeRecords,recordedAmount,matchesCategory,chartPoints,create};else root.BooksOverview={create};
+  if(typeof module!=='undefined'&&module.exports)module.exports={summarize,mergeRecords,recordedAmount,matchesCategory,categoryAmount,pieSegments,formatShare,chartPoints,create};else root.BooksOverview={create};
 })(typeof window==='undefined'?globalThis:window);
