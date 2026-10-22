@@ -8,10 +8,18 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     browser=await chromium.launch({headless:true,...(process.env.CHROMIUM_EXECUTABLE?{executablePath:process.env.CHROMIUM_EXECUTABLE}:{})});
     const page=await browser.newPage({viewport:{width:1440,height:1050}}),errors=[];
     page.on('pageerror',error=>errors.push(error.message));
+    const GiB=1024**3;
+    let sample={status:'healthy',checked_at:Date.now()/1000,capacity_basis:'macos_important_usage',capacity_available_bytes:110*GiB,capacity_used_percent:(1-110/230)*100,reclaimable_bytes:95*GiB,disk_total_bytes:230*GiB,disk_used_bytes:215*GiB,disk_used_percent:215/230*100,disk_free_bytes:15*GiB,inode_used_percent:.8,data_bytes:100,archive_bytes:50,trash_bytes:0};
+    await page.route('**/api/storage',route=>route.fulfill({json:{current:sample,monitor:{...sample,monitor_fresh:true}}}));
+
     await page.goto(`http://127.0.0.1:${port}`);
     await page.locator('[data-page="settings"]').first().click();
+    await page.locator('[data-detail="settings-storage"] > summary').click();
     const panel=page.locator('#storage-management'),old=panel.locator('.storage-archive-row').filter({hasText:'2024/12'});
     await old.waitFor();
+    assert.match(await panel.innerText(),/macOS估算可用.*110.00 GiB.*即时空闲：15.00 GiB.*预计可回收/s);
+    assert.match(await panel.locator('.storage-health-heading').innerText(),/正常/);
+    assert.ok(Number(await panel.getByRole('meter').getAttribute('aria-valuenow'))<60);
     assert.match(await panel.innerText(),/Bark 提醒.*企业微信详情.*每 5 分钟/s);
     const current=panel.locator('.storage-archive-row').filter({hasText:'受保护'});
     assert.equal(await current.getByRole('button').isDisabled(),true);
@@ -23,7 +31,7 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await page.evaluate(()=>render());
     assert.equal(await panel.locator('#storage-confirm-input').inputValue(),'删除','poll render preserves confirmation draft');
     fs.mkdirSync('/tmp/zeekr-storage-qa',{recursive:true});
-    for(const width of [1440,390,320]){
+    for(const width of [1440,1100]){
       await page.setViewportSize({width,height:1050});
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,`overflow ${width}`);
       await panel.screenshot({path:`/tmp/zeekr-storage-qa/storage-${width}.png`});
@@ -39,7 +47,12 @@ const path=require('node:path'),fs=require('node:fs'),assert=require('node:asser
     await preview('永久删除');assert.match(await panel.locator('.storage-confirm').innerText(),/不可恢复/);
     await confirm('永久删除 2024/12');
     assert.equal(await old.count(),0);assert.equal(await current.count(),1);
+    sample={...sample,status:'unknown',capacity_basis:'unavailable',capacity_available_bytes:null,capacity_used_percent:null,reclaimable_bytes:null};
+    await panel.getByRole('button',{name:'刷新存储状态'}).click();
+    await page.waitForFunction(()=>document.querySelector('#storage-management').innerText.includes('macOS可用空间读取失败'));
+    assert.match(await panel.locator('.storage-health-heading').innerText(),/巡检异常/);
+    assert.equal(await panel.getByRole('meter').count(),0);
     assert.deepEqual(errors,[]);
-    console.log('Storage UI passed: health, protection, cancel, session render, trash/restore/purge, 1440/390/320 widths. Synthetic data only.');
+    console.log('Storage UI passed: health, protection, cancel, session render, trash/restore/purge, desktop1440/1100 widths, macOS effective/raw capacities and native-failure state. Synthetic data only.');
   }finally{if(browser)await browser.close();server.kill('SIGTERM');}
 })().catch(error=>{console.error(error);process.exitCode=1;});

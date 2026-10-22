@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import subprocess
+import sys
 import time
 
 from .notifications import DeliveryError
@@ -12,6 +14,52 @@ from .storage import load, save
 GIB = 1024**3
 INTERVAL = 300
 REMINDER = 86400
+
+# Foundation includes space macOS expects to reclaim. Run a fixed, non-UI script;
+# the path is an argument, never JavaScript source. No files are purged here.
+MACOS_CAPACITY_SCRIPT = '''function run(argv) {
+ ObjC.import("Foundation");
+ var url = $.NSURL.fileURLWithPath(argv[0]);
+ var keys = $(["NSURLVolumeTotalCapacityKey", "NSURLVolumeAvailableCapacityForImportantUsageKey"]);
+ var values = url.resourceValuesForKeysError(keys, null);
+ if (!values) throw Error("capacity unavailable");
+ return JSON.stringify(ObjC.deepUnwrap(values));
+}'''
+
+
+def alert_capacity(root, usage):
+    if sys.platform != 'darwin':
+        return {'capacity_basis': 'filesystem_free', 'capacity_available_bytes': usage.free,
+                'capacity_used_percent': usage.used/usage.total*100 if usage.total else None,
+                'reclaimable_bytes': None}
+    try:
+        result = subprocess.run(['/usr/bin/osascript', '-l', 'JavaScript', '-e', MACOS_CAPACITY_SCRIPT,
+                                 '--', str(root)], capture_output=True, text=True, check=True, timeout=5)
+        values = json.loads(result.stdout)
+        available = values['NSURLVolumeAvailableCapacityForImportantUsageKey']
+        total = values['NSURLVolumeTotalCapacityKey']
+        if (type(available) is not int or type(total) is not int or
+                total != usage.total or not 0 <= available <= total or total <= 0):
+            raise ValueError('Invalid capacity')
+        return {'capacity_basis': 'macos_important_usage', 'capacity_available_bytes': available,
+                'capacity_used_percent': (1-available/total)*100,
+                'reclaimable_bytes': max(0, available-usage.free)}
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return {'capacity_basis': 'unavailable', 'capacity_available_bytes': None,
+                'capacity_used_percent': None, 'reclaimable_bytes': None}
+
+
+def capacity_lines(sample):
+    if sample.get('capacity_basis') in ('macos_important_usage', 'unavailable'):
+        lines = ['即时空闲：%.2f GiB（当前已腾出）。' % (sample['disk_free_bytes']/GIB)]
+        available = sample.get('capacity_available_bytes')
+        if available is None:
+            lines.append('macOS估算可用：读取失败；空间告警口径未知。')
+        else:
+            lines += ['macOS估算可用：%.2f GiB（含系统预计可回收空间，并非已全部腾空）。' % (available/GIB),
+                      '告警口径使用率：%.1f%%。' % sample['capacity_used_percent']]
+        return lines
+    return []
 
 
 def tree_bytes(root):
@@ -33,11 +81,13 @@ def tree_bytes(root):
 
 
 def severity(sample, previous='healthy'):
-    if sample.get('disk_used_percent') is None:
-        return 'unknown'
-    used, free = sample['disk_used_percent'], sample['disk_free_bytes']
     inode = sample.get('inode_used_percent') or 0
-    if used >= 90 or free <= 2*GIB or inode >= 90: return 'critical'
+    if inode >= 90: return 'critical'
+    if sample.get('capacity_basis') == 'unavailable': return 'unknown'
+    used = sample.get('capacity_used_percent', sample.get('disk_used_percent'))
+    free = sample.get('capacity_available_bytes', sample.get('disk_free_bytes'))
+    if used is None or free is None: return 'unknown'
+    if used >= 90 or free <= 2*GIB: return 'critical'
     if previous == 'critical' and (used >= 88 or free <= 2.5*GIB or inode >= 88): return 'critical'
     if used >= 80 or free <= 5*GIB or inode >= 80: return 'warning'
     if previous in ('warning', 'critical') and (used >= 78 or free <= 6*GIB or inode >= 78): return 'warning'
@@ -65,7 +115,7 @@ class StorageHealth:
         data, complete = tree_bytes(self.root)
         archive, archive_ok = tree_bytes(self.root/'snapshot-archive')
         trash, trash_ok = tree_bytes(self.root/'snapshot-trash')
-        return {'checked_at': time.time(), 'disk_total_bytes': usage.total,
+        return {**alert_capacity(self.root, usage), 'checked_at': time.time(), 'disk_total_bytes': usage.total,
                 'disk_used_bytes': usage.used, 'disk_free_bytes': usage.free,
                 'disk_used_percent': usage.used/usage.total*100 if usage.total else None,
                 'inode_used_percent': (1-filesystem.f_favail/filesystem.f_files)*100 if filesystem.f_files else None,
@@ -84,7 +134,9 @@ class StorageHealth:
     def _message(self, sample):
         labels = {'critical': '严重', 'warning': '提醒', 'healthy': '恢复正常', 'unknown': '巡检失败'}
         parts = ['极氪服务器存储：'+labels[sample['status']]]
-        if sample.get('disk_used_percent') is not None:
+        if sample.get('capacity_basis') in ('macos_important_usage', 'unavailable'):
+            parts += capacity_lines(sample)
+        elif sample.get('disk_used_percent') is not None:
             parts += ['磁盘使用 %.1f%%，剩余 %.2f GiB。' % (sample['disk_used_percent'], sample['disk_free_bytes']/GIB)]
         if sample.get('inode_used_percent') is not None:
             parts += ['inode 使用 %.1f%%。' % sample['inode_used_percent']]
@@ -95,9 +147,11 @@ class StorageHealth:
         healthy = sample['status'] == 'healthy'
         title = '✅ Zeekr 服务器存储恢复' if healthy else '⚠️ Zeekr 服务器存储异常'
         parts = []
-        if sample.get('disk_used_percent') is not None:
+        if sample.get('capacity_basis') in ('macos_important_usage', 'unavailable'):
+            parts += capacity_lines(sample)
+        elif sample.get('disk_used_percent') is not None:
             parts.append('磁盘使用率：%.1f%%' % sample['disk_used_percent'])
-        if sample.get('disk_free_bytes') is not None:
+        if sample.get('capacity_basis') not in ('macos_important_usage', 'unavailable') and sample.get('disk_free_bytes') is not None:
             parts.append('磁盘剩余：%.2f GiB' % (sample['disk_free_bytes']/GIB))
         if sample.get('inode_used_percent') is not None:
             parts.append('inode 使用率：%.1f%%' % sample['inode_used_percent'])
@@ -117,16 +171,23 @@ class StorageHealth:
         sample['checked_at'] = now
         sample['status'] = severity(sample, state.get('sample', {}).get('status'))
         history = [x for x in state.get('history', []) if now-7*86400 <= x['time'] < now]
-        recent = [x for x in history if now-86400 <= x['time'] <= now-21600]
+        basis = sample.get('capacity_basis', 'filesystem_free')
+        recent = [x for x in history if now-86400 <= x['time'] <= now-21600
+                  and x.get('capacity_basis', 'filesystem_free') == basis]
         sample['data_growth_bytes_per_day'] = sample['estimated_disk_days'] = None
         if recent and sample.get('scan_complete'):
             start = recent[0]
             factor = 86400/(now-start['time'])
             sample['data_growth_bytes_per_day'] = (sample['data_bytes']-start['data_bytes'])*factor
-            disk_growth = (start['free_bytes']-sample['disk_free_bytes'])*factor
-            if disk_growth > 0: sample['estimated_disk_days'] = sample['disk_free_bytes']/disk_growth
+            available = sample.get('capacity_available_bytes', sample['disk_free_bytes'])
+            disk_growth = ((start.get('available_bytes', start['free_bytes'])-available)*factor
+                           if available is not None else 0)
+            if disk_growth > 0: sample['estimated_disk_days'] = available/disk_growth
         if sample.get('scan_complete'):
-            history.append({'time': now, 'data_bytes': sample['data_bytes'], 'free_bytes': sample['disk_free_bytes']})
+            if sample.get('capacity_available_bytes', sample.get('disk_free_bytes')) is not None:
+                history.append({'time': now, 'data_bytes': sample['data_bytes'], 'free_bytes': sample['disk_free_bytes'],
+                                'capacity_basis': basis,
+                                'available_bytes': sample.get('capacity_available_bytes', sample['disk_free_bytes'])})
         state.update(sample=sample, history=history[-2016:], last_check=now)
         # A worker interrupted during send must not retry an uncertain delivery.
         if state.get('notification_state') == 'sending': state['notification_state'] = 'uncertain'
