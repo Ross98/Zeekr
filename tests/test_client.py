@@ -35,6 +35,30 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(wire.calls[2][2]['authorization'], 'access')
         self.assertEqual(wire.calls[1][3], b'{"authCode":"code"}')
 
+    def test_refresh_is_separate_signed_put_and_does_not_replace_session(self):
+        original={'accessToken':'old-access','userId':'user','clientId':'client','deviceId':'stable'}
+        wire=Transport({'code':'1000','data':{'accessToken':'new-access','refreshToken':'new-refresh'}})
+        client=Client(original,wire)
+        candidate=client.refresh_gw2('old-refresh')
+        self.assertEqual(candidate['accessToken'],'new-access')
+        self.assertEqual(candidate['refreshToken'],'new-refresh')
+        self.assertEqual(candidate['deviceId'],'stable')
+        self.assertEqual(client.session,original)
+        method,url,headers,body=wire.calls[0]
+        self.assertEqual(method,'PUT');self.assertNotIn('?',url)
+        self.assertEqual(json.loads(body),{'refreshToken':'old-refresh'})
+        self.assertEqual(client.query_outcome.operation,'gw2_refresh')
+        self.assertTrue(client.query_outcome.actual_request)
+
+    def test_login_refresh_capture_is_optional_and_never_in_default_session(self):
+        for value in ('refresh-secret',None,[],42,''):
+            for capture in (False,True):
+                wire=Transport(ok({'YIKAT_NEW':'code'}),ok({'accessToken':'access','userId':'user','clientId':'client','refreshToken':value}))
+                client=Client(transport=wire,capture_refresh=capture)
+                client.login_jwt('jwt')
+                self.assertNotIn('refreshToken',client.session)
+                self.assertEqual(client.login_refresh_token,'refresh-secret' if capture and value=='refresh-secret' else None)
+
     def test_signature_covers_exact_post_bytes(self):
         wire = Transport(ok({'accessToken': 'token', 'userId': 'uid', 'clientId': 'cid'}))
         client = Client(transport=wire)

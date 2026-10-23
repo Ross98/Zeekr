@@ -127,7 +127,7 @@ class VehicleLoginTests(unittest.TestCase):
     def test_storage_failure_preserves_session_and_does_not_expose_tokens(self):
         from unittest.mock import patch
         challenge = self.begin()
-        with patch('zeekr_control.vehicle_login.save', side_effect=OSError('new-token')):
+        with patch('zeekr_control.credential_store.save', side_effect=OSError('new-token')):
             status, result = self.finish(challenge)
         self.assertEqual(status, 500)
         self.assertNotIn('new-token', str(result))

@@ -33,6 +33,8 @@ from .query_policy import QueryPolicy
 from .archive_reader import ArchiveReader
 from .automatic_insights import Analyzer, InsightCache, InsightWorker
 from .system_notifications import AuthFailureAlert
+from .collection_incidents import CollectionIncidents
+from .refresh_recovery import RefreshDriver
 
 
 def enable_sampling(root):
@@ -127,13 +129,15 @@ def process_lock(path):
 
 
 PUBLIC_HEALTH_FIELDS = ('status', 'heartbeat', 'next_check', 'interval', 'last_success',
-                        'last_new', 'trip', 'charge', 'data_change', 'state_time')
+                        'last_new', 'trip', 'charge', 'data_change', 'state_time',
+                        'refresh_status', 'incident_recording')
 
 
 def _safe_error(value):
     if not value:
         return ''
     text = str(value)
+    if text=='凭据已更新，等待目标车辆接口恢复核对。':return text
     if '网关代码 1509' in text:
         return '车辆接口返回 1509，后台正在退避重试；期间记录可能不完整。'
     for category, tokens in (
@@ -193,7 +197,7 @@ def read_status(root, vehicle=None, public=False):
 
 class Runner:
     def __init__(self, session_path=DEFAULT_PATH, vehicle=None, client_factory=Client, sender=None,
-                 active_codes=(), stopped_codes=(), alert_sender=None):
+                 active_codes=(), stopped_codes=(), alert_sender=None, refresh_driver=None):
         self.session_path = Path(session_path)
         self.root = self.session_path.parent
         if vehicle is not None and (type(vehicle) is not int or vehicle < 1):
@@ -212,6 +216,8 @@ class Runner:
         self.reminder_sender = (FallbackSender(self.alert_sender, self.sender, compact_bark_times)
                                 if self.alert_sender is not None else self.sender)
         self.auth_failure_alert = AuthFailureAlert(self.root, self.alert_sender)
+        self.incidents = CollectionIncidents(self.root)
+        self.refresh_driver = refresh_driver if refresh_driver is not None else RefreshDriver(self.session_path,client_factory=self.client_factory)
         self.storage_health = StorageHealth(self.root, self.sender, self.alert_sender)
         self.reminders = Reminders(PersonalStore(self.root / 'personal.sqlite3'))
         self.tyre_notifications = TyreNotifications(self.reminders.store)
@@ -336,8 +342,20 @@ class Runner:
                               trip='waiting' if state['trip'] and state['trip']['stop'] else 'driving' if state['trip'] else 'idle',
                               charge='charging' if state['charge'] else 'idle' if state['last'] and state['last']['charging'] is False else 'unknown',
                               signals=json.dumps(state['last']['signals'], ensure_ascii=False) if state['last'] else '{}')
-                self.auth_failure_alert.recovered()
-                health.pop('gateway_retry', None)
+                outcome=getattr(client,'query_outcome',None)
+                actual_success=(outcome is None or outcome.actual_request and not outcome.cache_hit
+                                and outcome.operation=='status' and outcome.schema_valid
+                                and outcome.success_code in ('1000','000000'))
+                if actual_success:
+                    self.auth_failure_alert.recovered()
+                    health.pop('gateway_retry', None)
+                    try:self.refresh_driver.coordinator.confirm_status(session,outcome)
+                    except (ApiError,OSError,ValueError,sqlite3.Error):health['refresh_status']='storage_error'
+                try:
+                    self.incidents.success(account_scope(session),binding,session_scope(session),outcome,observed,
+                                           int(point['time']) if point['time'] is not None else None)
+                    health.pop('incident_recording',None)
+                except (ApiError,OSError,ValueError,sqlite3.Error):health['incident_recording']='unavailable'
                 self.failures = 0
                 def reminder_guard():
                     current_binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
@@ -374,8 +392,32 @@ class Runner:
                               gateway_reason=exc.gateway_reason or '', gateway_error_at=str(now), gap_pending='true')
                 self.monitor.mark_sampling_gap(load(self.root / 'monitor-binding.json').get('vehicle_key'))
                 self.auth_failure_alert.record_failure(exc.gateway_code, exc.gateway_reason, now)
-                if retry['attempts'] >= 3 and now - retry['first_at'] >= 600000:
-                    self.auth_failure_alert.blocked(error, now)
+                incident=None
+                try:
+                    incident=self.incidents.failure(account_scope(session),
+                        load(self.root/'monitor-binding.json').get('vehicle_key','unbound'),session_scope(session),now,
+                        int(health['state_time']) if health.get('state_time') else None,
+                        int(health['last_success']) if health.get('last_success') else None)
+                    health.pop('incident_recording',None)
+                except (ApiError,OSError,ValueError,sqlite3.Error):health['incident_recording']='unavailable'
+                eligibility=(dict(incident,attempts=min(incident['attempts'],retry['attempts']),
+                                  opened_at=max(incident['opened_at'],retry['first_at'])) if incident else None)
+                recovery=self.refresh_driver.attempt(session,eligibility,now)
+                health['refresh_status']=recovery.kind
+                if recovery.kind=='refreshed':
+                    delay=1
+                    health['error']='凭据已更新，等待目标车辆接口恢复核对。'
+                elif recovery.kind in ('deferred','rate_limited'):
+                    delay=max(delay,recovery.wait_seconds)
+                    retry['next_at']=(int(time.time()*1000) if live_clock else now)+delay*1000
+                    health['gateway_retry']=json.dumps(retry)
+                if incident and recovery.kind in ('refreshed','manual_required','uncertain','rate_limited','storage_error'):
+                    try:self.incidents.classify(incident['id'],recovery.kind,now)
+                    except (ApiError,OSError,ValueError,sqlite3.Error):health['incident_recording']='unavailable'
+                if recovery.kind in ('manual_required','uncertain'):
+                    self.auth_failure_alert.blocked(error,now,manual=True,incident_id=incident['id'] if incident else None)
+                elif retry['attempts'] >= 3 and now - retry['first_at'] >= 600000:
+                    self.auth_failure_alert.blocked(error,now,incident_id=incident['id'] if incident else None)
             elif exc.retry_after:
                 delay = max(interval, exc.retry_after)
                 health.update(status='cooldown', error=error[:150])

@@ -358,6 +358,45 @@ class ArchiveReaderTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.reader.frozen('new','car',self.start+10000).read('foreign','car',rows[0]['key'])
         self.assertEqual(len(list(self.reader.iter_metadata('foreign','car',self.start,self.start+10000))),1)
         with self.assertRaises(ValueError):store.bind_archive('old','car','other')
+    def test_thousand_scopes_read_all_and_frozen_membership_excludes_new_scope(self):
+        from zeekr_control.snapshots import SnapshotStore
+        store=SnapshotStore(self.root.parent/'snapshots.sqlite3')
+        for i in range(1024):
+            scope='session-'+str(i)
+            store.bind_archive(scope,'car','account')
+            self.append(i,scope=scope)
+        frozen=self.reader.frozen('session-0','car',self.start+10000)
+        store.bind_archive('later','car','account');self.append(2000,scope='later')
+        store.bind_archive('foreign','car','different-account');self.append(3000,scope='foreign')
+        rows=list(frozen.iter_metadata('session-0','car',self.start,self.start+10000))
+        self.assertEqual(len(rows),1024)
+        self.assertEqual(len({row['key'] for row in rows}),1024)
+        self.assertEqual(len(list(self.reader.iter_metadata('session-0','car',self.start,self.start+10000))),1025)
+        count=0;cursor=None
+        while True:
+            page=self.reader.timeline('session-0','car','2026-09-20',cursor=cursor,limit=120)
+            count+=len(page['items']);cursor=page['next_cursor']
+            if cursor is None:break
+        self.assertEqual(count,1025)
+
+    def test_registry_replacement_aborts_frozen_read_and_index_upgrade_preserves_rows(self):
+        from zeekr_control.snapshots import SnapshotStore
+        from zeekr_control.archive_reader import ArchiveChanged
+        store=SnapshotStore(self.root.parent/'snapshots.sqlite3')
+        store.bind_archive('owner','car','account');self.append()
+        frozen=self.reader.frozen('owner','car',self.start+10000)
+        registry=store.path;replacement=registry.with_suffix('.replacement')
+        replacement.write_bytes(registry.read_bytes());replacement.chmod(0o600);replacement.replace(registry)
+        with self.assertRaises(ArchiveChanged):list(frozen.iter_records('owner','car',self.start,self.start+10000))
+        shard=self.root/'2026/09.sqlite3'
+        with sqlite3.connect(shard) as db:
+            before=db.execute('SELECT * FROM reads').fetchall()
+            db.execute('DROP INDEX reads_vehicle_observed')
+        self.assertEqual(len(self.reader.timeline('owner','car','2026-09-20')['items']),1)
+        self.assertEqual(SnapshotArchive(self.root).ensure_read_indexes(),1)
+        self.assertEqual(SnapshotArchive(self.root).ensure_read_indexes(),0)
+        with sqlite3.connect(shard) as db:self.assertEqual(db.execute('SELECT * FROM reads').fetchall(),before)
+
     def test_linked_scope_pagination_keeps_index_order_without_sorting_whole_history(self):
         from zeekr_control.snapshots import SnapshotStore
         store=SnapshotStore(self.root.parent/'snapshots.sqlite3')

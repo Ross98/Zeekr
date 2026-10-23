@@ -4,7 +4,7 @@ import sqlite3
 import time
 
 from .archive_reader import _private
-from .delivery_state import delivery_lock
+from .delivery_state import delivery_lock, add_columns
 from .notifications import DeliveryError, bark_time
 from .storage import load
 
@@ -25,6 +25,9 @@ class AuthFailureAlert:
             with db:
                 db.execute('CREATE TABLE IF NOT EXISTS auth_state(id INTEGER PRIMARY KEY,generation INTEGER,active INTEGER)')
                 db.execute('CREATE TABLE IF NOT EXISTS auth_outbox(generation INTEGER PRIMARY KEY,created INTEGER,state TEXT,error TEXT,sent_at INTEGER)')
+                db.execute('CREATE TABLE IF NOT EXISTS auth_outbox_context(generation INTEGER PRIMARY KEY,kind TEXT)')
+                add_columns(db,'auth_outbox_context',{'incident_id':'TEXT'})
+                db.execute('CREATE UNIQUE INDEX IF NOT EXISTS auth_context_incident ON auth_outbox_context(incident_id,kind)')
                 if db.execute('SELECT 1 FROM auth_state WHERE id=1').fetchone() is None:
                     legacy=load(self.root/'auth-failure-alert.json').get('state')
                     db.execute('INSERT INTO auth_state VALUES(1,0,?)',(int(legacy in ('sending','sent','failed','uncertain')),))
@@ -38,16 +41,24 @@ class AuthFailureAlert:
             db.execute('INSERT INTO gateway_failures(created,code,reason) VALUES(?,?,?)', (now,code,(reason or '')[:240]))
             db.execute('DELETE FROM gateway_failures WHERE id NOT IN (SELECT id FROM gateway_failures ORDER BY id DESC LIMIT 200)')
 
-    def blocked(self,error,now=None):
+    def blocked(self,error,now=None,manual=False,incident_id=None):
         if '网关代码 1509' not in error:return
         now=int(time.time()*1000) if now is None else now
         with self.connect() as db,db:
             db.execute('BEGIN IMMEDIATE')
+            alert_kind='manual' if manual else 'interruption'
+            if incident_id and db.execute('SELECT 1 FROM auth_outbox_context WHERE incident_id=? AND kind=?',
+                                         (incident_id,alert_kind)).fetchone():return
             generation,active=db.execute('SELECT generation,active FROM auth_state WHERE id=1').fetchone()
-            if active:return
+            if active:
+                kind=db.execute('SELECT kind FROM auth_outbox_context WHERE generation=?',(generation,)).fetchone()
+                if not manual or kind and kind[0]=='manual':return
+                db.execute("UPDATE auth_outbox SET state='cancelled' WHERE state='pending'")
             generation+=1
             db.execute('UPDATE auth_state SET generation=?,active=1 WHERE id=1',(generation,))
             db.execute("INSERT INTO auth_outbox VALUES(?,?,'pending',NULL,NULL)",(generation,now))
+            db.execute('INSERT INTO auth_outbox_context(generation,kind,incident_id) VALUES(?,?,?)',
+                       (generation,alert_kind,incident_id))
 
     def recovered(self):
         if not self.path.exists() and not (self.root/'auth-failure-alert.json').exists():return
@@ -69,6 +80,10 @@ class AuthFailureAlert:
                 try:
                     last = load(self.root/'monitor-health.json').get('last_success')
                     body = '车辆接口持续返回 1509，采集暂未恢复，后台仍在自动重试。期间轨迹与行程可能不完整；请查看采集状态与脱敏网关说明。'
+                    with self.connect() as db:
+                        context=db.execute('SELECT kind FROM auth_outbox_context WHERE generation=?',(generation,)).fetchone()
+                    if context and context[0]=='manual':
+                        body='自动续期未能确认，采集仍在受保护重试。请人工核对车辆账号连接，必要时重新认证；不确定的刷新请求不会自动重放。'
                     if last: body += '\n最后成功读取：' + bark_time(last)
                     self.sender('⚠️ 极氪采集已中断',body)
                     state,error='sent',None

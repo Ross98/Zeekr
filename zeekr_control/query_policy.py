@@ -15,7 +15,8 @@ import sqlite3
 import stat
 import time
 
-from .errors import ApiError, RateLimited
+from .errors import ApiError, RateLimited, RequestDeferred
+from .coordination_context import lock_context
 from .sampling import read_settings
 
 DEFAULT_PATH = Path.home() / 'Library' / 'Application Support' / 'ZeekrControl' / 'queries.sqlite3'
@@ -69,7 +70,7 @@ class QueryPolicy:
         cache_key = digest(json.dumps([account, session, operation, resource]))
         self.cache_hit, self.fetched_at, self.next_query_at = False, None, None
         try:
-            with closing(self._connect()) as connection:
+            with lock_context('query'), closing(self._connect()) as connection:
                 connection.execute('BEGIN IMMEDIATE')
                 try:
                     connection.execute('CREATE TABLE IF NOT EXISTS cooldown (key TEXT PRIMARY KEY, until REAL NOT NULL)')
@@ -96,7 +97,7 @@ class QueryPolicy:
                     # local profile. Valid cached results remain readable.
                     if self.next_query_at > now:
                         wait = math.ceil(self.next_query_at - now)
-                        raise ApiError('本机查询保护：请等待 %d 秒后再查询；未发送网络请求。' % wait, retry_after=wait)
+                        raise RequestDeferred('本机查询保护：请等待 %d 秒后再查询；未发送网络请求。' % wait, retry_after=wait)
                     if operation == 'status':
                         self.next_query_at = max(self.next_query_at, now + interval)
                         connection.execute('INSERT OR REPLACE INTO status_attempts VALUES (?, ?)', (account_key, now))

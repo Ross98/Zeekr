@@ -1,6 +1,7 @@
 """Private latest-vehicle snapshots shared by monitor and Web processes."""
 from contextlib import closing
 import hashlib
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -117,16 +118,37 @@ def session_scope(session):
     return hashlib.sha256(json.dumps(session, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+@dataclass(frozen=True)
+class ArchiveScopeSelection:
+    scope: str
+    vehicle: str
+    registry: str = ''
+    identity: tuple = ()
+    owner: object = None
+    watermark: int = 0
+
+    def validate(self):
+        from .archive_reader import _private, ArchiveChanged
+        if not self.registry:return
+        path=Path(self.registry)
+        try:
+            _private(path.parent,directory=True);_private(path)
+            info=path.stat()
+            if (info.st_dev,info.st_ino)!=self.identity:raise OSError()
+        except OSError:
+            raise ArchiveChanged('账号历史关联库已变化，请重新读取。') from None
+
+
 def archive_aliases(path, scope, vehicle):
-    """Only explicitly registered sessions of this account and vehicle are readable."""
+    """A fixed-size verified selector, never an enumerated/truncated scope list."""
     path=Path(path)
-    if not path.exists() and not path.is_symlink():return (scope,)
+    if not path.exists() and not path.is_symlink():return ArchiveScopeSelection(scope,vehicle)
     from .archive_reader import _private
-    _private(path)
+    _private(path.parent,directory=True);_private(path)
+    info=path.stat();identity=(info.st_dev,info.st_ino)
     with closing(sqlite3.connect(path.absolute().as_uri()+'?mode=ro',uri=True)) as db:
-        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='archive_accounts'").fetchone():return (scope,)
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='archive_accounts'").fetchone():return ArchiveScopeSelection(scope,vehicle)
         owner=db.execute('SELECT owner_key FROM archive_accounts WHERE scope_key=? AND vehicle_key=?',(scope,vehicle)).fetchone()
-        if owner is None:return (scope,)
-        rows=db.execute('SELECT scope_key FROM archive_accounts WHERE owner_key=? AND vehicle_key=? ORDER BY scope_key LIMIT 257',(owner[0],vehicle)).fetchall()
-        if len(rows)>256:raise ValueError('账户历史会话过多，需要整理归档关联。')
-        return tuple(r[0] for r in rows)
+        if owner is None:return ArchiveScopeSelection(scope,vehicle)
+        maximum=db.execute('SELECT MAX(rowid) FROM archive_accounts WHERE owner_key=? AND vehicle_key=?',(owner[0],vehicle)).fetchone()[0]
+        return ArchiveScopeSelection(scope,vehicle,str(path.absolute()),identity,owner[0],maximum)

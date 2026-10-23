@@ -135,14 +135,21 @@ class ArchiveReader:
         aliases=getattr(self,'_aliases',None)
         if aliases is None:aliases=archive_aliases(self.root.parent/'snapshots.sqlite3',scope,vehicle)
         with self.connect(month) as db:
-            if db is not None and aliases!=(scope,):
-                # Main database remains mode=ro. A connection-local view preserves
-                # indexed scope/vehicle filtering; no original row is migrated.
+            if db is not None and aliases.owner is not None:
+                aliases.validate()
+                db.execute('ATTACH DATABASE ? AS account_registry',(Path(aliases.registry).as_uri()+'?mode=ro',))
+                owner=db.execute('SELECT owner_key FROM account_registry.archive_accounts WHERE scope_key=? AND vehicle_key=?',(scope,vehicle)).fetchone()
+                if owner is None or owner[0]!=aliases.owner:raise ArchiveChanged('账号历史关联已变化。')
                 quote=lambda value:"'"+value.replace("'","''")+"'"
+                has_index=db.execute("SELECT 1 FROM main.sqlite_master WHERE type='index' AND name='reads_vehicle_observed'").fetchone()
+                index=' INDEXED BY reads_vehicle_observed' if has_index else ''
+                projection=('SELECT r.id,'+quote(scope)+' AS scope_key,r.vehicle_key,r.state_time,r.fetched_at,r.observed_at,r.source,r.digest '
+                            'FROM main.reads AS r'+index+' CROSS JOIN account_registry.archive_accounts AS a '
+                            'WHERE a.scope_key=r.scope_key AND a.vehicle_key=r.vehicle_key AND a.owner_key='+quote(aliases.owner)+
+                            ' AND a.vehicle_key='+quote(vehicle)+' AND a.rowid<='+str(aliases.watermark))
                 db.execute('PRAGMA query_only=OFF')
-                projection='SELECT id,'+quote(scope)+' AS scope_key,vehicle_key,state_time,fetched_at,observed_at,source,digest FROM main.reads WHERE scope_key='
-                db.execute('CREATE TEMP VIEW reads AS '+' UNION ALL '.join(projection+quote(alias)+' AND vehicle_key='+quote(vehicle) for alias in aliases))
-                db.execute('PRAGMA query_only=ON')
+                try:db.execute('CREATE TEMP VIEW reads AS '+projection)
+                finally:db.execute('PRAGMA query_only=ON')
             yield db
 
     def _months(self):

@@ -3,6 +3,7 @@
 Only explicitly listed authentication and cached-data endpoints are reachable.
 """
 import base64
+from dataclasses import dataclass, replace
 import hashlib
 import hmac
 import json
@@ -25,6 +26,7 @@ OPERATIONS = {
     'login': (1, 'POST', '/zeekrlife-app-user/v1/user/pub/login/mobile'),
     'access_code': (1, 'GET', '/zeekrlife-mp-auth2/v1/auth/accessCodeList'),
     'line_login': (2, 'POST', '/auth/account/session/secure'),
+    'gw2_refresh': (2, 'PUT', '/auth/account/session/secure'),
     'vehicles': (2, 'GET', '/device-platform/user/vehicle/secure'),
     'status': (2, 'GET', '/remote-control/vehicle/status/{vin}'),
 }
@@ -82,8 +84,21 @@ def gateway_reason(value, private_values=()):
     return ' '.join(text.split())[:240]
 
 
+@dataclass(frozen=True)
+class QueryOutcome:
+    operation: str = ''
+    actual_request: bool = False
+    cache_hit: bool = False
+    success_code: str = ''
+    fetched_at: object = None
+    schema_valid: bool = False
+
+
 class Client:
-    def __init__(self, session=None, transport=transport, query_policy=None):
+    def __init__(self, session=None, transport=transport, query_policy=None, capture_refresh=False):
+        self.capture_refresh = capture_refresh
+        self.login_refresh_token = None
+        self.query_outcome = QueryOutcome()
         self.session = dict(session or {})
         self.session.setdefault('deviceId', uuid.uuid4().hex)
         self.transport = transport
@@ -134,6 +149,7 @@ class Client:
         }
 
     def _request(self, operation, params=None, payload=None, vin=None):
+        self.query_outcome = QueryOutcome(operation=operation)
         if operation not in OPERATIONS:
             raise ApiError('不支持此操作。')
         gateway, method, path = OPERATIONS[operation]
@@ -154,6 +170,7 @@ class Client:
             else:
                 query = urlencode(params)
             url = HOSTS[gateway] + path + ('?' + query if query else '')
+            self.query_outcome = replace(self.query_outcome, actual_request=True)
             result = self.transport(method, url, headers, body)
             if not isinstance(result, dict):
                 raise ApiError('网关响应结构不符。')
@@ -165,6 +182,7 @@ class Client:
                 message = '%s 失败，网关代码 %s' % (operation, safe_code)
                 if reason: message += '；网关说明（脱敏）：' + reason
                 raise ApiError(message, gateway_code=safe_code, gateway_reason=reason)
+            self.query_outcome = replace(self.query_outcome, success_code=code, fetched_at=time.time())
             return result.get('data')
 
         if self.query_policy is None:
@@ -177,6 +195,8 @@ class Client:
             self.last_query_cached = self.query_policy.cache_hit
             self.last_query_fetched_at = self.query_policy.fetched_at
             self.next_query_at = self.query_policy.next_query_at
+            self.query_outcome = replace(self.query_outcome, cache_hit=self.last_query_cached,
+                                         fetched_at=self.last_query_fetched_at)
 
     @staticmethod
     def _phone(phone):
@@ -206,8 +226,25 @@ class Client:
         code = required(data, 'YIKAT_NEW')
         data = self._request('line_login', payload={'authCode': code})
         fields = {key: required(data, key) for key in ('accessToken', 'userId', 'clientId')}
+        value = data.get('refreshToken')
+        self.login_refresh_token = value if self.capture_refresh and isinstance(value,str) and value.strip() and not any(c in value for c in '\r\n') else None
         # Persist only the GW2 session needed for read requests.
         self.session = {'deviceId': self.session['deviceId'], **fields}
+
+    def refresh_gw2(self, refresh_token):
+        """Return a detached candidate; coordination and persistence belong to caller."""
+        token=required({'refreshToken':refresh_token},'refreshToken')
+        self._authenticated()
+        data=self._request('gw2_refresh',payload={'refreshToken':token})
+        access=required(data,'accessToken')
+        if data.get('userId') is not None and data['userId']!=self.session['userId']:
+            raise ApiError('刷新响应账号不一致，未替换会话。')
+        candidate={key:value for key,value in self.session.items() if key not in ('jwtToken','refreshToken')}
+        candidate['accessToken']=access
+        candidate['clientId']=required(data if data.get('clientId') else self.session,'clientId')
+        value=data.get('refreshToken')
+        candidate['refreshToken']=value if isinstance(value,str) and value.strip() and not any(c in value for c in '\r\n') else token
+        return candidate
 
     def _authenticated(self):
         for key in ('accessToken', 'userId'):
@@ -232,4 +269,5 @@ class Client:
         result = data.get('vehicleStatus', data)
         if not isinstance(result, dict) or not result:
             raise ApiError('未返回有效车辆状态。')
+        self.query_outcome=replace(self.query_outcome,schema_valid=True)
         return result

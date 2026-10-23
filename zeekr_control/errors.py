@@ -16,3 +16,8 @@ class RateLimited(ApiError):
     def __init__(self, seconds):
         self.seconds = seconds
         super().__init__('网关 HTTP 429；至少等待 %d 秒后再查询，未自动重试。' % seconds)
+
+
+class RequestDeferred(ApiError):
+    """Query protection proved that no transport callback was invoked."""
+    request_sent = False

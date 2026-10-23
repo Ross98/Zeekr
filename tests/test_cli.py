@@ -22,6 +22,22 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result.exception.code,2)
             self.assertEqual(path.read_bytes(),before)
 
+    def test_login_exchange_and_logout_respect_other_process_operation(self):
+        from unittest.mock import Mock
+        from zeekr_control.credential_coordinator import CredentialCoordinator
+        from zeekr_control.snapshots import session_scope
+        from zeekr_control.storage import load
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'session.json'
+            old={'accessToken':'old','userId':'owner'};save(path,old)
+            c=CredentialCoordinator(path);c.reserve('sms_login',session_scope(old))
+            client=Mock()
+            with patch('sys.stdin.isatty',return_value=True),patch('zeekr_control.cli.Client',return_value=client),                  patch('zeekr_control.cli.getpass.getpass',side_effect=['13800000000','123456']),                  contextlib.redirect_stdout(io.StringIO()),contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(main(['login'],path),1)
+                self.assertEqual(main(['logout'],path),1)
+            client.login_sms.assert_not_called()
+            self.assertEqual(load(path),old)
+
     def test_missing_session_exit_and_no_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()

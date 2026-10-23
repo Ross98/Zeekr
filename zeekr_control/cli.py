@@ -7,9 +7,11 @@ import re
 import sys
 
 from .client import Client, ApiError
-from .storage import DEFAULT_PATH, load, save, clear
+from .storage import DEFAULT_PATH, load
 from .summary import format_status
 from .query_policy import QueryPolicy
+from .credential_coordinator import CredentialCoordinator
+from .snapshots import session_scope
 
 
 def redact(value, full=False):
@@ -98,24 +100,46 @@ def main(argv=None, session_path=DEFAULT_PATH):
             from .web import serve
             return serve(args.port)
         if args.command == 'logout':
-            clear(session_path)
+            coordinator=CredentialCoordinator(session_path)
+            operation=coordinator.reserve('logout',session_scope(load(session_path)))
+            coordinator.logout(operation)
             print('本机会话已删除。')
             return 0
         if args.command == 'login':
             if not sys.stdin.isatty():
                 raise ApiError('请在本机交互终端运行登录；不要通过聊天、命令参数或管道传递凭据。')
             # A fresh client prevents old tokens contaminating a new account login.
-            client = Client(query_policy=QueryPolicy(Path(session_path).parent / 'queries.sqlite3'))
+            coordinator=CredentialCoordinator(session_path)
+            client = Client(query_policy=QueryPolicy(Path(session_path).parent / 'queries.sqlite3'),capture_refresh=coordinator.store.allow_refresh)
             print('请使用已分享车辆的副账号。新登录可能使该账号的官方 App 下线。')
+            baseline=session_scope(load(session_path))
             if args.token:
-                client.login_jwt(getpass.getpass('粘贴 JWT（输入隐藏）：').strip())
+                token=getpass.getpass('粘贴 JWT（输入隐藏）：').strip()
             else:
                 phone = getpass.getpass('副账号手机号（输入隐藏，回车发送短信）：').strip()
                 client.send_sms(phone)
                 print('短信请求已被网关接受。')
                 code = getpass.getpass('短信验证码（输入隐藏）：').strip()
-                client.login_sms(phone, code)
-            save(session_path, client.session)
+            operation=coordinator.reserve('jwt_login' if args.token else 'sms_login',baseline)
+            try:
+                if args.token:client.login_jwt(token)
+                else:client.login_sms(phone, code)
+                old=load(session_path)
+                if old.get('userId') and client.session.get('userId')!=old['userId']:
+                    raise ApiError('账号与原采集账号不同，请先明确退出原账号。')
+                vehicles=client.vehicles()
+                vins=find_vins(vehicles)
+                binding=load(Path(session_path).parent/'monitor-binding.json').get('vehicle_key')
+                import hashlib
+                if not vins or binding and binding not in {hashlib.sha256(v.encode()).hexdigest() for v in vins}:
+                    raise ApiError('登录后的车辆与当前绑定不符，未替换会话。')
+                from .credential_store import login_candidate
+                if coordinator.commit(operation,login_candidate(client,coordinator.store))!='committed':
+                    raise ApiError('会话已更新，未覆盖当前会话。')
+            except BaseException:
+                try:coordinator.finish(operation,'uncertain')
+                except (ApiError,OSError):pass
+                raise
             print('认证完成，会话已保存。请运行 python3 -m zeekr_control vehicles 验证车辆访问。')
             return 0
         client = Client(load(session_path), query_policy=QueryPolicy(Path(session_path).parent / 'queries.sqlite3'))

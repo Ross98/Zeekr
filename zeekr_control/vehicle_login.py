@@ -7,11 +7,15 @@ import time
 
 from .cli import find_vins
 from .errors import ApiError
-from .storage import load, save
+from .storage import load
+from .snapshots import session_scope
+from .credential_coordinator import CredentialCoordinator, CredentialBusy
+from .credential_store import login_candidate
 
 
 class VehicleLogin:
-    def __init__(self, path, client_factory, session_lock, clock=time.monotonic):
+    def __init__(self, path, client_factory, session_lock, clock=time.monotonic, coordinator=None):
+        self.coordinator = coordinator if coordinator is not None else CredentialCoordinator(path)
         self.path = path
         self.client_factory = client_factory
         self.session_lock = session_lock
@@ -42,6 +46,7 @@ class VehicleLogin:
                 baseline = load(self.path)
             self.sent.append(now)
             client = self.client_factory({})
+            client.capture_refresh=self.coordinator.store.allow_refresh
             try:
                 client.send_sms(phone)
             except Exception:
@@ -62,6 +67,7 @@ class VehicleLogin:
             return self.error(400, '请输入有效的短信验证码。')
         if not self.lock.acquire(blocking=False):
             return self.error(409, '登录请求处理中，请稍候。')
+        operation = None
         try:
             pending, now = self.pending, self.clock()
             if pending and now >= pending['expires']:
@@ -75,11 +81,15 @@ class VehicleLogin:
             self.attempts.append(now)
             client = pending['client']
             try:
+                operation=self.coordinator.reserve('sms_login',session_scope(pending['baseline']))
+            except CredentialBusy:
+                return self.error(409, '会话已更新或凭据操作正在进行，请刷新后重试。')
+            try:
                 client.login_sms(pending['phone'], code)
                 vehicles = client.vehicles()
             except Exception:
                 return self.error(502, '登录或车辆验证失败，请检查验证码及车辆分享权限后重试。')
-            session = client.session
+            session = login_candidate(client,self.coordinator.store)
             old_user = pending['baseline'].get('userId')
             if not session.get('accessToken') or not session.get('userId'):
                 return self.error(502, '车辆认证未完成，请重试。')
@@ -95,10 +105,15 @@ class VehicleLogin:
                 binding = load(self.path.parent / 'monitor-binding.json').get('vehicle_key')
                 if binding and binding not in {hashlib.sha256(vin.encode()).hexdigest() for vin in vins}:
                     return self.error(409, '原绑定车辆不在当前账号下，未替换原会话。')
-                save(self.path, session)
+                if self.coordinator.commit(operation,session)!='committed':
+                    return self.error(409, '会话已更新，未覆盖当前会话。')
+                operation=None
             self.pending = None
             return 200, {'connected': True}
         except (ApiError, OSError):
             return self.error(500, '会话保存失败，请检查服务存储后重试。')
         finally:
+            if operation is not None:
+                try:self.coordinator.finish(operation,'uncertain')
+                except (ApiError,OSError):pass
             self.lock.release()

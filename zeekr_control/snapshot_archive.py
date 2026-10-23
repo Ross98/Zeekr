@@ -43,6 +43,22 @@ class SnapshotArchive:
         with archive_lock(self.root):
             return self._append(scope_key, vehicle_key, encoded, state_time, observed_at, fetched_at, source)
 
+    def ensure_read_indexes(self):
+        """Explicit, additive maintenance; never invoked by a read endpoint."""
+        from .archive_reader import ArchiveReader,_private
+        if not self.root.exists():return 0
+        added=0
+        with archive_lock(self.root):
+            for month in ArchiveReader(self.root)._months():
+                path=self.root/month[:4]/(month[4:]+'.sqlite3')
+                _private(path)
+                with closing(sqlite3.connect(path.absolute().as_uri()+'?mode=rw',uri=True)) as db,db:
+                    if db.execute('PRAGMA user_version').fetchone()[0]!=1:raise ValueError('归档版本不支持索引升级。')
+                    exists=db.execute("SELECT 1 FROM sqlite_master WHERE name='reads_vehicle_observed'").fetchone()
+                    db.execute('CREATE INDEX IF NOT EXISTS reads_vehicle_observed ON reads(vehicle_key,observed_at,id)')
+                    added+=int(not exists)
+        return added
+
     def _append(self, scope_key, vehicle_key, encoded, state_time, observed_at,
                 fetched_at, source='unknown'):
         validate_timestamp(observed_at)
@@ -82,6 +98,7 @@ class SnapshotArchive:
                     source TEXT NOT NULL, digest TEXT NOT NULL REFERENCES payloads(digest),
                     UNIQUE(scope_key,vehicle_key,observed_at,fetched_at,source,digest))''')
                 db.execute('CREATE INDEX IF NOT EXISTS reads_vehicle_time ON reads(vehicle_key,state_time)')
+                db.execute('CREATE INDEX IF NOT EXISTS reads_vehicle_observed ON reads(vehicle_key,observed_at,id)')
                 db.execute('CREATE INDEX IF NOT EXISTS reads_scope_observed ON reads(scope_key,vehicle_key,observed_at,id)')
                 db.execute('PRAGMA user_version=1')
                 db.execute('INSERT OR IGNORE INTO payloads VALUES (?,?,?,?)',

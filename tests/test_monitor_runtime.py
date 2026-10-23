@@ -448,6 +448,66 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(runner.monitor.status(binding)['trip']['partial'])
         self.assertEqual(runner.health()['error'],'')
 
+    def test_refresh_success_waits_for_real_target_status_and_keeps_new_session(self):
+        from zeekr_control.client import Client
+        from zeekr_control.credential_store import FileCredentialStore
+        from zeekr_control.refresh_recovery import RefreshDriver,RefreshPolicy
+        from zeekr_control.personal_store import account_scope
+        from zeekr_control.monitor_runtime import Runner
+        session=dict(accessToken='old-access',refreshToken='old-refresh',userId='user',clientId='client',deviceId='device')
+        save(self.root/'session.json',session)
+        calls=[];seconds=[0]
+        def wire(method,url,headers,body):
+            calls.append(method)
+            if method=='PUT':return {'code':'1000','data':{'accessToken':'new-access','refreshToken':'new-refresh'}}
+            if '/status/' in url:
+                if headers['authorization']=='old-access':return {'code':1509,'message':'会话暂不可用'}
+                return {'code':'1000','data':sample(seconds[0])}
+            return {'code':'1000','data':{'list':[{'vin':'L6T79X2Z0NP000001'}]}}
+        factory=lambda session:Client(session,wire)
+        driver=RefreshDriver(self.root/'session.json',client_factory=factory,policy=RefreshPolicy(enabled=True),
+                             store=FileCredentialStore(self.root/'session.json',allow_refresh=True))
+        runner=Runner(self.root/'session.json',client_factory=factory,sender=lambda text:None,refresh_driver=driver)
+        self.addCleanup(runner.insight_worker.close)
+        for seconds[0] in (0,60,180):runner.tick(BASE+seconds[0]*1000)
+        self.assertEqual(calls.count('PUT'),1)
+        self.assertEqual(runner.health()['refresh_status'],'refreshed')
+        binding=load(self.root/'monitor-binding.json')['vehicle_key']
+        incident=runner.incidents.current(account_scope(session),binding)
+        self.assertIsNotNone(incident)
+        self.assertIsNotNone(incident['refresh_completed_at'])
+        seconds[0]=181;runner.tick(BASE+181000)
+        self.assertIsNone(runner.incidents.current(account_scope(session),binding))
+        self.assertEqual(load(self.root/'session.json')['accessToken'],'new-access')
+        self.assertEqual(runner.health()['error'],'')
+
+    def test_incident_storage_failure_does_not_drop_received_driving_data(self):
+        import sqlite3
+        class Client:
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):return sample(0)
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        with patch.object(runner.incidents,'success',side_effect=OSError('unavailable')):
+            runner.tick(BASE)
+        health=load(self.root/'monitor-health.json')
+        self.assertEqual(health['last_success'],str(BASE))
+        self.assertEqual(health['incident_recording'],'unavailable')
+        with sqlite3.connect(self.root/'snapshots.sqlite3') as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM snapshots').fetchone()[0],1)
+
+    def test_manual_alert_is_deduplicated_by_incident_and_keeps_uncertain_delivery(self):
+        from zeekr_control.system_notifications import AuthFailureAlert
+        messages=[]
+        alert=AuthFailureAlert(self.root,lambda *message:messages.append(message))
+        alert.blocked('网关代码 1509',BASE,manual=True,incident_id='incident-one');alert.deliver()
+        alert.recovered()
+        alert.blocked('网关代码 1509',BASE+1000,manual=True,incident_id='incident-one');alert.deliver()
+        self.assertEqual(len(messages),1)
+        alert.blocked('网关代码 1509',BASE+2000,manual=True,incident_id='incident-two');alert.deliver()
+        self.assertEqual(len(messages),2)
+        self.assertIn('不会自动重放',messages[0][1])
+
     def test_auth_alert_does_not_send_on_other_blocked_errors(self):
         from zeekr_control.errors import ApiError
         from zeekr_control.monitor_runtime import Runner
