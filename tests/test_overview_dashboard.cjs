@@ -23,3 +23,15 @@ assert.deepEqual(selectRecords(mixed,'charge_end').map(e=>e.id),['c1']);
 assert.deepEqual(selectRecords(mixed,'trip_end').map(e=>e.id),['t1','t2','t3']);
 assert.deepEqual(selectRecords([],'all'),[]);
 console.log('PASS compact mixed list retains the latest charge and trip');
+
+const pendingReport={current:{days:[{date:'2026-10-03',trip_count:0,distance_km:null,partial_trip_count:0}],events:[]},open_trip:{start_time:Date.parse('2026-10-03T08:00:00+08:00'),end_time:Date.parse('2026-10-03T09:00:00+08:00'),distance_km:25,status:'waiting'}};
+let pendingDay=summarize(pendingReport,null,'2026-10-03',7).today;
+assert.equal(pendingDay.distance_km,25);
+assert.equal(pendingDay.open_distance_km,25);
+assert.equal(pendingDay.trip_count,0);
+assert.equal(summarize(pendingReport,null,'2026-10-04',7).today.distance_km,null,'never assign another day’s open trip');
+pendingReport.current.days[0].distance_km=5;pendingReport.current.days[0].trip_count=1;
+assert.equal(summarize(pendingReport,null,'2026-10-03',7).today.distance_km,30);
+pendingReport.open_trip.distance_km=null;
+assert.equal(summarize(pendingReport,null,'2026-10-03',7).today.distance_km,5);
+console.log('PASS unfinished observed distance separate from completed count, missing and day boundaries');

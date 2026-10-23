@@ -1,10 +1,11 @@
 """Calendar week/month reports from ended events and private archive metadata."""
 from datetime import datetime, timedelta
 import time
+import json
 
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
-from .usage_events import UsageEvents, total
+from .usage_events import UsageEvents, total, number
 from .analysis_work import TimeMap
 
 DAY = 86400000
@@ -85,6 +86,26 @@ class UsageReports:
         self.archive = archive
         self.clock = clock or (lambda: int(time.time()*1000))
 
+    def _open_trip(self, vehicle, now):
+        if not self.events.path.exists(): return None
+        with self.events.connect() as db:
+            if db is None or not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_state'").fetchone(): return None
+            row=db.execute('SELECT payload FROM monitor_state WHERE vehicle=?',(vehicle,)).fetchone()
+        if not row or len(row[0])>2*1024*1024: return None
+        try: state=json.loads(row[0])
+        except (ValueError,TypeError): return None
+        if not isinstance(state,dict): return None
+        trip=state.get('trip')
+        if not isinstance(trip,dict): return None
+        start,last=trip.get('start') or {},state.get('last') or {}
+        if not isinstance(start,dict) or not isinstance(last,dict): return None
+        a,b=number(start.get('time'),1,32503680000000),number(last.get('time'),1,32503680000000)
+        if a is None or b is None or not a<=b<=now: return None
+        first,final=number(start.get('km')),number(last.get('km'))
+        distance=round(final-first,6) if first is not None and final is not None and final>=first else None
+        return dict(start_time=a,end_time=b,distance_km=distance,partial=True,
+                    status='waiting' if trip.get('stop') else 'recording')
+
     def _coverage(self, scope, vehicle, result, as_of):
         window = result['window']
         counts = {'reads':0,'new_states':0,'revisions':0,'repeats':0,'invalid_or_stale':0,
@@ -127,5 +148,6 @@ class UsageReports:
             metrics[key] = {'previous':a,'current':b,'difference':round(b-a,6) if a is not None and b is not None else None,
                             'percent':round((b-a)/a*100,2) if reason is None else None,'reason':reason}
         return {'period':period,'as_of':now,'current':current,'previous':previous,
+                'open_trip':self._open_trip(vehicle,now),
                 'comparison':{'comparable':comparable,'metrics':metrics},
                 'history_quality':{'unreadable_or_undated':found['unreadable_or_undated']}}

@@ -14,6 +14,26 @@ await page.waitForFunction(()=>!document.querySelector('#overview-records')?.tex
 await page.getByRole('button',{name:'重新读取记录汇总',exact:true}).click();
 await page.waitForFunction(()=>document.querySelector('#overview-today-value')?.textContent==='8.4');
 assert.equal(await page.locator('#overview-cost-value').innerText(),'0');assert.match(await page.locator('#overview-cost-note').innerText(),/2 项充电待补/);assert.match(await page.locator('#overview-today-note').innerText(),/片段/);
+// An unfinished commute is observed evidence, not a completed trip or zero mileage.
+const endedReport=report;
+report={...report,current:{...report.current,days:[{date,distance_km:null,trip_count:0,partial_trip_count:0}]},open_trip:{start_time:Date.parse(date+'T08:57:00+08:00'),end_time:Date.parse(date+'T09:37:00+08:00'),distance_km:25,status:'waiting'}};
+await page.getByRole('button',{name:'重新读取记录汇总',exact:true}).click();
+await page.waitForFunction(()=>document.querySelector('#overview-today-value').textContent==='25');
+assert.match(await page.locator('#overview-today-note').innerText(),/0 次已结束.*待收尾 25 km.*09:37/);
+for(const width of [1024,1440]){
+ await page.setViewportSize({width,height:1000});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+}
+await page.setViewportSize({width:1440,height:1000});
+await page.screenshot({path:'/tmp/zeekr-overview-open-trip-desktop.png',fullPage:true});
+report=endedReport;
+await page.getByRole('button',{name:'重新读取记录汇总',exact:true}).click();
+await page.waitForFunction(()=>document.querySelector('#overview-today-value').textContent==='8.4');
+const priorMonitoring=await page.evaluate(()=>({monitoring:state.monitoring,recording:state.recording}));
+await page.evaluate(()=>{state.monitoring={...state.monitoring,status:'retrying',online:true};state.recording={...state.recording,active:true,status:'active',effective_interval:120,error:'车辆接口返回 1509，后台正在退避重试；期间记录可能不完整。'};updateHeartbeat();});
+assert.match(await page.locator('.overview-collection-state').innerText(),/退避重试.*重试间隔.*120/s);
+assert.match(await page.locator('.overview-collection-error').innerText(),/1509/);
+await page.evaluate(saved=>{state.monitoring=saved.monitoring;state.recording=saved.recording;updateHeartbeat();},priorMonitoring);
 const trip=original.current.events.concat(original.previous.events).find(e=>e.kind==='trip_end');
 if(trip){
 await page.locator(`[data-overview-record="${trip.id}"]`).click();

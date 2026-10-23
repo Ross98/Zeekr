@@ -1,5 +1,7 @@
 # 极氪会话失效 Bark 告警发布记录
 
+历史发布记录；当前 1509 重试与告警规则见 [Bark 通道说明](bark-notifications-2026-09-21.md)。
+
 北京时间 2026-09-23 发布。代码提交 `c1a58a7`。
 
 - 活动发布：`/opt/zeekr-control/releases/20260923-auth-bark-c1a58a7`。

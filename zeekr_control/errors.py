@@ -4,7 +4,9 @@
 class ApiError(Exception):
     """User-visible API error."""
 
-    def __init__(self, message, http_status=None, retry_after=None):
+    def __init__(self, message, http_status=None, retry_after=None, gateway_code=None, gateway_reason=None):
+        self.gateway_code = gateway_code
+        self.gateway_reason = gateway_reason
         self.http_status = http_status
         self.retry_after = retry_after
         super().__init__(message)

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
-from zeekr_control.storage import save
+from zeekr_control.storage import save, load
 from test_monitor import BASE, sample
 
 
@@ -297,16 +297,18 @@ class RuntimeTests(unittest.TestCase):
         runner.tick(BASE + 120000)
         self.assertEqual(Client.calls, 2)
 
-    def test_gateway_1509_alerts_bark_once_until_success_even_after_restart(self):
+    def test_gateway_1509_retries_durably_and_recovers_without_login(self):
         from zeekr_control.errors import ApiError
         from zeekr_control.monitor_runtime import Runner
         messages = []
         class Client:
             valid = False
+            calls = 0
             def __init__(self, session): pass
             def vehicles(self):
+                Client.calls += 1
                 if not Client.valid:
-                    raise ApiError('status 失败，网关代码 1509；会话过期或被替换时请重新登录。')
+                    raise ApiError('status 失败，网关代码 1509', gateway_code='1509', gateway_reason='会话暂不可用')
                 return [{'vin': 'L6T79X2Z0NP000001'}]
             def status(self, vin): return sample(0)
         def runner():
@@ -316,23 +318,135 @@ class RuntimeTests(unittest.TestCase):
             self.addCleanup(value.insight_worker.close)
             return value
         first = runner()
-        first.tick(BASE)
-        first.tick(BASE + 60000)
-        self.assertEqual(messages,[])
-        self.deliver(first,BASE+60000)
+        self.assertEqual(first.tick(BASE), 60)
+        self.assertEqual(first.health()['status'], 'retrying')
+        self.deliver(first, BASE)
+        self.assertEqual(messages, [])
+        restarted = runner()
+        restarted.tick(BASE + 30000)
+        self.assertEqual(Client.calls, 1, 'restart must respect existing retry deadline')
+        self.assertEqual(restarted.tick(BASE + 60000), 120)
+        self.assertEqual(restarted.tick(BASE + 180000), 240)
+        self.assertEqual(restarted.tick(BASE + 420000), 300)
+        self.deliver(restarted, BASE + 420000)
+        self.assertEqual(messages, [], 'short interruption stays quiet')
+        self.assertEqual(restarted.tick(BASE + 900000), 300)
+        self.deliver(restarted, BASE + 900000)
         self.assertEqual(len(messages), 1)
-        self.assertIn('1509', messages[0][1])
-        self.assertIn('重新登录', messages[0][1])
-        restarted=runner();restarted.tick(BASE+120000);self.deliver(restarted,BASE+120000)
-        self.assertEqual(len(messages), 1)
+        self.assertNotIn('重新登录', messages[0][1])
+        self.assertIn('自动重试', messages[0][1])
         Client.valid = True
-        save(self.root/'session.json', {'accessToken': 'new-synthetic'})
-        restarted=runner();restarted.tick(BASE+180000);self.deliver(restarted,BASE+180000)
-        self.assertEqual(len(messages), 1)
-        Client.valid = False
-        save(self.root/'session.json', {'accessToken': 'another-synthetic'})
-        restarted=runner();restarted.tick(BASE+240000);self.deliver(restarted,BASE+240000)
-        self.assertEqual(len(messages), 2)
+        restarted.tick(BASE + 1800000)
+        self.assertNotEqual(restarted.health()['status'], 'blocked')
+        self.assertEqual(restarted.health()['error'], '')
+        self.assertEqual(restarted.health()['last_success'], str(BASE + 1800000))
+        self.assertNotIn('gateway_retry', restarted.health())
+        with restarted.auth_failure_alert.connect() as db:
+            self.assertEqual(db.execute('SELECT active FROM auth_state').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT count(*) FROM gateway_failures').fetchone()[0], 5)
+
+    def test_1509_session_change_bypasses_old_backoff_and_pending_alert_is_cancelled(self):
+        from zeekr_control.errors import ApiError
+        class Client:
+            calls=0
+            def __init__(self, session): self.session=session
+            def vehicles(self):
+                Client.calls+=1
+                if self.session['accessToken']=='synthetic':
+                    raise ApiError('网关代码 1509',gateway_code='1509')
+                return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin): return sample(0)
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        runner.tick(BASE)
+        save(self.root/'session.json',{'accessToken':'updated-synthetic'})
+        runner.tick(BASE+1000)
+        self.assertEqual(Client.calls,2)
+        self.assertEqual(runner.health()['error'],'')
+        self.assertNotIn('gateway_retry',runner.health())
+
+    def test_1509_audit_is_bounded_and_public_message_keeps_sanitized_reason(self):
+        from zeekr_control.monitor_runtime import read_status
+        runner=self.runner(lambda session:None);self.addCleanup(runner.insight_worker.close)
+        for i in range(205): runner.auth_failure_alert.record_failure('1509','会话暂不可用',BASE+i)
+        with runner.auth_failure_alert.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM gateway_failures').fetchone()[0],200)
+        save(self.root/'monitor-health.json',{'status':'retrying','heartbeat':str(BASE),'error':'status 失败，网关代码 1509','gateway_reason':'会话暂不可用 phone=13800000000'})
+        value=read_status(self.root,public=True)
+        self.assertIn('会话暂不可用',value['error'])
+        self.assertNotIn('13800000000',str(value))
+        self.assertNotIn('重新登录',value['error'])
+
+    def test_short_1509_gap_breaks_track_and_preserves_existing_trip(self):
+        from zeekr_control.errors import ApiError
+        class Client:
+            seconds=0
+            fail=False
+            def __init__(self,session): pass
+            def vehicles(self): return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):
+                if Client.fail: raise ApiError('网关代码 1509',gateway_code='1509')
+                return sample(Client.seconds,speed=30 if Client.seconds else 0,
+                              engine='engine_on' if Client.seconds else 'engine_off',
+                              ready=int(Client.seconds>0),km=100+Client.seconds/10)
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        runner.tick(BASE)
+        Client.seconds=20;runner.tick(BASE+20000)
+        Client.fail=True;runner.tick(BASE+40000)
+        binding=load(self.root/'monitor-binding.json')['vehicle_key']
+        self.assertTrue(runner.monitor.status(binding)['trip']['partial'])
+        with runner.monitor.tracks.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM observations').fetchone()[0],2)
+        Client.fail=False;Client.seconds=100;runner.tick(BASE+100000)
+        with runner.monitor.tracks.connect() as db:
+            self.assertEqual(db.execute('SELECT gap_seconds FROM observations ORDER BY id DESC LIMIT 1').fetchone()[0],0)
+        route=runner.monitor.tracks.day(binding,'2024-01-01')
+        self.assertGreaterEqual(route['quality']['gap_count'],1)
+        self.assertNotIn('gap_pending',runner.health())
+        self.assertEqual(runner.monitor.status(binding)['trip']['start']['km'],100)
+
+    def test_recovery_keeps_driving_scalars_without_gps(self):
+        from zeekr_control.errors import ApiError
+        class Client:
+            seconds=0
+            fail=False
+            def __init__(self,session): pass
+            def vehicles(self): return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):
+                if Client.fail: raise ApiError('网关代码 1509',gateway_code='1509')
+                raw=sample(Client.seconds,speed=30 if Client.seconds else 0,
+                           engine='engine_on' if Client.seconds else 'engine_off',
+                           ready=int(Client.seconds>0),km=100+Client.seconds/10,soc=80-Client.seconds/100)
+                raw.pop('position',None)
+                return raw
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        runner.tick(BASE)
+        Client.seconds=20;runner.tick(BASE+20000)
+        Client.fail=True;runner.tick(BASE+40000)
+        Client.fail=False;Client.seconds=100;runner.tick(BASE+100000)
+        binding=load(self.root/'monitor-binding.json')['vehicle_key']
+        state=runner.monitor.status(binding)
+        self.assertEqual(state['last']['km'],110)
+        self.assertEqual(state['last']['soc'],79)
+        self.assertEqual(state['trip']['start']['km'],100)
+        self.assertTrue(state['trip']['partial'])
+        with runner.monitor.tracks.connect() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM report_observations').fetchone()[0],3)
+        self.assertEqual(runner.health()['last_success'],str(BASE+100000))
+
+    def test_upgrade_of_stopped_legacy_1509_marks_existing_trip_incomplete(self):
+        class Client:
+            seconds=0
+            def __init__(self,session): pass
+            def vehicles(self): return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin): return sample(Client.seconds,speed=30 if Client.seconds else 0,engine='engine_on' if Client.seconds else 'engine_off',ready=int(Client.seconds>0))
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        runner.tick(BASE);Client.seconds=20;runner.tick(BASE+20000)
+        health=runner.health();health.update(status='stopped',error='status 失败，网关代码 1509；请重新登录')
+        save(self.root/'monitor-health.json',health)
+        Client.seconds=40;runner.tick(BASE+40000)
+        binding=load(self.root/'monitor-binding.json')['vehicle_key']
+        self.assertTrue(runner.monitor.status(binding)['trip']['partial'])
+        self.assertEqual(runner.health()['error'],'')
 
     def test_auth_alert_does_not_send_on_other_blocked_errors(self):
         from zeekr_control.errors import ApiError

@@ -39,6 +39,30 @@ class UsageReportsTests(unittest.TestCase):
     def report(self, period='month', date='2026-09-20', now=None):
         return self.reports.query('owner','car',period,date,self.now if now is None else now)
 
+    def test_open_trip_keeps_observed_distance_separate_from_ended_totals(self):
+        start=self.now+8*3600000
+        state={'trip':{'start':{'time':start,'km':100},'stop':{'time':start+2400000},'partial':True},
+               'last':{'time':start+2400000,'observed':start+2410000,'km':125,'secret':'PRIVATE'}}
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE monitor_state(vehicle TEXT PRIMARY KEY,payload TEXT)')
+            db.execute('INSERT INTO monitor_state VALUES(?,?)',('car',json.dumps(state)))
+        result=self.report(date='2026-10-05',now=start+3600000)
+        self.assertEqual(result['open_trip']['distance_km'],25)
+        self.assertEqual(result['open_trip']['status'],'waiting')
+        self.assertIsNone(result['current']['totals']['distance_km'])
+        self.assertNotIn('PRIVATE',json.dumps(result['open_trip']))
+        self.assertIsNone(self.reports.query('owner','other','month','2026-10-05',start+3600000)['open_trip'])
+        state['last']['km']=90
+        with sqlite3.connect(self.db) as db:db.execute('UPDATE monitor_state SET payload=?',(json.dumps(state),))
+        self.assertIsNone(self.report(date='2026-10-05',now=start+3600000)['open_trip']['distance_km'])
+
+    def test_open_trip_projection_handles_absent_and_invalid_saved_state(self):
+        self.assertIsNone(self.report()['open_trip'])
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE monitor_state(vehicle TEXT PRIMARY KEY,payload TEXT)')
+            db.execute('INSERT INTO monitor_state VALUES(?,?)',('car','not-json'))
+        self.assertIsNone(self.report()['open_trip'])
+
     def test_calendar_week_month_leap_year_and_previous_bounds(self):
         week=period_window('week','2026-09-20')
         self.assertEqual((week['start_date'],week['end_date']),('2026-09-14','2026-09-20'))

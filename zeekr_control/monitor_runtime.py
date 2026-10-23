@@ -134,6 +134,8 @@ def _safe_error(value):
     if not value:
         return ''
     text = str(value)
+    if '网关代码 1509' in text:
+        return '车辆接口返回 1509，后台正在退避重试；期间记录可能不完整。'
     for category, tokens in (
         ('认证状态异常，请检查车辆连接。', ('登录', '认证', '401', '403', 'token')),
         ('接口暂不可用，后台将按策略处理。', ('网络', 'TLS', 'HTTP 5', '限流', '冷却')),
@@ -153,6 +155,9 @@ def read_status(root, vehicle=None, public=False):
               if public else dict(health))
     if public:
         source['error'] = _safe_error(health.get('error'))
+        if '网关代码 1509' in health.get('error', '') and health.get('gateway_reason'):
+            from .client import gateway_reason
+            source['error'] += ' 网关说明（脱敏）：' + gateway_reason(health['gateway_reason'])
     result = dict(source, online=health.get('status') != 'stopped' and 0 <= time.time() * 1000 - heartbeat <= allowed, events=[])
     path = root / 'tracks.sqlite3'
     if path.exists():
@@ -254,6 +259,17 @@ class Runner:
         try:
             session = load(self.session_path)
             fingerprint = hashlib.sha256(json.dumps(session, sort_keys=True).encode()).hexdigest()
+            if not health.get('gateway_retry') and '网关代码 1509' in health.get('error', ''):
+                self.monitor.mark_sampling_gap(load(self.root / 'monitor-binding.json').get('vehicle_key'))
+                health['gap_pending'] = 'true'
+            retry = json.loads(health.get('gateway_retry', '{}'))
+            if retry.get('session') == fingerprint and now < retry.get('next_at', 0):
+                delay = max(1, (retry['next_at'] - now + 999) // 1000)
+                health.update(status='retrying', interval=str(delay), next_check=str(retry['next_at']))
+                save(self.root / 'monitor-health.json', health)
+                return delay
+            if retry and retry.get('session') != fingerprint:
+                health.pop('gateway_retry', None)
             if self.blocked_fingerprint == fingerprint:
                 health['status'] = 'blocked'
             else:
@@ -290,7 +306,8 @@ class Runner:
                     session_scope(session), binding, raw, observed, fetched_at=fetched_at, source='monitor', owner_key=account_scope(session))
                 profile = vehicle_profile(binding, choices.index(vin) + 1, len(choices))
                 health['status'] = self.monitor.observe(binding, raw, observed,
-                    battery_capacity_kwh=profile.get('battery_capacity_kwh'), profile=profile)
+                    battery_capacity_kwh=profile.get('battery_capacity_kwh'), profile=profile,
+                    track_gap_seconds=0 if health.get('gap_pending') == 'true' else 180)
                 point = decode(raw, self.monitor.active_codes, self.monitor.stopped_codes)
                 health.update(data_change=publication['change'],
                               state_time=str(int(point['time'])) if point['time'] is not None else '')
@@ -307,8 +324,10 @@ class Runner:
                 state = self.monitor.status(binding)
                 # Parking uses the same cadence, so starting a trip stays visible.
                 if health['status'] == 'fresh':
-                    if self.monitor.tracks.record(binding, raw, observed, 180):
+                    if self.monitor.tracks.record(binding, raw, observed,
+                                                  0 if health.get('gap_pending') == 'true' else 180):
                         health['last_new'] = str(observed)
+                    health.pop('gap_pending', None)
                 with self.monitor.tracks.connect() as db:
                     newest = db.execute('SELECT MAX(observed_time) FROM observations WHERE vehicle=?', (binding,)).fetchone()[0]
                 if newest is not None:
@@ -318,6 +337,7 @@ class Runner:
                               charge='charging' if state['charge'] else 'idle' if state['last'] and state['last']['charging'] is False else 'unknown',
                               signals=json.dumps(state['last']['signals'], ensure_ascii=False) if state['last'] else '{}')
                 self.auth_failure_alert.recovered()
+                health.pop('gateway_retry', None)
                 self.failures = 0
                 def reminder_guard():
                     current_binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
@@ -342,7 +362,21 @@ class Runner:
             health.update(status='cooldown', error='接口限流，等待冷却')
         except ApiError as exc:
             error = str(exc)
-            if exc.retry_after:
+            if exc.gateway_code == '1509':
+                retry = json.loads(health.get('gateway_retry', '{}'))
+                if retry.get('session') != fingerprint:
+                    retry = dict(session=fingerprint, first_at=now, attempts=0)
+                retry['attempts'] += 1
+                delay = min(300, 60 * 2 ** min(retry['attempts'] - 1, 3))
+                finished = int(time.time() * 1000) if live_clock else now
+                retry['next_at'] = finished + delay * 1000
+                health.update(status='retrying', error=error[:400], gateway_retry=json.dumps(retry),
+                              gateway_reason=exc.gateway_reason or '', gateway_error_at=str(now), gap_pending='true')
+                self.monitor.mark_sampling_gap(load(self.root / 'monitor-binding.json').get('vehicle_key'))
+                self.auth_failure_alert.record_failure(exc.gateway_code, exc.gateway_reason, now)
+                if retry['attempts'] >= 3 and now - retry['first_at'] >= 600000:
+                    self.auth_failure_alert.blocked(error, now)
+            elif exc.retry_after:
                 delay = max(interval, exc.retry_after)
                 health.update(status='cooldown', error=error[:150])
             elif any(token in error for token in ('网络或 TLS', 'HTTP 5', '并发锁')):

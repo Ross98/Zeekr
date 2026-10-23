@@ -34,6 +34,24 @@ class MonitorTests(unittest.TestCase):
     def observe(self, seconds, **kwargs):
         return self.monitor.observe('test-vehicle', sample(seconds, **kwargs), BASE + seconds * 1000)
 
+    def test_sampling_gap_marks_active_trip_partial_without_creating_or_deleting_events(self):
+        self.observe(0)
+        self.observe(20,speed=30,engine='engine_on',ready=1,km=101)
+        self.assertFalse(self.monitor.status('test-vehicle')['trip']['partial'])
+        self.monitor.mark_sampling_gap('test-vehicle')
+        self.observe(80,speed=40,engine='engine_on',ready=1,km=103)
+        state=self.monitor.status('test-vehicle')
+        self.assertTrue(state['trip']['partial'],'even a short authenticated outage stays explicit')
+        self.assertEqual(state['trip']['start']['km'],100)
+        self.assertEqual(self.monitor.events(),[])
+        self.observe(100,km=103)
+        for seconds in range(160,701,60): self.observe(seconds,km=103)
+        ended=self.monitor.events()[0]['summary']
+        self.assertTrue(ended['partial'])
+        self.assertIn('sampling_interrupted',ended['report_v2']['quality']['quality_reasons'])
+        self.monitor.mark_sampling_gap('unknown-vehicle')
+        self.assertIsNone(self.monitor.status('unknown-vehicle')['trip'])
+
     def test_trip_waits_ten_minutes_freezes_endpoint_and_survives_restart(self):
         self.observe(0)
         self.observe(60, speed=30, engine='engine_on', ready=1, km=101)

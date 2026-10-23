@@ -68,6 +68,20 @@ def transport(method, url, headers, body):
         raise ApiError('网关响应不是有效 JSON。') from None
 
 
+def gateway_reason(value, private_values=()):
+    """Bounded text only: never retain raw bodies or identifier-shaped values."""
+    if not isinstance(value, str):
+        return ''
+    text = value[:4096]
+    for secret in sorted((v for v in private_values if isinstance(v, str) and len(v) >= 4), key=len, reverse=True):
+        text = text.replace(secret, '[hidden]')
+    text = re.sub(r'https?://[^\s<>]+|[\w.+-]+@[\w.-]+', '[hidden]', text, flags=re.I)
+    text = re.sub(r'(?i)(?:bearer\s+\S+|(?:token|authorization|cookie|password|secret|mobile|phone|vin|user_?id|device_?id|client_?id|latitude|longitude|lat|lon|验证码|手机号|地址|位置)\s*[=:：]\s*[\"\']?[^\s,;，；]+)', '[hidden]', text)
+    text = re.sub(r'[A-Za-z0-9_]+(?:[-./+=][A-Za-z0-9_]+)+|[A-Za-z0-9_]{16,}|\d{4,}', '[hidden]', text)
+    text = ''.join(c if c.isprintable() else ' ' for c in text)
+    return ' '.join(text.split())[:240]
+
+
 class Client:
     def __init__(self, session=None, transport=transport, query_policy=None):
         self.session = dict(session or {})
@@ -146,7 +160,11 @@ class Client:
             code = str(result.get('code', 'missing'))
             if code not in ('000000', '1000'):
                 safe_code = code if re.fullmatch('[0-9]{1,12}', code) else 'unknown'
-                raise ApiError('%s 失败，网关代码 %s；会话过期或被替换时请重新登录。' % (operation, safe_code))
+                reason = gateway_reason(result.get('message') or result.get('msg'),
+                                        [*self.session.values(), *params.values(), *(payload or {}).values(), vin])
+                message = '%s 失败，网关代码 %s' % (operation, safe_code)
+                if reason: message += '；网关说明（脱敏）：' + reason
+                raise ApiError(message, gateway_code=safe_code, gateway_reason=reason)
             return result.get('data')
 
         if self.query_policy is None:

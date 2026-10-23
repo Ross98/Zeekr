@@ -207,6 +207,25 @@ class Monitor:
             row = db.execute('SELECT payload FROM monitor_state WHERE vehicle=?', (vehicle,)).fetchone()
         return json.loads(row[0]) if row else {'last': None, 'trip': None, 'charge': None}
 
+    def mark_sampling_gap(self, vehicle):
+        """Preserve existing evidence; interrupted sessions cannot claim completeness."""
+        if not vehicle: return
+        with self.tracks.connect() as db:
+            row=db.execute('SELECT payload FROM monitor_state WHERE vehicle=?',(vehicle,)).fetchone()
+            if not row: return
+            state=json.loads(row[0])
+            changed=False
+            for kind in ('trip','charge'):
+                activity=state.get(kind)
+                if activity:
+                    activity['partial']=True
+                    activity['sampling_interrupted']=True
+                    if kind=='trip' and activity.get('stop'):
+                        activity['stop_confirmation']={'started':0,'observed':0}
+                    changed=True
+            if changed:
+                db.execute('UPDATE monitor_state SET payload=? WHERE vehicle=?',(json.dumps(state),vehicle))
+
     def _event(self, db, vehicle, kind, data, now):
         identity = '%s:%s:%s' % (vehicle, kind, data['start_time'])
         event_id = hashlib.sha256(identity.encode()).hexdigest()
@@ -241,7 +260,7 @@ class Monitor:
 
     def _report(self, kind, start, end, samples, profile, partial, charge_overlap=False, parking=None,
                 upgrade_mid_session=False, samples_truncated=False, decoder_changed=False, parking_samples=0,
-                start_timing=None):
+                start_timing=None, sampling_interrupted=False):
         # Keep short-stop observations if driving resumes, but exclude the final
         # parking confirmation window from the frozen trip's statistics.
         if start.get('state_time') is not None and end.get('state_time') is not None:
@@ -272,7 +291,8 @@ class Monitor:
                             'parking_samples': parking_samples,
                             'samples_truncated': samples_truncated,
                             'decoder_changed_mid_session': decoder_changed,
-                            'quality_reasons': (['upgrade_mid_session'] if upgrade_mid_session else []) +
+                            'quality_reasons': (['sampling_interrupted'] if sampling_interrupted else []) +
+                                               (['upgrade_mid_session'] if upgrade_mid_session else []) +
                                                (['decoder_changed_mid_session'] if decoder_changed else []) +
                                                (['late_start'] if partial else []) +
                                                (['charge_overlap'] if charge_overlap else [])}}
@@ -292,10 +312,11 @@ class Monitor:
             parking=trip.get('parking'), upgrade_mid_session=trip.get('report_upgrade', False),
             samples_truncated=trip.get('samples_truncated', False),
             decoder_changed=trip.get('decoder_changed', False),
-            parking_samples=trip.get('parking_samples', 0), start_timing=data['start_evidence'])
+            parking_samples=trip.get('parking_samples', 0), start_timing=data['start_evidence'],
+            sampling_interrupted=trip.get('sampling_interrupted', False))
         self._event(db, vehicle, 'trip_end', data, now)
 
-    def observe(self, vehicle, raw, now, battery_capacity_kwh=None, profile=None):
+    def observe(self, vehicle, raw, now, battery_capacity_kwh=None, profile=None, track_gap_seconds=180):
         point = decode(raw, self.active_codes, self.stopped_codes)
         profile = {key:value for key,value in dict(profile or {}).items()
                    if key in ('battery_capacity_kwh','range_km','range_standard','range_source')}
@@ -390,7 +411,7 @@ class Monitor:
                 _append_sample(trip.setdefault('parking_buffer', {}), telemetry)
             # TrackStore deduplicates replays if state commit is interrupted.
             if trip['stop'] is None or resumed_motion:
-                self.tracks.record(vehicle, raw, now, 180)
+                self.tracks.record(vehicle, raw, now, track_gap_seconds)
             if point['charging'] is True and trip.get('charging_time') is None:
                 trip['charging_time'] = timestamp
             if resumed_motion or point['off'] is not True:
@@ -447,7 +468,8 @@ class Monitor:
                                                  upgrade_mid_session=charge.get('report_upgrade', False),
                                                  samples_truncated=charge.get('samples_truncated', False),
                                                  decoder_changed=charge.get('decoder_changed', False),
-                                                 start_timing=data['start_evidence'])
+                                                 start_timing=data['start_evidence'],
+                                                 sampling_interrupted=charge.get('sampling_interrupted', False))
                 self._event(db, vehicle, 'charge_end', data, now)
                 charge = None
             state.update(last=point, trip=trip, charge=charge)

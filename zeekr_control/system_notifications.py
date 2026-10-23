@@ -5,7 +5,7 @@ import time
 
 from .archive_reader import _private
 from .delivery_state import delivery_lock
-from .notifications import DeliveryError
+from .notifications import DeliveryError, bark_time
 from .storage import load
 
 
@@ -30,6 +30,13 @@ class AuthFailureAlert:
                     db.execute('INSERT INTO auth_state VALUES(1,0,?)',(int(legacy in ('sending','sent','failed','uncertain')),))
             yield db
         finally:db.close()
+
+    def record_failure(self, code, reason, now):
+        # Only the client's already-sanitized scalar reason enters this bounded audit.
+        with self.connect() as db, db:
+            db.execute('CREATE TABLE IF NOT EXISTS gateway_failures(id INTEGER PRIMARY KEY,created INTEGER,code TEXT,reason TEXT)')
+            db.execute('INSERT INTO gateway_failures(created,code,reason) VALUES(?,?,?)', (now,code,(reason or '')[:240]))
+            db.execute('DELETE FROM gateway_failures WHERE id NOT IN (SELECT id FROM gateway_failures ORDER BY id DESC LIMIT 200)')
 
     def blocked(self,error,now=None):
         if '网关代码 1509' not in error:return
@@ -60,7 +67,10 @@ class AuthFailureAlert:
                     claimed=db.execute("UPDATE auth_outbox SET state='sending' WHERE generation=? AND state='pending'",(generation,)).rowcount
                 if not claimed:continue
                 try:
-                    self.sender('⚠️ 极氪采集已中断','车辆接口返回 1509，无法采集新数据或生成新通知。请在服务器重新登录极氪副账号。')
+                    last = load(self.root/'monitor-health.json').get('last_success')
+                    body = '车辆接口持续返回 1509，采集暂未恢复，后台仍在自动重试。期间轨迹与行程可能不完整；请查看采集状态与脱敏网关说明。'
+                    if last: body += '\n最后成功读取：' + bark_time(last)
+                    self.sender('⚠️ 极氪采集已中断',body)
                     state,error='sent',None
                 except DeliveryError as exc:
                     state,error=('uncertain','result_unknown') if exc.ambiguous else ('failed','send_rejected')

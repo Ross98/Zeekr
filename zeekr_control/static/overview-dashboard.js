@@ -16,7 +16,15 @@
     const pending=ledger?ledger.totals.unlinked_charge_count+ledger.totals.unknown_charge_count:null;
     const latest=['trip_end','charge_end'].flatMap(kind=>recent?.[kind]?.id?[{...recent[kind],kind}]:[]);
     const events=[...new Map([...latest,...(report?.current?.events||[]),...(report?.previous?.events||[])].map(event=>[event.id,event])).values()].sort((a,b)=>b.end_time-a.end_time);
-    return {today:lookup.get(today)||{distance_km:null,trip_count:null,partial_trip_count:null},days,actual:Number.isFinite(actual)?actual:null,pending,events};
+    const todayData={...(lookup.get(today)||{distance_km:null,trip_count:null,partial_trip_count:null})};
+    const open=report?.open_trip;
+    const dayOf=stamp=>Number.isFinite(stamp)?dateFormat.format(new Date(stamp)):'';
+    if(open&&dayOf(open.start_time)===today&&dayOf(open.end_time)===today){
+      todayData.open_trip=open;
+      todayData.open_distance_km=Number.isFinite(open.distance_km)?open.distance_km:null;
+      if(todayData.open_distance_km!==null)todayData.distance_km=(todayData.distance_km??0)+todayData.open_distance_km;
+    }
+    return {today:todayData,days,actual:Number.isFinite(actual)?actual:null,pending,events};
   }
   function selectRecords(events,filter){
     if(filter!=='all')return events.filter(event=>event.kind===filter).slice(0,3);
@@ -55,7 +63,8 @@
       for(const id of stable)node(id).style.minHeight=!report&&heights.get(id)?heights.get(id)+'px':'';
       const data=summary(),today=data.today;
       text('overview-today-value',number(today.distance_km));
-      text('overview-today-note',today.trip_count===null?'尚无有效观测':`${today.trip_count} 次行程${today.partial_trip_count?' · 含 '+today.partial_trip_count+' 条片段':''}`);
+      const openNote=today.open_trip?` · ${today.open_trip.status==='waiting'?'待收尾':'记录中'} ${number(today.open_distance_km)} km · 观测至 ${new Date(today.open_trip.end_time).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false})}`:'';
+      text('overview-today-note',today.trip_count===null?'尚无有效观测':`${today.trip_count} 次${today.open_trip?'已结束':'行程'}${today.partial_trip_count?' · 含 '+today.partial_trip_count+' 条片段':''}${openNote}`);
       text('overview-cost-value',data.actual===null?'未知':number(data.actual/100));
       text('overview-cost-note',data.pending===null?'账本尚未读取':`含充电、充电停车费与日常支出 · ${data.pending} 项充电待补`);
       const rows=selectRecords(data.events,filter);
