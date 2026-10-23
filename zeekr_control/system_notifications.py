@@ -26,7 +26,7 @@ class AuthFailureAlert:
                 db.execute('CREATE TABLE IF NOT EXISTS auth_state(id INTEGER PRIMARY KEY,generation INTEGER,active INTEGER)')
                 db.execute('CREATE TABLE IF NOT EXISTS auth_outbox(generation INTEGER PRIMARY KEY,created INTEGER,state TEXT,error TEXT,sent_at INTEGER)')
                 db.execute('CREATE TABLE IF NOT EXISTS auth_outbox_context(generation INTEGER PRIMARY KEY,kind TEXT)')
-                add_columns(db,'auth_outbox_context',{'incident_id':'TEXT'})
+                add_columns(db,'auth_outbox_context',{'incident_id':'TEXT','reason':'TEXT'})
                 db.execute('CREATE UNIQUE INDEX IF NOT EXISTS auth_context_incident ON auth_outbox_context(incident_id,kind)')
                 if db.execute('SELECT 1 FROM auth_state WHERE id=1').fetchone() is None:
                     legacy=load(self.root/'auth-failure-alert.json').get('state')
@@ -41,7 +41,7 @@ class AuthFailureAlert:
             db.execute('INSERT INTO gateway_failures(created,code,reason) VALUES(?,?,?)', (now,code,(reason or '')[:240]))
             db.execute('DELETE FROM gateway_failures WHERE id NOT IN (SELECT id FROM gateway_failures ORDER BY id DESC LIMIT 200)')
 
-    def blocked(self,error,now=None,manual=False,incident_id=None):
+    def blocked(self,error,now=None,manual=False,incident_id=None,reason=None):
         if '网关代码 1509' not in error:return
         now=int(time.time()*1000) if now is None else now
         with self.connect() as db,db:
@@ -57,8 +57,10 @@ class AuthFailureAlert:
             generation+=1
             db.execute('UPDATE auth_state SET generation=?,active=1 WHERE id=1',(generation,))
             db.execute("INSERT INTO auth_outbox VALUES(?,?,'pending',NULL,NULL)",(generation,now))
-            db.execute('INSERT INTO auth_outbox_context(generation,kind,incident_id) VALUES(?,?,?)',
-                       (generation,alert_kind,incident_id))
+            # Owner requested original gateway wording in private Bark notifications.
+            reason = reason[:240] if isinstance(reason,str) else ''
+            db.execute('INSERT INTO auth_outbox_context(generation,kind,incident_id,reason) VALUES(?,?,?,?)',
+                       (generation,alert_kind,incident_id,reason))
 
     def recovered(self):
         if not self.path.exists() and not (self.root/'auth-failure-alert.json').exists():return
@@ -79,11 +81,13 @@ class AuthFailureAlert:
                 if not claimed:continue
                 try:
                     last = load(self.root/'monitor-health.json').get('last_success')
-                    body = '车辆接口持续返回 1509，采集暂未恢复，后台仍在自动重试。期间轨迹与行程可能不完整；请查看采集状态与脱敏网关说明。'
+                    body = '采集暂未恢复，后台仍在自动重试。期间轨迹与行程可能不完整。'
                     with self.connect() as db:
-                        context=db.execute('SELECT kind FROM auth_outbox_context WHERE generation=?',(generation,)).fetchone()
+                        context=db.execute('SELECT kind,reason FROM auth_outbox_context WHERE generation=?',(generation,)).fetchone()
                     if context and context[0]=='manual':
                         body='自动续期未能确认，采集仍在受保护重试。请人工核对车辆账号连接，必要时重新认证；不确定的刷新请求不会自动重放。'
+                    reason = context[1] if context and context[1] else '网关未提供具体原因'
+                    body = '网关代码：1509\n网关说明：' + reason + '\n' + body
                     if last: body += '\n最后成功读取：' + bark_time(last)
                     self.sender('⚠️ 极氪采集已中断',body)
                     state,error='sent',None

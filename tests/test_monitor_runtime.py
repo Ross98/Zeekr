@@ -308,7 +308,8 @@ class RuntimeTests(unittest.TestCase):
             def vehicles(self):
                 Client.calls += 1
                 if not Client.valid:
-                    raise ApiError('status 失败，网关代码 1509', gateway_code='1509', gateway_reason='会话暂不可用')
+                    raise ApiError('status 失败，网关代码 1509', gateway_code='1509', gateway_reason='会话暂不可用',
+                                   notification_reason='服务维护中，稍后再试。 phone=13800000000')
                 return [{'vin': 'L6T79X2Z0NP000001'}]
             def status(self, vin): return sample(0)
         def runner():
@@ -335,6 +336,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(len(messages), 1)
         self.assertNotIn('重新登录', messages[0][1])
         self.assertIn('自动重试', messages[0][1])
+        self.assertIn('网关说明：服务维护中，稍后再试。 phone=13800000000', messages[0][1])
+        self.assertEqual(restarted.health()['gateway_reason'], '会话暂不可用')
         Client.valid = True
         restarted.tick(BASE + 1800000)
         self.assertNotEqual(restarted.health()['status'], 'blocked')

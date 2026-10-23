@@ -98,18 +98,26 @@ class ClientTests(unittest.TestCase):
         self.assertIn('079021', str(raised.exception))
         self.assertNotIn('secret-token', str(raised.exception))
 
-    def test_gateway_error_retains_only_sanitized_reason_and_code(self):
+    def test_gateway_error_keeps_private_notification_reason_separate_from_safe_message(self):
         secret='synthetic-private-token'
         reason='会话暂不可用 token='+secret+' mobile=13800000000 vin=L6T79X2Z0NP000001 userId=user-123 latitude=31.12345 https://example.test/private'
         client=Client({'accessToken':secret,'userId':'user-123'}, Transport({'code':1509,'message':reason}))
         with self.assertRaises(ApiError) as raised: client.vehicles()
         error=raised.exception
         self.assertEqual(error.gateway_code, '1509')
+        self.assertEqual(error.notification_reason, reason[:240])
         self.assertIn('会话暂不可用', error.gateway_reason)
         for value in (secret,'13800000000','L6T79X2Z0NP000001','user-123','31.12345','example.test'):
             self.assertNotIn(value, str(error))
         self.assertNotIn('重新登录',str(error))
         self.assertLessEqual(len(error.gateway_reason),240)
+
+    def test_gateway_notification_reason_requires_text_and_is_bounded(self):
+        for reason, expected in (({'token':'private'}, ''), ('维护中' * 200, ('维护中' * 200)[:240])):
+            with self.subTest(reason_type=type(reason).__name__):
+                client=Client({'accessToken':'synthetic','userId':'user'}, Transport({'code':1509,'message':reason}))
+                with self.assertRaises(ApiError) as raised: client.vehicles()
+                self.assertEqual(raised.exception.notification_reason, expected)
 
     def test_malformed_success_not_empty_vehicle_list(self):
         for response in ([], {}, ok({}), ok({'list': 'bad'}), ok({'list': [5]})):

@@ -177,11 +177,14 @@ class Client:
             code = str(result.get('code', 'missing'))
             if code not in ('000000', '1000'):
                 safe_code = code if re.fullmatch('[0-9]{1,12}', code) else 'unknown'
-                reason = gateway_reason(result.get('message') or result.get('msg'),
+                raw_reason = result.get('message') or result.get('msg')
+                reason = gateway_reason(raw_reason,
                                         [*self.session.values(), *params.values(), *(payload or {}).values(), vin])
                 message = '%s 失败，网关代码 %s' % (operation, safe_code)
                 if reason: message += '；网关说明（脱敏）：' + reason
-                raise ApiError(message, gateway_code=safe_code, gateway_reason=reason)
+                notification_reason = raw_reason[:240] if isinstance(raw_reason, str) else ''
+                raise ApiError(message, gateway_code=safe_code, gateway_reason=reason,
+                               notification_reason=notification_reason)
             self.query_outcome = replace(self.query_outcome, success_code=code, fetched_at=time.time())
             return result.get('data')
 

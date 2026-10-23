@@ -415,9 +415,11 @@ class Runner:
                     try:self.incidents.classify(incident['id'],recovery.kind,now)
                     except (ApiError,OSError,ValueError,sqlite3.Error):health['incident_recording']='unavailable'
                 if recovery.kind in ('manual_required','uncertain'):
-                    self.auth_failure_alert.blocked(error,now,manual=True,incident_id=incident['id'] if incident else None)
+                    self.auth_failure_alert.blocked(error,now,manual=True,incident_id=incident['id'] if incident else None,
+                                                    reason=exc.notification_reason)
                 elif retry['attempts'] >= 3 and now - retry['first_at'] >= 600000:
-                    self.auth_failure_alert.blocked(error,now,incident_id=incident['id'] if incident else None)
+                    self.auth_failure_alert.blocked(error,now,incident_id=incident['id'] if incident else None,
+                                                    reason=exc.notification_reason)
             elif exc.retry_after:
                 delay = max(interval, exc.retry_after)
                 health.update(status='cooldown', error=error[:150])
@@ -428,7 +430,7 @@ class Runner:
             else:
                 self.blocked_fingerprint = fingerprint
                 health.update(status='blocked', error=error[:150])
-                self.auth_failure_alert.blocked(error,now)
+                self.auth_failure_alert.blocked(error,now,reason=exc.notification_reason)
         # Storage errors escape and stop the worker, never inventing transitions.
         health['interval'] = str(delay)
         health['next_check'] = str((int(time.time() * 1000) if live_clock else now) + delay * 1000)

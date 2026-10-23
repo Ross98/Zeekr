@@ -1,12 +1,15 @@
-"""Safe client errors; never include server response bodies or credentials."""
+"""Safe error messages, with separate private notification context."""
 
 
 class ApiError(Exception):
     """User-visible API error."""
 
-    def __init__(self, message, http_status=None, retry_after=None, gateway_code=None, gateway_reason=None):
+    def __init__(self, message, http_status=None, retry_after=None, gateway_code=None, gateway_reason=None,
+                 notification_reason=None):
         self.gateway_code = gateway_code
         self.gateway_reason = gateway_reason
+        # Private Bark context only; never add this field to str(error) or health/audit output.
+        self.notification_reason = gateway_reason if notification_reason is None else notification_reason
         self.http_status = http_status
         self.retry_after = retry_after
         super().__init__(message)
