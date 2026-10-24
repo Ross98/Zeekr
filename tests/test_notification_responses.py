@@ -46,7 +46,7 @@ class NotificationResponseTests(unittest.TestCase):
         for sender, _ in self.senders:
             with self.subTest(sender=type(sender).__name__):
                 with self.assertRaises(DeliveryError) as caught:
-                    self.invoke(sender,b'['*1500+b'0'+b']'*1500)
+                    self.invoke(sender,b'['*10000+b'0'+b']'*10000)
                 self.assertTrue(caught.exception.ambiguous)
 
     def test_oversized_bark_response_does_not_trigger_fallback_delivery(self):

@@ -21,7 +21,7 @@ class StorageTests(unittest.TestCase):
     def test_deep_json_is_a_controlled_storage_error(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'session.json'
-            path.write_text('['*1500+'0'+']'*1500)
+            path.write_text('['*10000+'0'+']'*10000)
             path.chmod(0o600)
             with self.assertRaises(ApiError):load(path)
 

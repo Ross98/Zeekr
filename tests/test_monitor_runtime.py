@@ -83,7 +83,7 @@ class RuntimeTests(unittest.TestCase):
     def test_optional_profile_corruption_does_not_drop_successful_vehicle_sample(self):
         import hashlib
         from zeekr_control.profiles import vehicle_profile
-        config=self.root/'profiles.json';config.write_text('['*1500+'0'+']'*1500)
+        config=self.root/'profiles.json';config.write_text('['*10000+'0'+']'*10000)
         class Client:
             def __init__(self,session):pass
             def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]

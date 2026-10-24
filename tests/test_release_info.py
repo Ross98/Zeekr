@@ -25,7 +25,7 @@ class ReleaseInfoTests(unittest.TestCase):
         from zeekr_control.release_info import read_release
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp)
-            (root/'release-manifest.json').write_text('['*1500+'0'+']'*1500)
+            (root/'release-manifest.json').write_text('['*10000+'0'+']'*10000)
             self.assertEqual(read_release(root),dict(status='invalid',base_version=None,features=[]))
 
     @unittest.skipUnless(hasattr(os,'mkfifo'),'requires FIFO support')

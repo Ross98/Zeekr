@@ -167,7 +167,7 @@ class ChargingAnalyticsTests(unittest.TestCase):
         points=[sample(BASE+i*60000,20+i,7) for i in range(3)]
         self.insert_observations('car-a',points)
         self.insert_event('broken','car-a',BASE,BASE+120000)
-        for encoded in ('not-json','[]','['*1500+'0'+']'*1500):
+        for encoded in ('not-json','[]','['*10000+'0'+']'*10000):
             with self.subTest(encoded=encoded[:10]),Monitor(self.path).tracks.connect() as db:
                 db.execute('UPDATE report_observations SET normalized_payload=? WHERE state_time=?',
                            (encoded,BASE+60000))
@@ -193,7 +193,7 @@ class ChargingAnalyticsTests(unittest.TestCase):
     def test_deep_charge_summary_is_rejected_without_hiding_valid_statistics(self):
         self.insert_event('valid','car-a',BASE,BASE+120000)
         self.insert_event('bad','car-a',BASE,BASE+180000)
-        deep='{"extra":'+('['*1500)+'0'+(']'*1500)+'}'
+        deep='{"extra":'+('['*10000)+'0'+(']'*10000)+'}'
         with Monitor(self.path).tracks.connect() as db:
             db.execute("UPDATE monitor_events SET summary=? WHERE id='bad'",(deep,))
             db.execute('INSERT OR REPLACE INTO monitor_state VALUES(?,?)',('car-a',deep))

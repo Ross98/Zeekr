@@ -37,7 +37,7 @@ class ClientTests(unittest.TestCase):
     def test_oversized_and_deep_json_responses_are_retryable_safe_errors(self):
         from unittest.mock import MagicMock
         from zeekr_control.client import transport
-        for raw in (b'x'*(4*1024*1024+1),b'['*1500+b'0'+b']'*1500):
+        for raw in (b'x'*(4*1024*1024+1),b'['*10000+b'0'+b']'*10000):
             with self.subTest(size=len(raw)):
                 response=MagicMock();response.__enter__.return_value=response
                 response.read.return_value=raw

@@ -39,7 +39,7 @@ class RatedRangeTests(unittest.TestCase):
     def test_deep_profile_config_falls_back_without_stopping_collection(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'profiles.json'
-            path.write_text('['*1500+'0'+']'*1500)
+            path.write_text('['*10000+'0'+']'*10000)
             profile=vehicle_profile('car-a',1,1,path)
             self.assertEqual(profile['name'],'车辆 1')
             self.assertNotIn('battery_capacity_kwh',profile)

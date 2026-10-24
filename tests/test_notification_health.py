@@ -68,7 +68,7 @@ class CollectorHealthTests(unittest.TestCase):
             db.execute('INSERT INTO report_delivery_metadata(id,owner_key,vehicle_key) VALUES(?,?,?)',(key,'owner','car'))
         AuthFailureAlert(self.root).blocked('网关代码 1509',1000000)
         decoder=json.loads
-        for bad in ('['*1500+'0'+']'*1500,'{"note":"'+'X'*(MAX_SUMMARY_BYTES+1)+'"}'):
+        for bad in ('['*10000+'0'+']'*10000,'{"note":"'+'X'*(MAX_SUMMARY_BYTES+1)+'"}'):
             with self.subTest(size=len(bad)):
                 with delivery.connect() as db,db:
                     db.execute('INSERT OR REPLACE INTO reports VALUES(?,?,?,?,?,?,?,?)',('bad',bad,'light','pending','pending',0,0,0))
@@ -129,7 +129,7 @@ class CollectorHealthTests(unittest.TestCase):
     def test_malformed_storage_state_does_not_hide_other_notification_sources(self):
         AuthFailureAlert(self.root).blocked('网关代码 1509', 1000000)
         save(self.root / 'monitor-health.json', {'status':'parked_waiting','heartbeat':'1000000'})
-        for state in ('null', '[]', '42', '"invalid"', '['*1500+'0'+']'*1500):
+        for state in ('null', '[]', '42', '"invalid"', '['*10000+'0'+']'*10000):
             with self.subTest(size=len(state)):
                 save(self.root / 'storage-health.json', {'state':state})
                 result = read_health(self.root, now_ms=1010000)

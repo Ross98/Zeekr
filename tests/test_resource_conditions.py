@@ -32,7 +32,7 @@ class ConditionTests(unittest.TestCase):
     def test_damaged_primary_state_becomes_watchdog_unknown_without_overwriting_it(self):
         from zeekr_control.resource_monitor import observer_sample
         from zeekr_control.storage import save
-        for index,encoded in enumerate(('null','[]','"text"','[', '['*1500+'0'+']'*1500)):
+        for index,encoded in enumerate(('null','[]','"text"','[', '['*10000+'0'+']'*10000)):
             with self.subTest(encoded=encoded[:20]):
                 root=self.monitor.root/str(index)
                 save(root/'resource-health.json',{'state':encoded})

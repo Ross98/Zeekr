@@ -59,7 +59,7 @@ class QueryCacheRecoveryTests(unittest.TestCase):
 
     def test_bad_cache_is_quarantined_until_original_interval_then_repaired(self):
         for operation,interval in (('status',30),('vehicles',60)):
-            for encoded in ('not-json','['*1500+'0'+']'*1500,'{"value":NaN}','{"value":1e999}'):
+            for encoded in ('not-json','['*10000+'0'+']'*10000,'{"value":NaN}','{"value":1e999}'):
                 with self.subTest(operation=operation,encoded=encoded[:24]),tempfile.TemporaryDirectory() as folder:
                     now=[1000.0];path=Path(folder)/'queries.sqlite3';policy=QueryPolicy(path,clock=lambda:now[0])
                     fetch=Mock(return_value={'valid':True})

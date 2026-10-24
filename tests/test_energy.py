@@ -76,7 +76,7 @@ class EnergyTests(unittest.TestCase):
     def test_unreadable_latest_summary_is_unknown_without_reusing_older_trip(self):
         from zeekr_control.usage_events import MAX_SUMMARY_BYTES
         self.add()
-        for encoded in ('['*1500+'0'+']'*1500,
+        for encoded in ('['*10000+'0'+']'*10000,
                         json.dumps(dict(self.trip,unexpected='x'*MAX_SUMMARY_BYTES))):
             with self.subTest(size=len(encoded)):
                 with sqlite3.connect(self.path) as db:

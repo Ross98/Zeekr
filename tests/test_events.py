@@ -73,7 +73,7 @@ class EventStoreTests(unittest.TestCase):
     def test_deeply_nested_bad_summary_does_not_hide_valid_history_or_latest(self):
         from zeekr_control.events import EventStore
         self.add('valid','vehicle-a','trip_end',1704126600000,created=1,distance_km=12)
-        encoded='{"end_time":1704126660000,"unexpected":'+('['*1500)+'0'+(']'*1500)+'}'
+        encoded='{"end_time":1704126660000,"unexpected":'+('['*10000)+'0'+(']'*10000)+'}'
         with self.monitor.tracks.connect() as db:
             db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES(?,?,?,?,?,?)',
                 ('deep','vehicle-a','trip_end',encoded,'PRIVATE',2))

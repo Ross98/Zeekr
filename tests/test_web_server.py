@@ -39,7 +39,7 @@ class WebServerTests(unittest.TestCase):
                       json.dumps(FakeClient({}).status('synthetic')),
                       1704067200000,1704067200000,1704067200000,'monitor')
         writer.append(self.app.session_key,self.app.vehicle_key,
-                      '{"extra":'+'['*1500+'0'+']'*1500+'}',
+                      '{"extra":'+'['*10000+'0'+']'*10000+'}',
                       1704067201000,1704067201000,1704067201000,'monitor')
         items=reader.timeline(self.app.session_key,self.app.vehicle_key,'2024-01-01')['items']
         valid,bad=items[0]['key'],items[-1]['key']
@@ -158,7 +158,7 @@ class WebServerTests(unittest.TestCase):
         from unittest.mock import patch
         from zeekr_control.release_info import read_release
         root=self.root/'release';root.mkdir()
-        (root/'release-manifest.json').write_text('['*1500+'0'+']'*1500)
+        (root/'release-manifest.json').write_text('['*10000+'0'+']'*10000)
         self.post('/api/refresh',{'vehicle':1})
         expected=self.request('GET','/api/state')[1]['model']
         with patch('zeekr_control.web.read_release',side_effect=lambda:read_release(root)):
@@ -325,7 +325,7 @@ class WebServerTests(unittest.TestCase):
         owner=account_scope(self.app._read_session());vehicle=self.app.vehicle_key
         delivery=PeriodicDelivery(self.app.session_path.parent/'periodic-reports.sqlite3')
         with delivery.connect() as db,db:
-            db.execute('INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)',('bad','['*1500+'0'+']'*1500,'light','pending','pending',0,0,0))
+            db.execute('INSERT INTO reports VALUES(?,?,?,?,?,?,?,?)',('bad','['*10000+'0'+']'*10000,'light','pending','pending',0,0,0))
             db.execute('INSERT INTO report_delivery_metadata(id,owner_key,vehicle_key) VALUES(?,?,?)',('bad',owner,vehicle))
         before=delivery.path.read_bytes()
         code,result=self.request('GET','/api/notifications/health')
@@ -468,7 +468,7 @@ class WebServerTests(unittest.TestCase):
         monitor=Monitor(self.app.database_path)
         valid=json.dumps({'start_time':1704126500000,'end_time':1704126600000,
                           'duration_seconds':100,'distance_km':2.5,'partial':False})
-        deep='{"end_time":1704126660000,"extra":'+('['*1500)+'0'+(']'*1500)+'}'
+        deep='{"end_time":1704126660000,"extra":'+('['*10000)+'0'+(']'*10000)+'}'
         charge=json.dumps({'start_time':1704126500000,'end_time':1704126600000,
             'report_v2':{'schema_version':2,'start':{},'end':{},
                          'metrics':{'sampled_peak_kw':10**400,'average_power_kw':6.5}}})

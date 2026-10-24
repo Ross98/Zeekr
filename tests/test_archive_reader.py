@@ -15,7 +15,10 @@ from zeekr_control.archive_reader import ArchiveReader
 
 class ArchiveReaderTests(unittest.TestCase):
     def test_deep_json_payload_is_a_validation_error_after_valid_gzip_and_digest(self):
-        payload=b'{"extra":'+b'['*1500+b'0'+b']'*1500+b'}'
+        # Python 3.12 accepts 1,500 nested arrays; this must actually exercise
+        # the decoder's recursion boundary on both supported interpreters.
+        payload=b'{"extra":'+b'['*10000+b'0'+b']'*10000+b'}'
+        with self.assertRaises(RecursionError):json.loads(payload)
         row=dict(encoding='gzip-json-v1',raw_bytes=len(payload),
                  compressed_json=gzip.compress(payload),digest=hashlib.sha256(payload).hexdigest())
         with self.assertRaises(ValueError):

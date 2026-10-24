@@ -62,7 +62,7 @@ class HistoricalComparisonBoundaryTests(unittest.TestCase):
         for index in range(5):self.insert('good'+str(index),{'report_v2':self.historical()})
         self.insert('deep',{})
         self.db.execute('UPDATE monitor_events SET summary=? WHERE id=?',
-                        ('{"report_v2":'+'['*1500+'0'+']'*1500+'}','deep'))
+                        ('{"report_v2":'+'['*10000+'0'+']'*10000+'}','deep'))
         result=compare(self.db,'car',trip())
         self.assertTrue(result['available'])
         self.assertEqual(result['candidate_count'],5)
@@ -157,7 +157,7 @@ class HistoricalComparisonBoundaryTests(unittest.TestCase):
         self.assert_new_event_keeps_valid_baseline(json.dumps({'report_v2':damaged}))
 
     def test_deep_history_preserves_new_event_comparison(self):
-        self.assert_new_event_keeps_valid_baseline('{"report_v2":'+'['*1500+'0'+']'*1500+'}')
+        self.assert_new_event_keeps_valid_baseline('{"report_v2":'+'['*10000+'0'+']'*10000+'}')
 
     def test_oversized_history_preserves_new_event_comparison(self):
         from zeekr_control.usage_events import MAX_SUMMARY_BYTES
