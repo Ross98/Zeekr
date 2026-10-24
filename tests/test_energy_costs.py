@@ -8,6 +8,27 @@ def event(identity,kind,start,end,a,b,capacity=100,partial=False):
                 estimated_kwh=energy,partial=partial)
 
 class EnergyCostTests(unittest.TestCase):
+    def test_complete_inventory_conserves_paid_cost_across_parking_and_input_order(self):
+        from itertools import permutations
+        rows=[event('c1','charge_end',1,2,0,20),event('t1','trip_end',3,4,20,10),
+              event('c2','charge_end',5,6,10,30),event('p','parking',7,8,30,25),
+              event('t2','trip_end',9,10,25,0)]
+        books={'c1':dict(actual_cents=2500,metered_kwh=25),
+               'c2':dict(actual_cents=4000,metered_kwh=20)}
+        expected=estimate(rows,books)
+        for ordered in permutations(rows):
+            self.assertEqual(estimate(ordered,books),expected)
+        consumption=[dict(kind=row['kind'],energy_cost=expected[row['id']])
+                     for row in rows if row['kind']!='charge_end']
+        result=summarize(consumption)
+        self.assertEqual(result['estimated_cents'],6500)
+        self.assertEqual(result['known_cents'],6500)
+        self.assertEqual(result['energy_kwh'],40)
+        self.assertEqual(result['known_kwh'],40)
+        self.assertEqual(result['unknown_kwh'],0)
+        self.assertEqual(result['partial_count'],0)
+        self.assertEqual(result['parking_samples'],1)
+
     def test_actual_fee_includes_charging_loss_and_excludes_parking_fee(self):
         rows=[event('c','charge_end',1,2,0,20),event('t','trip_end',3,4,20,10)]
         costs=estimate(rows,{'c':dict(actual_cents=2500,metered_kwh=25,parking_fee_cents=900)})

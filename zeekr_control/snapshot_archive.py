@@ -12,6 +12,7 @@ from pathlib import Path
 import sqlite3
 import stat
 import fcntl
+from .sqlite_files import prepare_database_file
 
 
 BEIJING = timezone(timedelta(hours=8))
@@ -72,13 +73,10 @@ class SnapshotArchive:
         for directory in (self.root.parent, self.root, self.root / str(date.year)):
             _private_directory(directory)
         path = self.root / str(date.year) / ('%02d.sqlite3' % date.month)
-        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise OSError('归档文件权限不安全，应由服务用户持有且权限为 600。')
-        finally:
-            os.close(fd)
+        info = prepare_database_file(path)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077 or info.st_nlink != 1):
+            raise OSError('归档文件不安全，须为服务用户独占的私有普通文件（权限 600）。')
         payload = encoded.encode('utf-8')
         digest = hashlib.sha256(payload).hexdigest()
         compressed = gzip.compress(payload, mtime=0)

@@ -19,10 +19,11 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
-from .delivery_state import DeliveryBusy, delivery_lock
+from .delivery_state import DeliveryBusy, delivery_lock, delivery_clock
 from .notifications import BarkSender, DeliveryError
 from .storage import DEFAULT_PATH, load, save
-from .resource_conditions import observations, advance, active_conditions, signature, overall, notifiable
+from .errors import ApiError
+from .resource_conditions import observations, advance, active_conditions, signature, overall, notifiable, RANK
 
 INTERVAL = 60
 CONFIRMATIONS = 3
@@ -194,7 +195,7 @@ def observer_sample(root,now):
     try:
         state=ResourceHealth(root).cached();checked=state.get('checked_at')
         fresh=type(checked) in (int,float) and 0<=now-checked<=3*INTERVAL
-    except (OSError,ValueError,TypeError):fresh=False
+    except (ApiError,OSError,ValueError,TypeError):fresh=False
     return dict(observer_health=fresh)
 
 
@@ -215,15 +216,22 @@ def resource_status(root, now=None):
     sample=state.get('sample')
     if not isinstance(sample,dict):sample={}
     def number(value):
-        return value if type(value) in (int,float) and math.isfinite(value) and value>=0 else None
+        try:return value if type(value) in (int,float) and math.isfinite(value) and value>=0 else None
+        except OverflowError:return None
     checked=number(state.get('checked_at'));now=time.time() if now is None else now
     fresh=checked is not None and 0<=now-checked<=3*INTERVAL
     pressure=sample.get('memory_pressure')
     conditions=state.get('conditions')
-    if not isinstance(conditions,dict):conditions={}
-    conditions={key:value for key,value in conditions.items() if isinstance(value,dict)}
+    alert_level='unknown'
+    if fresh and isinstance(conditions,dict):
+        levels={}
+        for key,value in conditions.items():
+            if not notifiable(key):continue
+            level=value.get('level') if isinstance(value,dict) else None
+            levels[key]={'level':level if isinstance(level,str) and level in RANK else 'unknown'}
+        alert_level=overall(levels)
     return dict(checked_at=checked,fresh=fresh,
-                alert_level=overall(conditions) if fresh else 'unknown',
+                alert_level=alert_level,
                 host=dict(cpu_percent=number(sample.get('host_cpu_percent')),
                           memory_pressure=pressure if pressure in ('normal','warning','critical') else None,
                           physical_memory_bytes=number(sample.get('physical_memory_bytes'))),
@@ -302,7 +310,11 @@ class ResourceHealth:
 
     def cached(self):
         encoded=load(self.path).get('state')
-        return json.loads(encoded) if encoded else {}
+        try:state=json.loads(encoded) if encoded else {}
+        except (ValueError,TypeError,RecursionError):
+            raise ValueError('资源巡检状态格式无效。') from None
+        if not isinstance(state,dict):raise ValueError('资源巡检状态格式无效。')
+        return state
 
     def save(self,state):
         save(self.path,{'state':json.dumps(state,ensure_ascii=False,allow_nan=False)})
@@ -349,8 +361,10 @@ class ResourceHealth:
         body.append('各原因分别连续巡检确认；未自动停止服务或清理数据。')
         return title,'\n'.join(body)
 
-    def tick(self,sample,now=None,can_send=None):
+    def tick(self,sample,now=None,can_send=None,*,started=None):
         now=time.time() if now is None else now
+        elapsed_clock=delivery_clock(int(now*1000),started)
+        current_time=lambda:elapsed_clock()/1000
         state=self.cached();last=state.get('checked_at')
         if last is not None and 0<=now-last<INTERVAL:
             pid=sample.get('collector_pid')
@@ -388,22 +402,30 @@ class ResourceHealth:
         elif incident and supported and all(item.get('streak',0)>=CONFIRMATIONS for item in supported.values()):
             if state.get('notification_state')=='sent' and now-state.get('attempt_at',now)>=REMINDER:
                 state.update(notification_state='pending',retry_at=now)
-        due=state.get('notification_state') in ('pending','failed') and now>=state.get('retry_at',0)
+        due=state.get('notification_state') in ('pending','failed') and current_time()>=state.get('retry_at',0)
         # Do not resend an obsolete cause while its recovery is being confirmed.
         # A newly confirmed sensor failure may report inability to verify the old
         # incident, rather than repeat a stale pressure assertion.
         if not due or active and not supported or self.sender is None or can_send is not None and not can_send():
             self.save(state);return state
-        state.update(notification_state='sending',attempt_at=now)
+        # Content preparation and cancellation cannot have sent a request.
+        # Persist pending first so interruption here remains safely resumable.
+        state['notification_state']='pending'
         self.save(state)
+        try:message=self.message(state)
+        except Exception:
+            state.update(notification_state='failed',retry_at=current_time()+900)
+            self.save(state);return state
         if can_send is not None and not can_send():
-            state['notification_state']='pending';self.save(state);return state
+            return state
+        state.update(notification_state='sending',attempt_at=current_time())
+        self.save(state)
         try:
-            self.sender(*self.message(state));state['notification_state']='sent'
+            self.sender(*message);state['notification_state']='sent'
             state.pop('recovered_conditions',None)
         except DeliveryError as error:
             state['notification_state']='uncertain' if error.ambiguous else 'failed'
-            state['retry_at']=now+(3600 if error.permanent else 900)
+            state['retry_at']=current_time()+(3600 if error.permanent else 900)
         except Exception:state['notification_state']='uncertain'
         self.save(state);return state
 
@@ -429,7 +451,7 @@ def main(argv=None):
                 started=time.monotonic();sample_time=time.time()
                 # Anchor confirmation spacing to iteration start. Probe duration
                 # jitter must not turn a 60-second cadence into skipped samples.
-                try:monitor.tick(sampler.measure(),now=sample_time,can_send=lambda:not stop.is_set())
+                try:monitor.tick(sampler.measure(),now=sample_time,can_send=lambda:not stop.is_set(),started=started)
                 except Exception:print('资源巡检状态无法保存；请检查磁盘与权限。',flush=True)
                 stop.wait(max(0,INTERVAL-(time.monotonic()-started)))
     except DeliveryBusy:return

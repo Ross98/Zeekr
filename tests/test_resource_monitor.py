@@ -18,7 +18,140 @@ def healthy(**changes):
 
 
 class ResourceTests(unittest.TestCase):
+    def test_sampling_elapsed_moves_delivery_time_without_shifting_confirmation(self):
+        high=healthy(endpoints={'local':False,'https':True});elapsed=[0.0]
+        with patch('zeekr_control.resource_monitor.time.monotonic',side_effect=lambda:elapsed[0]):
+            self.ticks(high,count=2)
+            elapsed[0]=40.0
+            def fail(*args):elapsed[0]+=20.0;raise DeliveryError('synthetic rejection')
+            self.sender.side_effect=fail
+            result=self.monitor.tick(high,now=1120,started=0.0)
+        self.assertEqual(result['checked_at'],1120)
+        self.assertEqual(result['level'],'critical')
+        self.assertEqual(result['attempt_at'],1160)
+        self.assertEqual(result['retry_at'],2080)
+
+    def test_native_loop_passes_anchor_from_before_sampling(self):
+        import threading
+        from contextlib import nullcontext
+        from zeekr_control.resource_monitor import main
+        elapsed=[0.0];stop=threading.Event();monitor=Mock();sampler=Mock()
+        def sample():elapsed[0]=40.0;return {'synthetic':True}
+        sampler.measure.side_effect=sample
+        monitor.tick.side_effect=lambda *args,**kwargs:stop.set()
+        with patch('zeekr_control.resource_monitor.ResourceHealth',return_value=monitor),\
+             patch('zeekr_control.resource_monitor.NativeSampler',return_value=sampler),\
+             patch('zeekr_control.resource_monitor.BarkSender'),\
+             patch('zeekr_control.resource_monitor.threading.Event',return_value=stop),\
+             patch('zeekr_control.resource_monitor.signal.signal'),\
+             patch('zeekr_control.resource_monitor.delivery_lock',return_value=nullcontext()),\
+             patch('zeekr_control.resource_monitor.sys.platform','darwin'),\
+             patch('zeekr_control.resource_monitor.time.time',return_value=1120),\
+             patch('zeekr_control.resource_monitor.time.monotonic',side_effect=lambda:elapsed[0]):
+            main(['--root',str(self.root)])
+        self.assertEqual(monitor.tick.call_args.args,({'synthetic':True},))
+        self.assertEqual(monitor.tick.call_args.kwargs['now'],1120)
+        self.assertEqual(monitor.tick.call_args.kwargs['started'],0.0)
+
+    def test_slow_permanent_failure_waits_hour_from_return(self):
+        high=healthy(endpoints={'local':False,'https':True});elapsed=[0.0]
+        with patch('zeekr_control.resource_monitor.time.monotonic',side_effect=lambda:elapsed[0]):
+            self.ticks(high,count=2)
+            def fail(*args):elapsed[0]+=20.0;raise DeliveryError('synthetic permanent',permanent=True)
+            self.sender.side_effect=fail
+            result=self.monitor.tick(high,now=1120)
+            self.assertEqual(result['retry_at'],4740)
+            elapsed[0]=3600.0
+            self.monitor.tick(high,now=4720)
+            self.sender.assert_called_once()
+
+    def test_slow_send_failure_waits_full_backoff_after_completion(self):
+        high=healthy(endpoints={'local':False,'https':True})
+        elapsed=[0.0]
+        with patch('zeekr_control.resource_monitor.time.monotonic',side_effect=lambda:elapsed[0]):
+            self.ticks(high,count=2)
+            def fail(*args):
+                elapsed[0]+=20.0
+                raise DeliveryError('synthetic slow rejection')
+            self.sender.side_effect=fail
+            result=self.monitor.tick(high,now=1120)
+            self.assertEqual(result['retry_at'],2040)
+            elapsed[0]=900.0
+            self.monitor.tick(high,now=2020)
+            self.sender.assert_called_once()
+
+    def test_slow_message_failure_waits_full_backoff_after_preparation(self):
+        high=healthy(endpoints={'local':False,'https':True});elapsed=[0.0]
+        with patch('zeekr_control.resource_monitor.time.monotonic',side_effect=lambda:elapsed[0]):
+            self.ticks(high,count=2)
+            def prepare(*args):elapsed[0]+=20.0;raise ValueError('synthetic preparation')
+            with patch.object(self.monitor,'message',side_effect=prepare):
+                result=self.monitor.tick(high,now=1120)
+            self.assertEqual(result['retry_at'],2040)
+            self.sender.assert_not_called()
+
+    def test_message_preparation_interruption_keeps_known_unsent_pending(self):
+        high=healthy(endpoints={'local':False,'https':True})
+        self.ticks(high,count=2)
+        with patch.object(self.monitor,'message',side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):self.monitor.tick(high,now=1120)
+        self.assertEqual(self.state()['notification_state'],'pending')
+        self.sender.assert_not_called()
+        self.monitor=ResourceHealth(self.root,self.sender)
+        self.monitor.tick(high,now=1180)
+        self.sender.assert_called_once()
+        self.assertEqual(self.state()['notification_state'],'sent')
+
+    def test_message_preparation_error_is_failed_without_claiming_send(self):
+        high=healthy(endpoints={'local':False,'https':True})
+        self.ticks(high,count=2)
+        with patch.object(self.monitor,'message',side_effect=ValueError('PRIVATE_SYNTHETIC')):
+            self.monitor.tick(high,now=1120)
+        self.assertEqual(self.state()['notification_state'],'failed')
+        self.assertNotIn('attempt_at',self.state())
+        self.sender.assert_not_called()
+        self.assertNotIn('PRIVATE_SYNTHETIC',self.monitor.path.read_text())
+        self.monitor.tick(high,now=1180)
+        self.sender.assert_not_called()
+        self.monitor=ResourceHealth(self.root,self.sender)
+        self.monitor.tick(high,now=2020)
+        self.sender.assert_called_once()
+        self.assertEqual(self.state()['notification_state'],'sent')
+
+    def test_final_guard_checks_after_message_preparation(self):
+        high=healthy(endpoints={'local':False,'https':True});self.ticks(high,count=2)
+        allowed=[True]
+        def prepare(state):allowed[0]=False;return ('title','body')
+        with patch.object(self.monitor,'message',side_effect=prepare):
+            self.monitor.tick(high,now=1120,can_send=lambda:allowed[0])
+        self.sender.assert_not_called()
+        self.assertEqual(self.state()['notification_state'],'pending')
+
+    def test_raised_final_guard_does_not_leave_sending_intent(self):
+        high=healthy(endpoints={'local':False,'https':True});self.ticks(high,count=2)
+        guard=Mock(side_effect=[True,ValueError('synthetic cancellation')])
+        with self.assertRaises(ValueError):self.monitor.tick(high,now=1120,can_send=guard)
+        self.sender.assert_not_called()
+        self.assertEqual(self.state()['notification_state'],'pending')
+        self.monitor=ResourceHealth(self.root,self.sender)
+        self.monitor.tick(high,now=1180)
+        self.sender.assert_called_once()
+
+    def test_actual_sender_interruption_remains_uncertain_after_restart(self):
+        high=healthy(endpoints={'local':False,'https':True});self.ticks(high,count=2)
+        self.sender.side_effect=KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):self.monitor.tick(high,now=1120)
+        self.assertEqual(self.state()['notification_state'],'sending')
+        self.monitor=ResourceHealth(self.root,self.sender)
+        self.sender.side_effect=None
+        self.monitor.tick(high,now=1180)
+        self.monitor.tick(high,now=90000)
+        self.sender.assert_called_once()
+        self.assertEqual(self.state()['notification_state'],'uncertain')
+
     def setUp(self):
+        clock_patch=patch('zeekr_control.resource_monitor.time.monotonic',return_value=0.0)
+        clock_patch.start();self.addCleanup(clock_patch.stop)
         self.folder=tempfile.TemporaryDirectory();self.addCleanup(self.folder.cleanup)
         self.root=Path(self.folder.name);self.sender=Mock()
         self.monitor=ResourceHealth(self.root,self.sender)

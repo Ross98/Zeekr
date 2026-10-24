@@ -9,7 +9,7 @@ import time
 from .archive_reader import _private
 from .events import _cursor, _decode
 from .tracks import day_bounds, valid_timestamp
-from .trip_visibility import has_trash, revision
+from .trip_visibility import has_trash, revision, has_sending_delivery, cancel_event_delivery
 from .trips import _summary
 from .usage_events import UsageEvents, VALID_ID, MAX_SUMMARY_BYTES, MAX_SCAN
 
@@ -101,7 +101,7 @@ class TripRecordManager(UsageEvents):
             row = db.execute(sql, (vehicle, identity)).fetchone()
             if row is None or (row[5] is not None) != (action == 'restore'):
                 raise ValueError('行程不存在、状态已变化或不属于当前车辆，请重新读取。')
-            if row[2] == 'sending':
+            if has_sending_delivery(db,identity):
                 raise ValueError('所选行程正在发送通知，请稍后重新预览。')
             if row[4] > MAX_SUMMARY_BYTES:
                 raise ValueError('所选行程摘要过大，暂不能通过网页管理。')
@@ -151,6 +151,8 @@ class TripRecordManager(UsageEvents):
         db = sqlite3.connect(self.path.absolute().as_uri()+'?mode=rw', uri=True, timeout=5)
         try:
             db.execute('BEGIN IMMEDIATE')
+            if self.clock()>=plan['expires']:
+                raise ValueError('预览已过期，请重新预览。')
             if revision(db, plan['vehicle']) != plan['revision']:
                 raise ValueError('行程记录已变化，请重新读取并预览。')
             rows = self._checked_rows(db, plan['vehicle'], plan['ids'], plan['action'])
@@ -161,8 +163,7 @@ class TripRecordManager(UsageEvents):
             for identity in plan['ids']:
                 if plan['action'] == 'trash':
                     db.execute('INSERT INTO trip_record_trash VALUES (?,?,?)', (plan['vehicle'],identity,now))
-                    db.execute("UPDATE monitor_events SET delivery='cancelled',error='行程已移入回收区，未发送。',next_attempt=0 WHERE vehicle=? AND id=? AND delivery='pending'",
-                               (plan['vehicle'],identity))
+                    cancel_event_delivery(db,plan['vehicle'],identity,'行程已移入回收区，未发送。')
                 else:
                     db.execute('DELETE FROM trip_record_trash WHERE vehicle=? AND event_id=?', (plan['vehicle'],identity))
             new_revision = plan['revision']+1
@@ -173,6 +174,8 @@ class TripRecordManager(UsageEvents):
                        (plan['vehicle'],plan['vehicle']))
             if guard:
                 guard()
+            if self.clock()>=plan['expires']:
+                raise ValueError('预览已过期，请重新预览。')
             db.commit()
             return {'action': plan['action'], 'count': len(plan['ids']), 'revision': new_revision}
         finally:

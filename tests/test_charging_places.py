@@ -10,6 +10,81 @@ import test_usage_reports as fixtures
 
 
 class ChargingPlaceTests(unittest.TestCase):
+    def test_expiry_during_final_result_read_still_rolls_back_location(self):
+        from unittest.mock import patch
+        self.charge();places=self.review().places;proposal=self.proposal();now=[1000.0]
+        with patch('zeekr_control.charging_places.time.time',side_effect=lambda:now[0]):
+            plan=places.preview('owner','car',proposal);now[0]=1299.0
+            read=places.store._read
+            def delayed(*args,**kwargs):
+                result=read(*args,**kwargs)
+                if args[1][2]=='charging_places' and result['revision']==1:now[0]=1301.0
+                return result
+            with patch.object(places.store,'_read',side_effect=delayed):
+                with self.assertRaisesRegex(ValueError,'预览.*过期'):
+                    places.update('owner','car',dict(proposal,action='save',token=plan['token']))
+        self.assertEqual(places.store.read('owner','car','charging_places')['revision'],0)
+
+    def test_preview_expiring_while_waiting_for_commit_lock_cannot_save(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from contextlib import contextmanager
+        import threading
+        from unittest.mock import patch
+        self.charge();places=self.review().places;proposal=self.proposal();now=[1000.0]
+        mutex=threading.Lock();attempting=threading.Event()
+        @contextmanager
+        def commit_lock():
+            attempting.set()
+            with mutex:yield
+        with patch('zeekr_control.charging_places.time.time',side_effect=lambda:now[0]):
+            plan=places.preview('owner','car',proposal);now[0]=1299.0
+            mutex.acquire()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future=pool.submit(places.update,'owner','car',dict(proposal,action='save',token=plan['token']),
+                                   commit_lock=commit_lock())
+                try:
+                    self.assertTrue(attempting.wait(2),'update did not reach commit lock')
+                    now[0]=1301.0
+                finally:mutex.release()
+                with self.assertRaisesRegex(ValueError,'预览.*过期'):future.result(timeout=3)
+        self.assertFalse(places.store.path.exists())
+
+    def test_original_inclusive_expiry_boundary_still_allows_valid_save(self):
+        from unittest.mock import patch
+        self.charge();places=self.review().places;proposal=self.proposal()
+        with patch('zeekr_control.charging_places.time.time',return_value=1000):
+            plan=places.preview('owner','car',proposal)
+        with patch('zeekr_control.charging_places.time.time',return_value=1300):
+            result=places.update('owner','car',dict(proposal,action='save',token=plan['token']))
+        self.assertEqual(result['revision'],1)
+        self.assertEqual(places.detail('owner','car','charge')['name'],proposal['name'])
+
+    def test_preview_expiring_during_proposal_recheck_cannot_save(self):
+        from unittest.mock import patch
+        self.charge();places=self.review().places;proposal=self.proposal();now=[1000.0]
+        with patch('zeekr_control.charging_places.time.time',side_effect=lambda:now[0]):
+            plan=places.preview('owner','car',proposal)
+            now[0]=1299.0;original=places._proposal
+            def delayed(*args):
+                result=original(*args);now[0]=1301.0;return result
+            with patch.object(places,'_proposal',side_effect=delayed):
+                with self.assertRaisesRegex(ValueError,'预览.*过期'):
+                    places.update('owner','car',dict(proposal,action='save',token=plan['token']))
+        self.assertEqual(places.store.read('owner','car','charging_places')['revision'],0)
+
+    def test_preview_expiring_in_final_scope_guard_rolls_back(self):
+        from unittest.mock import patch
+        self.charge();places=self.review().places;proposal=self.proposal();now=[1000.0];calls=[]
+        with patch('zeekr_control.charging_places.time.time',side_effect=lambda:now[0]):
+            plan=places.preview('owner','car',proposal);now[0]=1299.0
+            def guard():
+                calls.append(1)
+                if len(calls)==2:now[0]=1301.0
+            with self.assertRaisesRegex(ValueError,'预览.*过期'):
+                places.update('owner','car',dict(proposal,action='save',token=plan['token']),guard=guard)
+        self.assertEqual(len(calls),2)
+        self.assertEqual(places.store.read('owner','car','charging_places')['revision'],0)
+
     setUp=fixtures.UsageReportsTests.setUp
     add=fixtures.UsageReportsTests.add
 
@@ -60,7 +135,7 @@ class ChargingPlaceTests(unittest.TestCase):
         start=self.charge();self.observe(start)
         d=self.detail();self.assertEqual(d['evidence']['source'],'single_sample');self.assertTrue(d['reference'])
 
-    def test_missing_gps_requires_continuous_stationary_telemetry(self):
+    def stationary_charge(self):
         start=self.charge();end=start+3600000
         loc=dict(valid=True,trusted=True,plottable=True,coordinate_system='WGS84（社区解释）',latitude=31.2,longitude=121.4)
         self.add('arrival',start_time=start-600000,end_time=start-60000,end_location=loc)
@@ -70,8 +145,107 @@ class ChargingPlaceTests(unittest.TestCase):
             for stamp in range(start-60000,end+60001,60000):
                 payload=dict(state_time=stamp,observed_at=stamp+1000,speed=0,odometer=1200,gear='P',charging=start<=stamp<=end)
                 db.execute('INSERT INTO report_observations VALUES(?,?,?,?,?)',('car',stamp,stamp+1000,json.dumps(payload),'v1'))
+        return start
+
+    def test_missing_gps_requires_continuous_stationary_telemetry(self):
+        start=self.stationary_charge()
         self.assertEqual(self.detail()['evidence']['source'],'stationary_between_trips')
         with sqlite3.connect(self.db) as db:db.execute('DELETE FROM report_observations WHERE state_time=?',(start+60000,));db.execute('DELETE FROM report_observations WHERE state_time=?',(start+120000,));db.execute('DELETE FROM report_observations WHERE state_time=?',(start+180000,))
+        self.assertIsNone(self.detail()['location'])
+
+    def test_delayed_movement_start_blocks_stationary_charge_location(self):
+        start = self.stationary_charge()
+        self.assertIsNotNone(self.detail()['location'])
+        stamp = start+3570000
+        self.add('late-movement', kind='trip_start', start_time=stamp, end_time=stamp)
+        with sqlite3.connect(self.db) as db:
+            # 150 seconds late is within accepted observation freshness, but
+            # after the following trip's vehicle-time boundary.
+            db.execute("UPDATE monitor_events SET created=? WHERE id='late-movement'", (start+3720000,))
+        self.assertIsNone(self.detail()['location'])
+
+    def test_intermediate_completed_or_partial_trip_is_a_barrier_even_if_recycled(self):
+        start = self.stationary_charge()
+        self.assertIsNotNone(self.detail()['location'])
+        raw = self.add('motion',start_time=start+60000,end_time=start+120000)
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE trip_record_trash(vehicle TEXT,event_id TEXT)')
+        for partial, recycled in [(False,False),(False,True),(True,False),(True,True)]:
+            with self.subTest(partial=partial,recycled=recycled):
+                raw['partial'] = partial
+                with sqlite3.connect(self.db) as db:
+                    db.execute("UPDATE monitor_events SET summary=? WHERE id='motion'",(json.dumps(raw),))
+                    db.execute('DELETE FROM trip_record_trash')
+                    if recycled:
+                        db.execute("INSERT INTO trip_record_trash VALUES('car','motion')")
+                self.assertIsNone(self.detail()['location'])
+
+    def test_partial_movement_with_only_end_time_still_blocks_stationary_location(self):
+        start = self.stationary_charge()
+        self.add('fragment',partial=True,start_time=None,end_time=start+120000)
+        self.assertIsNone(self.detail()['location'])
+
+    def test_unreadable_movement_blocks_only_its_unknown_time_fallback_window(self):
+        start = self.stationary_charge()
+        expected = self.detail()
+        for encoded in ('not-json', '[]', '{"start_time":true}', '['*1200+'0'+']'*1200):
+            with self.subTest(encoded=encoded[:24]):
+                with sqlite3.connect(self.db) as db:
+                    db.execute('INSERT OR REPLACE INTO monitor_events VALUES(?,?,?,?,?)',
+                               ('unknown-motion','car','trip_end',encoded,start+60000))
+                self.assertIsNone(self.detail()['location'])
+                with sqlite3.connect(self.db) as db:
+                    db.execute("UPDATE monitor_events SET created=? WHERE id='unknown-motion'",(start+86400000,))
+                self.assertEqual(self.detail(),expected)
+
+    def test_write_time_does_not_override_known_movement_time(self):
+        start = self.stationary_charge()
+        expected = self.detail()
+        for identity, stamp in [('old-start', start-3600000), ('departure-start', start+3660000)]:
+            self.add(identity, kind='trip_start', start_time=stamp, end_time=stamp)
+        self.add('foreign-start',kind='trip_start',vehicle='other',start_time=start+600000)
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE monitor_events SET created=? WHERE kind='trip_start'", (start+600000,))
+        self.assertEqual(self.detail(), expected)
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO monitor_events VALUES('bad-start','car','trip_start','not-json',?)", (start+600000,))
+        self.assertIsNone(self.detail()['location'])
+        for encoded in ('[]', '{"start_time":true}', '['*1200+'0'+']'*1200):
+            with self.subTest(encoded=encoded[:24]):
+                with sqlite3.connect(self.db) as db:
+                    db.execute("UPDATE monitor_events SET summary=? WHERE id='bad-start'", (encoded,))
+                self.assertIsNone(self.detail()['location'])
+
+    def test_old_stationary_charge_place_survives_unrelated_new_trips(self):
+        start = self.charge()
+        end = start+3600000
+        loc = dict(valid=True,trusted=True,plottable=True,coordinate_system='WGS84（社区解释）',latitude=31.2,longitude=121.4)
+        self.add('arrival', start_time=start-600000, end_time=start-60000, end_location=loc)
+        self.add('departure', start_time=end+60000, end_time=end+600000, start_location=loc)
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE report_observations(vehicle TEXT,state_time INTEGER,observed_at INTEGER,normalized_payload TEXT,decoder_version TEXT)')
+            for stamp in range(start-60000,end+60001,60000):
+                payload = dict(state_time=stamp,observed_at=stamp+1000,speed=0,odometer=1200,gear='P')
+                db.execute('INSERT INTO report_observations VALUES(?,?,?,?,?)',('car',stamp,stamp+1000,json.dumps(payload),'v1'))
+        expected = self.detail()
+        self.assertEqual(expected['evidence']['source'], 'stationary_between_trips')
+        with sqlite3.connect(self.db) as db:
+            for index in range(1024):
+                stamp = end+86400000+index*60000
+                summary = json.dumps(dict(start_time=stamp,end_time=stamp+30000,partial=False))
+                db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                           ('new-trip-'+str(index),'car','trip_end',summary,stamp))
+        self.assertEqual(self.detail(), expected)
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO monitor_events VALUES('malformed','car','trip_end','not-json',?)", (end+86400000,))
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('deep','car','trip_end','['*1200+'0'+']'*1200,end+86400001))
+        self.assertEqual(self.detail(), expected)
+        # The limit still applies to candidates in the relevant time window.
+        with sqlite3.connect(self.db) as db:
+            summary = json.dumps(dict(start_time=start,end_time=end,partial=True))
+            db.executemany('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                           [('in-window-'+str(index),'car','trip_end',summary,end+index) for index in range(1023)])
         self.assertIsNone(self.detail()['location'])
 
     def test_saved_precharge_reference_requires_stationary_evidence_and_stays_reference(self):

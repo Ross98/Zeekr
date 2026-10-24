@@ -10,6 +10,71 @@ from test_resource_monitor import healthy
 
 
 class ConditionTests(unittest.TestCase):
+    def test_resource_projection_isolates_invalid_numeric_reference_values(self):
+        from zeekr_control.resource_monitor import resource_status
+        for value in (10**400,True,-1,[],{'private':'PRIVATE-RESOURCE'}):
+            with self.subTest(value_type=type(value).__name__):
+                self.monitor.save({'checked_at':1000,'sample':{'host_cpu_percent':value,
+                                   'app_rss_bytes':0,'physical_memory_bytes':16*1024**3},
+                                   'conditions':{'endpoint:local':{'level':'critical'}}})
+                before=self.monitor.path.read_bytes()
+                result=resource_status(self.monitor.root,now=1000)
+                self.assertIsNone(result['host']['cpu_percent'])
+                self.assertEqual(result['application']['rss_bytes'],0)
+                self.assertEqual(result['alert_level'],'critical')
+                self.assertEqual(self.monitor.path.read_bytes(),before)
+        self.monitor.save({'checked_at':10**400,'sample':{'app_rss_bytes':0},'conditions':{}})
+        result=resource_status(self.monitor.root,now=1000)
+        self.assertIsNone(result['checked_at'])
+        self.assertFalse(result['fresh'])
+        self.assertEqual(result['alert_level'],'unknown')
+
+    def test_damaged_primary_state_becomes_watchdog_unknown_without_overwriting_it(self):
+        from zeekr_control.resource_monitor import observer_sample
+        from zeekr_control.storage import save
+        for index,encoded in enumerate(('null','[]','"text"','[', '['*1500+'0'+']'*1500)):
+            with self.subTest(encoded=encoded[:20]):
+                root=self.monitor.root/str(index)
+                save(root/'resource-health.json',{'state':encoded})
+                before=(root/'resource-health.json').read_bytes()
+                with self.assertRaises(ValueError):ResourceHealth(root).tick(healthy(),1000)
+                sender=Mock();watchdog=ResourceHealth(root,sender,'resource-watchdog.json')
+                for now in (1000,1060,1120,1180):
+                    watchdog.tick(observer_sample(root,now),now)
+                sender.assert_called_once()
+                self.assertIn('巡检失效',sender.call_args.args[0])
+                self.assertEqual((root/'resource-health.json').read_bytes(),before)
+                ResourceHealth(root).save({'checked_at':1240,'sample':healthy()})
+                for now in (1240,1300,1360):watchdog.tick(observer_sample(root,now),now)
+                self.assertEqual(sender.call_count,2)
+                self.assertIn('恢复',sender.call_args.args[0])
+
+    def test_unreadable_outer_state_file_is_reported_by_independent_watchdog(self):
+        from zeekr_control.resource_monitor import observer_sample
+        path=self.monitor.root/'resource-health.json'
+        path.write_text('{broken');path.chmod(0o600)
+        before=path.read_bytes();watchdog=ResourceHealth(self.monitor.root,self.sender,'resource-watchdog.json')
+        for now in (1000,1060,1120):watchdog.tick(observer_sample(self.monitor.root,now),now)
+        self.sender.assert_called_once()
+        self.assertEqual(path.read_bytes(),before)
+
+    def test_worker_reports_corrupt_primary_while_sampling_paused_and_storage_fails(self):
+        from zeekr_control.delivery_runtime import DeliveryWorker
+        from zeekr_control.storage import save
+        save(self.monitor.path,{'state':'null'})
+        before=self.monitor.path.read_bytes()
+        save(self.monitor.root/'sampling.json',{'enabled':'false'})
+        with patch('zeekr_control.delivery_runtime.observer_enabled',return_value=True):
+            worker=DeliveryWorker(self.monitor.root/'session.json',sender=Mock(),alert_sender=self.sender)
+        worker.storage.tick=Mock(side_effect=OSError('synthetic storage scan failure'))
+        with patch('builtins.print'),patch('zeekr_control.delivery_runtime.time.monotonic',return_value=0.0):
+            for now in (1000,1060,1120):worker.tick(now*1000)
+        self.sender.assert_called_once()
+        self.assertIn('巡检失效',self.sender.call_args.args[0])
+        self.assertEqual(worker.error,'storage_health_unavailable')
+        self.assertEqual(worker.status,'paused')
+        self.assertEqual(self.monitor.path.read_bytes(),before)
+
     def test_host_and_process_resources_are_display_only_even_when_unknown(self):
         for sample in [healthy(host_cpu_percent=99, memory_pressure='critical',
                                app_cpu_percent=250, app_rss_bytes=2*1024**3),

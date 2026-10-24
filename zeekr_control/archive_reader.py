@@ -288,7 +288,10 @@ class ArchiveReader:
         if (len(payload) != row['raw_bytes'] or len(payload) > MAX_PAYLOAD_BYTES or
                 hashlib.sha256(payload).hexdigest() != row['digest']):
             raise ValueError('归档正文校验失败。')
-        raw = json.loads(payload)
+        try:
+            raw = json.loads(payload)
+        except RecursionError:
+            raise ValueError('归档正文嵌套过深。') from None
         if not isinstance(raw, dict):
             raise ValueError('归档正文不是车辆快照。')
         return raw

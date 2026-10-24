@@ -31,7 +31,12 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.route('**/api/insights/report?*',async route=>{await page.evaluate(()=>{state.insights_context='changed-account';});return route.fulfill({status:202,json:{analysis_job_url:job,retry_after_ms:1}});});
   assert.match(await page.evaluate(()=>api('/api/insights/report?date=2026-10-01').catch(e=>e.message)),/车辆或账号已切换/);
   assert.equal(polls,2,'old account job is not polled');
-  const deadline=await page.evaluate(async()=>{const original=Date.now;let calls=0;Date.now=()=>original()+(calls++?600001:0);try{return await api('/api/timeline?deadline=1').catch(e=>e.message);}finally{Date.now=original;}});
+  const deadline=await page.evaluate(async()=>{
+    const original=performance.now.bind(performance),own=Object.getOwnPropertyDescriptor(performance,'now');let calls=0;
+    Object.defineProperty(performance,'now',{configurable:true,value:()=>original()+(calls++?600001:0)});
+    try{return await api('/api/timeline?deadline=1').catch(e=>e.message);}
+    finally{if(own)Object.defineProperty(performance,'now',own);else delete performance.now;}
+  });
   assert.match(deadline,/超过 10 分钟/);
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);assert.deepEqual(f.posts,[f.origin+job+'/cancel']);
   await page.evaluate(()=>{state.insights_context='synthetic';});

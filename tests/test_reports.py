@@ -17,6 +17,33 @@ except ImportError:
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_fresh_temperature_timestamp_does_not_validate_missing_measurement(self):
+        for value in (None,True,'broken',200):
+            with self.subTest(value=value):
+                raw=sample(0)
+                raw['additionalVehicleStatus']['climateStatus']={
+                    'interiorTemp':value,'exteriorTemp':18,'temperatureUpdateTime':BASE}
+                data=normalize(raw,BASE)
+                self.assertIsNone(data['inside_temp']['value'])
+                self.assertEqual(data['inside_temp']['validity'],'missing')
+                self.assertEqual(data['inside_temp']['reason'],'missing')
+                self.assertEqual(data['outside_temp']['value'],18)
+                self.assertEqual(data['outside_temp']['validity'],'valid')
+
+    def test_float_conversion_overflow_is_not_valid_telemetry(self):
+        from zeekr_control.vehicle_state import numeric
+        for value in ('1e999999999','-1e999999999'):
+            with self.subTest(value=value):self.assertIsNone(numeric(value,None,None))
+        self.assertEqual(numeric('12.5',None,None),12.5)
+        raw=sample(0)
+        raw['additionalVehicleStatus']['maintenanceStatus']['tyreStatusDriver']='1e999999999'
+        data=normalize(raw,BASE)
+        self.assertIsNone(data['tyres'][0]['pressure']['value'])
+        self.assertEqual(data['tyres'][0]['pressure']['validity'],'missing')
+        self.assertEqual(data['soc'],80)
+        self.assertEqual(data['odometer'],100)
+        json.dumps(data,allow_nan=False)
+
     def test_ac_report_keeps_generic_electrical_values_separate_from_dc(self):
         from test_ac_charging import ac_sample
         raw = ac_sample(chargeUAct=220, chargeIAct=16, dcChargePileUAct=360)
@@ -60,6 +87,59 @@ class TelemetryTests(unittest.TestCase):
 
 
 class MetricTests(unittest.TestCase):
+    def test_rated_range_attainment_does_not_require_battery_capacity(self):
+        start=normalize(sample(0,km=100,soc=80),BASE)
+        end=normalize(sample(3600,km=180,soc=60),BASE+3600000)
+        profile=dict(range_km=546,range_standard='CLTC')
+        result=trip_metrics(start,end,[start,end],profile)
+        self.assertAlmostEqual(result['range_attainment_percent'],73.26007326)
+        self.assertIsNone(result['estimated_kwh'])
+        self.assertIsNone(result['estimated_kwh_100km'])
+        with_capacity=trip_metrics(start,end,[start,end],dict(profile,battery_capacity_kwh=86))
+        self.assertEqual(with_capacity['range_attainment_percent'],result['range_attainment_percent'])
+        for changes,options in ((dict(range_standard='unknown'),{}),({},dict(partial=True)),
+                                ({},dict(charge_overlap=True)),(dict(range_km=0),{})):
+            with self.subTest(changes=changes,options=options):
+                self.assertIsNone(trip_metrics(start,end,[start,end],dict(profile,**changes),**options)['range_attainment_percent'])
+        for endpoint in (dict(odometer=109,soc=60),dict(odometer=180,soc=78)):
+            self.assertIsNone(trip_metrics(start,dict(end,**endpoint),[start,end],profile)['range_attainment_percent'])
+
+    def test_zero_tyre_pressure_endpoint_excludes_delta_per_report_contract(self):
+        for first,last,expected in ((260,0,None),(0,260,None),(0,0,None),(260,270,10)):
+            with self.subTest(first=first,last=last):
+                start=normalize(sample(0),BASE);end=normalize(sample(120),BASE+120000)
+                start['tyres'][0]['pressure']=dict(value=first,validity='valid')
+                end['tyres'][0]['pressure']=dict(value=last,validity='valid')
+                result=trip_metrics(start,end,[start,end],{})
+                self.assertEqual(result['tyre_changes'][0]['pressure_delta'],expected)
+
+    def test_invalid_legacy_tyre_metric_cannot_create_nonfinite_or_invalid_deltas(self):
+        for field in ('pressure','temperature'):
+            for value in (None,'broken',True,float('inf'),float('-inf'),float('nan')):
+                with self.subTest(field=field,value=value):
+                    start=normalize(sample(0),BASE);end=normalize(sample(120),BASE+120000)
+                    start['tyres'][0][field]=dict(value=value,validity='valid')
+                    end['tyres'][0][field]=dict(value=25,validity='valid')
+                    result=trip_metrics(start,end,[start,end],{})
+                    key='pressure_delta' if field=='pressure' else 'temperature_delta'
+                    self.assertIsNone(result['tyre_changes'][0][key])
+                    json.dumps(result,allow_nan=False)
+
+    def test_legacy_valid_temperature_without_value_cannot_break_trip_metrics(self):
+        start=normalize(sample(0,km=100,soc=80),BASE)
+        end=normalize(sample(120,km=110,soc=76),BASE+120000)
+        start['inside_temp']=dict(value=None,validity='valid',field_time=BASE)
+        end['inside_temp']=dict(value=25,validity='valid',field_time=BASE+120000)
+        for value in (None,'broken','20',True,float('inf'),200):
+            with self.subTest(value=value):
+                start['inside_temp']['value']=value
+                result=trip_metrics(start,end,[start,end],{})
+                self.assertEqual(result['distance_km'],10)
+                self.assertEqual(result['soc_delta'],-4)
+                self.assertIsNone(result['inside_temp_delta'])
+        start['inside_temp']['value']=20
+        self.assertEqual(trip_metrics(start,end,[start,end],{})['inside_temp_delta'],5)
+
     def test_trip_formula_uses_unrounded_values_and_thresholds(self):
         start = {'state_time': BASE, 'observed_at': BASE, 'odometer': 100, 'soc': 78, 'speed': 10}
         end = {'state_time': BASE+2520000, 'observed_at': BASE+2520000, 'odometer': 123.6, 'soc': 72, 'speed': 76}

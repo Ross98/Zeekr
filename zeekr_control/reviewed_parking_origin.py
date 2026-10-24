@@ -4,6 +4,8 @@ from .parking_origin import _point, _summary, _telemetry, MAX_PARKING_AGE_MS
 from .parking_destination import _stationary
 from .reviewed_parking_destination import _sample
 from .usage_events import MAX_SUMMARY_BYTES, number
+from .movement_barriers import trip_movement_between
+from .trip_visibility import visible_clause
 
 
 def reviewed_parking_origin(db, vehicle, event, current):
@@ -20,7 +22,8 @@ def reviewed_parking_origin(db, vehicle, event, current):
     if not isinstance(previous_id,str) or previous_id == event['id'] or parked_time is None:
         return None
     row = db.execute("SELECT summary FROM monitor_events WHERE vehicle=? AND id=? AND kind='trip_end' "
-                     'AND length(CAST(summary AS BLOB))<=?', (vehicle, previous_id, MAX_SUMMARY_BYTES)).fetchone()
+                     'AND length(CAST(summary AS BLOB))<=? AND '+visible_clause(db),
+                     (vehicle, previous_id, MAX_SUMMARY_BYTES)).fetchone()
     if row is None:
         return None
     previous = _summary(row[0])
@@ -32,9 +35,7 @@ def reviewed_parking_origin(db, vehicle, event, current):
     odometer = number(departure.get('odometer'))
     if odometer is None or not _stationary(departure,start,odometer) or not _stationary(parked,parked_time,odometer):
         return None
-    if db.execute("SELECT 1 FROM monitor_events WHERE vehicle=? AND kind IN ('trip_start','trip_end') "
-                  'AND id NOT IN (?,?) AND created>? AND created<? LIMIT 1',
-                  (vehicle,event['id'],previous_id,end,start)).fetchone():
+    if trip_movement_between(db, vehicle, end, start, exclude_event_ids=(event['id'],previous_id)):
         return None
     if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_observations'").fetchone():
         return None

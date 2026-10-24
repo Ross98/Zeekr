@@ -1,6 +1,6 @@
 /* Server-only archive administration. Never requests vehicle data. */
 window.StorageManagement = (() => {
-  let panel, request, status, inventory, plan, busy=false, error='', message='', draft='', sequence=0, loadedAt=0;
+  let panel, request, status, inventory, plan, busy=false, error='', message='', draft='', sequence=0, loadedAt=null;
   const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const bytes=value=>{
     if(!Number.isFinite(value))return '未知';
@@ -53,7 +53,7 @@ window.StorageManagement = (() => {
     try{
       const result=await Promise.all([request('/api/storage'),request('/api/storage/archives')]);
       if(version!==sequence)return;
-      [status,inventory]=result;loadedAt=Date.now();
+      [status,inventory]=result;loadedAt=performance.now();
     }catch(e){if(version===sequence)error=e.message;}
     finally{if(version===sequence){busy=false;draw();}}
   }
@@ -86,6 +86,6 @@ window.StorageManagement = (() => {
     request=api;
     if(!panel){panel=document.createElement('section');panel.id='storage-management';panel.className='card section-gap';panel.addEventListener('click',click);panel.addEventListener('input',event=>{if(event.target.id==='storage-confirm-input'){draft=event.target.value;const b=panel.querySelector('[data-storage-action="execute"]');if(b)b.disabled=busy||draft!==plan?.confirmation;}});draw();}
     root.querySelector('section')?.after(panel);
-    if(!busy&&!plan&&Date.now()-loadedAt>60000)reload();
+    if(!busy&&!plan&&(loadedAt===null||performance.now()-loadedAt>60000))reload();
   }};
 })();

@@ -16,6 +16,132 @@ def delivery_report():
 
 
 class PeriodicReportTests(unittest.TestCase):
+    def test_text_preparation_failure_is_known_unsent_without_consuming_send_attempt(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            sender=Mock();renderer=Mock();renderer.render.return_value=b'PNG'
+            delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:1000)
+            with patch('zeekr_control.periodic_report.markdown',side_effect=ValueError('PRIVATE_SYNTHETIC')):
+                result=delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual((result['text'],result['text_attempts']),('failed',0))
+            sender.send_markdown.assert_not_called()
+            sender.send_image.assert_not_called()
+            with delivery.connect() as db:
+                self.assertEqual(db.execute('SELECT text_error FROM report_delivery_metadata').fetchone()[0],
+                                 'preparation_failed')
+
+    def test_text_preparation_interruption_leaves_pending_and_can_resume(self):
+        from unittest.mock import patch
+        from zeekr_control.periodic_report import report_id
+        with tempfile.TemporaryDirectory() as folder:
+            sender=Mock();renderer=Mock();renderer.render.return_value=b'PNG'
+            delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:1000)
+            report=delivery_report()
+            with patch('zeekr_control.periodic_report.markdown',side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):delivery.deliver('scope','car',report,sender)
+            key=report_id('scope','car',report['period'],report['start_date'],report['end_date'])
+            self.assertEqual((delivery.status(key)['text'],delivery.status(key)['text_attempts']),('pending',0))
+            result=delivery.deliver('scope','car',report,sender)
+            self.assertEqual((result['text'],result['image']),('sent','sent'))
+            self.assertEqual(sender.send_markdown.call_count,1)
+            self.assertEqual(sender.send_image.call_count,1)
+
+    def test_retry_preparation_interruption_preserves_existing_send_count(self):
+        from unittest.mock import patch
+        from zeekr_control.periodic_report import report_id
+        with tempfile.TemporaryDirectory() as folder:
+            now=[1000];sender=Mock();renderer=Mock();renderer.render.return_value=b'PNG'
+            sender.send_markdown.side_effect=DeliveryError('synthetic rejection')
+            path=Path(folder)/'reports.sqlite3'
+            delivery=PeriodicDelivery(path,renderer,clock=lambda:now[0])
+            report=delivery_report()
+            self.assertEqual(delivery.deliver('scope','car',report,sender)['text'],'retry')
+            now[0]=121000
+            with patch('zeekr_control.periodic_report.markdown',side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):delivery.deliver('scope','car',report,sender)
+            key=report_id('scope','car',report['period'],report['start_date'],report['end_date'])
+            self.assertEqual((delivery.status(key)['text'],delivery.status(key)['text_attempts']),('retry',1))
+            sender.send_markdown.side_effect=None
+            restarted=PeriodicDelivery(path,renderer,clock=lambda:now[0])
+            result=restarted.deliver('scope','car',report,sender)
+            self.assertEqual((result['text'],result['image'],result['text_attempts']),('sent','sent',2))
+            self.assertEqual(sender.send_markdown.call_count,2)
+            self.assertEqual(sender.send_image.call_count,1)
+
+    def test_slow_preparation_failure_keeps_full_two_minute_backoff(self):
+        with tempfile.TemporaryDirectory() as folder:
+            now=[1000];sender=Mock();renderer=Mock()
+            def fail(*arguments):
+                now[0]+=20000
+                raise ImagePreparationError('synthetic slow preparation')
+            renderer.render.side_effect=fail
+            delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:now[0])
+            state=delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual(state['next_at'],141000)
+            now[0]=121000
+            delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual(renderer.render.call_count,1)
+            for stamp in (141000,281000,1000000):
+                now[0]=stamp
+                state=delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual(state['image'],'failed')
+            self.assertEqual(renderer.render.call_count,3)
+            self.assertEqual(sender.send_markdown.call_count,1)
+
+    def test_slow_text_failure_keeps_full_two_minute_backoff(self):
+        with tempfile.TemporaryDirectory() as folder:
+            now=[1000];sender=Mock();renderer=Mock();renderer.render.return_value=b'PNG'
+            def fail(*arguments):
+                now[0]+=20000
+                raise DeliveryError('synthetic slow rejection')
+            sender.send_markdown.side_effect=fail
+            delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:now[0])
+            state=delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual(state['next_at'],141000)
+            now[0]=121000
+            delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual(sender.send_markdown.call_count,1)
+
+    def test_slow_image_failure_keeps_full_two_minute_backoff(self):
+        with tempfile.TemporaryDirectory() as folder:
+            now=[1000];sender=Mock();renderer=Mock();renderer.render.return_value=b'PNG'
+            def fail(*arguments):
+                now[0]+=20000
+                raise DeliveryError('synthetic slow rejection')
+            sender.send_image.side_effect=fail
+            delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:now[0])
+            state=delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual(state['next_at'],141000)
+            now[0]=121000
+            delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual(sender.send_image.call_count,1)
+            for stamp in (141000,281000,1000000):
+                now[0]=stamp
+                state=delivery.deliver('scope','car',delivery_report(),sender)
+            self.assertEqual(state['image'],'failed')
+            self.assertEqual(sender.send_image.call_count,3)
+            self.assertEqual(sender.send_markdown.call_count,1)
+
+    def test_slow_preparation_retry_uses_frozen_report_and_theme(self):
+        with tempfile.TemporaryDirectory() as folder:
+            now=[1000];sender=Mock();renderer=Mock()
+            def prepare(report,theme):
+                if renderer.render.call_count==1:
+                    now[0]+=20000
+                    raise ImagePreparationError('synthetic slow preparation')
+                return b'PNG'
+            renderer.render.side_effect=prepare
+            delivery=PeriodicDelivery(Path(folder)/'reports.sqlite3',renderer,clock=lambda:now[0])
+            original=delivery_report()
+            delivery.deliver('scope','car',original,sender,theme='dark')
+            changed=delivery_report();changed['metrics']['distance_km']=999
+            now[0]=141000
+            result=delivery.deliver('scope','car',changed,sender,theme='light')
+            self.assertEqual((result['text'],result['image']),('sent','sent'))
+            self.assertEqual(renderer.render.call_args.args[0]['metrics']['distance_km'],original['metrics']['distance_km'])
+            self.assertEqual(renderer.render.call_args.args[1],'dark')
+            self.assertEqual(sender.send_markdown.call_count,1)
+
     def test_six_templates_valid_png_and_zero_not_missing(self):
         for period in ('day','week','month'):
             for theme in ('light','dark'):

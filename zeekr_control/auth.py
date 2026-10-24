@@ -3,6 +3,7 @@ from contextlib import closing
 import hashlib
 import hmac
 import ipaddress
+import math
 import os
 from pathlib import Path
 import secrets
@@ -10,6 +11,7 @@ import sqlite3
 import stat
 import threading
 import time
+from .sqlite_files import prepare_database_file
 
 
 def password_record(password):
@@ -44,14 +46,11 @@ class WebAuth:
         parent = path.parent.stat()
         if parent.st_uid != os.getuid() or parent.st_mode & 0o077:
             raise ValueError('记住设备的存储目录权限必须为 700。')
-        flags = os.O_RDWR | os.O_NOFOLLOW | (os.O_CREAT if create else 0)
-        fd = os.open(path, flags, 0o600)
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise ValueError('记住设备的存储文件权限必须为 600。')
-        finally:
-            os.close(fd)
+        info = prepare_database_file(path) if create else path.lstat()
+        if stat.S_ISDIR(info.st_mode):
+            raise IsADirectoryError('记住设备的存储路径必须为普通文件。')
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError('记住设备的存储文件权限必须为 600。')
         return sqlite3.connect(path, timeout=2)
 
     @staticmethod
@@ -66,10 +65,11 @@ class WebAuth:
 
     def limited(self):
         with self.lock:
-            self.failures = [t for t in self.failures if time.time() - t < 300]
+            now=time.monotonic()
+            self.failures = [t for t in self.failures if now - t < 300]
             return len(self.failures) >= 5
 
-    def login(self, password, remember_days=0, client_ip='', user_agent=''):
+    def login(self, password, remember_days=0, client_ip='', user_agent='',previous_token=''):
         with self.lock:
             if type(remember_days) is not int or remember_days not in (0, 7, 30):
                 raise ValueError('记住设备期限只能为 7 天、30 天或不记住。')
@@ -80,26 +80,37 @@ class WebAuth:
             if self.limited():
                 return None
             if not isinstance(password, str) or len(password) > 256:
-                self.failures.append(time.time())
+                self.failures.append(time.monotonic())
                 return None
             digest = hashlib.pbkdf2_hmac('sha256', password.encode(), self.salt, 600000)
             if not hmac.compare_digest(digest, self.digest):
-                self.failures.append(time.time())
+                self.failures.append(time.monotonic())
                 return None
             now = time.time()
             token = secrets.token_urlsafe(32)
             token_key = hashlib.sha256(token.encode()).digest()
-            if remember_days:
+            previous_key=(hashlib.sha256(previous_token.encode()).digest()
+                          if isinstance(previous_token,str) and 0<len(previous_token)<=256 else None)
+            previous_in_memory=previous_key is not None and previous_key in self.sessions
+            revoke_remembered=(previous_key is not None and not previous_in_memory
+                               and self.remembered_path is not None)
+            if remember_days or revoke_remembered:
                 with closing(self._connect()) as connection, connection:
-                    connection.execute('DELETE FROM remembered_sessions WHERE expires <= ? OR password_key != ?',
-                                       (now, self.password_key))
-                    # Make room before inserting: a new 7-day credential must
-                    # not immediately lose to older 30-day credentials.
-                    connection.execute('''DELETE FROM remembered_sessions WHERE token_key IN (
-                        SELECT token_key FROM remembered_sessions ORDER BY expires DESC, rowid DESC LIMIT -1 OFFSET 31)''')
-                    connection.execute('INSERT INTO remembered_sessions VALUES (?, ?, ?, ?)',
-                                       (token_key, self.password_key, client_key, now + remember_days * 86400))
-                return token
+                    if revoke_remembered:
+                        connection.execute('DELETE FROM remembered_sessions WHERE token_key=?',(previous_key,))
+                    if remember_days:
+                        # Invalid deadlines must not consume slots ahead of valid devices.
+                        connection.execute('''DELETE FROM remembered_sessions WHERE expires <= ? OR password_key != ?
+                            OR typeof(expires) NOT IN ('integer','real') OR expires >= ?''',
+                                           (now, self.password_key, float('inf')))
+                        # Reuse this browser's slot before trimming unrelated devices.
+                        connection.execute('''DELETE FROM remembered_sessions WHERE token_key IN (
+                            SELECT token_key FROM remembered_sessions ORDER BY expires DESC, rowid DESC LIMIT -1 OFFSET 31)''')
+                        connection.execute('INSERT INTO remembered_sessions VALUES (?, ?, ?, ?)',
+                                           (token_key, self.password_key, client_key, now + remember_days * 86400))
+            # Required persistent changes must commit before changing memory sessions.
+            if previous_in_memory:del self.sessions[previous_key]
+            if remember_days:return token
             self.sessions = {k:v for k,v in self.sessions.items() if v > now}
             if len(self.sessions) >= 32:
                 del self.sessions[min(self.sessions, key=self.sessions.get)]
@@ -118,17 +129,20 @@ class WebAuth:
             try:
                 client_key = self._client_key(client_ip, user_agent)
                 with closing(self._connect()) as connection:
-                    row = connection.execute('''SELECT 1 FROM remembered_sessions
+                    row = connection.execute('''SELECT expires FROM remembered_sessions
                         WHERE token_key = ? AND password_key = ? AND client_key = ? AND expires > ?''',
                         (token_key, self.password_key, client_key, time.time())).fetchone()
-                return row is not None
+                return row is not None and type(row[0]) in (int,float) and math.isfinite(row[0])
             except (ValueError, OSError, sqlite3.Error):
                 return False
 
     def logout(self, token):
         with self.lock:
             token_key = hashlib.sha256(token.encode()).digest()
+            # Default sessions are never persisted in remembered_sessions.
+            if token_key in self.sessions:
+                del self.sessions[token_key]
+                return
             if self.remembered_path is not None:
                 with closing(self._connect()) as connection, connection:
                     connection.execute('DELETE FROM remembered_sessions WHERE token_key = ?', (token_key,))
-            self.sessions.pop(token_key, None)

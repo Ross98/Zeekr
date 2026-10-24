@@ -2,13 +2,13 @@
 from contextlib import contextmanager
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import sqlite3
 import time
 
 from .archive_reader import _private
+from .sqlite_files import prepare_database_file
 from .snapshots import session_scope
 
 COLLECTIONS = {'charges','tags','rules','experiments','expenses','reminders','place_names','place_corrections','tyre_notifications','charging_places'}
@@ -42,8 +42,7 @@ class PersonalStore:
         if write:
             self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
             _private(self.path.parent,directory=True)
-            fd=os.open(self.path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
-            os.close(fd)
+            prepare_database_file(self.path)
         if not self.path.exists() and not self.path.is_symlink():
             yield None
             return
@@ -96,16 +95,17 @@ class PersonalStore:
     def _row(row):
         return {'id':row[0],'body':json.loads(row[1]),'deleted':bool(row[2]),'updated_at':row[3]}
 
-    def _read(self,db,key):
+    def _read(self,db,key,schema='main'):
+        if schema not in ('main','ledger'):raise ValueError('个人记录数据库作用域无效。')
         if db is None:
             return {'revision':0,'records':[],'can_undo':False}
-        rev=db.execute('SELECT revision FROM revisions WHERE owner=? AND vehicle=? AND collection=?',key).fetchone()
+        rev=db.execute(f'SELECT revision FROM {schema}.revisions WHERE owner=? AND vehicle=? AND collection=?',key).fetchone()
         revision=rev[0] if rev else 0
-        rows=db.execute('SELECT id,body,deleted,updated_at FROM records WHERE owner=? AND vehicle=? AND collection=? '
+        rows=db.execute(f'SELECT id,body,deleted,updated_at FROM {schema}.records WHERE owner=? AND vehicle=? AND collection=? '
                         'ORDER BY updated_at DESC,id LIMIT 10001',key).fetchall()
         if len(rows)>10000:
             raise ValueError('个人记录数量超限。')
-        latest=db.execute('SELECT operation FROM changes WHERE owner=? AND vehicle=? AND collection=? AND revision=?',
+        latest=db.execute(f'SELECT operation FROM {schema}.changes WHERE owner=? AND vehicle=? AND collection=? AND revision=?',
                           (*key,revision)).fetchone()
         return {'revision':revision,'records':[self._row(row) for row in rows],
                 'can_undo':bool(latest and latest[0]!='undo')}
@@ -184,36 +184,46 @@ class PersonalStore:
             # Keep only that step, in the same transaction as the guarded write.
             db.execute('DELETE FROM changes WHERE owner=? AND vehicle=? AND collection=? AND revision<?',
                        (*key,revision+1))
+            result=self._read(db,key)
             if guard:guard()
-            return self._read(db,key)
+            return result
 
-    def change_many(self, owner, vehicle, collection, action, identities, revision, guard=None):
+    def change_many(self, owner, vehicle, collection, action, identities, revision, guard=None, *, connection=None):
         """Soft-delete or restore a previewed batch without offering one-step undo."""
         key = self._key(owner, vehicle, collection)
         if (action not in ('delete', 'restore') or type(revision) is not int or revision < 0
                 or not isinstance(identities, list) or not 1 <= len(identities) <= 100
-                or len(set(identities)) != len(identities)
-                or any(not isinstance(identity, str) or not VALID_ID.fullmatch(identity) for identity in identities)):
+                or any(not isinstance(identity, str) or not VALID_ID.fullmatch(identity) for identity in identities)
+                or len(set(identities)) != len(identities)):
             raise ValueError('批量记录操作或版本无效。')
+        if connection is not None:
+            attached={row[1]:row[2] for row in connection.execute('PRAGMA database_list')}
+            if (not connection.in_transaction or not attached.get('ledger')
+                    or Path(attached['ledger']).resolve()!=self.path.resolve()
+                    or connection.execute('PRAGMA ledger.user_version').fetchone()[0] not in (1,2)):
+                raise ValueError('关联账单事务未确认。')
+            return self._change_many(connection,key,action,identities,revision,guard,'ledger')
         with self.connect(write=True) as db, db:
             db.execute('BEGIN IMMEDIATE')
-            current = self._read(db, key)
-            if current['revision'] != revision:
-                raise ValueError('账本记录已有更新，请重新预览。')
-            rows = db.execute('SELECT id,deleted FROM records WHERE owner=? AND vehicle=? AND collection=? '
-                              'AND id IN (%s)' % ','.join('?'*len(identities)), (*key, *identities)).fetchall()
-            found = {row[0]: bool(row[1]) for row in rows}
-            target = action == 'delete'
-            if any(identity not in found or found[identity] == target for identity in identities):
-                raise ValueError('关联账单不存在、状态已变化或不属于当前车辆。')
-            now = int(time.time()*1000)
-            db.execute('UPDATE records SET deleted=?,updated_at=? WHERE owner=? AND vehicle=? AND collection=? '
-                       'AND id IN (%s)' % ','.join('?'*len(identities)),
-                       (int(target), now, *key, *identities))
-            new_revision = revision+1
-            # Batch changes remain recoverable from trash, but are not ambiguous one-step undo operations.
-            db.execute('DELETE FROM changes WHERE owner=? AND vehicle=? AND collection=?', key)
-            db.execute('INSERT OR REPLACE INTO revisions VALUES(?,?,?,?)', (*key, new_revision))
-            if guard:
-                guard()
-            return self._read(db, key)
+            return self._change_many(db,key,action,identities,revision,guard,'main')
+
+    def _change_many(self,db,key,action,identities,revision,guard,schema):
+        current = self._read(db,key,schema)
+        if current['revision'] != revision:
+            raise ValueError('账本记录已有更新，请重新预览。')
+        rows = db.execute(f'SELECT id,deleted,updated_at FROM {schema}.records WHERE owner=? AND vehicle=? AND collection=? '
+                          'AND id IN (%s)' % ','.join('?'*len(identities)), (*key,*identities)).fetchall()
+        found = {row[0]:bool(row[1]) for row in rows}
+        target = action=='delete'
+        if any(identity not in found or found[identity]==target for identity in identities):
+            raise ValueError('关联账单不存在、状态已变化或不属于当前车辆。')
+        now=max(int(time.time()*1000), max(row[2] for row in rows)+1)
+        db.execute(f'UPDATE {schema}.records SET deleted=?,updated_at=? WHERE owner=? AND vehicle=? AND collection=? '
+                   'AND id IN (%s)' % ','.join('?'*len(identities)), (int(target),now,*key,*identities))
+        new_revision=revision+1
+        # Batch operations are recovered from trash, not one-step undo.
+        db.execute(f'DELETE FROM {schema}.changes WHERE owner=? AND vehicle=? AND collection=?',key)
+        db.execute(f'INSERT OR REPLACE INTO {schema}.revisions VALUES(?,?,?,?)',(*key,new_revision))
+        result=self._read(db,key,schema)
+        if guard:guard()
+        return result

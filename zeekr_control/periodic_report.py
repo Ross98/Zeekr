@@ -16,6 +16,7 @@ import time
 import zlib
 
 from .archive_reader import _private
+from .sqlite_files import prepare_database_file
 from .focused_trip_image import ImagePreparationError
 from .notifications import DeliveryError
 from .snapshot_archive import BEIJING
@@ -183,7 +184,7 @@ class PeriodicDelivery:
     def connect(self):
         self.path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
         _private(self.path.parent,directory=True)
-        fd=os.open(self.path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600);os.close(fd)
+        prepare_database_file(self.path)
         _private(self.path)
         db=sqlite3.connect(self.path,timeout=5)
         db.row_factory=sqlite3.Row
@@ -197,12 +198,12 @@ class PeriodicDelivery:
             yield db
         finally:db.close()
 
-    def deliver(self,scope,vehicle,report,sender,theme='light'):
+    def deliver(self,scope,vehicle,report,sender,theme='light',*,guard=None):
         report_view(report)
         if report.get('demo'):raise ValueError('演示报告不可发送')
         if theme not in PALETTES:raise ValueError('报表主题无效')
         with delivery_lock(self.path.parent/'periodic-delivery.lock'):
-            return self._deliver(scope,vehicle,report,sender,theme)
+            return self._deliver(scope,vehicle,report,sender,theme,guard=guard)
 
     @staticmethod
     def _recover(db):
@@ -215,7 +216,7 @@ class PeriodicDelivery:
         db.execute("UPDATE report_delivery_metadata SET image_error='preparation_interrupted' WHERE id IN (SELECT id FROM reports WHERE image='preparing')")
         db.execute("UPDATE reports SET image=CASE WHEN COALESCE((SELECT image_prepare_attempts FROM report_delivery_metadata m WHERE m.id=reports.id),0)>=3 THEN 'failed' ELSE 'retry' END WHERE image='preparing'")
 
-    def _deliver(self,scope,vehicle,report,sender,theme):
+    def _deliver(self,scope,vehicle,report,sender,theme,*,guard=None):
         key=report_id(scope,vehicle,report['period'],report['start_date'],report['end_date'])
         now=self.clock()
         with self.connect() as db,db:
@@ -235,22 +236,30 @@ class PeriodicDelivery:
             row['image']='skipped'
         if now<row['next_at']:return self.status(key)
         if row['text'] in ('sending','unknown','failed'):return self.status(key)
+        if guard is not None and not guard():return self.status(key)
         content=None
         if row['image'] in ('pending','retry','ready') and row['image_prepare_attempts']<3:
             if self.claim(key,'image',row['image'],preparing=True):
                 try:content=self.renderer.render(report,theme)
                 except ImagePreparationError as error:
-                    self.finish(key,'image','failed' if not error.retryable or row['image_prepare_attempts']>=2 else 'retry',now+120000,'preparation_failed')
-                except Exception:self.finish(key,'image','failed',now+120000,'preparation_failed')
+                    self.finish(key,'image','failed' if not error.retryable or row['image_prepare_attempts']>=2 else 'retry',self._retry_at(now),'preparation_failed')
+                except Exception:self.finish(key,'image','failed',self._retry_at(now),'preparation_failed')
                 else:self.finish(key,'image','ready',0)
         elif row['image'] in ('pending','retry','ready'):
             self.finish(key,'image','failed',0,'preparation_limit')
         # A locally failed or interrupted image must never suppress pending text.
         if row['text'] in ('pending','retry'):
-            if self.claim(key,'text',row['text']):
-                self.send(key,'text',lambda:sender.send_markdown(markdown(report)),now)
+            # Formatting cannot send anything. Only claim an actual delivery
+            # after it succeeds, so interrupted preparation remains resumable.
+            try:message=markdown(report)
+            except Exception:self.finish(key,'text','failed',0,'preparation_failed')
+            else:
+                if guard is not None and not guard():return self.status(key)
+                if self.claim(key,'text',row['text']):
+                    self.send(key,'text',lambda:sender.send_markdown(message),now)
         state=self.status(key)
         if state['text']=='sent' and state['image']=='ready' and content is not None:
+            if guard is not None and not guard():return state
             if self.claim(key,'image','ready'):
                 self.send(key,'image',lambda:sender.send_image(content),now)
         return self.status(key)
@@ -282,9 +291,12 @@ class PeriodicDelivery:
         except DeliveryError as error:
             attempts=self.status(key)[part+'_attempts']
             state='unknown' if error.ambiguous else 'failed' if error.permanent or attempts>=3 else 'retry'
-            self.finish(key,part,state,now+120000,'result_unknown' if error.ambiguous else 'send_rejected')
+            self.finish(key,part,state,self._retry_at(now),'result_unknown' if error.ambiguous else 'send_rejected')
         except Exception:self.finish(key,part,'unknown',0,'result_unknown')
         else:self.finish(key,part,'sent',0)
+
+    def _retry_at(self,started):
+        return max(started,self.clock())+120000
 
     def status(self,key):
         with self.connect() as db:

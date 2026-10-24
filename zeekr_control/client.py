@@ -58,16 +58,16 @@ def transport(method, url, headers, body):
         with build_opener(NoRedirect()).open(request, timeout=20) as response:
             raw = response.read(4 * 1024 * 1024 + 1)
         if len(raw) > 4 * 1024 * 1024:
-            raise ApiError('网关响应过大。')
+            raise ApiError('网关响应过大。',retryable=True)
         return json.loads(raw)
     except HTTPError as exc:
         if exc.code == 429:
             raise RateLimited(retry_seconds(exc.headers.get('Retry-After') if exc.headers else None)) from None
         raise ApiError('网关 HTTP %d；未自动重试。' % exc.code, http_status=exc.code) from None
     except (URLError, TimeoutError, OSError):
-        raise ApiError('网络或 TLS 连接失败；未自动重试。') from None
-    except (ValueError, UnicodeError):
-        raise ApiError('网关响应不是有效 JSON。') from None
+        raise ApiError('网络或 TLS 连接失败；未自动重试。',retryable=True) from None
+    except (ValueError, UnicodeError, RecursionError):
+        raise ApiError('网关响应不是有效 JSON。',retryable=True) from None
 
 
 def gateway_reason(value, private_values=()):
@@ -95,13 +95,14 @@ class QueryOutcome:
 
 
 class Client:
-    def __init__(self, session=None, transport=transport, query_policy=None, capture_refresh=False):
+    def __init__(self, session=None, transport=transport, query_policy=None, capture_refresh=False, request_guard=None):
         self.capture_refresh = capture_refresh
         self.login_refresh_token = None
         self.query_outcome = QueryOutcome()
         self.session = dict(session or {})
         self.session.setdefault('deviceId', uuid.uuid4().hex)
         self.transport = transport
+        self.request_guard = request_guard
         self.query_policy = query_policy if query_policy is not None else (QueryPolicy() if transport is globals()["transport"] else None)
         self.last_query_cached = False
         self.last_query_fetched_at = None
@@ -170,10 +171,11 @@ class Client:
             else:
                 query = urlencode(params)
             url = HOSTS[gateway] + path + ('?' + query if query else '')
+            if self.request_guard is not None:self.request_guard()
             self.query_outcome = replace(self.query_outcome, actual_request=True)
             result = self.transport(method, url, headers, body)
             if not isinstance(result, dict):
-                raise ApiError('网关响应结构不符。')
+                raise ApiError('网关响应结构不符。',retryable=True)
             code = str(result.get('code', 'missing'))
             if code not in ('000000', '1000'):
                 safe_code = code if re.fullmatch('[0-9]{1,12}', code) else 'unknown'
@@ -184,7 +186,7 @@ class Client:
                 if reason: message += '；网关说明（脱敏）：' + reason
                 notification_reason = raw_reason[:240] if isinstance(raw_reason, str) else ''
                 raise ApiError(message, gateway_code=safe_code, gateway_reason=reason,
-                               notification_reason=notification_reason)
+                               notification_reason=notification_reason,retryable=safe_code=='unknown')
             self.query_outcome = replace(self.query_outcome, success_code=code, fetched_at=time.time())
             return result.get('data')
 
@@ -244,9 +246,12 @@ class Client:
             raise ApiError('刷新响应账号不一致，未替换会话。')
         candidate={key:value for key,value in self.session.items() if key not in ('jwtToken','refreshToken')}
         candidate['accessToken']=access
-        candidate['clientId']=required(data if data.get('clientId') else self.session,'clientId')
+        client_id=data.get('clientId')
+        candidate['clientId']=required(self.session if client_id is None or client_id=='' else data,'clientId')
         value=data.get('refreshToken')
-        candidate['refreshToken']=value if isinstance(value,str) and value.strip() and not any(c in value for c in '\r\n') else token
+        # An omitted optional token preserves the prior value; an explicitly
+        # malformed token is not evidence of a completed credential exchange.
+        candidate['refreshToken']=token if value is None or value=='' else required(data,'refreshToken')
         return candidate
 
     def _authenticated(self):
@@ -260,7 +265,7 @@ class Client:
         data = self._request('vehicles', {'id': self.session['userId'], 'needSharedCar': 1})
         vehicles = data.get('list') if isinstance(data, dict) else None
         if not isinstance(vehicles, list) or any(not isinstance(v, dict) for v in vehicles):
-            raise ApiError('车辆列表响应结构不符，不能视作无车辆。')
+            raise ApiError('车辆列表响应结构不符，不能视作无车辆。',retryable=True)
         return vehicles
 
     def status(self, vin):
@@ -268,9 +273,9 @@ class Client:
         data = self._request('status', {'latest': 'Local', 'target': 'basic%2Cmore',
                                      'userId': self.session['userId']}, vin=vin)
         if not isinstance(data, dict) or not data:
-            raise ApiError('未返回有效车辆状态。')
+            raise ApiError('未返回有效车辆状态。',retryable=True)
         result = data.get('vehicleStatus', data)
         if not isinstance(result, dict) or not result:
-            raise ApiError('未返回有效车辆状态。')
+            raise ApiError('未返回有效车辆状态。',retryable=True)
         self.query_outcome=replace(self.query_outcome,schema_valid=True)
         return result

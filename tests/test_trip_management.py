@@ -15,6 +15,86 @@ import test_web_server as web_base
 
 
 class ManagementTests(TripFixtures, unittest.TestCase):
+    def test_trash_during_text_preparation_prevents_sender_call(self):
+        self.preparation_cancelled()
+
+    def test_preparation_cancellation_does_not_requeue_trashed_text(self):
+        from zeekr_control.delivery_state import DeliveryCancelled
+        self.preparation_cancelled(DeliveryCancelled())
+
+    def preparation_cancelled(self,error=None):
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET summary=? WHERE id='one'",
+                (json.dumps({'start_time':MIDNIGHT,'end_time':MIDNIGHT+60000,'partial':True}),))
+        sent=[]
+        def prepare(*args):
+            self.change()
+            if error:raise error
+            return 'synthetic prepared message'
+        with patch('zeekr_control.monitor.message_for',side_effect=prepare):
+            self.monitor.deliver(sent.append,now=MIDNIGHT+86400000)
+        self.assertEqual(sent,[])
+        with self.monitor.tracks.connect() as db:
+            self.assertEqual(db.execute("SELECT delivery FROM monitor_events WHERE id='one'").fetchone()[0],'cancelled')
+
+    def test_failed_image_preparation_cannot_requeue_recycled_record(self):
+        from types import SimpleNamespace
+        report={'schema_version':2,'start_time':MIDNIGHT,'end_time':MIDNIGHT+600000,
+                'metrics':{'distance_km':6}}
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET delivery='sent',summary=? WHERE id='one'",
+                (json.dumps({'start_time':MIDNIGHT,'end_time':MIDNIGHT+600000,'report_v2':report}),))
+            db.execute("INSERT INTO monitor_event_media(event_id,kind) VALUES('one','trip_image')")
+        def render(*args):
+            self.change()
+            raise ValueError('synthetic image preparation failure after recycling')
+        self.monitor.map_renderer=SimpleNamespace(render_trip=render)
+        sent=[]
+        sender=SimpleNamespace(send_image=sent.append)
+        self.monitor._deliver_images(sender,MIDNIGHT+86400000,vehicle='car-a')
+        self.assertEqual(sent,[])
+        with self.monitor.tracks.connect() as db:
+            self.assertEqual(db.execute("SELECT delivery FROM monitor_event_media WHERE event_id='one'").fetchone()[0],'cancelled')
+
+    def test_trash_cancels_pending_auxiliary_channels_and_refuses_sending(self):
+        with self.monitor.tracks.connect() as db:
+            db.execute("INSERT INTO monitor_event_alerts(event_id) VALUES('one')")
+            db.execute("INSERT INTO monitor_event_media(event_id,kind,delivery) VALUES('one','trip_image','sending')")
+        with self.assertRaisesRegex(ValueError,'正在发送'):
+            self.preview()
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_event_media SET delivery='preparing' WHERE event_id='one'")
+        self.change()
+        for table in ('monitor_event_alerts','monitor_event_media'):
+            with self.monitor.tracks.connect() as db:
+                self.assertEqual(db.execute('SELECT delivery FROM '+table+" WHERE event_id='one'").fetchone()[0],'cancelled')
+
+    def test_send_claim_after_preview_blocks_execute_without_partial_recycle(self):
+        with self.monitor.tracks.connect() as db:
+            db.execute("INSERT INTO monitor_event_alerts(event_id) VALUES('one')")
+        plan=self.preview()
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_event_alerts SET delivery='sending' WHERE event_id='one'")
+        with self.assertRaisesRegex(ValueError,'正在发送'):
+            self.manager.execute(plan['token'],'owner')
+        self.assertEqual(self.manager.revision('car-a'),0)
+        self.assertEqual(len(self.query()['items']),2)
+
+    def test_legacy_recycled_record_pending_notifications_are_retired_before_send(self):
+        self.change()
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET delivery='pending',summary=? WHERE id='one'",
+                (json.dumps({'start_time':MIDNIGHT,'end_time':MIDNIGHT+60000,'partial':True}),))
+            db.execute("INSERT INTO monitor_event_alerts(event_id) VALUES('one')")
+            db.execute("INSERT INTO monitor_event_media(event_id,kind) VALUES('one','trip_image')")
+        sent=[]
+        with patch('zeekr_control.monitor.message_for',return_value='synthetic'):
+            self.monitor.deliver(sent.append,now=MIDNIGHT+86400000,alert_sender=lambda *args:sent.append(args))
+        self.assertEqual(sent,[])
+        for table,key in (('monitor_events','id'),('monitor_event_alerts','event_id'),('monitor_event_media','event_id')):
+            with self.monitor.tracks.connect() as db:
+                self.assertEqual(db.execute(f'SELECT delivery FROM {table} WHERE {key}=?',('one',)).fetchone()[0],'cancelled')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

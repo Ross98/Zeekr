@@ -12,6 +12,10 @@ from zeekr_control.usage_events import UsageEvents
 
 
 class UsageReportsTests(unittest.TestCase):
+    def test_period_calendar_overflow_is_a_validation_error(self):
+        for period,date in (('month','9999-12-01'),('week','9999-12-28')):
+            with self.subTest(period=period),self.assertRaises(ValueError):period_window(period,date)
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
@@ -41,7 +45,7 @@ class UsageReportsTests(unittest.TestCase):
 
     def test_open_trip_keeps_observed_distance_separate_from_ended_totals(self):
         start=self.now+8*3600000
-        state={'trip':{'start':{'time':start,'km':100},'stop':{'time':start+2400000},'partial':True},
+        state={'trip':{'start':{'time':start,'km':100},'stop':{'time':start+2400000,'km':125},'partial':True},
                'last':{'time':start+2400000,'observed':start+2410000,'km':125,'secret':'PRIVATE'}}
         with sqlite3.connect(self.db) as db:
             db.execute('CREATE TABLE monitor_state(vehicle TEXT PRIMARY KEY,payload TEXT)')
@@ -52,7 +56,7 @@ class UsageReportsTests(unittest.TestCase):
         self.assertIsNone(result['current']['totals']['distance_km'])
         self.assertNotIn('PRIVATE',json.dumps(result['open_trip']))
         self.assertIsNone(self.reports.query('owner','other','month','2026-10-05',start+3600000)['open_trip'])
-        state['last']['km']=90
+        state['trip']['stop']['km']=90
         with sqlite3.connect(self.db) as db:db.execute('UPDATE monitor_state SET payload=?',(json.dumps(state),))
         self.assertIsNone(self.report(date='2026-10-05',now=start+3600000)['open_trip']['distance_km'])
 
@@ -62,6 +66,55 @@ class UsageReportsTests(unittest.TestCase):
             db.execute('CREATE TABLE monitor_state(vehicle TEXT PRIMARY KEY,payload TEXT)')
             db.execute('INSERT INTO monitor_state VALUES(?,?)',('car','not-json'))
         self.assertIsNone(self.report()['open_trip'])
+
+    def test_bad_active_state_does_not_break_valid_completed_report(self):
+        self.add()
+        start = self.now+8*3600000
+        state = {'trip': {'start': {'time': start, 'km': 100}},
+                 'last': {'time': start+60000, 'km': 110}, 'padding': '界'*700000}
+        payloads = ['['*1200+'0'+']'*1200, json.dumps(state, ensure_ascii=False)]
+        self.assertLess(len(payloads[1]), 2*1024*1024)
+        self.assertGreater(len(payloads[1].encode()), 2*1024*1024)
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE monitor_state(vehicle TEXT PRIMARY KEY,payload TEXT)')
+        for payload in payloads:
+            with self.subTest(kind='deep' if payload.startswith('[') else 'oversized_bytes'):
+                with sqlite3.connect(self.db) as db:
+                    db.execute('INSERT OR REPLACE INTO monitor_state VALUES(?,?)', ('car',payload))
+                result = self.report(date='2026-10-05', now=start+120000)
+                self.assertIsNone(result['open_trip'])
+                self.assertEqual(result['previous']['totals']['distance_km'], 40)
+
+    def test_waiting_trip_uses_frozen_arrival_not_later_parking_observation(self):
+        from zeekr_control.trips import TripStore
+        start=self.now+8*3600000
+        arrival={'time':start+2400000,'km':125,'soc':60}
+        state={'trip':{'start':{'time':start,'km':100,'soc':70},'stop':arrival,'partial':True},
+               'last':{'time':start+3000000,'km':126,'soc':59}}
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE monitor_state(vehicle TEXT PRIMARY KEY,payload TEXT)')
+            db.execute('INSERT INTO monitor_state VALUES(?,?)',('car',json.dumps(state)))
+        opened=self.report(date='2026-10-05',now=start+3600000)['open_trip']
+        active=TripStore(self.db).active('car')
+        self.assertEqual(opened['end_time'],active['end_time'])
+        self.assertEqual(opened['distance_km'],active['distance_km'])
+        self.assertEqual(opened['end_time'],arrival['time'])
+        self.assertEqual(opened['distance_km'],25)
+        # Missing arrival odometer is unknown, never borrowed from later parking.
+        state['trip']['stop'].pop('km')
+        with sqlite3.connect(self.db) as db:
+            db.execute('UPDATE monitor_state SET payload=?',(json.dumps(state),))
+        opened=self.report(date='2026-10-05',now=start+3600000)['open_trip']
+        self.assertIsNone(opened['distance_km'])
+        self.assertEqual(opened['end_time'],arrival['time'])
+        # A genuinely driving trip still uses its latest observed state.
+        state['trip']['stop']=None
+        with sqlite3.connect(self.db) as db:
+            db.execute('UPDATE monitor_state SET payload=?',(json.dumps(state),))
+        opened=self.report(date='2026-10-05',now=start+3600000)['open_trip']
+        self.assertEqual(opened['status'],'recording')
+        self.assertEqual(opened['end_time'],state['last']['time'])
+        self.assertEqual(opened['distance_km'],26)
 
     def test_calendar_week_month_leap_year_and_previous_bounds(self):
         week=period_window('week','2026-09-20')

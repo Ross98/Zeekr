@@ -11,6 +11,239 @@ from test_monitor import BASE, sample
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_refresh_completion_time_includes_exchange_elapsed_time(self):
+        from unittest.mock import Mock
+        from zeekr_control.errors import ApiError
+        from zeekr_control.monitor_runtime import Runner
+        from zeekr_control.personal_store import account_scope
+        from zeekr_control.refresh_recovery import RefreshResult
+        clock=[BASE/1000]
+        class Client:
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):raise ApiError('网关代码 1509',gateway_code='1509')
+        driver=Mock()
+        def complete(*args):
+            clock[0]+=30
+            return RefreshResult('refreshed')
+        driver.attempt.side_effect=complete
+        runner=Runner(self.root/'session.json',client_factory=Client,sender=lambda text:None,refresh_driver=driver)
+        self.addCleanup(runner.insight_worker.close)
+        with patch('zeekr_control.monitor_runtime.time.time',side_effect=lambda:clock[0]):
+            runner.tick()
+        binding=load(self.root/'monitor-binding.json')['vehicle_key']
+        incident=runner.incidents.current(account_scope(load(self.root/'session.json')),binding)
+        self.assertEqual(incident['refresh_completed_at'],BASE+30000)
+        self.assertIsNone(incident['interface_recovered_at'])
+        self.assertEqual(runner.health()['next_check'],str(BASE+31000))
+
+    def test_first_binding_recovers_outage_opened_by_vehicle_list_1509(self):
+        from zeekr_control.client import Client
+        from zeekr_control.personal_store import account_scope
+        save(self.root/'session.json',dict(accessToken='synthetic',userId='user',
+                                           clientId='client',deviceId='device'))
+        failed=[True]
+        def wire(method,url,headers,body):
+            if '/status/' in url:return {'code':'1000','data':sample(60)}
+            if failed[0]:return {'code':1509,'message':'synthetic maintenance'}
+            return {'code':'1000','data':{'list':[{'vin':'L6T79X2Z0NP000001'}]}}
+        runner=self.runner(lambda session:Client(session,wire))
+        self.addCleanup(runner.insight_worker.close)
+        owner=account_scope(load(self.root/'session.json'))
+        runner.tick(BASE)
+        incident=runner.incidents.current(owner,'unbound')
+        self.assertIsNotNone(incident)
+        self.assertFalse((self.root/'monitor-binding.json').exists())
+        failed[0]=False
+        runner.tick(BASE+60000)
+        self.assertIsNone(runner.incidents.current(owner,'unbound'))
+        saved=runner.incidents.read(incident['id'])
+        self.assertEqual(saved['interface_recovered_at'],BASE+60000)
+        self.assertEqual(saved['vehicle'],'unbound')
+        self.assertEqual(runner.health()['last_success'],str(BASE+60000))
+
+    def test_bad_private_gateway_reason_does_not_stop_1509_retries(self):
+        from zeekr_control.errors import ApiError
+        class Client:
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):
+                raise ApiError('网关代码 1509',gateway_code='1509',gateway_reason='服务维护',
+                               notification_reason='服务维护\ud800中，稍后再试。')
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        for now in (BASE,BASE+120000,BASE+600000):runner.tick(now)
+        self.assertEqual(runner.health()['status'],'retrying')
+        self.assertEqual(json.loads(runner.health()['gateway_retry'])['attempts'],3)
+        with runner.auth_failure_alert.connect() as db:
+            reason=db.execute('SELECT reason FROM auth_outbox_context').fetchone()[0]
+            self.assertEqual(db.execute('SELECT state FROM auth_outbox').fetchone()[0],'pending')
+        reason.encode('utf-8')
+        self.assertIn('\\ud800',reason)
+
+    def test_optional_profile_corruption_does_not_drop_successful_vehicle_sample(self):
+        import hashlib
+        from zeekr_control.profiles import vehicle_profile
+        config=self.root/'profiles.json';config.write_text('['*1500+'0'+']'*1500)
+        class Client:
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):return sample(0,km=123,soc=75)
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        with patch('zeekr_control.monitor_runtime.vehicle_profile',
+                   side_effect=lambda key,number,count:vehicle_profile(key,number,count,config)):
+            runner.tick(BASE)
+        self.assertEqual(runner.health().get('last_success'),str(BASE))
+        vehicle=hashlib.sha256(b'L6T79X2Z0NP000001').hexdigest()
+        state=runner.monitor.status(vehicle)
+        self.assertEqual(state['last']['km'],123)
+        self.assertEqual(state['last']['soc'],75)
+
+    def test_public_channel_metadata_preserves_legacy_states_and_unknown_values(self):
+        import sqlite3
+        from zeekr_control.monitor import Monitor
+        from zeekr_control.monitor_runtime import read_status
+        path=self.root/'tracks.sqlite3';Monitor(path)
+        with sqlite3.connect(path) as db:
+            db.execute("INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES('event','car','trip_end','{}','PRIVATE',0)")
+            db.execute("INSERT INTO monitor_event_alerts(event_id) VALUES('event')")
+            db.execute("INSERT INTO monitor_event_media(event_id,kind) VALUES('event','trip_image')")
+        save(self.root/'monitor-health.json',dict(status='fresh',heartbeat=str(BASE)))
+        for value in ('sent','retry','unknown','preparing','local',b'PRIVATE','PRIVATE'):
+            with self.subTest(value_type=type(value).__name__,state=value if isinstance(value,str) else None):
+                with sqlite3.connect(path) as db:
+                    db.execute('UPDATE monitor_events SET delivery=?',(value,))
+                    db.execute('UPDATE monitor_event_alerts SET delivery=?',(value,))
+                    db.execute('UPDATE monitor_event_media SET delivery=?',(value,))
+                original=path.read_bytes()
+                result=read_status(self.root,'car',public=True)
+                event=result['events'][0]
+                expected=value if value in ('sent','retry','unknown','preparing','local') else 'unknown'
+                self.assertEqual([event[key] for key in ('delivery','alert_delivery','image_delivery')],[expected]*3)
+                self.assertEqual(event['created'],0)
+                self.assertNotIn('PRIVATE',json.dumps(result,allow_nan=False))
+                self.assertEqual(path.read_bytes(),original)
+
+    def test_public_event_metadata_is_finite_and_json_safe_without_dropping_events(self):
+        import sqlite3
+        from zeekr_control.monitor import Monitor
+        from zeekr_control.monitor_runtime import read_status
+        path=self.root/'tracks.sqlite3';Monitor(path)
+        with sqlite3.connect(path) as db:
+            for identity,created in (('good',1),('bad',2)):
+                db.execute('INSERT INTO monitor_events(id,vehicle,kind,summary,message,created,delivery) VALUES(?,?,?,?,?,?,?)',
+                           (identity,'car','trip_end','{}','PRIVATE',created,'sent'))
+        save(self.root/'monitor-health.json',dict(status='fresh',heartbeat=str(BASE)))
+        for field,value in (('created',float('inf')),('created',float('-inf')),('created',1e308),
+                            ('created','PRIVATE'),('kind',b'PRIVATE'),('delivery',b'PRIVATE'),('delivery','PRIVATE')):
+            with self.subTest(field=field,value_type=type(value).__name__):
+                with sqlite3.connect(path) as db:
+                    db.execute("UPDATE monitor_events SET kind='trip_end',delivery='sent',created=2 WHERE id='bad'")
+                    db.execute('UPDATE monitor_events SET '+field+"=? WHERE id='bad'",(value,))
+                original=path.read_bytes();result=read_status(self.root,'car',public=True)
+                self.assertEqual(len(result['events']),2)
+                self.assertNotIn('PRIVATE',json.dumps(result,allow_nan=False))
+                self.assertEqual(sum(event['created']==1 for event in result['events']),1)
+                if field=='created':self.assertEqual(sum(event['created'] is None for event in result['events']),1)
+                if field=='kind':self.assertIn('vehicle_event',[event['kind'] for event in result['events']])
+                if field=='delivery':self.assertIn('unknown',[event['delivery'] for event in result['events']])
+                for event in result['events']:
+                    self.assertIsNone(event['alert_delivery'])
+                    self.assertIsNone(event['image_delivery'])
+                self.assertEqual(path.read_bytes(),original)
+
+    def test_late_older_fetch_uses_accepted_snapshot_for_event_processing(self):
+        import hashlib
+        from zeekr_control.snapshots import SnapshotStore,session_scope
+        vin = 'L6T79X2Z0NP000001'
+        vehicle = hashlib.sha256(vin.encode()).hexdigest()
+        accepted = sample(0,soc=90)
+        SnapshotStore(self.root/'snapshots.sqlite3').publish(
+            session_scope(load(self.root/'session.json')),vehicle,accepted,BASE+500)
+        class Client:
+            last_query_fetched_at = BASE/1000
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':vin}]
+            def status(self,vin):return sample(0,soc=20)
+        runner = self.runner(Client)
+        self.addCleanup(runner.insight_worker.close)
+        with patch.object(runner.monitor,'observe',wraps=runner.monitor.observe) as observe:
+            runner.tick(BASE+1000)
+        self.assertEqual(runner.health()['data_change'],'superseded')
+        self.assertEqual(observe.call_args.args[1],accepted)
+
+    def test_uncacheable_gateway_state_retries_with_original_session_and_keeps_query_guard(self):
+        from zeekr_control.client import Client
+        from zeekr_control.query_policy import QueryPolicy
+        from zeekr_control.errors import RequestDeferred
+        clock=[BASE/1000];calls=[];bad=[True]
+        def wire(method,url,headers,body):
+            if '/status/' not in url:
+                return {'code':'1000','data':{'list':[{'vin':'L6T79X2Z0NP000001'}]}}
+            calls.append(url)
+            raw=sample(int(clock[0]-BASE/1000))
+            if bad[0]:raw['invalid_extra']=float('nan')
+            return {'code':'1000','data':{'vehicleStatus':raw}}
+        factory=lambda session:Client(session,wire,query_policy=QueryPolicy(self.root/'queries.sqlite3',clock=lambda:clock[0]))
+        from zeekr_control.monitor_runtime import Runner
+        session_path=self.root/'session.json'
+        save(session_path,{'accessToken':'synthetic','userId':'synthetic-user'})
+        runner=Runner(session_path,client_factory=factory,sender=lambda message:None)
+        self.addCleanup(runner.insight_worker.close)
+        session=load(session_path)
+        runner.tick(BASE)
+        self.assertEqual(runner.health()['status'],'retrying')
+        self.assertIsNone(runner.blocked_fingerprint)
+        clock[0]+=1
+        with self.assertRaises(RequestDeferred):factory(session).status('L6T79X2Z0NP000001')
+        self.assertEqual(len(calls),1)
+        bad[0]=False;clock[0]=BASE/1000+120
+        runner.tick(BASE+120000)
+        self.assertEqual(len(calls),2)
+        self.assertEqual(runner.health()['error'],'')
+        self.assertEqual(load(session_path),session)
+
+    def test_short_outage_breaks_reminder_and_tyre_confirmation_across_restart(self):
+        self.short_outage_reminders()
+
+    def test_outage_marker_survives_optional_rule_failure_after_collection_resumes(self):
+        self.short_outage_reminders(fail_rule=True)
+
+    def short_outage_reminders(self,fail_rule=False):
+        import hashlib
+        from zeekr_control.errors import ApiError
+        from zeekr_control.personal_store import account_scope
+        class Client:
+            seconds=0;failed=False
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):
+                if Client.failed:raise ApiError('synthetic network error',retryable=True)
+                raw=sample(Client.seconds,soc=20)
+                raw['additionalVehicleStatus']['maintenanceStatus']['tyreStatusDriver']=200
+                return raw
+        first=self.runner(Client);self.addCleanup(first.insight_worker.close)
+        owner=account_scope({'accessToken':'synthetic'})
+        vehicle=hashlib.sha256(b'L6T79X2Z0NP000001').hexdigest()
+        first.reminders.update(owner,vehicle,dict(action='save',name='合成低电量',kind='low_soc',
+            threshold=25,enabled=True,recovery=True,confirm_seconds=60,cooldown_minutes=10,
+            delivery='in_app',revision=0))
+        first.tick(BASE)
+        Client.failed=True;first.tick(BASE+20000)
+        Client.failed=False;Client.seconds=100
+        resumed=self.runner(Client);self.addCleanup(resumed.insight_worker.close)
+        if fail_rule:
+            with patch.object(resumed.reminders,'observe',side_effect=ValueError('synthetic rule failure')):
+                resumed.tick(BASE+100000)
+        else:resumed.tick(BASE+100000)
+        self.assertEqual(resumed.reminders.query(owner,vehicle)['history'],[])
+        self.assertEqual(resumed.tyre_notifications.query(owner,vehicle)['history'],[])
+        Client.seconds=160;resumed.tick(BASE+160000)
+        self.assertEqual(len(resumed.reminders.query(owner,vehicle)['history']),0 if fail_rule else 1)
+        self.assertEqual(len(resumed.tyre_notifications.query(owner,vehicle)['history']),1)
+        if fail_rule:
+            Client.seconds=220;resumed.tick(BASE+220000)
+            self.assertEqual(len(resumed.reminders.query(owner,vehicle)['history']),1)
+
     def test_tyre_reminders_use_existing_observations_and_independent_senders(self):
         class Client:
             seconds=0;calls=0
@@ -406,6 +639,103 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(route['quality']['gap_count'],1)
         self.assertNotIn('gap_pending',runner.health())
         self.assertEqual(runner.monitor.status(binding)['trip']['start']['km'],100)
+
+    def test_network_and_rate_limit_outages_preserve_gap_across_restart(self):
+        from zeekr_control.errors import ApiError, RateLimited
+        from zeekr_control.monitor_runtime import Runner
+        errors=(ApiError('网络或 TLS 连接失败'),ApiError('服务暂时不可用',http_status=503),RateLimited(60))
+        for error in errors:
+            with self.subTest(error=str(error)), tempfile.TemporaryDirectory() as folder:
+                root=Path(folder)/'private';save(root/'session.json',{'accessToken':'synthetic'})
+                class Client:
+                    seconds=0;failure=None
+                    def __init__(self,session):pass
+                    def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+                    def status(self,vin):
+                        if Client.failure:raise Client.failure
+                        return sample(Client.seconds,speed=30 if Client.seconds else 0,
+                            engine='engine_on' if Client.seconds else 'engine_off',ready=int(Client.seconds>0),km=100+Client.seconds/10)
+                def runner():
+                    value=Runner(root/'session.json',client_factory=Client,sender=lambda message:None)
+                    self.addCleanup(value.insight_worker.close)
+                    return value
+                first=runner();first.tick(BASE)
+                Client.seconds=20;first.tick(BASE+20000)
+                Client.failure=error;first.tick(BASE+40000)
+                binding=load(root/'monitor-binding.json')['vehicle_key']
+                self.assertEqual(first.health().get('gap_pending'),'true')
+                self.assertIn(first.health()['status'],('retrying','cooldown'))
+                self.assertTrue(first.monitor.status(binding)['trip']['partial'])
+                Client.failure=None;Client.seconds=100
+                resumed=runner();resumed.tick(BASE+100000)
+                with resumed.monitor.tracks.connect() as db:
+                    self.assertEqual(db.execute('SELECT gap_seconds FROM observations ORDER BY id DESC LIMIT 1').fetchone()[0],0)
+                    payload=db.execute('SELECT normalized_payload FROM report_observations ORDER BY state_time DESC LIMIT 1').fetchone()[0]
+                    self.assertTrue(json.loads(payload)['sampling_gap_before'])
+                self.assertEqual(resumed.monitor.status(binding)['trip']['start']['km'],100)
+
+    def test_local_query_deferral_does_not_mark_a_new_sampling_outage(self):
+        from zeekr_control.errors import RequestDeferred
+        class Client:
+            defer=False
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):
+                if Client.defer:raise RequestDeferred('本机查询保护',retry_after=20)
+                return sample(0)
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        runner.tick(BASE);Client.defer=True;runner.tick(BASE+10000)
+        self.assertNotIn('gap_pending',runner.health())
+
+    def test_malformed_gateway_response_recovers_without_session_change(self):
+        from zeekr_control.client import Client
+        from zeekr_control.monitor_runtime import Runner
+        malformed=([], {}, {'code':'1000','data':None}, {'code':'1000','data':{'vehicleStatus':[]}})
+        for response in malformed:
+            with self.subTest(response=response), tempfile.TemporaryDirectory() as folder:
+                root=Path(folder)/'private';session={'accessToken':'synthetic','userId':'user'}
+                save(root/'session.json',session)
+                calls=[];reply=[response]
+                def wire(method,url,headers,body):
+                    if '/status/' in url:
+                        calls.append(url);return reply[0]
+                    return {'code':'1000','data':{'list':[{'vin':'L6T79X2Z0NP000001'}]}}
+                runner=Runner(root/'session.json',client_factory=lambda session:Client(session,wire),sender=lambda text:None)
+                self.addCleanup(runner.insight_worker.close)
+                runner.tick(BASE)
+                self.assertEqual(runner.health()['status'],'retrying')
+                from zeekr_control.monitor_runtime import read_status
+                self.assertIn('接口暂不可用',read_status(root,public=True)['error'])
+                reply[0]={'code':'1000','data':sample(120)}
+                runner.tick(BASE+120000)
+                self.assertEqual(len(calls),2)
+                self.assertEqual(runner.health()['error'],'')
+                self.assertEqual(load(root/'session.json'),session)
+
+    def test_derived_rule_failure_does_not_block_collection_or_mark_false_gap(self):
+        from zeekr_control.errors import ApiError
+        class Client:
+            seconds=0;calls=0
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):
+                Client.calls+=1
+                return sample(Client.seconds,km=100+Client.seconds/10)
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        with patch.object(runner.commute_tags,'collect',side_effect=ApiError('PRIVATE rule error')):
+            runner.tick(BASE)
+            Client.seconds=20;runner.tick(BASE+20000)
+        self.assertEqual(Client.calls,2)
+        self.assertEqual(runner.health()['last_success'],str(BASE+20000))
+        self.assertEqual(runner.health().get('derived_status'),'unavailable')
+        self.assertEqual(runner.health()['error'],'')
+        self.assertNotIn('gap_pending',runner.health())
+        Client.seconds=40;runner.tick(BASE+40000)
+        self.assertEqual(runner.health()['derived_status'],'ready')
+        self.assertNotIn('PRIVATE',json.dumps(runner.health()))
+        Client.seconds=60
+        with patch.object(runner.commute_tags,'collect',side_effect=OSError('storage unavailable')):
+            with self.assertRaises(OSError):runner.tick(BASE+60000)
 
     def test_recovery_keeps_driving_scalars_without_gps(self):
         from zeekr_control.errors import ApiError

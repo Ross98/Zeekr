@@ -4,6 +4,7 @@ import sqlite3
 import time
 
 from .archive_reader import _private
+from .sqlite_files import prepare_database_file
 from .delivery_state import delivery_lock, add_columns
 from .notifications import DeliveryError, bark_time
 from .storage import load
@@ -15,14 +16,14 @@ class AuthFailureAlert:
 
     @contextmanager
     def connect(self):
-        import os
         self.root.mkdir(parents=True,exist_ok=True,mode=0o700)
         _private(self.root,directory=True)
-        fd=os.open(self.path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600);os.close(fd)
+        prepare_database_file(self.path)
         _private(self.path)
         db=sqlite3.connect(self.path,timeout=5)
         try:
             with db:
+                db.execute('BEGIN IMMEDIATE')
                 db.execute('CREATE TABLE IF NOT EXISTS auth_state(id INTEGER PRIMARY KEY,generation INTEGER,active INTEGER)')
                 db.execute('CREATE TABLE IF NOT EXISTS auth_outbox(generation INTEGER PRIMARY KEY,created INTEGER,state TEXT,error TEXT,sent_at INTEGER)')
                 db.execute('CREATE TABLE IF NOT EXISTS auth_outbox_context(generation INTEGER PRIMARY KEY,kind TEXT)')
@@ -53,12 +54,13 @@ class AuthFailureAlert:
             if active:
                 kind=db.execute('SELECT kind FROM auth_outbox_context WHERE generation=?',(generation,)).fetchone()
                 if not manual or kind and kind[0]=='manual':return
-                db.execute("UPDATE auth_outbox SET state='cancelled' WHERE state='pending'")
+                db.execute("UPDATE auth_outbox SET state='cancelled' WHERE state IN ('pending','preparing')")
             generation+=1
             db.execute('UPDATE auth_state SET generation=?,active=1 WHERE id=1',(generation,))
             db.execute("INSERT INTO auth_outbox VALUES(?,?,'pending',NULL,NULL)",(generation,now))
             # Owner requested original gateway wording in private Bark notifications.
-            reason = reason[:240] if isinstance(reason,str) else ''
+            reason = (reason[:240].encode('utf-8','backslashreplace').decode('utf-8')[:240]
+                      if isinstance(reason,str) else '')
             db.execute('INSERT INTO auth_outbox_context(generation,kind,incident_id,reason) VALUES(?,?,?,?)',
                        (generation,alert_kind,incident_id,reason))
 
@@ -66,18 +68,22 @@ class AuthFailureAlert:
         if not self.path.exists() and not (self.root/'auth-failure-alert.json').exists():return
         with self.connect() as db,db:
             db.execute('UPDATE auth_state SET active=0 WHERE id=1')
-            db.execute("UPDATE auth_outbox SET state='cancelled' WHERE state='pending'")
+            db.execute("UPDATE auth_outbox SET state='cancelled' WHERE state IN ('pending','preparing')")
 
     def deliver(self,guard=None):
         if self.sender is None or not self.path.exists():return
         with delivery_lock(self.root/'notifications.lock'):
             with self.connect() as db,db:
                 db.execute("UPDATE auth_outbox SET state='uncertain',error='send_interrupted' WHERE state='sending'")
+                db.execute("UPDATE auth_outbox SET state='cancelled' WHERE state IN ('pending','preparing') "
+                           'AND NOT EXISTS (SELECT 1 FROM auth_state WHERE active=1 AND generation=auth_outbox.generation)')
+                db.execute("UPDATE auth_outbox SET state='pending',error='prepare_interrupted' WHERE state='preparing'")
                 rows=db.execute("SELECT generation FROM auth_outbox WHERE state='pending' ORDER BY generation LIMIT 1").fetchall()
             for generation, in rows:
                 if guard:guard()
                 with self.connect() as db,db:
-                    claimed=db.execute("UPDATE auth_outbox SET state='sending' WHERE generation=? AND state='pending'",(generation,)).rowcount
+                    claimed=db.execute("UPDATE auth_outbox SET state='preparing' WHERE generation=? AND state='pending' "
+                        'AND EXISTS (SELECT 1 FROM auth_state WHERE active=1 AND generation=auth_outbox.generation)',(generation,)).rowcount
                 if not claimed:continue
                 try:
                     last = load(self.root/'monitor-health.json').get('last_success')
@@ -89,6 +95,21 @@ class AuthFailureAlert:
                     reason = context[1] if context and context[1] else '网关未提供具体原因'
                     body = '网关代码：1509\n网关说明：' + reason + '\n' + body
                     if last: body += '\n最后成功读取：' + bark_time(last)
+                except Exception:
+                    with self.connect() as db,db:
+                        db.execute("UPDATE auth_outbox SET state='failed',error='prepare_failed' WHERE generation=? AND state='preparing'",(generation,))
+                    continue
+                try:
+                    if guard:guard()
+                except Exception:
+                    with self.connect() as db,db:
+                        db.execute("UPDATE auth_outbox SET state='pending' WHERE generation=? AND state='preparing'",(generation,))
+                    raise
+                with self.connect() as db,db:
+                    claimed=db.execute("UPDATE auth_outbox SET state='sending',error=NULL WHERE generation=? AND state='preparing' "
+                        'AND EXISTS (SELECT 1 FROM auth_state WHERE active=1 AND generation=auth_outbox.generation)',(generation,)).rowcount
+                if not claimed:continue
+                try:
                     self.sender('⚠️ 极氪采集已中断',body)
                     state,error='sent',None
                 except DeliveryError as exc:

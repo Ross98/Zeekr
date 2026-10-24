@@ -29,7 +29,7 @@ def display(value, unit='', minimum=None, maximum=None, grouped=False):
     if result is None:
         return '未知'
     # Avoid unbounded exponent formatting and meaningless excess precision.
-    if abs(result) > Decimal('1e12'):
+    if result.copy_abs() > Decimal('1e12'):
         return '未知'
     formatted = format(result, ',.3f' if grouped else '.3f').rstrip('0').rstrip('.')
     return formatted + unit
@@ -61,7 +61,8 @@ def raw_fields(data, fields):
 
 
 def updated_at(value):
-    milliseconds = number(value, 0)
+    # Reject values beyond datetime's year-9999 range before Decimal arithmetic.
+    milliseconds = number(value, 0, 253402300799999)
     if milliseconds is None:
         return '未知'
     try:

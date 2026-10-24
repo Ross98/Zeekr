@@ -14,6 +14,13 @@ from zeekr_control.archive_reader import ArchiveReader
 
 
 class ArchiveReaderTests(unittest.TestCase):
+    def test_deep_json_payload_is_a_validation_error_after_valid_gzip_and_digest(self):
+        payload=b'{"extra":'+b'['*1500+b'0'+b']'*1500+b'}'
+        row=dict(encoding='gzip-json-v1',raw_bytes=len(payload),
+                 compressed_json=gzip.compress(payload),digest=hashlib.sha256(payload).hexdigest())
+        with self.assertRaises(ValueError):
+            ArchiveReader._payload(row)
+
     def test_false_small_payload_size_bounds_decompression_memory(self):
         compressed = gzip.compress(b' ' * (3 * 1024 * 1024))
         row = dict(encoding='gzip-json-v1', raw_bytes=2,

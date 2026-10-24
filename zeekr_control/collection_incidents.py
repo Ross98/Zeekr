@@ -10,11 +10,12 @@ class CollectionIncidents:
     @contextmanager
     def connect(self):
         with database(self.root/'collection-incidents.sqlite3') as db:
-            db.execute('CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY,owner TEXT,vehicle TEXT,scope TEXT,opened_at INTEGER,last_failure INTEGER,attempts INTEGER,baseline INTEGER,last_success INTEGER,refresh_completed_at INTEGER,interface_recovered_at INTEGER,fresh_state_seen_at INTEGER,fresh_vehicle_state_at INTEGER,fresh_state_outcome TEXT,classification TEXT)')
-            db.execute('CREATE INDEX IF NOT EXISTS incidents_owner ON incidents(owner,vehicle,opened_at)')
-            db.execute('CREATE UNIQUE INDEX IF NOT EXISTS incident_open ON incidents(owner,vehicle) WHERE interface_recovered_at IS NULL')
-            db.execute('CREATE TABLE IF NOT EXISTS probes (incident_id TEXT,at INTEGER,scope TEXT,kind TEXT)')
-            db.commit()
+            with db:
+                db.execute('BEGIN IMMEDIATE')
+                db.execute('CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY,owner TEXT,vehicle TEXT,scope TEXT,opened_at INTEGER,last_failure INTEGER,attempts INTEGER,baseline INTEGER,last_success INTEGER,refresh_completed_at INTEGER,interface_recovered_at INTEGER,fresh_state_seen_at INTEGER,fresh_vehicle_state_at INTEGER,fresh_state_outcome TEXT,classification TEXT)')
+                db.execute('CREATE INDEX IF NOT EXISTS incidents_owner ON incidents(owner,vehicle,opened_at)')
+                db.execute('CREATE UNIQUE INDEX IF NOT EXISTS incident_open ON incidents(owner,vehicle) WHERE interface_recovered_at IS NULL')
+                db.execute('CREATE TABLE IF NOT EXISTS probes (incident_id TEXT,at INTEGER,scope TEXT,kind TEXT)')
             yield db
 
     def failure(self,owner,vehicle,scope,now,baseline=None,last_success=None):
@@ -54,7 +55,12 @@ class CollectionIncidents:
                 and outcome.schema_valid and outcome.success_code in ('1000','000000')):return False
         with self.connect() as db,db:
             db.execute('BEGIN IMMEDIATE')
-            rows=db.execute("SELECT * FROM incidents WHERE owner=? AND vehicle=? AND (interface_recovered_at IS NULL OR fresh_state_outcome='waiting') ORDER BY opened_at DESC LIMIT 1",(owner,vehicle)).fetchall()
+            # Before the first binding, list failures have account scope only.
+            # A verified target read resolves that outage too, without rewriting
+            # its original unknown vehicle or touching another account/vehicle.
+            rows=[]
+            for target in dict.fromkeys((vehicle,'unbound')):
+                rows.extend(db.execute("SELECT * FROM incidents WHERE owner=? AND vehicle=? AND (interface_recovered_at IS NULL OR fresh_state_outcome='waiting') ORDER BY opened_at DESC LIMIT 1",(owner,target)).fetchall())
             for row in rows:
                 if row['interface_recovered_at'] is None:
                     db.execute('UPDATE incidents SET interface_recovered_at=? WHERE id=?',(now,row['id']))

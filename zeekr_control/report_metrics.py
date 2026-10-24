@@ -1,5 +1,13 @@
 """Reproducible calculations for v2 reports."""
 from statistics import median
+from .vehicle_state import numeric
+
+
+def _metric_value(metric, minimum, maximum):
+    if (not isinstance(metric,dict) or metric.get('validity')!='valid'
+            or type(metric.get('value')) not in (int,float)):
+        return None
+    return numeric(metric['value'],minimum,maximum)
 
 
 def trip_metrics(start, end, samples, profile, *, partial=False, charge_overlap=False):
@@ -13,25 +21,35 @@ def trip_metrics(start, end, samples, profile, *, partial=False, charge_overlap=
              if not charge_overlap and None not in (start.get('soc'), end.get('soc')) else None)
     capacity = profile.get('battery_capacity_kwh')
     used = capacity * -delta / 100 if capacity and delta is not None and delta <= 0 and not charge_overlap else None
-    consumption = used / distance * 100 if used is not None and distance is not None and distance >= 10 and -delta >= 3 and not partial else None
+    estimate_allowed=(distance is not None and distance>=10 and delta is not None and delta<=-3
+                      and not partial and not charge_overlap)
+    consumption = used / distance * 100 if used is not None and estimate_allowed else None
     speeds = [s.get('speed') for s in samples if s.get('speed') is not None]
     state_gaps = [b['state_time'] - a['state_time'] for a, b in zip(samples, samples[1:]) if None not in (a.get('state_time'), b.get('state_time'))]
     observed_gaps = [b['observed_at'] - a['observed_at'] for a, b in zip(samples, samples[1:])]
     range_delta = end.get('range_km') - start.get('range_km') if None not in (start.get('range_km'), end.get('range_km')) else None
     average_speed = distance / (duration / 3600) if distance is not None and duration and duration > 0 else None
     if average_speed is not None and not 0 <= average_speed <= 400: average_speed = None
-    rated = profile.get('range_km')
-    attainment = distance/(rated*(-delta)/100)*100 if consumption is not None and rated and delta < 0 else None
+    rated = (numeric(profile.get('range_km'),0,3000)
+             if type(profile.get('range_km')) in (int,float) else None)
+    attainment = None
+    if estimate_allowed and rated and profile.get('range_standard') in ('CLTC','WLTP','NEDC','EPA'):
+        reference=rated*(-delta)/100
+        if reference>0:attainment=numeric(distance/reference*100,0,None)
     def temp(metric):
         left, right = start.get(metric, {}), end.get(metric, {})
-        valid = all(x.get('validity') == 'valid' and x.get('field_time') is not None for x in (left,right))
+        valid = all(isinstance(x,dict) and x.get('validity') == 'valid'
+                    and type(x.get('field_time')) in (int,float)
+                    and numeric(x.get('field_time'),1,32503680000000) is not None
+                    and _metric_value(x,-80,100) is not None for x in (left,right))
         return (right.get('value')-left.get('value')) if valid and right['field_time'] >= left['field_time'] else None
     tyre_changes = []
     for left, right in zip(start.get('tyres', []), end.get('tyres', [])):
-        p1,p2 = left['pressure'],right['pressure']; t1,t2 = left['temperature'],right['temperature']
+        p1,p2 = (_metric_value(point.get('pressure'),0,None) for point in (left,right))
+        t1,t2 = (_metric_value(point.get('temperature'),-80,150) for point in (left,right))
         tyre_changes.append({'position': left['position'],
-            'pressure_delta': p2['value']-p1['value'] if p1['validity']=='valid' and p2['validity']=='valid' and p1['value'] and p2['value'] else None,
-            'temperature_delta': t2['value']-t1['value'] if t1['validity']=='valid' and t2['validity']=='valid' else None})
+            'pressure_delta': p2-p1 if p1 is not None and p2 is not None and p1>0 and p2>0 else None,
+            'temperature_delta': t2-t1 if t1 is not None and t2 is not None else None})
     return {'distance_km': distance, 'duration_seconds': duration, 'soc_delta': delta,
             'range_delta_km': range_delta, 'estimated_kwh': used, 'estimated_kwh_100km': consumption,
             'range_attainment_percent': attainment, 'average_speed_kmh': average_speed,
@@ -55,7 +73,7 @@ def charge_metrics(start, end, samples, profile, *, partial=False):
     for left, right in zip(samples, samples[1:]):
         gap = (right['state_time'] - left['state_time']) / 1000
         observed_gap = (right['observed_at'] - left['observed_at']) / 1000
-        if 0 < gap <= 180 and 0 <= observed_gap <= 180:
+        if 0 < gap <= 180 and 0 <= observed_gap <= 180 and right.get('sampling_gap_before') is not True:
             if left.get('charging') is True and right.get('charging') is True:
                 active_seconds += gap
             if (left.get('charging') is True and right.get('charging') is True

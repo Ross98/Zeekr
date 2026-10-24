@@ -2,8 +2,9 @@
 import hashlib
 import json
 import math
+import time
 from .notifications import DeliveryError, bark_time
-from .delivery_state import delivery_lock
+from .delivery_state import delivery_lock, delivery_clock
 from .report_telemetry import normalize
 
 COLLECTION='tyre_notifications'
@@ -90,7 +91,7 @@ class TyreNotifications:
         self.store.change(owner,vehicle,COLLECTION,'save','settings',dict(enabled=data['enabled'],load=data['load']),data.get('revision'),guard=guard)
         return self.query(owner,vehicle)
 
-    def observe(self,owner,vehicle,raw,now,bark=None,wecom=None,guard=None):
+    def observe(self,owner,vehicle,raw,now,bark=None,wecom=None,guard=None,*,sampling_epoch=None):
         if guard:guard()
         config=self.config(owner,vehicle);signature=self.signature(config)
         point=normalize(raw,now)
@@ -100,18 +101,21 @@ class TyreNotifications:
             with db:
                 row=db.execute('SELECT signature,payload FROM tyre_states WHERE owner=? AND vehicle=?',(owner,vehicle)).fetchone()
                 old=json.loads(row[1]) if row and row[0]==signature else {}
+                if sampling_epoch is not None and old.get('sampling_epoch')!=sampling_epoch:
+                    for wheel in old.get('wheels',{}).values():wheel.pop('candidate',None)
+                    old['sampling_epoch']=sampling_epoch
                 if not row or row[0]!=signature or not config['enabled']:
-                    db.execute("UPDATE tyre_outbox SET bark=CASE WHEN bark='pending' THEN 'cancelled' ELSE bark END,wecom=CASE WHEN wecom='pending' THEN 'cancelled' ELSE wecom END WHERE owner=? AND vehicle=?",(owner,vehicle))
+                    db.execute("UPDATE tyre_outbox SET bark=CASE WHEN bark IN ('pending','preparing') THEN 'cancelled' ELSE bark END,wecom=CASE WHEN wecom IN ('pending','preparing') THEN 'cancelled' ELSE wecom END WHERE owner=? AND vehicle=?",(owner,vehicle))
                 state,events=transition(old,pressures,point['state_time'],now,BASES[config['load']]) if config['enabled'] else ({},[])
                 db.execute('INSERT OR REPLACE INTO tyre_states VALUES(?,?,?,?)',(owner,vehicle,signature,json.dumps(state)))
                 if events:
                     changed={event['wheel'] for event in events}
-                    pending=db.execute("SELECT id,payload FROM tyre_outbox WHERE owner=? AND vehicle=? AND (bark='pending' OR wecom='pending')",(owner,vehicle)).fetchall()
+                    pending=db.execute("SELECT id,payload FROM tyre_outbox WHERE owner=? AND vehicle=? AND (bark IN ('pending','preparing') OR wecom IN ('pending','preparing'))",(owner,vehicle)).fetchall()
                     for old_id,encoded in pending:
                         old_payload=json.loads(encoded)
                         remaining=[e for e in old_payload.get('delivery_events',old_payload['events']) if e['wheel'] not in changed]
                         if not remaining:
-                            db.execute("UPDATE tyre_outbox SET bark=CASE WHEN bark='pending' THEN 'cancelled' ELSE bark END,wecom=CASE WHEN wecom='pending' THEN 'cancelled' ELSE wecom END WHERE id=?",(old_id,))
+                            db.execute("UPDATE tyre_outbox SET bark=CASE WHEN bark IN ('pending','preparing') THEN 'cancelled' ELSE bark END,wecom=CASE WHEN wecom IN ('pending','preparing') THEN 'cancelled' ELSE wecom END WHERE id=?",(old_id,))
                         else:
                             replacement=render_payload(remaining,config,old_payload['pressures'],old_payload['stamp'])
                             replacement.update(events=old_payload['events'],delivery_events=remaining)
@@ -119,7 +123,7 @@ class TyreNotifications:
                     payload=render_payload(events,config,pressures,point['state_time'])
                     identity=hashlib.sha256((owner+vehicle+signature+str(point['state_time'])+json.dumps(events,sort_keys=True)).encode()).hexdigest()
                     db.execute('INSERT OR IGNORE INTO tyre_outbox(id,owner,vehicle,signature,created,payload,bark,wecom) VALUES(?,?,?,?,?,?,?,?)',(identity,owner,vehicle,signature,now,json.dumps(payload),'pending','pending'))
-                    db.execute("DELETE FROM tyre_outbox WHERE owner=? AND vehicle=? AND bark NOT IN ('pending','sending') AND wecom NOT IN ('pending','sending') AND rowid NOT IN (SELECT rowid FROM tyre_outbox WHERE owner=? AND vehicle=? ORDER BY created DESC,rowid DESC LIMIT 1000)",(owner,vehicle,owner,vehicle))
+                    db.execute("DELETE FROM tyre_outbox WHERE owner=? AND vehicle=? AND bark NOT IN ('pending','preparing','sending') AND wecom NOT IN ('pending','preparing','sending') AND rowid NOT IN (SELECT rowid FROM tyre_outbox WHERE owner=? AND vehicle=? ORDER BY created DESC,rowid DESC LIMIT 1000)",(owner,vehicle,owner,vehicle))
                 if guard:guard()
                 if self.signature(self.config(owner,vehicle))!=signature:
                     raise ObservationCancelled()
@@ -127,19 +131,22 @@ class TyreNotifications:
             self.deliver(owner,vehicle,now,bark,wecom,guard)
 
     def deliver(self,owner,vehicle,now,bark,wecom,guard=None):
+        started=time.monotonic()
         with delivery_lock(self.store.path.parent/'notifications.lock'):
-            self._deliver(owner,vehicle,now,bark,wecom,guard)
+            self._deliver(owner,vehicle,now,bark,wecom,guard,started=started)
 
-    def _deliver(self,owner,vehicle,now,bark,wecom,guard=None):
+    def _deliver(self,owner,vehicle,now,bark,wecom,guard=None,*,started=None):
+        current_time=delivery_clock(now,started)
         signature=self.signature(self.config(owner,vehicle))
         with self.store.connect(write=True) as db:
             self._tables(db)
             with db:
                 for channel in ('bark','wecom'):
                     db.execute('UPDATE tyre_outbox SET '+channel+"='uncertain' WHERE owner=? AND vehicle=? AND "+channel+"='sending'",(owner,vehicle))
-            rows=db.execute("SELECT id,payload FROM tyre_outbox WHERE owner=? AND vehicle=? AND signature=? AND (bark='pending' OR wecom='pending') ORDER BY created,rowid LIMIT 10",(owner,vehicle,signature)).fetchall()
-        for identity,encoded in rows:
-            payload=json.loads(encoded)
+                    db.execute('UPDATE tyre_outbox SET '+channel+"='pending' WHERE owner=? AND vehicle=? AND "+channel+"='preparing'",(owner,vehicle))
+                    db.execute('UPDATE tyre_outbox SET '+channel+"='cancelled' WHERE owner=? AND vehicle=? AND signature!=? AND "+channel+"='pending'",(owner,vehicle,signature))
+            rows=db.execute("SELECT id FROM tyre_outbox WHERE owner=? AND vehicle=? AND signature=? AND (bark='pending' OR wecom='pending') ORDER BY created,rowid LIMIT 10",(owner,vehicle,signature)).fetchall()
+        for (identity,) in rows:
             for channel,sender in [('bark',bark),('wecom',wecom)]:
                 if sender is None:continue
                 if guard:guard()
@@ -148,17 +155,42 @@ class TyreNotifications:
                     with db:
                         if guard:guard()
                         if self.signature(self.config(owner,vehicle))!=signature:return
-                        claimed=db.execute('UPDATE tyre_outbox SET '+channel+"='sending',attempts_"+channel+'=attempts_'+channel+'+1 WHERE id=? AND '+channel+"='pending' AND next_"+channel+'<=?',(identity,now)).rowcount
-                    attempts=db.execute('SELECT attempts_'+channel+' FROM tyre_outbox WHERE id=?',(identity,)).fetchone()[0]
+                        row=db.execute('SELECT payload FROM tyre_outbox WHERE id=? AND '+channel+"='pending' AND next_"+channel+'<=?',(identity,current_time())).fetchone()
+                        if not row:continue
+                        encoded=row[0]
+                        claimed=db.execute('UPDATE tyre_outbox SET '+channel+"='preparing' WHERE id=? AND "+channel+"='pending' AND payload=?",(identity,encoded)).rowcount
                 if not claimed:continue
-                if guard:guard()
-                if self.signature(self.config(owner,vehicle))!=signature:return
+                try:
+                    payload=json.loads(encoded)
+                    arguments=(payload['title'],payload['body']) if channel=='bark' else (payload['detail'],)
+                    if not all(isinstance(value,str) for value in arguments):raise ValueError()
+                except (ValueError,TypeError,KeyError,RecursionError):
+                    self._release_prepared(identity,channel,'failed')
+                    continue
+                try:
+                    if guard:guard()
+                except Exception:
+                    self._release_prepared(identity,channel,'pending')
+                    raise
+                if self.signature(self.config(owner,vehicle))!=signature:
+                    self._release_prepared(identity,channel,'cancelled')
+                    return
+                with self.store.connect(write=True) as db,db:
+                    claimed=db.execute('UPDATE tyre_outbox SET '+channel+"='sending',attempts_"+channel+'=attempts_'+channel+'+1 WHERE id=? AND '+channel+"='preparing' AND payload=?",(identity,encoded)).rowcount
+                    attempts=(db.execute('SELECT attempts_'+channel+' FROM tyre_outbox WHERE id=?',(identity,)).fetchone()[0]
+                              if claimed else 0)
+                if not claimed:
+                    self._release_prepared(identity,channel,'pending')
+                    continue
                 status='sent'
                 try:
-                    if channel=='bark':sender(payload['title'],payload['body'])
-                    else:sender(payload['detail'])
+                    sender(*arguments)
                 except DeliveryError as error:
                     status='uncertain' if error.ambiguous else 'failed' if error.permanent or attempts>=5 else 'pending'
                 except Exception:status='uncertain'
                 with self.store.connect(write=True) as db:
-                    with db:db.execute('UPDATE tyre_outbox SET '+channel+'=?,next_'+channel+'=? WHERE id=?',(status,now+60000*min(16,2**(attempts-1)),identity))
+                    with db:db.execute('UPDATE tyre_outbox SET '+channel+'=?,next_'+channel+"=? WHERE id=? AND "+channel+"='sending'",(status,current_time()+60000*min(16,2**(attempts-1)),identity))
+
+    def _release_prepared(self,identity,channel,status):
+        with self.store.connect(write=True) as db,db:
+            db.execute('UPDATE tyre_outbox SET '+channel+'=? WHERE id=? AND '+channel+"='preparing'",(status,identity))

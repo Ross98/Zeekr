@@ -1,4 +1,5 @@
 """Shared cached-vehicle interpretation for monitoring and dashboard display."""
+import math
 from .summary import number, section
 
 
@@ -9,7 +10,9 @@ GEAR_LABELS = {'P': '驻车', 'R': '倒车', 'N': '空挡', 'D': '前进'}
 
 def numeric(value, minimum=0, maximum=1e9):
     result = number(value, minimum, maximum)
-    return float(result) if result is not None else None
+    if result is None:return None
+    parsed=float(result)
+    return parsed if math.isfinite(parsed) else None
 
 
 def decode(raw, active_codes=(), stopped_codes=()):

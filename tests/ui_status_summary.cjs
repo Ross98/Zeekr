@@ -184,6 +184,87 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.getByText(/合成刷新失败/).first().waitFor();
   assert.equal(await page.locator('.overview-vehicle').innerText(),retained,'failed refresh retains all prior state, uncertainty and source times');
   assert.match(await page.locator('.hero .freshness').innerText(),/更新时间未知/);
+  snapshot=await page.evaluate(()=>{
+   state.recording={...state.recording,active:null,interval:null,effective_interval:null,status:'failed',error:'采集配置暂不可读或无效，请检查设置与存储权限。'};
+   state.monitoring={...state.monitoring,online:false,status:'unavailable'};
+   render();return structuredClone(state);
+  });
+  assert.match(await page.locator('.overview-collection').innerText(),/采集失败.*采样间隔\s*未知 秒/s);
+  await page.getByRole('button',{name:'设置',exact:true}).first().click();
+  assert.match(await page.locator('#collection-status').innerText(),/采集配置\s*未知/s);
+  assert.doesNotMatch(await page.locator('#collection-status').innerText(),/已暂停/);
+  const collectionCard=page.locator('.card').filter({has:page.getByRole('heading',{name:'本地轨迹采集',exact:true})});
+  assert.match(await collectionCard.innerText(),/采集配置暂不可读/);
+  assert.doesNotMatch(await collectionCard.innerText(),/null 秒|undefined 秒/);
+  assert.equal(await page.locator('#interval').inputValue(),'');
+  const originalStorageBytes=snapshot.storage_bytes;
+  for(const [bytes,expected] of [[null,'未知'],['broken','未知'],[-1,'未知'],[0,'0.0 KB'],[2048,'2.0 KB']]){
+   snapshot=await page.evaluate(bytes=>{state.storage_bytes=bytes;render();return structuredClone(state);},bytes);
+   const sizeRow=collectionCard.locator('.inline-row').filter({has:page.getByText('轨迹数据库大小',{exact:true})});
+   assert.equal(await sizeRow.locator('strong').innerText(),expected,'database size must distinguish unknown, zero and actual bytes');
+  }
+  snapshot=await page.evaluate(bytes=>{state.storage_bytes=bytes;render();return structuredClone(state);},originalStorageBytes);
+  await page.locator('[data-detail="settings-notifications"]>summary').click();
+  const diagnostics=page.locator('.card').filter({has:page.getByRole('heading',{name:'自动行程与充电通知',exact:true})});
+  const unknownDescription=await diagnostics.innerText();
+  const outcomes=[];
+  for(const status of ['unavailable','degraded','error','unexpected','paused','fresh','unchanged','parked_waiting']){
+   snapshot=await page.evaluate(status=>{
+    const known=['fresh','unchanged','parked_waiting'].includes(status);
+    state.recording={...state.recording,active:known?true:status==='paused'?false:null,interval:known?10:null,status:known?'active':status==='paused'?'paused':'failed'};
+    state.monitoring={...state.monitoring,status,online:true};render();return structuredClone(state);
+   },status);
+   outcomes.push({status,green:await diagnostics.locator('.card-head .pill.good').count()});
+  }
+  assert.match(await diagnostics.innerText(),/正常采样间隔 10 秒/);
+  snapshot=await page.evaluate(()=>{state.recording={...state.recording,active:null,interval:null,status:'failed'};state.monitoring.status='fresh';render();return structuredClone(state);});
+  outcomes.push({status:'fresh-unknown-config',green:await diagnostics.locator('.card-head .pill.good').count()});
+  assert.deepEqual(outcomes.map(row=>row.green),[0,0,0,0,0,1,1,1,0],'only positively known collecting states appear healthy');
+  assert.match(unknownDescription,/正常采样间隔 未知/);
+  assert.doesNotMatch(unknownDescription,/每 30 秒/,'unknown configuration must never invent the default interval');
+  // Earlier assertions deliberately changed the synthetic owner/request key.
+  // Restore the fixture's real identity before testing actual settings writes.
+  await page.waitForFunction(()=>!polling&&!busy);
+  const identity=await(await page.request.get(f.origin+'/api/state')).json();
+  snapshot=await page.evaluate(identity=>{
+   for(const key of ['request_key','insights_context','vehicle'])state[key]=identity[key];
+   render();return structuredClone(state);
+  },identity);
+  const recordingRequests=[];
+  await page.route('**/api/recording',async route=>{
+   recordingRequests.push(route.request().postDataJSON());
+   const response=await route.fetch();snapshot=await response.json();
+   assert.equal(response.status(),200,'real fixture settings write must succeed');
+   await route.fulfill({response,json:snapshot});
+  });
+  await page.locator('#interval').fill('20');
+  await page.getByRole('button',{name:'保存间隔',exact:true}).click();
+  await page.waitForFunction(()=>!busy);
+  assert.deepEqual(recordingRequests,[],'saving an interval cannot silently choose an unknown switch state');
+  assert.match(await page.locator('body').innerText(),/采集开关状态未知/);
+  await page.getByRole('button',{name:'开始采集',exact:true}).click();
+  await page.waitForFunction(()=>!busy);
+  assert.deepEqual(recordingRequests,[{active:true,interval:20}],'explicit start repairs unknown controls using the entered interval');
+  assert.equal(await page.evaluate(()=>state.recording.active),true);
+  assert.equal(await page.evaluate(()=>state.recording.interval),20);
+  assert.equal(await page.evaluate(()=>samplingDraft),null);
+  await page.locator('#interval').fill('25');
+  await page.getByRole('button',{name:'暂停采集',exact:true}).click();
+  await page.waitForFunction(()=>!busy);
+  assert.deepEqual(recordingRequests[1],{active:false},'a normal pause does not save the unrelated interval draft');
+  assert.equal(await page.locator('#interval').inputValue(),'25');
+  assert.equal(await page.evaluate(()=>state.recording.interval),20);
+  await page.getByRole('button',{name:'保存间隔',exact:true}).click();
+  await page.waitForFunction(()=>!busy);
+  assert.deepEqual(recordingRequests[2],{operation:'interval',interval:25});
+  assert.equal(await page.evaluate(()=>state.recording.active),false,'saving the interval preserves the explicit paused state');
+  snapshot=await page.evaluate(()=>{state.recording.active=true;state.recording.status='active';render();return structuredClone(state);});
+  await page.locator('#interval').fill('30');
+  await page.getByRole('button',{name:'保存间隔',exact:true}).click();
+  await page.waitForFunction(()=>!busy);
+  assert.equal(await page.evaluate(()=>state.recording.active),false,'a stale enabled window must not restart collection when saving only the interval');
+  assert.equal(await page.evaluate(()=>state.recording.interval),30);
+  assert.deepEqual(recordingRequests[3],{operation:'interval',interval:30});
   assert.deepEqual(f.errors,[]);assert.deepEqual(f.external,[]);
   console.log('DESKTOP_STATUS_SUMMARY_PASS: 15 states/all unknown, official photo decode, independent freshness, semantic colors/positions, PM2.5 zero/missing, contextual/reset navigation, polling/owner isolation, failed refresh retention, 8 desktop layouts');
  }catch(error){await f.fail(error);throw error;}finally{await f.close();}

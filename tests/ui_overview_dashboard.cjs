@@ -111,6 +111,35 @@ for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}
  }
 }
 await page.setViewportSize({width:1440,height:1000});await page.locator('#overview-record-filter').selectOption('all');await page.getByLabel('外观',{exact:true}).selectOption('light');await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'/tmp/zeekr-overview-production-desktop.png',fullPage:true});
-report={...report,context:'other-vehicle'};ledger={...ledger,context:'other-vehicle'};await page.getByRole('button',{name:'重新读取记录汇总',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#overview-today-value').textContent==='未知');assert.equal(await page.locator('#overview-cost-value').innerText(),'未知');assert.match(await page.locator('#overview-records').innerText(),/读取失败/);
+const pinned=await page.evaluate(()=>structuredClone(state));
+const pinState=route=>route.fulfill({json:pinned});await page.route('**/api/state',pinState);
+try{
+ await page.evaluate(()=>{
+  const clock=window.__rollover={Date,fetch:window.fetch,wall:Date.parse('2026-10-31T23:59:59.500+08:00'),queries:[]};
+  window.Date=class extends clock.Date{constructor(...args){super(...(args.length?args:[clock.wall]));}static now(){return clock.wall;}};
+  window.fetch=(url,options)=>{
+   const target=new URL(url,location.origin);
+   if(!['/api/insights/report','/api/insights/costs'].includes(target.pathname))return clock.fetch.call(window,url,options);
+   const date=target.searchParams.get('date');clock.queries.push(date);
+   const old=date==='2026-10-31';
+   const result=target.pathname.endsWith('/report')
+    ?{context:state.insights_context,current:{days:[{date,distance_km:old?12:null,trip_count:old?1:0,partial_trip_count:0}],events:[]},previous:{days:[],events:[]}}
+    :{context:state.insights_context,totals:{actual_cents:old?9900:0,unlinked_charge_count:0,unknown_charge_count:0}};
+   return Promise.resolve(new Response(JSON.stringify(result)));
+  };
+  overviewDashboard.mount();
+ });
+ await page.waitForFunction(()=>document.querySelector('#overview-today-value').textContent==='12'&&document.querySelector('#overview-cost-value').textContent==='99');
+ const before=await page.evaluate(()=>window.__rollover.queries.length);
+ await page.evaluate(async()=>{window.__rollover.wall+=1000;await pollState(true);});
+ const added=await page.evaluate(before=>window.__rollover.queries.slice(before),before);
+ assert.equal(await page.evaluate(()=>connectionFailures),0,'rollover check must run after a successful unchanged-state poll');
+ assert.deepEqual(added,['2026-11-01','2026-11-01'],'unchanged state poll refreshes both local summaries at Beijing month rollover');
+ await page.waitForFunction(()=>document.querySelector('#overview-today-value').textContent==='未知'&&document.querySelector('#overview-cost-value').textContent==='0');
+}finally{
+ await page.evaluate(()=>{if(window.__rollover){window.Date=window.__rollover.Date;window.fetch=window.__rollover.fetch;delete window.__rollover;}});
+ await page.unroute('**/api/state',pinState);
+}
+report={...report,context:'other-vehicle'};ledger={...ledger,context:'other-vehicle'};await page.getByRole('button',{name:'重新读取记录汇总',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#overview-today-value').textContent==='未知'&&document.querySelector('#overview-cost-value').textContent==='未知'&&document.querySelector('#overview-records').textContent.includes('读取失败'));assert.equal(await page.locator('#overview-cost-value').innerText(),'未知');assert.match(await page.locator('#overview-records').innerText(),/读取失败/);
 assert.deepEqual(f.errors,[]);assert.equal(f.external.length,0);console.log('PASS overview actual-only zero, partial distance, calendar return, door selection/context reset, unknown battery, return/filter/scroll, context rejection, 8 desktop viewport/theme checks');
 }catch(error){await f.fail(error);throw error;}finally{await f.close();}})().catch(e=>{console.error(e);process.exit(1)});

@@ -10,6 +10,18 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .storage import load
 
+MAX_RESPONSE_BYTES = 65536
+
+
+def _read_response(response):
+    encoded = response.read(MAX_RESPONSE_BYTES+1)
+    if len(encoded)>MAX_RESPONSE_BYTES:
+        raise ValueError('notification response exceeds limit')
+    try:
+        return json.loads(encoded)
+    except RecursionError:
+        raise ValueError('notification response nesting exceeds limit') from None
+
 
 class DeliveryError(Exception):
     def __init__(self, message, ambiguous=False, permanent=False):
@@ -67,7 +79,7 @@ class BarkSender:
                           headers={'Content-Type': 'application/json; charset=utf-8'}, method='POST')
         try:
             with build_opener(NoRedirect()).open(request, timeout=20) as response:
-                result = json.loads(response.read(65536))
+                result = _read_response(response)
         except HTTPError as exc:
             raise DeliveryError('Bark HTTP 错误 %d' % exc.code, ambiguous=exc.code >= 500,
                                 permanent=300 <= exc.code < 500 and exc.code != 429) from None
@@ -127,7 +139,7 @@ class WeComSender:
         request = Request(url, data=encoded, headers={'Content-Type': 'application/json'}, method='POST')
         try:
             with build_opener(NoRedirect()).open(request, timeout=20) as response:
-                result = json.loads(response.read(65536))
+                result = _read_response(response)
         except HTTPError as exc:
             # A server error may occur after the message has been accepted.
             raise DeliveryError('通知 HTTP 错误 %d' % exc.code, ambiguous=exc.code >= 500,

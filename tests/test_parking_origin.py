@@ -109,12 +109,109 @@ class ParkingOriginTests(unittest.TestCase):
         self.edit('previous',make_old)
         self.assertIsNone(self.infer())
 
+    def test_late_written_movement_inside_parking_blocks_origin(self):
+        self.event = self.seed()
+        stamp = self.current-60000
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('late-start','car','trip_start',json.dumps({'start_time':stamp}),self.current+90000))
+        self.assertIsNone(self.infer())
+
+    def test_old_movement_written_during_parking_does_not_block_origin(self):
+        self.event = self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('old-start','car','trip_start',json.dumps({'start_time':self.start-60000}),self.current-60000))
+        self.assertEqual(self.infer(), expected)
+
     def test_invalid_latest_predeparture_sample_is_not_skipped(self):
         self.event=self.seed()
         with sqlite3.connect(self.db) as db:
             db.execute('INSERT INTO observations(vehicle,cache_key,state_time,observed_time,gap_seconds,location) VALUES(?,?,?,?,?,?)',
                        ('car','newest',self.current-1000,self.current-500,30,'invalid-json'))
         self.assertIsNone(self.infer())
+
+    def test_previous_arrival_is_selected_by_vehicle_time_after_late_archival(self):
+        self.event = self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE monitor_events SET created=? WHERE id='previous'", (self.current+1000,))
+        self.assertEqual(self.infer(), expected)
+
+    def test_older_arrival_written_later_does_not_replace_latest_arrival(self):
+        self.event = self.seed()
+        with sqlite3.connect(self.db) as db:
+            raw = json.loads(db.execute("SELECT summary FROM monitor_events WHERE id='previous'").fetchone()[0])
+            raw['end_time'] -= 60000
+            raw['report_v2']['end']['state_time'] = raw['end_time']
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('older','car','trip_end',json.dumps(raw),self.current-1000))
+        self.assertEqual(self.infer()['previous_event_id'], 'previous')
+
+    def test_newest_partial_arrival_cannot_be_skipped_after_late_archival(self):
+        self.event = self.seed()
+        with sqlite3.connect(self.db) as db:
+            raw = json.loads(db.execute("SELECT summary FROM monitor_events WHERE id='previous'").fetchone()[0])
+            raw['end_time'] -= 60000
+            raw['report_v2']['end']['state_time'] = raw['end_time']
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('older','car','trip_end',json.dumps(raw),self.start))
+            raw['end_time'] += 60000
+            raw['report_v2']['end']['state_time'] = raw['end_time']
+            raw['partial'] = True
+            db.execute("UPDATE monitor_events SET summary=?,created=? WHERE id='previous'",
+                       (json.dumps(raw),self.current+1000))
+        self.assertIsNone(self.infer())
+
+    def test_overlapping_trip_written_later_blocks_previous_arrival(self):
+        self.event = self.seed()
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('overlap','car','trip_end',json.dumps(dict(start_time=self.current-60000,
+                        end_time=self.current+60000,partial=False)),self.current+120000))
+        self.assertIsNone(self.infer())
+
+    def test_invalid_newest_arrival_is_not_skipped_for_older_support(self):
+        self.event = self.seed()
+        payloads = ['not-json', '[]', '{"end_time":true}', '['*1200+'0'+']'*1200,
+                    json.dumps({'end_time': self.current-1000, 'padding':'x'*(2*1024*1024)})]
+        for encoded in payloads:
+            with self.subTest(encoded=encoded[:30]):
+                with sqlite3.connect(self.db) as db:
+                    db.execute('INSERT OR REPLACE INTO monitor_events VALUES(?,?,?,?,?)',
+                               ('invalid-latest','car','trip_end',encoded,self.current-1000))
+                self.assertIsNone(self.infer())
+
+    def test_unrelated_future_arrival_and_current_write_time_do_not_replace_previous(self):
+        self.event = self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE monitor_events SET created=? WHERE id='current'", (self.current-2000,))
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('future','car','trip_end',json.dumps(dict(start_time=self.current+100000,
+                        end_time=self.current+200000,partial=False)),self.current-1000))
+        self.assertEqual(self.infer(), expected)
+
+    def test_recycled_previous_arrival_is_a_stop_not_support_or_older_fallback(self):
+        self.event = self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            raw = json.loads(db.execute("SELECT summary FROM monitor_events WHERE id='previous'").fetchone()[0])
+            raw['end_time'] -= 60000
+            raw['report_v2']['end']['state_time'] = raw['end_time']
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)', ('older','car','trip_end',json.dumps(raw),self.start))
+            db.execute('CREATE TABLE trip_record_trash(vehicle TEXT,event_id TEXT)')
+            db.execute("INSERT INTO trip_record_trash VALUES('other','previous')")
+        self.assertEqual(self.infer(), expected)
+        with sqlite3.connect(self.db) as db:
+            db.execute("INSERT INTO trip_record_trash VALUES('car','previous')")
+        self.assertIsNone(self.infer())
+        row = next(row for row in self.tags.query('owner','car','2026-10-06')['events'] if row['id']=='current')
+        self.assertNotIn('start_place_evidence', row)
+        with sqlite3.connect(self.db) as db:
+            db.execute("DELETE FROM trip_record_trash WHERE vehicle='car'")
+        self.assertEqual(self.infer(), expected)
 
     def test_query_marks_estimate_and_leaves_commute_trust_unchanged(self):
         self.event=self.seed()

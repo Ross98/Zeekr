@@ -3,6 +3,7 @@ from .commute_tags import _distance
 from .parking_origin import _point, _summary, _telemetry
 from .usage_events import MAX_SUMMARY_BYTES, number
 from .reviewed_parking_destination import reviewed_parking_destination
+from .movement_barriers import trip_start_between
 
 
 MIN_PARKING_MS = 60000
@@ -58,8 +59,7 @@ def parking_destination(db, vehicle, event):
             or odometer is None or anchor is None
             or not _stationary(arrival, end, odometer) or not _stationary(parked, stamp, odometer)):
         return None
-    if db.execute("SELECT 1 FROM monitor_events WHERE vehicle=? AND kind='trip_start' "
-                  'AND created>? AND created<=? LIMIT 1', (vehicle, end, stamp)).fetchone():
+    if trip_start_between(db, vehicle, end, stamp, upper_inclusive=True):
         return None
     rows = db.execute('SELECT state_time,observed_at,CASE WHEN length(CAST(normalized_payload AS BLOB))<=? '
                       'THEN normalized_payload END FROM report_observations WHERE vehicle=? '

@@ -12,6 +12,53 @@ from zeekr_control.web import App, make_server
 
 
 class StorageAPITests(unittest.TestCase):
+    def test_bad_resource_fields_do_not_break_readonly_storage_page(self):
+        from unittest.mock import patch
+        from zeekr_control.resource_monitor import ResourceHealth
+        health=ResourceHealth(self.app.session_path.parent)
+        cases=(
+            ({'host_cpu_percent':10**400,'app_rss_bytes':10**400}, {}, 'healthy'),
+            ({}, {'endpoint:local':{'level':[]}}, 'unknown'),
+            ({}, {'endpoint:local':[]}, 'unknown'),
+            ({}, [], 'unknown'),
+            ({}, {'endpoint:local':{'level':{}},'service:local.zeekr.web':{'level':'critical'}}, 'critical'),
+            ({}, {'memory_pressure':{'level':{}}}, 'healthy'),
+        )
+        for sample,conditions,expected_level in cases:
+            with self.subTest(expected_level=expected_level,conditions=str(conditions)[:80]):
+                sample=dict(sample,physical_memory_bytes=16*1024**3,app_cpu_percent=0,private_token='PRIVATE-RESOURCE')
+                health.save({'checked_at':1000,'sample':sample,'conditions':conditions})
+                before=health.path.read_bytes()
+                with patch('zeekr_control.resource_monitor.time.time',return_value=1000),\
+                     patch('zeekr_control.resource_monitor.NativeSampler.measure',side_effect=AssertionError('must not sample')):
+                    code,body=self.request('GET','/api/storage')
+                self.assertEqual(code,200,body)
+                result=json.loads(body)['resources']
+                self.assertEqual(result['alert_level'],expected_level)
+                self.assertEqual(result['application']['cpu_percent'],0)
+                self.assertEqual(result['host']['physical_memory_bytes'],16*1024**3)
+                if 'app_rss_bytes' in sample:self.assertIsNone(result['application']['rss_bytes'])
+                self.assertEqual(health.path.read_bytes(),before)
+                self.assertNotIn('PRIVATE-RESOURCE',body)
+
+    def test_broken_monitor_cache_does_not_hide_current_storage_or_rewrite_state(self):
+        from unittest.mock import patch
+        from zeekr_control.storage import save
+        path=self.app.session_path.parent/'storage-health.json'
+        sample={'disk_used_percent':50,'disk_free_bytes':20*1024**3,'scan_complete':True}
+        for state in ('null','[]','{"sample":[]}','{"sample":"PRIVATE"}'):
+            with self.subTest(state=state):
+                save(path,{'state':state});before=path.read_bytes()
+                with patch('zeekr_control.storage_health.StorageHealth.measure',return_value=sample):
+                    code,body=self.request('GET','/api/storage')
+                self.assertEqual(code,200)
+                result=json.loads(body)
+                self.assertEqual(result['current']['disk_free_bytes'],20*1024**3)
+                self.assertEqual(result['monitor']['status'],'unknown')
+                self.assertFalse(result['monitor']['monitor_fresh'])
+                self.assertEqual(path.read_bytes(),before)
+                self.assertNotIn('PRIVATE',body)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.app = App(Path(self.temp.name)/'private/session.json')

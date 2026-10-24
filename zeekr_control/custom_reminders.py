@@ -1,10 +1,11 @@
 """Confirmed cached-state reminders with private, durable local history/outbox."""
 import hashlib
 import json
+import time
 import uuid
 
 from .notifications import DeliveryError
-from .delivery_state import delivery_lock
+from .delivery_state import delivery_lock, delivery_clock
 from .summary import updated_at, number, section, SIDES
 from .vehicle_state import decode
 
@@ -99,6 +100,7 @@ class Reminders:
             id TEXT PRIMARY KEY,owner TEXT,vehicle TEXT,rule_id TEXT,signature TEXT,
             kind TEXT,name TEXT,created INTEGER,state_time INTEGER,delivery TEXT,message TEXT,error TEXT)''')
         db.execute('CREATE INDEX IF NOT EXISTS rule_history_scope ON rule_history(owner,vehicle,created DESC)')
+        db.execute('CREATE INDEX IF NOT EXISTS rule_history_latest ON rule_history(owner,vehicle,rule_id,signature)')
 
     @staticmethod
     def _has_tables(db):
@@ -144,6 +146,7 @@ class Reminders:
         with self.store.connect(write=True) as db,db:
             if self._has_tables(db):
                 db.execute("UPDATE rule_history SET delivery='uncertain',error='发送期间进程中断，结果未确认；不会自动重发。' WHERE delivery='sending'")
+                db.execute("UPDATE rule_history SET delivery='pending' WHERE delivery='preparing'")
 
     @staticmethod
     def _event(db,owner,vehicle,record,state,kind,now,timestamp):
@@ -161,13 +164,13 @@ class Reminders:
                    '(SELECT rowid FROM rule_history WHERE owner=? AND vehicle=? ORDER BY created DESC,rowid DESC LIMIT 10000)',
                    (owner,vehicle,owner,vehicle))
 
-    def observe(self,owner,vehicle,raw,now,sender=None,guard=None):
+    def observe(self,owner,vehicle,raw,now,sender=None,guard=None,*,sampling_epoch=None):
         saved=self.store.read(owner,vehicle,'rules')
         if not saved['records']:
             with self.store.connect() as db:
                 if not self._has_tables(db):return
                 orphan=db.execute('SELECT 1 FROM rule_states WHERE owner=? AND vehicle=? LIMIT 1',(owner,vehicle)).fetchone()
-                pending=db.execute("SELECT 1 FROM rule_history WHERE owner=? AND vehicle=? AND delivery='pending' LIMIT 1",(owner,vehicle)).fetchone()
+                pending=db.execute("SELECT 1 FROM rule_history WHERE owner=? AND vehicle=? AND delivery IN ('pending','preparing') LIMIT 1",(owner,vehicle)).fetchone()
                 if not orphan and not pending:return
         digest=hashlib.sha256(json.dumps(raw,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         with self.store.connect(write=True) as db,db:
@@ -179,7 +182,7 @@ class Reminders:
                        "(SELECT id FROM records WHERE owner=? AND vehicle=? AND collection='rules' AND deleted=0)",
                        (owner,vehicle,owner,vehicle))
             db.execute("UPDATE rule_history SET delivery='cancelled',error='规则已移除，未发送。' "
-                       "WHERE owner=? AND vehicle=? AND delivery='pending' AND rule_id NOT IN "
+                       "WHERE owner=? AND vehicle=? AND delivery IN ('pending','preparing') AND rule_id NOT IN "
                        "(SELECT id FROM records WHERE owner=? AND vehicle=? AND collection='rules' AND deleted=0)",
                        (owner,vehicle,owner,vehicle))
             for record in records:
@@ -188,6 +191,9 @@ class Reminders:
                 row=db.execute('SELECT signature,payload FROM rule_states WHERE owner=? AND vehicle=? AND id=?',
                                (owner,vehicle,record['id'])).fetchone()
                 state=json.loads(row[1]) if row and row[0]==stamp else dict(active=False,last_raised=None,last_time=None,count=0,candidate=None)
+                if sampling_epoch is not None and state.get('sampling_epoch')!=sampling_epoch:
+                    state.update(count=0,candidate=None,first_time=None,first_observed=None,
+                                 sampling_epoch=sampling_epoch)
                 observation=preview(rule,raw,now);timestamp=observation['state_time'];matches=observation['matches']
                 previous=state.get('last_time')
                 reset=matches is None or timestamp is None or previous is not None and timestamp<previous
@@ -222,43 +228,67 @@ class Reminders:
         if sender is not None:self.deliver(owner,vehicle,raw,now,sender,guard)
 
     def deliver(self,owner,vehicle,raw,now,sender,guard=None):
+        started=time.monotonic()
         with delivery_lock(self.store.path.parent/'notifications.lock'):
             self._recover()
-            self._deliver(owner,vehicle,raw,now,sender,guard)
+            self._deliver(owner,vehicle,raw,now,sender,guard,started=started)
 
-    def _deliver(self,owner,vehicle,raw,now,sender,guard=None):
+    def _deliver(self,owner,vehicle,raw,now,sender,guard=None,*,started=None):
         # Claim under a write transaction, send outside it; one attempt per event.
+        current_time=delivery_clock(now,started)
         with self.store.connect() as db:
             if not self._has_tables(db):return
             ids=[r[0] for r in db.execute("SELECT id FROM rule_history WHERE owner=? AND vehicle=? AND delivery='pending' ORDER BY created,rowid LIMIT 100",(owner,vehicle))]
         for identity in ids:
-            with self.store.connect(write=True) as db,db:
-                db.execute('BEGIN IMMEDIATE')
-                row=db.execute("SELECT rule_id,signature,kind,created,message FROM rule_history WHERE id=? AND delivery='pending'",(identity,)).fetchone()
-                if not row:continue
-                saved=self.store._read(db,self.store._key(owner,vehicle,'rules'))
-                record=next((r for r in saved['records'] if r['id']==row[0] and not r['deleted']),None)
-                valid=record and record['body']['enabled'] and signature(record)==row[1]
-                observed=preview(record['body'],raw,now) if valid else None
-                age=MAX_AGE if record and record['body']['kind']=='parked_windows' else MAX_GAP
-                valid=bool(valid and observed['matches'] is (row[2]=='raised') and 0<=now-row[3]<=age)
-                if not valid:
-                    db.execute("UPDATE rule_history SET delivery='cancelled',error='条件、规则或有效时间已变化，未发送。' WHERE id=?",(identity,))
-                    continue
-                if guard:guard()
-                db.execute("UPDATE rule_history SET delivery='sending' WHERE id=?",(identity,))
+            if guard:guard()
+            message=self._claim_delivery(owner,vehicle,identity,raw,current_time,'pending','preparing')
+            if message is None:continue
             try:
                 if guard:guard()
             except Exception:
                 with self.store.connect(write=True) as db,db:
-                    db.execute("UPDATE rule_history SET delivery='cancelled',error='发送前账号已变化，未发送。' WHERE id=?",(identity,))
+                    db.execute("UPDATE rule_history SET delivery='cancelled',error='发送前账号已变化，未发送。' WHERE id=? AND delivery='preparing'",(identity,))
                 raise
+            message=self._claim_delivery(owner,vehicle,identity,raw,current_time,'preparing','sending')
+            if message is None:continue
             try:
-                sender(row[4]);delivery,error='sent',''
+                sender(message);delivery,error='sent',''
             except DeliveryError as exc:
                 delivery='uncertain' if exc.ambiguous else 'failed'
                 error='发送结果未确认，不会自动重发。' if exc.ambiguous else '通知被拒绝，请检查通知配置；不会自动重发。'
             except Exception:
                 delivery,error='uncertain','发送结果未确认，不会自动重发。'
             with self.store.connect(write=True) as db,db:
-                db.execute('UPDATE rule_history SET delivery=?,error=? WHERE id=?',(delivery,error,identity))
+                db.execute("UPDATE rule_history SET delivery=?,error=? WHERE id=? AND delivery='sending'",(delivery,error,identity))
+
+    def _claim_delivery(self,owner,vehicle,identity,raw,clock,expected,target):
+        """Validate the current rule and confirmation again at each claim."""
+        with self.store.connect(write=True) as db,db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT rule_id,signature,kind,created,message FROM rule_history '
+                           'WHERE id=? AND owner=? AND vehicle=? AND delivery=?',
+                           (identity,owner,vehicle,expected)).fetchone()
+            if not row:return None
+            saved=self.store._read(db,self.store._key(owner,vehicle,'rules'))
+            record=next((r for r in saved['records'] if r['id']==row[0] and not r['deleted']),None)
+            valid=bool(record and record['body']['enabled'] and signature(record)==row[1])
+            desired=row[2]=='raised'
+            age=MAX_AGE if record and record['body']['kind']=='parked_windows' else MAX_GAP
+            runtime=db.execute('SELECT signature,payload FROM rule_states WHERE owner=? AND vehicle=? AND id=?',
+                               (owner,vehicle,row[0])).fetchone()
+            try:state=json.loads(runtime[1]) if runtime and runtime[0]==row[1] else {}
+            except (TypeError,ValueError,RecursionError):state={}
+            latest=db.execute('SELECT id FROM rule_history WHERE owner=? AND vehicle=? AND rule_id=? AND signature=? '
+                              'ORDER BY rowid DESC LIMIT 1',(owner,vehicle,row[0],row[1])).fetchone()
+            now=clock()
+            observed=preview(record['body'],raw,now) if valid else None
+            valid=bool(valid and observed['matches'] is desired and 0<=now-row[3]<=age
+                       and isinstance(state,dict) and state.get('active') is desired
+                       and state.get('candidate') is desired and latest and latest[0]==identity)
+            if not valid:
+                db.execute("UPDATE rule_history SET delivery='cancelled',error='条件、规则或有效时间已变化，未发送。' "
+                           'WHERE id=? AND delivery=?',(identity,expected))
+                return None
+            changed=db.execute("UPDATE rule_history SET delivery=?,error='' WHERE id=? AND delivery=?",
+                               (target,identity,expected)).rowcount
+            return row[4] if changed else None

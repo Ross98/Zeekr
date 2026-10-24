@@ -9,6 +9,66 @@ from zeekr_control.auth import WebAuth, password_record
 
 
 class RememberedAuthTests(unittest.TestCase):
+    def test_failed_login_window_survives_wall_clock_jump_forward(self):
+        for password in (None,'wrong'):
+            with self.subTest(password_type=type(password).__name__):
+                auth=WebAuth(self.record)
+                with patch('zeekr_control.auth.time.time',return_value=1000) as wall, \
+                     patch('zeekr_control.auth.time.monotonic',return_value=100) as elapsed:
+                    for _ in range(5):self.assertIsNone(auth.login(password))
+                    wall.return_value=10**12;elapsed.return_value=101
+                    self.assertTrue(auth.limited(),'clock correction must not erase recent failures')
+
+    def test_failed_login_window_expires_despite_wall_clock_jump_backward(self):
+        for password in (None,'wrong'):
+            with self.subTest(password_type=type(password).__name__):
+                auth=WebAuth(self.record)
+                with patch('zeekr_control.auth.time.time',return_value=1000) as wall, \
+                     patch('zeekr_control.auth.time.monotonic',return_value=100) as elapsed:
+                    for _ in range(5):self.assertIsNone(auth.login(password))
+                    wall.return_value=1;elapsed.return_value=399.999
+                    self.assertTrue(auth.limited())
+                    elapsed.return_value=400
+                    self.assertFalse(auth.limited(),'five actual minutes must release the login limit')
+
+    def test_invalid_expiries_cannot_evict_other_valid_devices_at_capacity(self):
+        import hashlib
+        old=self.login(30)
+        client=self.auth._client_key('192.0.2.10','Synthetic Browser')
+        with sqlite3.connect(self.path) as db:
+            db.executemany('INSERT INTO remembered_sessions VALUES(?,?,?,?)',
+                [(hashlib.sha256(('bad'+str(index)).encode()).digest(),self.auth.password_key,client,
+                  ('invalid expiry',b'invalid expiry',float('inf'))[index%3]) for index in range(31)])
+        new=self.login(7)
+        self.assertTrue(self.valid(self.auth,old),'invalid credentials must not displace a valid device')
+        self.assertTrue(self.valid(self.auth,new))
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM remembered_sessions').fetchone()[0],2)
+
+    def test_nonnumeric_and_nonfinite_saved_expiry_cannot_authenticate(self):
+        import hashlib
+        token=self.login();other=self.login(30)
+        key=hashlib.sha256(token.encode()).digest()
+        for expiry in ('invalid expiry',b'invalid expiry',float('inf'),float('-inf')):
+            with self.subTest(expiry_type=type(expiry).__name__):
+                with sqlite3.connect(self.path) as db:
+                    db.execute('UPDATE remembered_sessions SET expires=? WHERE token_key=?',(expiry,key))
+                before=self.path.read_bytes()
+                self.assertFalse(self.valid(self.auth,token))
+                self.assertTrue(self.valid(self.auth,other))
+                self.assertEqual(self.path.read_bytes(),before)
+
+    def test_default_logout_does_not_require_remembered_storage(self):
+        token=self.auth.login('synthetic remembered password')
+        remembered=self.login()
+        original=self.path.read_bytes()
+        with patch.object(self.auth,'_connect',side_effect=OSError('synthetic storage failure')) as connect:
+            self.auth.logout(token)
+            connect.assert_not_called()
+        self.assertFalse(self.auth.valid(token))
+        self.assertTrue(self.valid(self.auth,remembered))
+        self.assertEqual(self.path.read_bytes(),original)
+
     @classmethod
     def setUpClass(cls):
         cls.record = password_record('synthetic remembered password')

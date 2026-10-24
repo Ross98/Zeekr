@@ -4,6 +4,27 @@ from zeekr_control.summary import format_status
 
 
 class SummaryTests(unittest.TestCase):
+    def test_extreme_numeric_exponents_do_not_break_other_fields(self):
+        from zeekr_control.summary import display
+        for value in ('1e999999999','-1e999999999','1e13','-1e13',
+                      '1000000000000.0000000000000000000000001'):
+            with self.subTest(value=value):self.assertEqual(display(value),'未知')
+        self.assertEqual(display('1000000000000',grouped=True),'1,000,000,000,000')
+        self.assertEqual(display('-0.125',' A'),'-0.125 A')
+        text=format_status({'additionalVehicleStatus':{'electricVehicleStatus':{
+            'chargeLevel':62,'distanceToEmptyOnBatteryOnly':'1e999999999'}}})
+        self.assertIn('动力电池：62%',text)
+        self.assertIn('电池续航：未知',text)
+
+    def test_unrepresentable_timestamp_exponents_are_unknown(self):
+        from zeekr_control.summary import updated_at
+        for value in ('1e999999999','1e1000000','-1e999999999','NaN','Infinity',True):
+            with self.subTest(value=value):self.assertEqual(updated_at(value),'未知')
+        self.assertEqual(updated_at(1704067200000),'2024-01-01 08:00:00（北京时间）')
+        self.assertEqual(updated_at(0),'1970-01-01 08:00:00（北京时间）')
+        self.assertEqual(updated_at(253402271999000),'9999-12-31 23:59:59（北京时间）')
+        self.assertEqual(updated_at(253402300800000),'未知')
+
     def test_traction_fields_win_over_generic_and_low_voltage_battery(self):
         data = {
             'updateTime': '1704067200000',

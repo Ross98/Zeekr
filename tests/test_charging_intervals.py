@@ -25,6 +25,80 @@ class ChargingIntervalsTests(unittest.TestCase):
         self.charge('a','2026-09-15',30,80,1000)
         self.charge('b','2026-09-20',40,90,1200)
 
+    def enable_wal(self):
+        anchor = self.add_db()
+        self.addCleanup(anchor.close)
+        self.assertEqual(anchor.execute('PRAGMA journal_mode=WAL').fetchone()[0], 'wal')
+        anchor.execute('UPDATE monitor_events SET created=created')
+        anchor.commit()
+
+    def test_query_keeps_one_snapshot_while_collector_adds_charge_and_samples(self):
+        from unittest.mock import patch
+        from zeekr_control.charging_intervals import ChargingIntervals
+        self.pair()
+        self.enable_wal()
+        intervals = ChargingIntervals(self.db)
+        window = period_window('month', '2026-09-01')
+        expected = intervals.query('car', window, self.now, {})
+        original = intervals._charges
+        def read_then_collect(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.charge('middle', '2026-09-17', 30, 80, 1100)
+            self.observation(day='2026-09-17', minutes=-15, charging=True)
+            return result
+        with patch.object(intervals, '_charges', side_effect=read_then_collect):
+            actual = intervals.query('car', window, self.now, {})
+        self.assertEqual(actual, expected)
+        following = intervals.query('car', window, self.now, {})
+        self.assertEqual(following['summary']['valid_count'], 2)
+        self.assertEqual(len(following['records']), 3)
+
+    def test_precharge_reference_uses_same_snapshot_as_charge_events(self):
+        from unittest.mock import patch
+        from zeekr_control.charging_intervals import ChargingIntervals
+        self.charge('a', '2026-09-15', 30, 80, 1000)
+        self.charge('b', '2026-09-20', 60, 90, 1300, partial=True)
+        cutoff = self.observation(minutes=5, soc=40, odometer=1200)
+        self.enable_wal()
+        intervals = ChargingIntervals(self.db)
+        original = intervals._charges
+        def read_then_collect(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.observation(minutes=1, soc=35, odometer=1210)
+            return result
+        with patch.object(intervals, '_charges', side_effect=read_then_collect):
+            result = intervals.query('car', period_window('month','2026-09-01'), self.now, {})
+        self.assertEqual(result['records'][0]['end_time'], cutoff)
+        self.assertEqual(result['records'][0]['end_soc'], 40)
+        self.assertEqual(result['summary']['distance_km'], 200)
+        self.assertEqual(self.query()['records'][0]['end_soc'], 35)
+
+    def test_cancelled_query_closes_shared_read_transaction(self):
+        import sqlite3
+        from unittest.mock import patch
+        from zeekr_control.analysis_cancel import AnalysisCancelled, cancellation_scope
+        from zeekr_control.charging_intervals import ChargingIntervals
+        self.pair()
+        intervals = ChargingIntervals(self.db)
+        original = intervals._charges
+        connections = []
+        cancelled = []
+        def read_then_cancel(*args, **kwargs):
+            result = original(*args, **kwargs)
+            connection = kwargs['_connection']
+            self.assertTrue(connection.in_transaction)
+            connections.append(connection)
+            cancelled.append(True)
+            return result
+        with cancellation_scope(lambda: bool(cancelled)):
+            with patch.object(intervals, '_charges', side_effect=read_then_cancel):
+                with self.assertRaises(AnalysisCancelled):
+                    intervals.query('car', period_window('month','2026-09-01'), self.now, {})
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connections[0].execute('SELECT 1')
+        with self.add_db() as db:
+            db.execute('BEGIN IMMEDIATE')
+
     def test_interval_uses_battery_and_odometer_endpoints_not_trip_samples(self):
         self.pair()
         self.add('flat',day='2026-09-17',distance_km=2,start_soc=70,end_soc=70,soc_delta=0)
@@ -209,6 +283,79 @@ class ChargingIntervalsTests(unittest.TestCase):
         self.observation(minutes=2,soc=40,odometer=1200)
         self.observation(minutes=5,soc=35,odometer=1200,charging=True)
         self.assertEqual(self.query()['records'][0]['reason'],'unclosed_charge')
+
+    def test_confirmed_endpoint_cannot_hide_intermediate_charging_observation(self):
+        self.pair()
+        self.observation(day='2026-09-17', charging=True)
+        result = self.query()
+        self.assertEqual(result['records'][0]['reason'], 'unclosed_charge')
+        self.assertIsNone(result['summary']['kwh_per_100km'])
+
+    def test_intermediate_charge_is_not_lost_after_256_newer_observations(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        self.observation(day='2026-09-17', charging=True)
+        for minute in range(1, 258):
+            self.observation(minutes=minute)
+        self.assertEqual(self.query()['records'][0]['reason'], 'unclosed_charge')
+
+    def test_charge_after_reference_cutoff_does_not_invalidate_measured_subinterval(self):
+        self.charge('a','2026-09-15',30,80,1000)
+        self.charge('b','2026-09-20',60,90,1300,partial=True)
+        cutoff = self.observation(minutes=5)
+        self.observation(minutes=2, charging=True)
+        row = self.query()['records'][0]
+        self.assertIsNone(row['reason'])
+        self.assertEqual(row['end_time'], cutoff)
+
+    def test_intermediate_charge_barrier_ignores_untrusted_or_unrelated_samples(self):
+        self.pair()
+        self.observation(day='2026-09-17', charging=True, age=600000)
+        self.observation(day='2026-09-17', charging=True, vehicle='other')
+        self.observation(day='2026-09-14', charging=True)
+        self.observation(day='2026-09-21', charging=True)
+        stamp = self.observation(day='2026-09-18', charging=True)
+        with self.add_db() as db:
+            payload = dict(state_time=stamp+1, observed_at=stamp+1000, charging=True)
+            db.execute('UPDATE report_observations SET normalized_payload=? WHERE state_time=?',
+                       (json.dumps(payload), stamp))
+            for offset, encoded in enumerate(['not-json', json.dumps({'padding': 'x'*(2*1024*1024), 'charging': True}),
+                                             '['*1200+'0'+']'*1200]):
+                db.execute('INSERT INTO report_observations VALUES(?,?,?,?,?)',
+                           ('car', stamp+offset+1, stamp+1000, encoded, None))
+        result = self.query()
+        self.assertEqual(result['summary']['valid_count'], 1)
+        self.assertAlmostEqual(result['summary']['kwh_per_100km'], 17.2)
+
+    def test_intermediate_charge_scan_is_bounded_and_cancellable(self):
+        from unittest.mock import patch
+        from zeekr_control.analysis_cancel import AnalysisCancelled, cancellation_scope
+        from zeekr_control.charging_intervals import ChargingIntervals
+        lower = day_bounds('2026-09-15')[0]
+        upper = day_bounds('2026-09-21')[0]
+        for day in ('2026-09-17', '2026-09-18'):
+            stamp = self.observation(day=day, charging=True)
+            with self.add_db() as db:
+                # Candidate evidence is malformed, so neither row can short-circuit.
+                db.execute('UPDATE report_observations SET normalized_payload=? WHERE state_time=?',
+                           (json.dumps(dict(charging=True, state_time=stamp+1, observed_at=stamp)), stamp))
+        intervals = ChargingIntervals(self.db)
+        with patch('zeekr_control.charging_intervals.MAX_SCAN', 1):
+            with self.assertRaisesRegex(ValueError, '充电观测过多'):
+                intervals._intermediate_charge('car', lower, upper)
+        decoded = []
+        original = json.loads
+        def decode(encoded):
+            result = original(encoded)
+            decoded.append(True)
+            return result
+        with cancellation_scope(lambda: bool(decoded)):
+            with patch('zeekr_control.charging_intervals.json.loads', side_effect=decode):
+                with self.assertRaises(AnalysisCancelled):
+                    intervals._intermediate_charge('car', lower, upper)
+        self.assertEqual(len(decoded), 1)
+        with self.add_db() as db:
+            db.execute('BEGIN IMMEDIATE')
 
     def test_confirmed_charge_start_stays_preferred_over_older_reference(self):
         self.pair();self.observation(soc=30,odometer=1190)

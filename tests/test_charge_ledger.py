@@ -48,6 +48,34 @@ class ChargeLedgerTests(unittest.TestCase):
     def query(self,date='2026-09-20'):
         return self.ledger.query('owner','car',date)
 
+    def test_clearing_bill_values_and_zero_reentry_update_actual_summary_and_undo(self):
+        from zeekr_control.cost_summary import CostsSummary
+        summary=CostsSummary(self.personal,self.db)
+        saved=self.save(amount='12.34',metered_kwh='10',unit_price='1.2345',
+                        service_fee='1.01',parking_fee='2.02')
+        self.assertEqual(summary.query('owner','car','2026-09-20')['totals']['actual_cents'],1436)
+        self.save(revision=1,id=saved['id'],amount='',metered_kwh='',unit_price='',
+                  service_fee='',parking_fee='')
+        row=self.query()['entries'][0]
+        for field in ('actual_cents','metered_kwh','unit_price','service_fee_cents','estimated_cents'):
+            self.assertIsNone(row[field],field)
+        self.assertEqual(row['parking_fee_cents'],0)
+        self.assertEqual(row['source_event_id'],'charge')
+        totals=summary.query('owner','car','2026-09-20')['totals']
+        self.assertIsNone(totals['actual_cents'])
+        self.assertEqual(totals['unknown_charge_count'],1)
+        self.assertEqual(totals['unlinked_charge_count'],0)
+        self.save(revision=2,id=saved['id'],amount='0',metered_kwh='0',unit_price='0',
+                  service_fee='0',parking_fee='0')
+        row=self.query()['entries'][0]
+        self.assertEqual((row['actual_cents'],row['estimated_cents']),(0,0))
+        totals=summary.query('owner','car','2026-09-20')['totals']
+        self.assertEqual(totals['actual_cents'],0)
+        self.assertEqual(totals['unknown_charge_count'],0)
+        self.ledger.update('owner','car',dict(action='undo',revision=3))
+        self.assertIsNone(summary.query('owner','car','2026-09-20')['totals']['actual_cents'])
+        self.assertEqual(len(self.query()['entries']),1)
+
     def test_manual_bill_can_link_later_without_duplicate_and_can_undo(self):
         manual=self.save(event_id='',amount='20')
         result=self.save(revision=1,id=manual['id'],amount='20')
