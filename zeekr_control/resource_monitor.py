@@ -20,7 +20,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from .delivery_state import DeliveryBusy, delivery_lock, delivery_clock
-from .notifications import BarkSender, DeliveryError
+from .notifications import BarkSender, DeliveryError, bark_channel
 from .storage import DEFAULT_PATH, load, save
 from .errors import ApiError
 from .resource_conditions import observations, advance, active_conditions, signature, overall, notifiable, RANK
@@ -306,7 +306,7 @@ def classify(sample, previous='healthy'):
 
 class ResourceHealth:
     def __init__(self, root, sender=None, filename='resource-health.json'):
-        self.root=Path(root);self.path=self.root/filename;self.sender=sender
+        self.root=Path(root);self.path=self.root/filename;self.sender=bark_channel(sender,'service')
 
     def cached(self):
         encoded=load(self.path).get('state')
@@ -357,8 +357,8 @@ class ResourceHealth:
             body.append('已恢复：'+'；'.join(state['recovered_conditions']))
             if active:title+='（部分异常恢复）'
         if len(supported)!=len(active):body.append('另有此前异常尚未证实恢复；当前读数不支持重新断言其仍在超限。')
-        body.append('仅报告极氪服务异常；CPU、内存及整机压力只作页面参考，不触发 Bark。')
-        body.append('各原因分别连续巡检确认；未自动停止服务或清理数据。')
+        body.append('来源：极氪服务巡检（整机资源告警另由 Mac mini Server 负责）。')
+        body.append('各原因分别连续确认；请在网页检查服务状态。未自动停止服务或清理数据。')
         return title,'\n'.join(body)
 
     def tick(self,sample,now=None,can_send=None,*,started=None):

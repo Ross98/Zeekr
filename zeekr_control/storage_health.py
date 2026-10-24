@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from .notifications import DeliveryError
+from .notifications import DeliveryError, bark_channel
 from .errors import ApiError
 from .storage import load, save
 from .delivery_state import delivery_clock
@@ -101,7 +101,7 @@ class StorageHealth:
         self.root = Path(root)
         self.path = self.root/'storage-health.json'
         self.sender = sender
-        self.alert_sender = alert_sender
+        self.alert_sender = bark_channel(alert_sender,'storage')
         self.next_check = 0
 
     def _state(self):
@@ -177,7 +177,10 @@ class StorageHealth:
             parts.append('磁盘剩余：%.2f GiB' % (sample['disk_free_bytes']/GIB))
         if sample.get('inode_used_percent') is not None:
             parts.append('inode 使用率：%.1f%%' % sample['inode_used_percent'])
-        parts.append('恢复详情由企业微信发送' if healthy else '具体异常由企业微信发送')
+        if sample.get('data_bytes') is not None:
+            parts.append('极氪数据目录：%.2f GiB'%(sample['data_bytes']/GIB))
+        parts.append('以上为极氪所在磁盘的空间，不代表都由极氪占用。')
+        parts.append('空间已恢复；详细状态见网页存储管理。' if healthy else '请在网页存储管理检查；未自动清理数据。')
         return title, '\n'.join(parts)
 
     def tick(self, now=None, can_send=None):

@@ -3,7 +3,7 @@ import hashlib
 import json
 import math
 import time
-from .notifications import DeliveryError, bark_time
+from .notifications import DeliveryError, bark_time, bark_channel
 from .delivery_state import delivery_lock, delivery_clock
 from .report_telemetry import normalize
 
@@ -57,7 +57,7 @@ def render_payload(events,config,pressures,stamp):
     labels={0:'恢复',1:'偏低',2:'明显偏低'}
     lines=['%s：%s kPa（%s）'%(e['wheel'],format(e['pressure'],'.1f'),labels[e['level']]) for e in events]
     baseline='%s参考：%s kPa'%('轻载' if config['load']=='light' else '满载',BASES[config['load']])
-    body='\n'.join(lines+[baseline,'车辆观测：'+bark_time(stamp),'已由连续新观测确认，请核查胎压。' if severity else '以上轮位已连续确认恢复。'])
+    body='\n'.join(lines+[baseline,'车辆观测：'+bark_time(stamp),'已由连续新观测确认，请核查胎压。' if severity else '以上轮位已连续确认恢复。','软件参考，非厂家报警标准；云端缓存可能延迟。'])
     detail='\n'.join([title,body]+['%s：%s kPa'%(name,format(value,'.1f') if type(value) in (int,float) and value>0 else '未知') for name,value in pressures.items()]+['软件参考提醒，非厂家报警标准。','车辆云端缓存观测；轮胎独立更新时间未提供。'])
     return dict(events=events,title=title,body=body,detail=detail,pressures=pressures,stamp=stamp)
 
@@ -136,6 +136,7 @@ class TyreNotifications:
             self._deliver(owner,vehicle,now,bark,wecom,guard,started=started)
 
     def _deliver(self,owner,vehicle,now,bark,wecom,guard=None,*,started=None):
+        bark=bark_channel(bark,'reminder')
         current_time=delivery_clock(now,started)
         signature=self.signature(self.config(owner,vehicle))
         with self.store.connect(write=True) as db:
