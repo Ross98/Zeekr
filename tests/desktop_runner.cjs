@@ -19,6 +19,13 @@ try{
  // A terminated orphan may briefly be a zombie on Linux, never a live worker.
  const ps=spawnSync('ps',['-o','stat=','-p',String(pid)],{encoding:'utf8'});
  assert.ok(ps.status!==0||!ps.stdout.trim()||ps.stdout.trim().startsWith('Z'),'timed-out descendants must be stopped');
+ fs.mkdirSync(path.join(root,'zeekr_control/static'),{recursive:true});
+ fs.writeFileSync(path.join(root,'zeekr_control/static/feature.js'),'const usable=true;');
+ fs.writeFileSync(path.join(root,'zeekr_control/static/._feature.js'),Buffer.from([0,5,22,7]));
+ const syntax=spawnSync(process.execPath,[path.join(root,'scripts/test-desktop.cjs'),'syntax'],{cwd:root,encoding:'utf8',timeout:10000});
+ assert.equal(syntax.status,0,syntax.stdout+syntax.stderr);
+ assert.match(syntax.stdout,/\[syntax\] zeekr_control\/static\/feature\.js/);
+ assert.doesNotMatch(syntax.stdout,/\._feature\.js/);
  console.log('DESKTOP_RUNNER_PASS: continue after failure, truthful summary, bounded timeout, descendant cleanup');
 }finally{
  const file=path.join(root,'descendant.pid');if(fs.existsSync(file)){try{process.kill(Number(fs.readFileSync(file,'utf8')),'SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;}}

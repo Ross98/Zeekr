@@ -6,6 +6,8 @@ const root=path.resolve(__dirname,'..');
 const {loadAndValidate}=require('./check-desktop-manifest.cjs');
 function syntaxFiles(directory){
  return fs.readdirSync(directory,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name)).flatMap(entry=>{
+  // AppleDouble is filesystem metadata, never an executable script.
+  if(entry.name.startsWith('._'))return [];
   const file=path.join(directory,entry.name);
   if(entry.isSymbolicLink())throw Error('Unsupported syntax input symlink');
   return entry.isDirectory()?syntaxFiles(file):/\.(?:js|cjs)$/.test(entry.name)?[path.relative(root,file)]:[];
