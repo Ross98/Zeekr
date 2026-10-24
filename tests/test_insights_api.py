@@ -16,6 +16,17 @@ from zeekr_control.parking_analytics import ParkingAnalytics
 
 
 class InsightsApiTests(unittest.TestCase):
+    def test_report_payments_are_owner_scoped_and_private_notes_stay_local(self):
+        owner=account_scope(self.session)
+        bill=dict(date='2026-09-20',actual_cents=1234,note='PRIVATE-BILL-NOTE',event=None)
+        self.app.personal_store.change(owner,self.vehicle,'charges','save','one',bill,0)
+        self.app.personal_store.change('other',self.vehicle,'charges','save','two',dict(bill,actual_cents=99999),0)
+        code,result=self.get('/api/insights/report?period=week&date=2026-09-20')
+        self.assertEqual(code,200)
+        self.assertEqual(result['current']['totals']['charging_paid_cents'],1234)
+        self.assertEqual(result['current']['payments']['bill_count'],1)
+        self.assertNotIn('PRIVATE-BILL-NOTE',json.dumps(result))
+
     def test_charging_review_is_read_only_scoped_and_has_no_private_fields(self):
         with patch.object(self.app.archive_reader,'iter_records',side_effect=AssertionError('review must not scan raw archive')):
             code,result=self.get('/api/insights/charging-review?date=2026-09-01')

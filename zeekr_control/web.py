@@ -124,8 +124,8 @@ class App:
         self.archive_reader = ArchiveReader(self.session_path.parent / 'snapshot-archive')
         self.automatic_analyzer = Analyzer(self.database_path, self.archive_reader)
         self.automatic_cache = InsightCache(self.session_path.parent / 'automatic-insights.json')
-        self.usage_reports = UsageReports(self.database_path, self.archive_reader)
         self.personal_store = PersonalStore(self.session_path.parent / 'personal.sqlite3')
+        self.usage_reports = UsageReports(self.database_path, self.archive_reader, store=self.personal_store)
         self.charge_ledger = ChargeLedger(self.personal_store, self.database_path)
         self.cost_summary = CostsSummary(self.personal_store, self.database_path)
         self.reminders = Reminders(self.personal_store)
@@ -556,7 +556,7 @@ class App:
             'timeline': self.archive_reader.timeline,
             'snapshot': self.archive_reader.snapshot,
             'compare': self.archive_reader.compare,
-            'report': lambda s,v,*a:self.usage_reports.query(s,v,*a,now=context.now),
+            'report': lambda s,v,*a:self.usage_reports.query(s,v,*a,now=context.now,owner=context.owner),
             'charging-place': lambda s,v,*a:self.charging_review.places.detail(context.owner,v,*a),
             'charging-review': lambda s,v,*a:self.charging_review.query(context.owner,v,*a,now=context.now),
             'calendar': lambda s,v,*a:self.usage_calendar.query(s,v,*a,now=context.now,owner=context.owner),
