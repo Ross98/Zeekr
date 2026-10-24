@@ -22,6 +22,15 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     assert.match(await page.locator('#report-observations').innerText(),/22.33 km/);
     assert.match(await page.locator('#report-observations').innerText(),/40 km/);
     assert.match(await page.locator('#report-observations').innerText(),/3 \/ 30/);
+    assert.equal(await page.locator('#report-observations .report-pair').count(),4);
+    assert.equal(await page.locator('#report-coverage .report-coverage-cells').count(),2);
+    assert.equal(await page.locator('#report-departure .report-pair').count(),6);
+    assert.equal(await page.locator('[data-report-event] .report-event-chart-grid').count(),4);
+    assert.equal(await page.locator('[data-report-event] details[open]').count(),0);
+    await page.locator('[data-report-event]').first().locator('summary').click();
+    assert.equal(await page.locator('[data-report-event] details[open]').count(),1);
+    await page.locator('[data-report-event]').first().locator('summary').click();
+
     assert.equal(await page.locator('.report-daily-chart [data-report="day"]').count(),30);
     assert.equal(await page.locator('[data-date="2026-09-15"]').getAttribute('data-distance-state'),'value');
     assert.equal(await page.locator('[data-date="2026-09-01"]').getAttribute('data-distance-state'),'missing');
@@ -59,6 +68,15 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('heading',{name:'2026-09-14 — 2026-09-20',exact:true}).waitFor();
     assert.equal(await page.locator('.report-daily-chart [data-report="day"]').count(),7);
     assert.match(await page.locator('#report-energy-comparison h3').innerText(),/两周对照/);
+    await page.route('**/api/insights/review?*',async route=>{
+      const response=await route.fetch(),source=await response.json();
+      await route.fulfill({response,json:{...source,places:[{label:'合成地点 <样本>',departures:2,arrivals:3}],unknown_departures:1,unknown_arrivals:0}});
+    });
+    await page.getByRole('button',{name:'读取本周地点',exact:true}).click();
+    await page.locator('#report-places .report-place-graphs').waitFor();
+    assert.equal(await page.locator('#report-places .report-pair').count(),2);
+    assert.match(await page.locator('#report-places').innerText(),/合成地点 <样本>/);
+
     await layouts(page,'usage-week-comparison');
     await page.getByLabel('周期内日期',{exact:true}).fill('2026-10-05');
     await page.getByRole('button',{name:'查看报告',exact:true}).click();
