@@ -82,3 +82,18 @@ assert.equal(sample.value,0);assert.equal(sample.ratio,0);assert.equal(sample.en
 assert.equal(eventGraphic({kind:'charge_end',duration_seconds:1800,start_soc:null,end_soc:80},{trip:40,charge:60,energy:20}).ratio,.5);
 assert.equal(eventGraphic({kind:'trip_end',distance_km:-1,start_soc:101,end_soc:80},{trip:40,charge:60,energy:20}).startSoc,null);
 console.log('REPORT_REMAINING_GRAPHICS_PASS: missing departure bins, real zero and bounded SOC endpoints');
+const {changeExtent,deltaGeometry,dailyDeltas,differenceDomain}=sandbox.window.UsageReportPage;
+assert.equal(changeExtent([22,-50,null]),60);
+assert.equal(changeExtent([123.33,-200]),210);
+assert.equal(changeExtent([null,Infinity,NaN]),60);
+assert.equal(deltaGeometry(-30,60).left,25);
+assert.equal(deltaGeometry(-30,60).width,25);
+assert.equal(deltaGeometry(0,60).width,0);
+assert.equal(deltaGeometry(null,60),null);
+const deltas=dailyDeltas({...current,days:[{date:'2026-09-15',distance_km:20,coverage:'observed'},{date:'2026-09-16',distance_km:0,coverage:'observed'},{date:'2026-09-17',distance_km:9,coverage:'future'}]},
+ {...current,days:[{date:'2026-09-08',distance_km:40,coverage:'observed'},{date:'2026-09-09',distance_km:0,coverage:'observed'},{date:'2026-09-10',distance_km:4,coverage:'observed'}]});
+assert.deepEqual(Array.from(deltas,d=>d.difference),[-20,0,null]);
+const positive=differenceDomain([8.6,11.2,0,null]);assert.equal(positive.low,0);assert.ok(positive.high>=11.2);
+const negative=differenceDomain([-40,20]);assert.ok(negative.low<=-40&&negative.high>=20);
+assert.ok(differenceDomain([0,0]).high>0);
+console.log('COMPACT_REPORT_DELTA_PASS: shared untruncated percent scale, zero-centered geometry, signed daily differences and unknown/future');
