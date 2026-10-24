@@ -244,7 +244,11 @@ async function api(path, data, timeout = 50000, analysisOptions = {}) {
           throw Error('本机服务响应无效，请重试。');
         }
         if(!object(value))throw Error('本机服务响应无效，请重试。');
-        if(!response.ok)throw Error(typeof value.error==='string'&&value.error.trim()?value.error:'请求失败，请稍后重试。');
+        if(!response.ok){
+          const failure=Error(typeof value.error==='string'&&value.error.trim()?value.error:'请求失败，请稍后重试。');
+          Object.assign(failure,{status:response.status,code:value.code||'request_failed',retryable:value.retryable===true,retry_after_seconds:value.retry_after_seconds});
+          throw failure;
+        }
         if(stateResponse&&(
           typeof value.request_key!=='string'||!value.request_key||typeof value.authenticated!=='boolean'||
           !object(value.recording)||!object(value.monitoring)||
@@ -271,6 +275,7 @@ async function api(path, data, timeout = 50000, analysisOptions = {}) {
       }
       completed=true;
       if(data&&value.context===state?.insights_context&&['/api/place-corrections','/api/insights/ledger','/api/insights/trip-tags'].includes(path)&&data.operation!=='preview'&&!String(data.action||'').endsWith('preview'))window.recallInvalidate?.();
+      if(changing&&value.context===state?.insights_context&&Object.hasOwn(value,'personal_records_revision'))state.personal_records_revision=value.personal_records_revision;
       return value;
     }
   }finally{
@@ -1569,6 +1574,7 @@ async function pollState(force = false) {
       latest.insights_context!==state.insights_context ||
       latest.trip_records_revision!==state.trip_records_revision ||
       latest.charge_records_revision!==state.charge_records_revision ||
+      JSON.stringify(latest.personal_records_revision)!==JSON.stringify(state.personal_records_revision) ||
       JSON.stringify(latest.charging_places_revision)!==JSON.stringify(state.charging_places_revision) ||
       latest.snapshot_revision!==state.snapshot_revision ||
       JSON.stringify(latest.recent_events)!==JSON.stringify(state.recent_events) ||

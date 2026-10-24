@@ -7,12 +7,9 @@ from .snapshot_archive import BEIJING
 from .tracks import day_bounds
 from .usage_events import UsageEvents, total, number, MAX_SUMMARY_BYTES
 from .analysis_work import TimeMap
+from .data_contract import recorded_by, date_at as date_label
 
 DAY = 86400000
-
-
-def date_label(stamp):
-    return datetime.fromtimestamp(stamp/1000, BEIJING).strftime('%Y-%m-%d')
 
 
 def period_window(period, date):
@@ -48,7 +45,7 @@ def aggregate(events, window, as_of):
     charge_energy = [row for row in charges if row['estimated_kwh'] is not None]
     efficiency_distance = total(row['distance_km'] for row in efficiency)
     efficiency_energy = total(row['estimated_kwh'] for row in efficiency)
-    totals = {'trip_count':len(trips), 'complete_trip_count':len(complete), 'partial_trip_count':len(partial),
+    totals = {'trip_count':len(trips), 'ended_trip_count':len(trips), 'complete_trip_count':len(complete), 'partial_trip_count':len(partial),
         'charge_count':len(charges), 'complete_charge_count':sum(not row['partial'] for row in charges),
         'partial_charge_count':sum(row['partial'] for row in charges),
         'distance_km':total(row['distance_km'] for row in trips),
@@ -78,6 +75,7 @@ def aggregate(events, window, as_of):
                 day['distance_km'] = round((day['distance_km'] or 0)+row['distance_km'],6)
             if row['start_time'] is not None:
                 hours[datetime.fromtimestamp(row['start_time']/1000,BEIJING).hour] += 1
+    for day in days:day['ended_trip_count']=day['trip_count']
     status = 'closed' if as_of >= window['end'] else 'upcoming' if as_of < window['start'] else 'ongoing'
     return {'window':window,'status':status,'totals':totals,'samples':samples,'days':days,
             'departure_hours':hours,'events':events}
@@ -153,11 +151,11 @@ class UsageReports:
             self._coverage(scope,vehicle,result,now)
             window = result['window']
             selected = [bill for bill in bills if isinstance(bill.get('date'),str)
-                        and window['start_date'] <= bill['date'] <= min(window['end_date'],date_label(now))]
+                        and window['start_date'] <= bill['date'] <= window['end_date'] and recorded_by(bill,now)]
             amounts = [bill.get('actual_cents') for bill in selected]
             amounts = [value if type(value) is int and 0 <= value <= 100000000 else None for value in amounts]
             result['totals']['charging_paid_cents'] = total(amounts)
-            result['payments'] = dict(bill_count=len(selected),unpriced_bill_count=sum(v is None for v in amounts),
+            result['payments'] = dict(future_bill_count=sum(isinstance(b.get('date'),str) and window['start_date']<=b['date']<=window['end_date'] and not recorded_by(b,now) for b in bills),bill_count=len(selected),unpriced_bill_count=sum(v is None for v in amounts),
                 pending_charge_bill_count=sum(e['kind']=='charge_end' and e['id'] not in linked for e in result['events']))
         comparable = current['status']=='closed' and previous['status']=='closed'
         metrics = {}

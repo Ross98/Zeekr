@@ -297,7 +297,7 @@ class RecallApiTests(unittest.TestCase):
         self.assertNotIn('"position":',json_dump(result))
         payload=dict(operation='undo',revision=0,context=result['context'])
         self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''},'/api/place-corrections')[0],403)
-        self.assertEqual(self.post_ledger(dict(payload,context='stale'),route='/api/place-corrections')[0],400)
+        self.assertEqual(self.post_ledger(dict(payload,context='stale'),route='/api/place-corrections')[0],409)
 
 
 def json_dump(value):

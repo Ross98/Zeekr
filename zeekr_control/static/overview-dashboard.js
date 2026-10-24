@@ -41,7 +41,7 @@
     const markup=new WeakMap();
     const date=()=>dateFormat.format(new Date());
     const scope=()=>getState()?.insights_context||'';
-    const identity=()=>[scope(),date(),getState()?.trip_records_revision||0,getState()?.charge_records_revision||0].join('|');
+    const identity=()=>[scope(),date(),getState()?.trip_records_revision||0,getState()?.charge_records_revision||0,JSON.stringify(getState()?.personal_records_revision)].join('|');
     const valid=(token,context,stamp)=>serial===token&&scope()===context&&identity()===stamp;
     const node=id=>document.getElementById(id);
     function summary(){

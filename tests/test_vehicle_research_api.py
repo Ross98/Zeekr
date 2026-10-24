@@ -70,7 +70,7 @@ class ResearchApiTests(unittest.TestCase):
             return result
         with patch.object(self.app.vehicle_research, 'query', side_effect=changed):
             code, result = self.query()
-        self.assertEqual(code, 400)
+        self.assertEqual(code, 409)
         self.assertNotIn('fields', result)
 
     def test_manual_evidence_saved_without_promoting_runtime_meaning(self):
@@ -91,7 +91,7 @@ class ResearchApiTests(unittest.TestCase):
         for extra in [dict(raw='70'),dict(path='updateTime'),dict(experiment_side='bad'),dict(context='other')]:
             passed = dict(extra)
             active_context = passed.pop('context',context)
-            self.assertEqual(self.review(identity,active_context,**passed)[0],400)
+            self.assertEqual(self.review(identity,active_context,**passed)[0],409 if active_context!=context else 400)
         self.app.personal_store.change(account_scope(self.session),self.vehicle,'experiments','delete',identity,None,1)
         self.assertEqual(self.review(identity,context)[0],400)
         self.assertFalse(self.app.field_review_store.path.exists())
@@ -104,7 +104,7 @@ class ResearchApiTests(unittest.TestCase):
             save(self.path,{'accessToken':'different-owner'})
             return result
         with patch.object(self.app.experiments,'review_evidence',side_effect=changed):
-            self.assertEqual(self.review(identity,context)[0],400)
+            self.assertEqual(self.review(identity,context)[0],409)
         self.assertEqual(self.app.field_review_store.read(self.vehicle)['revision'],0)
 
 

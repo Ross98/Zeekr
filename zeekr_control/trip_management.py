@@ -1,4 +1,5 @@
 """Reversible, previewed trip exclusion. Raw events and samples are retained."""
+from .errors import RecordConflict
 import hashlib
 import json
 import secrets
@@ -120,7 +121,7 @@ class TripRecordManager(UsageEvents):
             if db is not None:
                 db.execute('BEGIN')
             if revision(db, vehicle) != expected_revision:
-                raise ValueError('行程记录已变化，请重新读取后选择。')
+                raise RecordConflict('行程记录已变化，请重新读取后选择。')
             rows = self._checked_rows(db, vehicle, identities, action)
         with self.lock:
             now = self.clock()
@@ -154,10 +155,10 @@ class TripRecordManager(UsageEvents):
             if self.clock()>=plan['expires']:
                 raise ValueError('预览已过期，请重新预览。')
             if revision(db, plan['vehicle']) != plan['revision']:
-                raise ValueError('行程记录已变化，请重新读取并预览。')
+                raise RecordConflict('行程记录已变化，请重新读取并预览。')
             rows = self._checked_rows(db, plan['vehicle'], plan['ids'], plan['action'])
             if [row[0] for row in rows] != plan['fingerprints']:
-                raise ValueError('所选行程已变化，本次操作取消，请重新预览。')
+                raise RecordConflict('所选行程已变化，本次操作取消，请重新预览。')
             self._schema(db)
             now = int(self.clock()*1000)
             for identity in plan['ids']:

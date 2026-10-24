@@ -8,6 +8,7 @@ from .usage_reports import DAY, date_label, period_window
 from .parking_analytics import ParkingAnalytics
 from .energy_costs import attach, summarize
 from .analysis_work import TimeMap
+from .data_contract import recorded_by
 
 
 class UsageCalendar:
@@ -116,7 +117,9 @@ class UsageCalendar:
             day['energy_cost']=summarize([e for e in consumption if date_label(e['end_time'])==day['date']])
             ended=[e for e in events if e['end_date']==day['date']]
             driving=[e for e in ended if e['kind']=='trip_end']
-            bills=[r for r in entries if r['date']==day['date']]
+            bills=[r for r in entries if r['date']==day['date'] and recorded_by(r,now)]
+            day['overlap_trip_count']=day['trip_count']
+            day['future_bill_count']=sum(r['date']==day['date'] and not recorded_by(r,now) for r in entries)
             day.update(distance_km=total(e['distance_km'] for e in driving),
                        distance_samples=sum(e['distance_km'] is not None for e in driving),
                        duration_seconds=total(e['duration_seconds'] for e in driving),
@@ -129,7 +132,8 @@ class UsageCalendar:
                        pending_count=sum(e.get('needs_bill',False) for e in ended))
         ended=[e for e in events if window['start']<=e['end_time']<window['end']]
         driving=[e for e in ended if e['kind']=='trip_end']
-        return dict(parking_places=parking_places,distance_km=total(e['distance_km'] for e in driving),
+        return dict(parking_places=parking_places,ended_trip_count=len(driving),
+                    future_bill_count=sum(d['future_bill_count'] for d in days),distance_km=total(e['distance_km'] for e in driving),
                     distance_samples=sum(e['distance_km'] is not None for e in driving),
                     duration_seconds=total(e['duration_seconds'] for e in driving),
                     duration_samples=sum(e['duration_seconds'] is not None for e in driving),

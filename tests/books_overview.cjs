@@ -15,6 +15,8 @@ assert.equal(merged[1].title,'<img src=x onerror=alert(1)>','raw names preserved
 assert.equal(merged[0].category,'保险');
 assert.equal(merged[0].source,'生活账本');
 assert.deepEqual(mergeRecords(null,null),[]);
+const cutoff=Date.parse('2026-09-20T12:00:00+08:00');
+assert.deepEqual(mergeRecords({entries:[{id:'today',date:'2026-09-20',actual_cents:0},{id:'future',date:'2026-09-21',actual_cents:1000}]},null,cutoff).map(r=>r.id),['today'],'detail rows use the same cutoff as totals');
 console.log('BOOKS_OVERVIEW_MERGE_PASS');
 (async()=>{
   const {create}=require('../zeekr_control/static/books-overview.js');

@@ -38,6 +38,7 @@ class WebConnectionTests(unittest.TestCase):
             app=App(Path(directory)/'session.json');stack.callback(app.close)
             server=make_server(app,0);stack.callback(server.server_close)
             handler=server.RequestHandlerClass.__new__(server.RequestHandlerClass)
+            handler.path='/'
             handler.request_version='HTTP/1.1';handler.requestline='GET / HTTP/1.1';handler.command='GET'
             handler.wfile=Mock();handler.wfile.write.side_effect=OSError('other failure')
             with self.assertRaises(OSError):handler.send(200,{})

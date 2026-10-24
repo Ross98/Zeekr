@@ -139,9 +139,10 @@
       }catch(failure){if(valid(token,identity))error=failure.message;}
       finally{if(valid(token,identity)){loading=false;paint();}}
     }
-    let tripRevision,chargeRevision,personalRevision;
+    let tripRevision,chargeRevision,personalRevision,personalDataRevision;
     function mount(container){
-      const changed=owner!==context(),recordsChanged=(personalRevision!==root.recallPersonalRevision||tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision),remount=node!==container;node=container;
+      const changed=owner!==context(),recordsChanged=(personalDataRevision!==JSON.stringify(getState()?.personal_records_revision)||personalRevision!==root.recallPersonalRevision||tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision),remount=node!==container;node=container;
+      personalDataRevision=JSON.stringify(getState()?.personal_records_revision);
       if(changed||recordsChanged){personalRevision=root.recallPersonalRevision;tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;}
       if(changed){analysisController?.abort();owner=context();data=null;selected=eventId='';eventPage=0;attempted=loading=false;error='';serial++;}
       else if(recordsChanged&&attempted){analysisController?.abort();serial++;loading=false;load(true);}

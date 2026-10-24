@@ -652,7 +652,12 @@ class WebServerTests(unittest.TestCase):
     def test_local_tracks_remain_readable_without_cloud_refresh_after_restart(self):
         from zeekr_control.web import App
         from zeekr_control.tracks import TrackStore
-        TrackStore(self.app.database_path).record('synthetic', FakeClient({}).status('synthetic'), 1704067200000, 180)
+        from zeekr_control.snapshots import session_scope
+        from zeekr_control.storage import load, save
+        raw=FakeClient({}).status('synthetic')
+        TrackStore(self.app.database_path).record('synthetic', raw, 1704067200000, 180)
+        save(self.app.session_path.parent/'monitor-binding.json',{'vehicle_key':'synthetic'})
+        self.app.snapshot_store.publish(session_scope(load(self.app.session_path)),'synthetic',raw,1704067200000)
         reopened = App(self.app.session_path, self.app.database_path, FakeClient)
         try:
             self.assertIsNone(reopened.model)

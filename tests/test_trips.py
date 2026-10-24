@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from zeekr_control.monitor import Monitor
 from zeekr_control.storage import save
+from zeekr_control.snapshots import session_scope
 from zeekr_control.web import App
 import test_web_server as web_base
 
@@ -58,7 +59,10 @@ class TripTests(TripFixtures, unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / 'private'
         self.root.mkdir(mode=0o700)
+        self.session={'accessToken':'SYNTHETIC-TRIP-ACCOUNT'}
+        save(self.root/'session.json',self.session)
         self.app = App(self.root / 'session.json')
+        self.app._sync_session(self.session)
         self.addCleanup(self.app.close)
         self.monitor = Monitor(self.app.database_path)
         self.app.vehicle_key = 'car-a'
@@ -128,14 +132,14 @@ class TripTests(TripFixtures, unittest.TestCase):
         with self.assertRaises(ValueError):
             self.app.tracks('2024-01-03', trip='current')
 
-    def test_single_archived_event_vehicle_can_be_read_offline_without_mutation(self):
+    def test_unbound_archived_event_cannot_establish_current_account_vehicle(self):
         self.event()
         self.app.vehicle_key = None
         before = self.app.database_path.read_bytes()
         self.assertTrue(callable(getattr(self.app, 'trips', None)), 'read-only trip listing missing')
         with patch.object(self.app, 'client_factory', side_effect=AssertionError('no remote access')):
-            self.assertEqual(self.app.trips('2024-01-02')['events'][0]['id'], 'ended')
-            self.assertEqual(self.app.tracks('2024-01-02', trip='ended')['count'], 0)
+            with self.assertRaises(ValueError):self.app.trips('2024-01-02')
+            with self.assertRaises(ValueError):self.app.tracks('2024-01-02', trip='ended')
         self.assertEqual(before, self.app.database_path.read_bytes())
         self.assertIsNone(self.app.vehicle_key)
 
@@ -150,6 +154,8 @@ class TripTests(TripFixtures, unittest.TestCase):
         with self.assertRaises(ValueError):
             self.app.trips('2024-01-02')
         save(self.root / 'monitor-binding.json', {'vehicle_key': 'car-b'})
+        with self.assertRaises(ValueError):self.app.trips('2024-01-02')
+        self.app.snapshot_store.publish(session_scope(self.session),'car-b',sample(MIDNIGHT),MIDNIGHT)
         self.assertEqual(self.app.trips('2024-01-02')['events'][0]['id'], 'car-b')
         self.assertEqual(self.app.tracks('2024-01-02')['count'], 1)
         self.app.vehicle_key = 'car-a'
@@ -167,11 +173,12 @@ class TripTests(TripFixtures, unittest.TestCase):
     def test_legacy_archive_must_match_resolved_single_or_bound_vehicle(self):
         self.event('single', 'car-a')
         self.app.vehicle_key = None
-        self.assertEqual(self.app.tracks('2024-01-02', archive='car-a')['count'], 0)
+        with self.assertRaises(ValueError):self.app.tracks('2024-01-02', archive='car-a')
         with self.assertRaises(ValueError):
             self.app.tracks('2024-01-02', archive='car-b')
         self.event('other', 'car-b')
         save(self.root / 'monitor-binding.json', {'vehicle_key': 'car-a'})
+        self.app.snapshot_store.publish(session_scope(self.session),'car-a',sample(MIDNIGHT),MIDNIGHT)
         self.assertEqual(self.app.tracks('2024-01-02', archive='car-a')['count'], 0)
         with self.assertRaises(ValueError):
             self.app.tracks('2024-01-02', archive='car-b')

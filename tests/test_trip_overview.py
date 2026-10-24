@@ -25,7 +25,7 @@ class OverviewTests(unittest.TestCase):
         timeline=Mock()
         timeline._records.return_value=([],{'history_quality':0})
         result=TripOverview(timeline).query('scope','car','2026-10-20',owner='owner',now=T+DAY)
-        timeline._records.assert_called_once_with('scope','car','owner','2026-10-14','2026-10-20')
+        timeline._records.assert_called_once_with('scope','car','owner','2026-10-14','2026-10-20',now=T+DAY)
         self.assertEqual(len(result['days']),7)
         timeline.calendar.query.assert_not_called()
 

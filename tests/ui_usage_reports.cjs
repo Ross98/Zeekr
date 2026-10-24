@@ -114,7 +114,23 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByText(/合成报告失败/).waitFor();
     assert.match(await page.locator('#report-title').innerText(),/2026-10-05/);
     assert.ok(f.posts.every(url=>{const request=new URL(url);return request.origin===f.origin&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(request.pathname);}), 'report only cancels read analyses; never writes business data');
+    // Another tab saves a bill: background state invalidates all dependent summaries.
+    await page.unroute('**/api/insights/report?*');
+    await page.getByLabel('报告周期',{exact:true}).selectOption('month');
+    await page.getByLabel('周期内日期',{exact:true}).fill('2026-09-20');
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-report-metric="charging_paid_cents"] strong')?.textContent==='30.10');
+    await page.getByLabel('事件类型',{exact:true}).selectOption('charge_end');
+    const saved=await page.evaluate(async()=>{
+      const book=await fetch('/api/insights/ledger?date=2026-09-20').then(r=>r.json());
+      const response=await fetch('/api/insights/ledger',{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':state.request_key},body:JSON.stringify({action:'save',revision:book.revision,context:book.context,event_id:'',date:'2026-09-20',source:'public',amount:'10',note:'SYNTHETIC CONTRACT'})});
+      if(!response.ok)throw Error(await response.text());
+      await pollState(true);return response.status;
+    });
+    assert.equal(saved,200);
+    await page.waitForFunction(()=>document.querySelector('[data-report-metric="charging_paid_cents"] strong')?.textContent==='40.10');
+    assert.equal(await page.getByLabel('事件类型',{exact:true}).inputValue(),'charge_end','bill revision refresh preserves filters');
     assert.deepEqual(f.external,[]);assert.deepEqual(f.errors,[]);
-    console.log('UI_USAGE_REPORTS_PASS: compact signed comparisons, omitted diagnostics, negative/zero/unknown days, event selection/details, week/month, midnight, filters and preserved errors, desktop themes/zoom/contrast; no business writes or cloud');
+    console.log('UI_USAGE_REPORTS_PASS: compact signed comparisons, omitted diagnostics, negative/zero/unknown days, event selection/details, week/month, midnight, filters and preserved errors, desktop themes/zoom/contrast; synthetic bill revision and no cloud');
   }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

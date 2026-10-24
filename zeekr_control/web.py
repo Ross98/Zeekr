@@ -1,5 +1,6 @@
 """Loopback-only Web UI and shared background cached-position collection."""
 import hashlib
+from math import ceil
 from datetime import datetime
 import hmac
 import ipaddress
@@ -18,6 +19,8 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
 from .client import ApiError, Client
+from .errors import RecordConflict
+from .data_contract import PERSONAL_COLLECTIONS, response_body
 from .sampling import SamplingBusy
 from .vehicle_login import VehicleLogin
 from .query_policy import QueryPolicy
@@ -89,6 +92,26 @@ class AnalysisChanged(ValueError):
 
 class ReadContextUnavailable(ValueError):
     """A controlled connection prerequisite message, safe for the local UI."""
+
+
+def public_error(exc, mutation=False):
+    if isinstance(exc, (AnalysisChanged, ArchiveChanged, RecordConflict)):
+        return 409, dict(error=str(exc),code='data_changed',retryable=False)
+    if isinstance(exc, (AnalysisBusy, JobsBusy, RefreshBusy)):
+        return 429, dict(error=str(exc),code='analysis_busy',retryable=True,retry_after_seconds=1)
+    if isinstance(exc, AnalysisCapacity):
+        return 503, dict(error=str(exc),code='analysis_capacity',retryable=True)
+    if isinstance(exc, ApiError):
+        status = 503 if isinstance(exc, SamplingBusy) else 429 if exc.http_status == 429 else 502
+        body = dict(error=str(exc),code='sampling_busy' if status==503 else
+                    'gateway_rate_limited' if status==429 else 'gateway_error',retryable=exc.retryable or status in (429,503))
+        if type(exc.retry_after) in (int,float) and 0 <= exc.retry_after <= 86400:
+            body['retry_after_seconds'] = exc.retry_after
+        if isinstance(exc.gateway_code,str) and exc.gateway_code.isdigit() and len(exc.gateway_code)<=16:
+            body['gateway_code'] = exc.gateway_code
+        return status,body
+    message = str(exc)[:150] if mutation or isinstance(exc,(ReadContextUnavailable,ResearchInputError)) else '日期或参数无效。'
+    return 400, dict(error=message,code='context_unavailable' if isinstance(exc,ReadContextUnavailable) else 'invalid_request',retryable=False)
 
 
 @dataclass(frozen=True)
@@ -263,10 +286,12 @@ class App:
             except Exception:
                 charge_revision = None
             try:
-                charging_places_revision=(self.personal_store.revisions(account_scope(session),self.vehicle_key,
-                    ('charging_places','place_names','charges'),include_commute=True) if authenticated and self.vehicle_key else None)
+                personal_revision=(self.personal_store.revisions(account_scope(session),self.vehicle_key,
+                    PERSONAL_COLLECTIONS,include_commute=True) if authenticated and self.vehicle_key else None)
+                charging_places_revision=({key:personal_revision[key] for key in
+                    ('charging_places','place_names','charges','commute_rule')} if personal_revision else None)
             except Exception:
-                charging_places_revision=None
+                personal_revision=charging_places_revision=None
             try:
                 place_rules=self.trip_tags.place_rules.rules(account_scope(session),self.vehicle_key) if authenticated and self.vehicle_key else None
                 place_rules_revision=[place_rules['revision'],place_rules['decision_revision']] if place_rules else None
@@ -277,6 +302,7 @@ class App:
                     'trip_records_revision': trip_revision,
                     'place_tag_rules_revision': place_rules_revision,
                     'charge_records_revision': charge_revision,
+                    'personal_records_revision': personal_revision,
                     'charging_places_revision': charging_places_revision,
                     'model': self.model, 'vehicle': self.vehicle, 'vehicles': self.vehicles,
                     'read_at': updated_at(self.read_at), 'read_time': self.read_at,
@@ -384,7 +410,7 @@ class App:
             fingerprint, context = session_scope(session), self._insights_context()
             def guard():
                 if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
-                    raise ValueError('账号或车辆已切换，本次核实未保存。')
+                    raise RecordConflict('账号或车辆已切换，本次核实未保存。')
             paths = {field['path'] for field in (self.model or {}).get('fields', [])}
             if 'hypothesis_context' in data:
                 if data['hypothesis_context'] != context or data.get('status') != 'question' or data.get('scope') != 'field' or data.get('action') != 'save':
@@ -396,7 +422,7 @@ class App:
             evidence = None
             if data.get('experiment_id') and data.get('action') == 'save':
                 if data.get('context') != self._insights_context():
-                    raise ValueError('账号或车辆已切换，请重新读取实验。')
+                    raise RecordConflict('账号或车辆已切换，请重新读取实验。')
                 evidence = self.experiments.review_evidence(account_scope(session), self.vehicle_key, data)
                 paths.add(data.get('path'))
             return self.field_review_store.update(self.vehicle_key, data, paths, evidence=evidence, guard=guard)
@@ -435,7 +461,7 @@ class App:
                 scope='当前账号、本车全部保留记录', use=use))
         with self.lock:
             if session_scope(self._read_session()) != scope or self._insights_context() != context:
-                raise ValueError('账号或车辆已切换，请重新读取。')
+                raise RecordConflict('账号或车辆已切换，请重新读取。')
             result['context'] = context
         return result
 
@@ -452,7 +478,7 @@ class App:
         result=HypothesisLab(self.archive_reader,self.database_path).query(scope,vehicle,start,end,state,anchor,value)
         with self.lock:
             if session_scope(self._read_session())!=scope or self._insights_context()!=context:
-                raise ValueError('账号或车辆已切换，请重新分析。')
+                raise RecordConflict('账号或车辆已切换，请重新分析。')
             result['context']=context
             result['reviews']=self.field_review_store.read(vehicle)
             for row in result['candidates']:
@@ -501,7 +527,7 @@ class App:
 
     def _guard_insight_session(self, session, context):
         if session_scope(self._read_session()) != session_scope(session) or self._insights_context() != context:
-            raise ValueError('账号或车辆已切换，本次修改已取消。')
+            raise RecordConflict('账号或车辆已切换，本次修改已取消。')
 
     def _read_context(self, allow_archive=False):
         with self.lock:
@@ -525,7 +551,7 @@ class App:
     def _check_context(self, context):
         check_cancelled()
         if not self._context_matches(context):
-            raise ValueError('账号或车辆已切换，请重新读取。')
+            raise AnalysisChanged('账号或车辆已切换，请重新读取。')
 
     def _analysis_revision(self, context):
         personal = self.personal_store.revisions(context.owner, context.vehicle,
@@ -562,9 +588,9 @@ class App:
             'calendar': lambda s,v,*a:self.usage_calendar.query(s,v,*a,now=context.now,owner=context.owner),
             'quality': self.data_quality.query,
             'trip-overview': lambda s,v,date:self.trip_overview.query(s,v,date,owner=context.owner,now=context.now),
-            'day-timeline': lambda s,v,date,positions=False:self.daily_timeline.query(s,v,date,owner=context.owner,positions=positions),
-            'place-history': lambda s,v,*a:self.daily_timeline.history(s,v,*a,owner=context.owner),
-            'year-review': lambda s,v,*a:self.daily_timeline.year(s,v,*a,owner=context.owner),
+            'day-timeline': lambda s,v,date,positions=False:self.daily_timeline.query(s,v,date,owner=context.owner,positions=positions,now=context.now),
+            'place-history': lambda s,v,*a:self.daily_timeline.history(s,v,*a,owner=context.owner,now=context.now),
+            'year-review': lambda s,v,*a:self.daily_timeline.year(s,v,*a,owner=context.owner,now=context.now),
             'costs': lambda s,v,*a:self.cost_summary.query(context.owner,v,*a,now=context.now),
         }
         return self._bounded_analysis(context, lambda: handlers[operation](context.scope, context.vehicle, *args))
@@ -580,6 +606,8 @@ class App:
                 self._check_context(context)
                 if revision == self._analysis_revision(context):
                     result['context'] = context.context
+                    result['meta'] = dict(context=context.context,as_of=context.now,source='local_records',
+                        data_revision=hashlib.sha256(repr(revision).encode()).hexdigest())
                     return result
             raise AnalysisChanged('记录在查询期间更新，请重新读取。')
         finally:
@@ -602,14 +630,8 @@ class App:
                 result = read()
                 self._check_context(context)
                 return 200, result
-            except AnalysisBusy as exc:
-                return 429, {'error':str(exc),'code':'analysis_busy'}
-            except (AnalysisChanged, ArchiveChanged) as exc:
-                return 409, {'error':str(exc),'code':'data_changed'}
-            except AnalysisCapacity as exc:
-                return 503, {'error':str(exc),'code':'analysis_capacity'}
-            except ValueError:
-                return 400, {'error':'日期、参数或账号状态已变化，请重新读取。'}
+            except (ValueError, ApiError, AnalysisCapacity, JobsBusy) as exc:
+                return public_error(exc)
         revision = repr((datetime.fromtimestamp(context.now/1000, BEIJING).strftime('%Y-%m-%d'),
                          self._analysis_revision(context),
                          self.archive_reader._freeze(context.scope, context.vehicle, '999912'))) if key is not None else None
@@ -664,7 +686,7 @@ class App:
                         'trip-management': lambda scope, car, *query: self.trip_manager.query(car, *query),
                         'charge-management': lambda scope, car, *query: self.charge_manager.query(car, *query),
                         'life': lambda scope, car, start, end=None: self.vehicle_life.query(account_scope(session),car,start,self.raw,self.read_at,end=end),
-                        'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date),
+                        'ledger': lambda scope, car, date: self.charge_ledger.query(account_scope(session),car,date,now=int(time.time()*1000)),
                         'rules': lambda scope, car: self.reminders.query(account_scope(session),car),
                         'tyres': lambda scope, car: self.tyre_notifications.query(account_scope(session),car),
                         'commute-rule': lambda scope, car: dict(commute_rule=self.trip_tags.commute.rule(account_scope(session),car)),
@@ -680,7 +702,7 @@ class App:
             result = handlers[operation](session_scope(session), vehicle, *args)
             current_session = self._read_session()
             if session_scope(current_session) != session_scope(session) or context != self._insights_context():
-                raise ValueError('账号或车辆已切换，请重新读取。')
+                raise RecordConflict('账号或车辆已切换，请重新读取。')
             result['context'] = context
             return result
 
@@ -692,12 +714,12 @@ class App:
             self._restore_snapshot(session)
             context = self._insights_context()
             if not context or data.get('context') != context:
-                raise ValueError('账号或车辆已切换，请重新读取行程。')
+                raise RecordConflict('账号或车辆已切换，请重新读取行程。')
             fingerprint = session_scope(session)
             bound_owner = context+':'+owner
             def guard():
                 if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
-                    raise ValueError('操作期间账号或车辆已切换，本次修改已取消。')
+                    raise RecordConflict('操作期间账号或车辆已切换，本次修改已取消。')
             if operation == 'preview':
                 result = self.trip_manager.preview(self.vehicle_key, data.get('action'), data.get('ids'),
                                                    data.get('revision'), bound_owner)
@@ -717,12 +739,12 @@ class App:
             self._restore_snapshot(session)
             context = self._insights_context()
             if not context or data.get('context') != context:
-                raise ValueError('账号或车辆已切换，请重新读取充电记录。')
+                raise RecordConflict('账号或车辆已切换，请重新读取充电记录。')
             fingerprint = session_scope(session)
             bound_owner = context+':'+owner
             def guard():
                 if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
-                    raise ValueError('操作期间账号或车辆已切换，本次修改已取消。')
+                    raise RecordConflict('操作期间账号或车辆已切换，本次修改已取消。')
             if operation == 'preview':
                 selected = data.get('ids') if isinstance(data.get('ids'), list) else []
                 owner_scope = account_scope(session)
@@ -740,7 +762,7 @@ class App:
                                        'has_metered':record['body'].get('metered_kwh') is not None})
                 together = data.get('with_linked_bills') is True
                 if together and data.get('ledger_revision') != ledger['revision']:
-                    raise ValueError('账本记录已变化，请重新预览。')
+                    raise RecordConflict('账本记录已变化，请重新预览。')
                 result = self.charge_manager.preview(self.vehicle_key, data.get('action'), selected,
                     data.get('revision'), bound_owner, linked_bills=linked,
                     with_linked_bills=together, ledger_revision=ledger['revision'], ledger_owner=owner_scope)
@@ -760,19 +782,19 @@ class App:
 
     def charging_place_candidates(self,data):
         context=self._read_context()
-        if data.get('context')!=context.context:raise ValueError('账号或车辆已切换，请重新读取。')
+        if data.get('context')!=context.context:raise RecordConflict('账号或车辆已切换，请重新读取。')
         return self._bounded_analysis(context,lambda:self.charging_review.places.candidates(
             context.owner,context.vehicle,data.get('event_id'),self.location_geocoder))
 
     def update_charging_place(self,data):
         context=self._read_context()
-        if data.get('context')!=context.context:raise ValueError('账号或车辆已切换，请重新读取。')
+        if data.get('context')!=context.context:raise RecordConflict('账号或车辆已切换，请重新读取。')
         if not self.analysis_slots.acquire(blocking=False):raise AnalysisBusy('地点分析正在处理其他查询，请稍后重试。')
         try:
             revision=self._analysis_revision(context)
             def guard():
                 self._check_context(context)
-                if revision!=self._analysis_revision(context):raise ValueError('记录已变化，请重新预览地点修改。')
+                if revision!=self._analysis_revision(context):raise RecordConflict('记录已变化，请重新预览地点修改。')
             result=self.charging_review.places.update(context.owner,context.vehicle,data,guard=guard,commit_lock=self.lock)
             result['context']=context.context
             return result
@@ -787,11 +809,11 @@ class App:
             self._restore_snapshot(session)
             context, vehicle = self._insights_context(), self._archive_vehicle()
             if not context or data.get('context') != context:
-                raise ValueError('账号或车辆已切换，请重新加载。')
+                raise RecordConflict('账号或车辆已切换，请重新加载。')
             fingerprint = session_scope(session)
             def guard():
                 if session_scope(load(self.session_path)) != fingerprint or self._insights_context() != context:
-                    raise ValueError('保存期间账号或车辆已切换；本次修改已取消。')
+                    raise RecordConflict('保存期间账号或车辆已切换；本次修改已取消。')
             if operation == 'rule-preview':
                 result = self.reminders.preview(account_scope(session),vehicle,data,self.raw,int(time.time()*1000))
                 guard()
@@ -801,6 +823,11 @@ class App:
                 extra = {'scope':session_scope(session)} if operation in ('experiments','place-corrections') else {}
                 result = manager.update(account_scope(session), vehicle, data, guard=guard,**extra)
             result['context'] = context
+            try:
+                result['personal_records_revision'] = self.personal_store.revisions(
+                    account_scope(session),vehicle,PERSONAL_COLLECTIONS,include_commute=True)
+            except (OSError,sqlite3.Error):
+                result['personal_records_revision'] = None
             return result
 
     def _store(self):
@@ -863,7 +890,7 @@ class App:
             self._restore_snapshot(session)
             location = parse_location(self.raw or {})
             if revision != self.location_map_revision(location):
-                raise ValueError('缓存位置已变化，请重新读取地图')
+                raise RecordConflict('缓存位置已变化，请重新读取地图')
             key = (account_scope(session), self.vehicle_key, revision, int(zoom))
             cached = self.location_maps.get(key)
         if cached and cached[0] > time.monotonic():
@@ -875,29 +902,13 @@ class App:
             self.location_maps[key] = (time.monotonic() + 300, image)
         return image
 
-    def _local_vehicle(self, archive=None):
-        self._restore_snapshot(self._read_session())
-        selected = self.vehicle_key
-        if not selected:
-            try:
-                selected = load(self.session_path.parent / 'monitor-binding.json').get('vehicle_key')
-            except ApiError:
-                raise ValueError('本地车辆绑定无法读取。') from None
-        if selected is not None and not isinstance(selected, str):
-            raise ValueError('本地车辆绑定无效。')
-        if not selected:
-            vehicles = self.trip_store.vehicles()
-            if len(vehicles) > 1:
-                raise ValueError('本地存在多辆车辆，无法确定当前车辆。')
-            selected = next(iter(vehicles), None)
-        if archive is not None and (not archive or archive != selected):
-            raise ValueError('所选本地车辆不是当前车辆。')
-        return selected
-
     def tracks(self, date, archive=None, trip=None):
-        with self.lock:
+        context = self._read_context()
+        if archive is not None and archive != context.vehicle:
+            raise ValueError('所选本地车辆不是当前车辆。')
+        def read():
             day_bounds(date)
-            selected = self._local_vehicle(archive)
+            selected = context.vehicle
             if trip is not None:
                 start, end = self.trip_store.bounds(selected, trip, date)
                 route = self.trip_store.tracks.between(selected, start, end, date)
@@ -905,19 +916,17 @@ class App:
                 route = empty_route(date)
             else:
                 route = self.trip_store.tracks.day(selected, date)
-        # Do not hold the application lock during bounded road inference.
-        return self.road_matcher.enrich(route)
+            return self.road_matcher.enrich(route)
+        return self._bounded_analysis(context, read)
 
     def trips(self, date, cursor=None):
-        with self.lock:
-            return self.trip_store.query(self._local_vehicle(), date, cursor)
+        context = self._read_context()
+        return self._bounded_analysis(context, lambda: self.trip_store.query(context.vehicle, date, cursor))
 
     def events(self, date, kind, cursor=None, end_date=None):
-        with self.lock:
-            self._restore_snapshot(self._read_session())
-            if not self.vehicle_key:
-                raise ValueError('请先选择车辆。')
-            return self.event_store.query(self.vehicle_key, date, kind, cursor=cursor, end_date=end_date)
+        context = self._read_context()
+        return self._bounded_analysis(context, lambda: self.event_store.query(
+            context.vehicle, date, kind, cursor=cursor, end_date=end_date))
 
     def storage_status(self):
         from .resource_monitor import resource_status
@@ -946,7 +955,8 @@ class App:
 
     def _charging_read(self, operation, *args):
         context = self._read_context()
-        return self._bounded_analysis(context, lambda: getattr(self.charging_analytics, operation)(context.vehicle, *args))
+        return self._bounded_analysis(context, lambda: getattr(self.charging_analytics, operation)(
+            context.vehicle,*args,**({'now':context.now} if operation=='statistics' else {})))
 
     def close(self):
         self.stop.set()
@@ -1074,6 +1084,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                 return self.send(503, {'error': '登录凭证暂时无法保存或撤销，请稍后重试。'})
 
         def send(self, status, value, content_type='application/json; charset=utf-8', cookie=None, cache_control='no-store', etag=None):
+            if urlsplit(self.path).path.startswith('/api/') and isinstance(value,dict):
+                value = response_body(status,value)
             payload = value if isinstance(value, bytes) else json.dumps(value, ensure_ascii=False, allow_nan=False).encode()
             self.send_response(status)
             if cookie:
@@ -1082,6 +1094,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
             if status != 304:
                 self.send_header('Content-Length', str(len(payload)))
             self.send_header('Cache-Control', cache_control)
+            if isinstance(value,dict) and type(value.get('retry_after_seconds')) in (int,float):
+                self.send_header('Retry-After',str(max(1,ceil(value['retry_after_seconds']))))
             if etag:
                 self.send_header('ETag', etag)
             self.send_header('X-Content-Type-Options', 'nosniff')
@@ -1317,18 +1331,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                         return self.send(200,static_assets.html(STATIC,name),content_type)
                     return self.send_asset(name,content_type)
                 return self.send(404, {'error': '页面不存在。'})
-            except ResearchInputError as exc:
-                self.send(400, {'error': str(exc)})
-            except (AnalysisBusy, JobsBusy) as exc:
-                self.send(429, {'error': str(exc), 'code': 'analysis_busy'})
-            except (AnalysisChanged, ArchiveChanged) as exc:
-                self.send(409, {'error': str(exc), 'code': 'data_changed'})
-            except AnalysisCapacity as exc:
-                self.send(503, {'error': str(exc), 'code': 'analysis_capacity'})
-            except ReadContextUnavailable as exc:
-                self.send(400, {'error': str(exc)})
-            except ValueError:
-                self.send(400, {'error': '日期或参数无效。'})
+            except (ValueError,ApiError,AnalysisCapacity,JobsBusy) as exc:
+                self.send(*public_error(exc))
             except Exception:
                 self.send(500, {'error': '本地数据暂时无法读取。'})
 
@@ -1390,12 +1394,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                         raise ValueError('仅保存间隔时不可同时提交采集开关。')
                     return self.send(200, app.recording(data.get('active'), data.get('interval'),operation))
                 return self.send(404, {'error': '操作不存在。'})
-            except ValueError as exc:
-                self.send(400, {'error': str(exc)[:150]})
-            except SamplingBusy as exc:
-                self.send(503, {'error': str(exc)})
-            except ApiError as exc:
-                self.send(502, {'error': str(exc)})
+            except (ValueError,ApiError,AnalysisCapacity,JobsBusy) as exc:
+                self.send(*public_error(exc,mutation=True))
             except Exception:
                 with app.lock:
                     app.error = '本地服务或存储发生错误，请检查后重试。'
