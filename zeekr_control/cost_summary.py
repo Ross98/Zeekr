@@ -5,6 +5,7 @@ import time
 
 from .usage_events import UsageEvents
 from .usage_reports import period_window
+from .data_contract import recorded_by
 
 
 def _money(value):
@@ -87,6 +88,7 @@ class CostsSummary:
         if not isinstance(category, str) or len(category) > 24:raise ValueError('费用分类无效。')
         if year and (not isinstance(year, str) or len(year) != 4 or not year.isascii() or not year.isdigit()):
             raise ValueError('费用年份无效。')
+        now = int(time.time()*1000) if now is None else now
         window = period_window('month', date)
         saved = self.store.read_many(owner, vehicle, ['charges', 'expenses'])
         active = {key: [dict(row['body'], id=row['id'], updated_at=row['updated_at']) for row in value['records']
@@ -94,6 +96,8 @@ class CostsSummary:
         def in_month(row):
             value = row.get('date')
             return isinstance(value, str) and len(value) == 10 and (scope == 'all' or window['start_date'] <= value <= window['end_date'])
+        future_count = sum(in_month(row) and not recorded_by(row,now) for rows in active.values() for row in rows)
+        active = {key:[row for row in rows if recorded_by(row,now)] for key,rows in active.items()}
         charges = [row for row in active['charges'] if in_month(row)]
         expenses = [row for row in active['expenses'] if in_month(row)]
         charge = [_money(row.get('actual_cents')) for row in charges]
@@ -104,7 +108,7 @@ class CostsSummary:
         linked = {row['event'].get('id') for row in active['charges']
                   if isinstance(row.get('event'), dict)}
         events = self.events.between(vehicle, window['start'], window['end'])['events'] if scope == 'month' else []
-        pending = sum(row['kind'] == 'charge_end' and row['id'] not in linked for row in events) if scope == 'month' else None
+        pending = sum(row['kind'] == 'charge_end' and row['id'] not in linked and row['end_time']<=now for row in events) if scope == 'month' else None
         parking_bills = {(row['date'], row['parking_fee_cents']) for row in charges
                          if (_money(row.get('parking_fee_cents')) or 0) > 0}
         duplicates = [dict(id=row['id'], date=row['date'], title=row.get('title',''),
@@ -122,7 +126,7 @@ class CostsSummary:
             page = min(page, max(0, (len(filtered) - 1) // 10))
             records = dict(rows=filtered[page * 10:page * 10 + 10], total=len(filtered), page=page,
                            count=len(rows), pages=max(1, (len(filtered) + 9) // 10))
-        return dict(scope=scope, records=records, window=window, as_of=int(time.time()*1000) if now is None else now,
+        return dict(scope=scope, records=records, window=window, as_of=now, future_record_count=future_count,
                     revisions={key:value['revision'] for key,value in saved.items()},
                     event_revision=hashlib.sha256(json.dumps(events,sort_keys=True).encode()).hexdigest(),
                     totals=dict(actual_cents=sum(charge)+parking+sum(daily) if charge or daily or parking else None,

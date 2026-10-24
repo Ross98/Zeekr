@@ -5,15 +5,16 @@
   function summarize(response){
     const t=response.totals;
     return {charge:t.charge_cents,parking:t.charge_parking_cents,daily:t.life_cents,total:t.actual_cents,
-      unknown:t.unknown_charge_count,unlinked:t.unlinked_charge_count,duplicates:response.duplicates||[],asOf:response.as_of,window:response.window,recordPage:response.records,charts:response.charts||{categories:[],months:[]}};
+      unknown:t.unknown_charge_count,unlinked:t.unlinked_charge_count,duplicates:response.duplicates||[],future:response.future_record_count||0,asOf:response.as_of,window:response.window,recordPage:response.records,charts:response.charts||{categories:[],months:[]}};
   }
-  function mergeRecords(ledger,life){
+  function mergeRecords(ledger,life,asOf=Date.now()){
+    const cutoff=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(asOf));
     const cents=value=>Number.isFinite(value)&&value>=0?value:null;
     return [...(ledger?.entries||[]).map(row=>({id:row.id,date:row.date,title:row.note||'充电账单',category:'充电',
       source:sources[row.source]||'来源未知',actual_cents:cents(row.actual_cents),parking_cents:cents(row.parking_fee_cents),kind:'charge',updated_at:row.updated_at||0})),
     ...(life?.expenses?.entries||[]).map(row=>({id:row.id,date:row.date,title:row.title,category:row.category,source:'生活账本',
       actual_cents:cents(row.amount_cents),parking_cents:null,kind:'life',updated_at:row.updated_at||0}))]
-      .sort((a,b)=>b.date.localeCompare(a.date)||b.updated_at-a.updated_at||String(b.id).localeCompare(String(a.id)));
+      .filter(row=>row.date<=cutoff).sort((a,b)=>b.date.localeCompare(a.date)||b.updated_at-a.updated_at||String(b.id).localeCompare(String(a.id)));
   }
   function recordedAmount(row){
     return row.actual_cents==null&&!(row.parking_cents>0)?null:(row.actual_cents||0)+(row.parking_cents||0);
@@ -94,7 +95,7 @@
       if(getView()==='costs')root.updateBooksPeriod?.({id:'books-month',month,busy:false});
       preserve(node,()=>{
         const metrics=getView()==='costs'?`<div class="books-scope-switch" aria-label="费用统计范围"><button class="button secondary" data-costs="scope-month" aria-pressed="${!allHistory()}">本月</button><button class="button secondary" data-costs="scope-all" aria-pressed="${allHistory()}">全部历史</button></div><div class="books-visual-total"><span>${allHistory()?'全部历史累计花费':esc(month)+' 已录花费'}</span><strong>${data?(Number.isFinite(data.total)?money(data.total):'暂无已录金额'):'—'}</strong></div>`:`<div class="insight-metrics">${[['已录实际总额',data?.total],['充电费用',data?.charge],['充电停车费',data?.parking],['日常支出',data?.daily]].map(([label,value])=>`<div><span>${label}</span><strong>${data?(Number.isFinite(value)?money(value):'暂无已录金额'):'—'}</strong></div>`).join('')}</div>`;
-        node.innerHTML=`<section class="card insight-panel books-summary" id="books-totals" aria-busy="${loading}">${metrics}<p class="insight-note">仅合计已录实际金额；估算不计入。${data?`${data.unknown} 笔充电金额待补。`:''}${allHistory()&&data?.window?.start_date?' 账目日期 '+esc(data.window.start_date)+' 至 '+esc(data.window.end_date)+'。':''}</p>${loading&&!data?'<p role="status">正在读取费用…</p>':''}${error?`<p class="notice error" role="alert">${esc(error)}</p>`:''}${data?`<div class="insight-actions books-review-actions"><button class="button secondary" data-costs="ledger">${allHistory()?'按月核对未关联充电':'充电未关联 '+data.unlinked+' 次'}</button><button class="button secondary" data-costs="unknown">${allHistory()?'按月补充充电金额':'实际金额待补 '+data.unknown+' 笔'}</button><button class="button secondary" data-costs="life">${allHistory()?'按月管理日常支出':'查看日常支出'}</button>${data.duplicates.length?`<button class="button secondary" data-costs="duplicates">停车费重复线索 ${data.duplicates.length} 笔</button>`:''}</div>${data.duplicates.length?`<details class="books-duplicate"><summary>可能重复录入停车费 ${data.duplicates.length} 笔</summary><p class="insight-note">同日同金额仅为核对线索，不自动删除或扣减。</p><ul>${data.duplicates.map(r=>`<li>${esc(r.date)} · ${esc(r.title)} · ${money(r.amount_cents)}</li>`).join('')}</ul></details>`:''}`:''}</section>`;
+        node.innerHTML=`<section class="card insight-panel books-summary" id="books-totals" aria-busy="${loading}">${metrics}<p class="insight-note">仅合计截至查询当天的已录实际金额；估算不计入。${data?.future?' '+data.future+' 笔未来账目保留，暂未计入。':''}${data?`${data.unknown} 笔充电金额待补。`:''}${allHistory()&&data?.window?.start_date?' 账目日期 '+esc(data.window.start_date)+' 至 '+esc(data.window.end_date)+'。':''}</p>${loading&&!data?'<p role="status">正在读取费用…</p>':''}${error?`<p class="notice error" role="alert">${esc(error)}</p>`:''}${data?`<div class="insight-actions books-review-actions"><button class="button secondary" data-costs="ledger">${allHistory()?'按月核对未关联充电':'充电未关联 '+data.unlinked+' 次'}</button><button class="button secondary" data-costs="unknown">${allHistory()?'按月补充充电金额':'实际金额待补 '+data.unknown+' 笔'}</button><button class="button secondary" data-costs="life">${allHistory()?'按月管理日常支出':'查看日常支出'}</button>${data.duplicates.length?`<button class="button secondary" data-costs="duplicates">停车费重复线索 ${data.duplicates.length} 笔</button>`:''}</div>${data.duplicates.length?`<details class="books-duplicate"><summary>可能重复录入停车费 ${data.duplicates.length} 笔</summary><p class="insight-note">同日同金额仅为核对线索，不自动删除或扣减。</p><ul>${data.duplicates.map(r=>`<li>${esc(r.date)} · ${esc(r.title)} · ${money(r.amount_cents)}</li>`).join('')}</ul></details>`:''}`:''}</section>`;
       });
       root.syncBooksWriteControls?.();
       paintRecords();
@@ -155,12 +156,13 @@
         const [ledger,life]=await Promise.all([request('/api/insights/ledger?date='+selected+'-01'),request('/api/insights/life?start='+selected+'-01&end='+selected+'-'+last)]);
         if(token!==recordSerial||identity!==context()||selected!==month)return;
         if(ledger.context!==identity||life.context!==identity)throw Error('账号或车辆已切换，请重新读取。');
-        records=mergeRecords(ledger,life);page=0;
+        records=mergeRecords(ledger,life,data?.asOf??Date.now());page=0;
       }catch(e){if(token===recordSerial&&identity===context()&&selected===month){records=null;recordsError=e.message;}}
       finally{if(token===recordSerial){recordsLoading=false;recordsPending=null;paintRecords();}}})();return recordsPending;
     }
     function refresh(){sync();const previousData=data,previousRecords=records,previousCategory=category;reset();data=previousData;records=previousRecords;category=previousCategory;paint();return Promise.all([loadSummary(),loadRecords()]);}
-    function mount(container){const remount=node&&node!==container;node=container;sync();if(remount)return refresh();paint();if(!summaryAttempted)loadSummary();if(getView()==='costs'&&!recordsAttempted)loadRecords();}
+    let dataRevision;
+    function mount(container){const revision=JSON.stringify(getState()?.personal_records_revision),changed=dataRevision!==revision&&summaryAttempted,remount=node&&node!==container;dataRevision=revision;node=container;sync();if(remount||changed)return refresh();paint();if(!summaryAttempted)loadSummary();if(getView()==='costs'&&!recordsAttempted)loadRecords();}
     function selectMonth(value){if(!validMonth(value))return false;scope='month';chartYear='';month=value;root.BookSession?.setMonth(owner,month);reset();paint();return true;}
     function reloadAll(){serial++;loading=false;summaryPending=null;records=null;recordPage=null;return loadSummary();}
     function handle(event){

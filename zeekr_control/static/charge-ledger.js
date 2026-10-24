@@ -27,7 +27,7 @@
     }
     function pendingSection(){
       const pending=data.events.filter(row=>!row.recorded).length,unknown=data.entries.filter(row=>row.actual_cents===null).length;
-      return `<section class="card insight-panel ledger-hub-summary" id="ledger-pending"><div id="ledger-actual-total"><span>本月已填充电费用</span><strong>${money(data.totals.actual_cents)} <small>元</small></strong><p class="insight-note">按账单日期 · 停车费 ${money(data.entries.reduce((sum,row)=>sum+(row.parking_fee_cents||0),0))} 元另计</p></div><div class="ledger-hub-counts" id="ledger-pending-count" tabindex="-1">${[['pending','待关联充电',pending,'次'],['unknown','金额待补',unknown,'笔'],['known','已填账单',data.entries.length-unknown,'笔']].map(([key,label,count,unit])=>`<button class="ledger-hub-count" data-ledger-filter="${key}" aria-pressed="${listFilter===key}" ${busy?'disabled':''}><span>${label}</span><strong>${count} <small>${unit}</small></strong></button>`).join('')}</div></section>`;
+      return `<section class="card insight-panel ledger-hub-summary" id="ledger-pending"><div id="ledger-actual-total"><span>本月已填充电费用</span><strong>${money(data.totals.actual_cents)} <small>元</small></strong><p class="insight-note">截至查询当天 · 按账单日期${data.future_bill_count?' · '+data.future_bill_count+' 笔未来账单未计入':''} · 停车费 ${money(data.entries.filter(row=>row.date<=dateOf(data.as_of??Date.now())).reduce((sum,row)=>sum+(row.parking_fee_cents||0),0))} 元另计</p></div><div class="ledger-hub-counts" id="ledger-pending-count" tabindex="-1">${[['pending','待关联充电',pending,'次'],['unknown','金额待补',unknown,'笔'],['known','已填账单',data.entries.length-unknown,'笔']].map(([key,label,count,unit])=>`<button class="ledger-hub-count" data-ledger-filter="${key}" aria-pressed="${listFilter===key}" ${busy?'disabled':''}><span>${label}</span><strong>${count} <small>${unit}</small></strong></button>`).join('')}</div></section>`;
     }
     function paint(){
       return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
@@ -125,9 +125,10 @@
       node.querySelector('#ledger-editor')?.scrollIntoView({block:'start'});
       node.querySelector('#ledger-'+focus)?.focus({preventScroll:true});
     }
-    let tripRevision,chargeRevision;
+    let tripRevision,chargeRevision,personalDataRevision;
     function mount(container){
-      const changed=owner!==context(),recordsChanged=!busy&&(tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision),remount=node!==container;node=container;
+      const changed=owner!==context(),recordsChanged=!busy&&(personalDataRevision!==JSON.stringify(getState()?.personal_records_revision)||tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision),remount=node!==container;node=container;
+      personalDataRevision=JSON.stringify(getState()?.personal_records_revision);
       if(changed||recordsChanged){tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;}
       if(changed){owner=context();month=root.BookSession.month(owner,dateOf(Date.now()).slice(0,7));data=null;attempted=false;loading=false;busy=false;serial++;writeSerial++;error='';status='';draft=blank(defaultDate());editorOpen=false;pendingReturn=null;dirty=false;pendingAction=null;
         const saved=root.BookSession?.read(owner,'charge');

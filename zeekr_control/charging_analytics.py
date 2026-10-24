@@ -10,19 +10,13 @@ from .trip_visibility import visible_clause
 from .usage_events import project, total, number, MAX_SUMMARY_BYTES
 from .charging_details import remaining_charge_minutes, number as _number
 from .analysis_cancel import check_cancelled, configure_sqlite
+from .data_contract import charge_mode as _mode
 
 
 BEIJING = timezone(timedelta(hours=8))
 VALID_ID = re.compile(r'^[A-Za-z0-9_-]{1,128}$')
 VALID_VIEWS = {'power-soc', 'electrical'}
 VALID_MODES = {'all', 'ac', 'dc'}
-
-
-def _mode(report):
-    values = [part.get('charging_mode') for part in
-              (report.get('start', {}), report.get('end', {}))
-              if isinstance(part, dict) and part.get('charging_mode') is not None]
-    return values[0] if values and all(value in ('ac','dc') and value==values[0] for value in values) else 'unknown'
 
 
 def _metric_value(point, name):

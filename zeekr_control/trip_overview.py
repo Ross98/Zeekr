@@ -160,7 +160,7 @@ class TripOverview:
         now = int(time.time()*1000) if now is None else now
         lower, _ = day_bounds(date)
         start = date_label(lower-6*DAY)
-        records, meta = self.timeline._records(scope, vehicle, owner or scope, start, date)
+        records, meta = self.timeline._records(scope, vehicle, owner or scope, start, date, now=now)
         result = summarize(records, date, now)
         result['history_quality'] = meta.get('history_quality', 0)
         return result

@@ -75,7 +75,7 @@ class FieldReviewTests(unittest.TestCase):
             return result
         with patch.object(store,'_read',side_effect=switched):
             code,result=self.request(self.payload(action=action,revision=revision))
-        self.assertEqual(code,400,result)
+        self.assertEqual(code,409,result)
         self.assertIn('核实未保存',result['error'])
         self.assertEqual(store.read('synthetic-vehicle-a'),before)
 

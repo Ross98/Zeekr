@@ -165,11 +165,13 @@ class RoadGraphSearchTests(unittest.TestCase):
 
 class RoadMatchApiTests(unittest.TestCase):
     def test_tracks_enriches_outside_app_lock_and_preserves_trip_bounds(self):
-        from zeekr_control.web import App
+        from zeekr_control.web import App,ReadContext
         from unittest.mock import Mock
         app=App.__new__(App)
         import threading
-        app.lock=threading.RLock();app._local_vehicle=lambda archive:'car-a';app.trip_store=Mock()
+        app.lock=threading.RLock();app.trip_store=Mock()
+        app._read_context=Mock(return_value=ReadContext('scope','owner','car-a','context',BASE))
+        app._bounded_analysis=Mock(side_effect=lambda context,read:read())
         pts=[point(0),point(1,121.001)]
         raw=route(pts);app.trip_store.bounds.return_value=(BASE,BASE+60000)
         app.trip_store.tracks.between.return_value=raw

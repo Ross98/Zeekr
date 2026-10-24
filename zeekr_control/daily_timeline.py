@@ -84,9 +84,9 @@ class DailyTimeline:
         if result['source']=='unknown' and result['decision']!='rejected':result['issues'].append('missing_name')
         return result
 
-    def _records(self, scope, vehicle, owner, start_date, end_date):
+    def _records(self, scope, vehicle, owner, start_date, end_date, *, now=None):
         lower,_=day_bounds(start_date);_,upper=day_bounds(end_date)
-        now=int(time.time()*1000)
+        now=int(time.time()*1000) if now is None else now
         found=self.events.between(vehicle,lower,upper,overlap=True)
         events=[e for e in found['events'] if e['end_time']<=now]
         names=TripPlaceNames(self.store)
@@ -117,7 +117,7 @@ class DailyTimeline:
             row['bill']=booked.get(event['id']) if row['type']=='charge' else None
             records.append(row)
         parked=ParkingAnalytics(self.archive,self.database,store=self.store,owner=owner).query(
-            scope,vehicle,start_date,end_date,context_days=1,include_place_resolution=True)
+            scope,vehicle,start_date,end_date,context_days=1,include_place_resolution=True,now=now)
         for session in parked['events']:
             if session['end_time']>now:continue
             row={k:session[k] for k in ('start_time','end_time','duration_seconds','sample_count','reasons','reason_labels',
@@ -150,11 +150,12 @@ class DailyTimeline:
             for side in ('start','end'):
                 row[side+'_place'].pop('latitude',None);row[side+'_place'].pop('longitude',None)
 
-    def query(self,scope,vehicle,date,owner=None,positions=False):
+    def query(self,scope,vehicle,date,owner=None,positions=False,*,now=None):
+        now=int(time.time()*1000) if now is None else now
         owner=owner or scope
         lower,upper=day_bounds(date)
-        records,meta=self._records(scope,vehicle,owner,date,date)
-        month=self.calendar.query(scope,vehicle,date,owner=owner)
+        records,meta=self._records(scope,vehicle,owner,date,date,now=now)
+        month=self.calendar.query(scope,vehicle,date,owner=owner,now=now)
         day=next(d for d in month['days'] if d['date']==date)
         ended=[r for r in records if lower<=r['end_time']<upper and r['type']!='parking']
         trips=[r for r in ended if r['type']=='trip']
@@ -164,7 +165,7 @@ class DailyTimeline:
         revision=digest(dict(records=records,summary=summary,meta=meta))
         self._positions(records,positions)
         known=[dict(key=r['id'],name=r['body']['name']) for r in TripPlaceNames(self.store).regions(owner,vehicle)]
-        return dict(date=date,records=records,known_places=known,summary=summary,coverage={k:day[k] for k in
+        return dict(date=date,as_of=now,records=records,known_places=known,summary=summary,coverage={k:day[k] for k in
                     ('coverage','reads','effective_states','first_read','last_read')},revision=revision,**meta)
 
     def update(self,owner,vehicle,data,scope=None,guard=None):
@@ -209,12 +210,13 @@ class DailyTimeline:
         changed=self.store.change(owner,vehicle,'place_corrections','save',identity,body,saved['revision'],guard=guard)
         return dict(revision=changed['revision'])
 
-    def history(self,scope,vehicle,start,end,key,cursor=None,owner=None):
+    def history(self,scope,vehicle,start,end,key,cursor=None,owner=None,*,now=None):
+        now=int(time.time()*1000) if now is None else now
         lower,_=day_bounds(start);_,upper=day_bounds(end)
         if not 0<upper-lower<=31*86400000:raise ValueError('地点历史请选择不超过 31 天。')
         if not isinstance(key,str) or not re.fullmatch(r'place_name_[a-f0-9]{64}',key):raise ValueError('地点标识无效。')
-        rows,meta=self._records(scope,vehicle,owner or scope,start,end)
-        selected,_=self._records(scope,vehicle,owner or scope,end,end)
+        rows,meta=self._records(scope,vehicle,owner or scope,start,end,now=now)
+        selected,_=self._records(scope,vehicle,owner or scope,end,end,now=now)
         anchor=next((r[side+'_place'] for r in selected for side in ('start','end') if r[side+'_place']['key']==key),None)
         if anchor is None:
             anchor=next((r[side+'_place'] for r in rows for side in ('start','end') if r[side+'_place']['key']==key),None)
@@ -235,13 +237,14 @@ class DailyTimeline:
                 if version!=revision or offset<0:raise ValueError()
             except (ValueError,AttributeError):raise ValueError('历史已变化，请从第一页重新读取。') from None
         page=rows[offset:offset+30];self._positions(page,False)
-        return dict(records=page,count=len(rows),revision=revision,next_cursor=f'{revision}:{offset+30}' if offset+30<len(rows) else None,**meta)
+        return dict(as_of=now,records=page,count=len(rows),revision=revision,next_cursor=f'{revision}:{offset+30}' if offset+30<len(rows) else None,**meta)
 
-    def year(self,scope,vehicle,year,owner=None):
+    def year(self,scope,vehicle,year,owner=None,*,now=None):
+        now=int(time.time()*1000) if now is None else now
         if not isinstance(year,str) or not re.fullmatch(r'20\d{2}',year):raise ValueError('年份无效。')
         months=[];days=[];places=Counter();parking_counts=Counter();parking_info={};parking_references=Counter()
         for month in range(1,13):
-            result=self.calendar.query(scope,vehicle,f'{year}-{month:02d}-01',owner=owner or scope)
+            result=self.calendar.query(scope,vehicle,f'{year}-{month:02d}-01',owner=owner or scope,now=now)
             months.append(dict(month=f'{year}-{month:02d}',**result['totals']))
             days.extend(result['days'])
             for p in result['totals'].get('parking_places',[]):
@@ -254,7 +257,7 @@ class DailyTimeline:
         totals.update(usage_days=sum(d['trip_count']>0 for d in days),trip_count=sum(m['trip_count'] for m in months),
                       charge_count=sum(m['charge_count'] for m in months),unpriced_count=sum(m['unpriced_count'] for m in months),
                       pending_count=sum(m['pending_count'] for m in months))
-        return dict(year=year,days=days,months=months,totals=totals,
+        return dict(year=year,as_of=now,days=days,months=months,totals=totals,
                     frequent_places=[dict(label=k,arrivals=v) for k,v in places.most_common(10)],
                     frequent_parking_places=[dict(parking_info[k],count=v,reference_count=parking_references[k],confidence='reference' if parking_references[k] else parking_info[k].get('confidence','unknown')) for k,v in parking_counts.most_common(10)],
                     correction_revision=self.store.read(owner or scope,vehicle,'place_corrections')['revision'])

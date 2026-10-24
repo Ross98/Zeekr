@@ -10,6 +10,7 @@ import time
 from .archive_reader import _private
 from .sqlite_files import prepare_database_file
 from .snapshots import session_scope
+from .errors import RecordConflict
 
 COLLECTIONS = {'charges','tags','rules','experiments','expenses','reminders','place_names','place_corrections','tyre_notifications','charging_places'}
 VALID_ID = re.compile(r'[A-Za-z0-9_-]{1,128}')
@@ -147,7 +148,7 @@ class PersonalStore:
             db.execute('BEGIN IMMEDIATE')
             current=self._read(db,key)
             if current['revision']!=revision:
-                raise ValueError('记录已有更新，请重新加载后再保存；填写内容仍保留。')
+                raise RecordConflict('记录已有更新，请重新加载后再保存；填写内容仍保留。')
             prior=None
             if action=='undo':
                 if not current['can_undo']:
@@ -174,7 +175,7 @@ class PersonalStore:
                 db.execute('INSERT OR REPLACE INTO records VALUES(?,?,?,?,?,?,?)',(*key,identity,encoded,0,now))
             else:
                 if prior['deleted']==(action=='delete'):
-                    raise ValueError('记录状态已变化，请重新加载。')
+                    raise RecordConflict('记录状态已变化，请重新加载。')
                 db.execute('UPDATE records SET deleted=?,updated_at=? WHERE owner=? AND vehicle=? AND collection=? AND id=?',
                            (int(action=='delete'),now,*key,identity))
             db.execute('INSERT INTO changes VALUES(?,?,?,?,?,?,?)',
@@ -210,7 +211,7 @@ class PersonalStore:
     def _change_many(self,db,key,action,identities,revision,guard,schema):
         current = self._read(db,key,schema)
         if current['revision'] != revision:
-            raise ValueError('账本记录已有更新，请重新预览。')
+            raise RecordConflict('账本记录已有更新，请重新预览。')
         rows = db.execute(f'SELECT id,deleted,updated_at FROM {schema}.records WHERE owner=? AND vehicle=? AND collection=? '
                           'AND id IN (%s)' % ','.join('?'*len(identities)), (*key,*identities)).fetchall()
         found = {row[0]:bool(row[1]) for row in rows}

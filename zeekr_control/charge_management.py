@@ -1,4 +1,5 @@
 """Reversible, previewed exclusion of automatically collected charge events."""
+from .errors import RecordConflict
 import hashlib
 import json
 import secrets
@@ -124,7 +125,7 @@ class ChargeRecordManager(UsageEvents):
             if db is not None:
                 db.execute('BEGIN')
             if charge_revision(db, vehicle) != expected_revision:
-                raise ValueError('充电记录已变化，请重新读取后选择。')
+                raise RecordConflict('充电记录已变化，请重新读取后选择。')
             rows = self._checked_rows(db, vehicle, identities, action)
             if action == 'restore':
                 # Only restore the exact bill revisions moved by this recycle
@@ -192,10 +193,10 @@ class ChargeRecordManager(UsageEvents):
                     if db.execute(f'PRAGMA {schema}.journal_mode').fetchone()[0] not in ('delete','persist','truncate'):
                         raise ValueError('数据库日志模式不支持关联账单原子修改。')
             if charge_revision(db, plan['vehicle']) != plan['revision']:
-                raise ValueError('充电记录已变化，请重新读取并预览。')
+                raise RecordConflict('充电记录已变化，请重新读取并预览。')
             rows = self._checked_rows(db, plan['vehicle'], plan['ids'], plan['action'])
             if [row[0] for row in rows] != plan['fingerprints']:
-                raise ValueError('所选充电记录已变化，本次操作取消，请重新预览。')
+                raise RecordConflict('所选充电记录已变化，本次操作取消，请重新预览。')
             self._schema(db)
             now = int(self.clock()*1000)
             for identity in plan['ids']:

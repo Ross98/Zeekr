@@ -10,6 +10,7 @@ from .analysis_cancel import configure_sqlite, check_cancelled
 from .archive_reader import _private
 from .trip_visibility import has_charge_trash, visible_clause
 from .start_evidence import from_summary as start_evidence
+from .data_contract import charge_mode
 
 MAX_SUMMARY_BYTES = 2 * 1024 * 1024
 MAX_SCAN = 250000
@@ -63,13 +64,13 @@ def project(identity, kind, summary):
         change = -energy_delta if kind == 'trip_end' else energy_delta
         if change >= 0:
             estimated = round(change*capacity/100, 6)
-    mode = _object(report.get('start')).get('charging_mode')
+    mode = charge_mode(report)
     return {'id': identity, 'kind': kind, 'start_time': start, 'end_time': end,
             'start_evidence': start_evidence(summary, kind),
             'duration_seconds': duration, 'distance_km': distance, 'start_soc': a, 'end_soc': b,
             'soc_delta': delta, 'energy_soc_delta': energy_delta,
             'partial': not complete, 'battery_capacity_kwh': capacity,
-            'estimated_kwh': estimated, 'charge_mode': mode if mode in ('ac', 'dc') else None,
+            'estimated_kwh': estimated, 'charge_mode': mode,
             'energy_source': 'soc_capacity_estimate' if estimated is not None else None}
 
 

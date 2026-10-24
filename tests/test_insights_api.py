@@ -50,7 +50,7 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(code,200);self.assertIsNone(detail['location'])
         payload=dict(action='preview',context=detail['context'],event_id='place-test',revision=0,scope='single',name='人工地点',station_name='测试充电站',latitude=31.2,longitude=121.4,radius_m=75)
         self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''},route)[0],403)
-        self.assertEqual(self.post_ledger(dict(payload,context='old'),route=route)[0],400)
+        self.assertEqual(self.post_ledger(dict(payload,context='old'),route=route)[0],409)
         code,preview=self.post_ledger(payload,route=route);self.assertEqual(code,200)
         save=dict(payload,action='save',token=preview['token'])
         before_revision=self.get('/api/state')[1].get('charging_places_revision')
@@ -73,11 +73,11 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(result['config'],dict(enabled=True,load='light',revision=0))
         payload=dict(context=result['context'],action='save',revision=0,enabled=True,load='full')
         self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''},'/api/insights/tyres')[0],403)
-        self.assertEqual(self.post_ledger(dict(payload,context='old'),route='/api/insights/tyres')[0],400)
+        self.assertEqual(self.post_ledger(dict(payload,context='old'),route='/api/insights/tyres')[0],409)
         code,result=self.post_ledger(payload,route='/api/insights/tyres')
         self.assertEqual(code,200);self.assertEqual(result['base'],290)
         self.assertEqual(result['config']['revision'],1)
-        self.assertEqual(self.post_ledger(payload,route='/api/insights/tyres')[0],400)
+        self.assertEqual(self.post_ledger(payload,route='/api/insights/tyres')[0],409)
         self.assertEqual(self.get('/api/insights/tyres')[1]['config']['load'],'full')
 
     def test_hypothesis_api_reads_all_public_fields_and_rejects_private_anchor(self):
@@ -262,7 +262,7 @@ class InsightsApiTests(unittest.TestCase):
             save(self.path, {'accessToken': 'DIFFERENT-OWNER'})
             return {'events': [], 'calculation_version': 2}
         with patch.object(ParkingAnalytics, 'query', side_effect=changed_query):
-            self.assertEqual(self.get('/api/insights/parking?start=2026-09-20&end=2026-09-20')[0], 400)
+            self.assertEqual(self.get('/api/insights/parking?start=2026-09-20&end=2026-09-20')[0], 409)
 
     def test_automatic_insights_reads_cache_only_and_rejects_switched_account(self):
         route = '/api/insights/automatic'
@@ -280,7 +280,7 @@ class InsightsApiTests(unittest.TestCase):
             save(self.path, {'accessToken': 'DIFFERENT-OWNER'})
             return result
         with patch.object(self.app.automatic_cache, 'query', side_effect=switched):
-            self.assertEqual(self.get(route)[0], 400)
+            self.assertEqual(self.get(route)[0], 409)
         self.assertNotIn('report', self.get(route)[1])
 
     def test_automatic_analysis_and_script_require_auth(self):
@@ -318,7 +318,7 @@ class InsightsApiTests(unittest.TestCase):
             save(self.path, {'accessToken': 'DIFFERENT-OWNER'})
             return result
         with patch.object(self.app.archive_reader, 'timeline', side_effect=changed):
-            self.assertEqual(self.get('/api/insights/timeline?date=2026-09-20')[0], 400)
+            self.assertEqual(self.get('/api/insights/timeline?date=2026-09-20')[0], 409)
 
     def test_account_change_without_latest_snapshot_discards_archive_response(self):
         original=self.app.archive_reader.timeline
@@ -332,7 +332,7 @@ class InsightsApiTests(unittest.TestCase):
         # Both accounts then have a null UI context; scope must still be checked.
         with patch.object(self.app.snapshot_store,'read',return_value=None),patch.object(self.app.archive_reader,'timeline',side_effect=changed):
             status,body=self.get('/api/insights/timeline?date=2026-09-20')
-        self.assertEqual(status,400)
+        self.assertEqual(status,409)
         self.assertNotIn('items',body)
 
     def post_ledger(self,data,headers=None,route='/api/insights/ledger'):
@@ -349,11 +349,11 @@ class InsightsApiTests(unittest.TestCase):
         payload={'context':context,'action':'save','revision':0,'event_id':'','date':'2026-09-20',
                  'source':'home','amount':'12.34','note':'<script>synthetic</script>'}
         self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''})[0],403)
-        self.assertEqual(self.post_ledger(dict(payload,context='old-context'))[0],400)
+        self.assertEqual(self.post_ledger(dict(payload,context='old-context'))[0],409)
         code,saved=self.post_ledger(payload)
         self.assertEqual(code,200)
         self.assertEqual(saved['revision'],1)
-        self.assertEqual(self.post_ledger(payload)[0],400)
+        self.assertEqual(self.post_ledger(payload)[0],409)
         data=self.get('/api/insights/ledger?date=2026-09-20')[1]
         self.assertEqual(data['totals']['actual_cents'],1234)
         reopened=App(self.path)
@@ -374,7 +374,7 @@ class InsightsApiTests(unittest.TestCase):
         with patch.object(self.app.personal_store,'change',side_effect=switched):
             code,_=self.post_ledger({'context':context,'action':'save','revision':0,'event_id':'',
                                     'date':'2026-09-20','source':'home','amount':'99'})
-        self.assertEqual(code,400)
+        self.assertEqual(code,409)
         self.assertEqual(self.app.personal_store.read(account_scope(self.session),self.vehicle,'charges')['revision'],0)
 
     def test_account_switch_during_result_reconstruction_cancels_http_save(self):
@@ -388,7 +388,7 @@ class InsightsApiTests(unittest.TestCase):
         with patch.object(self.app.personal_store,'_read',side_effect=switched):
             code,result=self.post_ledger({'context':context,'action':'save','revision':0,'event_id':'',
                                           'date':'2026-09-20','source':'home','amount':'99'})
-        self.assertEqual(code,400,result)
+        self.assertEqual(code,409,result)
         self.assertIn('保存期间',result['error'])
         saved=self.app.personal_store.read(account_scope(self.session),self.vehicle,'charges')
         self.assertEqual(saved['revision'],0)
@@ -409,7 +409,7 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(result['history'],[])
         save(self.path,{'accessToken':'OTHER-ACCOUNT'})
         self.assertEqual(self.get('/api/insights/rules')[0],400)
-        self.assertEqual(self.post_ledger(payload,route='/api/insights/rules')[0],400)
+        self.assertEqual(self.post_ledger(payload,route='/api/insights/rules')[0],409)
 
     def test_trip_tags_roundtrip_delete_restore_and_scope(self):
         from zeekr_control.monitor import Monitor
@@ -437,7 +437,7 @@ class InsightsApiTests(unittest.TestCase):
                      home=dict(latitude=31.2,longitude=121.4,radius_m=300),
                      work=dict(latitude=31.21,longitude=121.41,radius_m=500))
         self.assertEqual(self.post_ledger(payload,{'X-Request-Key':''},'/api/insights/trip-tags')[0],403)
-        self.assertEqual(self.post_ledger(dict(payload,context='old'),route='/api/insights/trip-tags')[0],400)
+        self.assertEqual(self.post_ledger(dict(payload,context='old'),route='/api/insights/trip-tags')[0],409)
         self.assertEqual(self.post_ledger(payload,route='/api/insights/trip-tags')[0],200)
         rule=self.get('/api/insights/trip-tags?date=2026-09-20')[1]['commute_rule']
         self.assertEqual(rule['home']['radius_m'],300)
@@ -481,7 +481,7 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(detail['body']['status'],'research_only')
         self.assertNotIn('PRIVATE-VIN',json.dumps(detail))
         self.assertFalse(self.app.field_review_store.path.exists())
-        self.assertEqual(self.post_ledger(payload,route='/api/insights/experiments')[0],400)
+        self.assertEqual(self.post_ledger(payload,route='/api/insights/experiments')[0],409)
 
     def test_calendar_is_readonly_private_and_has_beijing_month_days(self):
         code,result=self.get('/api/insights/calendar?date=2026-09-20')

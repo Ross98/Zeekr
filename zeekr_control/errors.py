@@ -19,7 +19,12 @@ class ApiError(Exception):
 class RateLimited(ApiError):
     def __init__(self, seconds):
         self.seconds = seconds
-        super().__init__('网关 HTTP 429；至少等待 %d 秒后再查询，未自动重试。' % seconds)
+        super().__init__('网关 HTTP 429；至少等待 %d 秒后再查询，未自动重试。' % seconds,
+                         http_status=429, retry_after=seconds, retryable=True)
+
+
+class RecordConflict(ValueError):
+    """The requested record revision no longer matches persistent state."""
 
 
 class RequestDeferred(ApiError):

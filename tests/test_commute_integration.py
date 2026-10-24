@@ -39,7 +39,7 @@ class CommuteApiTests(unittest.TestCase):
         self.assertEqual(self.post_ledger(rule, route='/api/insights/trip-tags')[0], 200)
         payload = dict(context=context, action='commute-preview', revision=1, date='2026-09-20')
         self.assertEqual(self.post_ledger(payload, {'X-Request-Key': ''}, '/api/insights/trip-tags')[0], 403)
-        self.assertEqual(self.post_ledger(dict(payload, context='old'), route='/api/insights/trip-tags')[0], 400)
+        self.assertEqual(self.post_ledger(dict(payload, context='old'), route='/api/insights/trip-tags')[0], 409)
         code, preview = self.post_ledger(payload, route='/api/insights/trip-tags')
         self.assertEqual(code, 200)
         self.assertFalse(preview['applied'])

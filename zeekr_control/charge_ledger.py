@@ -2,6 +2,9 @@
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import hashlib
 import uuid
+import time
+
+from .data_contract import recorded_by
 
 from .tracks import day_bounds
 from .usage_events import UsageEvents
@@ -141,10 +144,11 @@ class ChargeLedger:
                 'metered_kwh':total(row['metered_kwh'] for row in entries),
                 'metered_count':sum(row['metered_kwh'] is not None for row in entries)}
 
-    def query(self,owner,vehicle,date):
+    def query(self,owner,vehicle,date,*,now=None):
+        now=int(time.time()*1000) if now is None else now
         window=period_window('month',date)
         saved=self.store.read(owner,vehicle,'charges')
-        events=self.events.between(vehicle,window['start'],window['end'])['events']
+        events=[e for e in self.events.between(vehicle,window['start'],window['end'])['events'] if e['end_time']<=now]
         source_ids={record['body'].get('event',{}).get('id') for record in saved['records']
                     if isinstance(record.get('body',{}).get('event'),dict)}
         removed_event_ids=self.events.hidden_charge_ids(vehicle,source_ids)
@@ -155,7 +159,8 @@ class ChargeLedger:
         current.sort(key=lambda row:(row['date'],row['updated_at'],row['id']),reverse=True)
         trips=[row for row in events if row['kind']=='trip_end' and row['distance_km'] is not None]
         distance=total(row['distance_km'] for row in trips)
-        totals=self.totals(current)
+        recorded=[row for row in current if recorded_by(row,now)]
+        totals=self.totals(recorded)
         actual=totals['actual_cents']
         combined=sum_optional((totals['actual_cents'],totals['unbilled_estimated_cents']))
         booked={row['event']['id']:row for row in entries if row.get('event') and not row['deleted']}
@@ -177,12 +182,12 @@ class ChargeLedger:
                     row['event']=dict(row['event'],**{key:labels.get(key) for key in ('station_name','place_label','place_source','place_reference')})
         trend=[];period=window
         for _ in range(6):
-            rows=[row for row in entries if row['date'].startswith(period['start_date'][:7]) and not row['deleted']]
+            rows=[row for row in entries if row['date'].startswith(period['start_date'][:7]) and not row['deleted'] and recorded_by(row,now)]
             trend.append(dict(self.totals(rows),month=period['start_date'][:7]))
             period=period_window('month',period['previous_date'])
-        return {'window':window,'revision':saved['revision'],'can_undo':saved['can_undo'],
+        return {'window':window,'as_of':now,'future_bill_count':len(current)-len(recorded),'revision':saved['revision'],'can_undo':saved['can_undo'],
                 'entries':current,'trash':trash,'events':choices,'totals':totals,'trend':list(reversed(trend)),
-                'sources':{key:self.totals([row for row in current if row['source']==key]) for key in ('home','public','unknown')},
+                'sources':{key:self.totals([row for row in recorded if row['source']==key]) for key in ('home','public','unknown')},
                 'cost_per_km':{'distance_km':distance,'distance_samples':len(trips),
                     'partial_distance_samples':sum(row['partial'] for row in trips),
                     'actual_yuan':round(actual/100/distance,6) if actual is not None and distance and distance>0 else None,

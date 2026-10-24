@@ -199,9 +199,10 @@
       }catch(failure){if(valid(token,identity))error=failure.message;}
       finally{if(valid(token,identity)){loading=false;paint();}}
     }
-    let tripRevision,chargeRevision;
+    let tripRevision,chargeRevision,personalDataRevision;
     function mount(container){
-      const changed=owner!==context(),recordsChanged=tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision,remount=node!==container;node=container;
+      const changed=owner!==context(),recordsChanged=personalDataRevision!==JSON.stringify(getState()?.personal_records_revision)||tripRevision!==getState()?.trip_records_revision||chargeRevision!==getState()?.charge_records_revision,remount=node!==container;node=container;
+      personalDataRevision=JSON.stringify(getState()?.personal_records_revision);
       tripRevision=getState()?.trip_records_revision;chargeRevision=getState()?.charge_records_revision;
       if(changed){analysisController?.abort();owner=context();data=null;error='';loading=false;attempted=false;serial++;placesSerial++;places=null;placesError='';placesLoading=false;dayFilter=selectedEvent='';page=0;}
       else if(recordsChanged&&attempted){analysisController?.abort();serial++;loading=false;load(true);}

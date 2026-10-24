@@ -318,8 +318,8 @@ class ManagementWebTests(TripFixtures, unittest.TestCase):
         data = {'context':self.context,'action':'trash','ids':['one'],'revision':0}
         plan = self.post('/api/trips/manage/preview',data)[1]
         save(self.app.session_path,{'accessToken':'DIFFERENT','userId':'new-owner'})
-        self.assertEqual(self.post('/api/trips/manage/execute',{'context':self.context,'token':plan['token']})[0],400)
-        self.assertEqual(self.post('/api/trips/manage/preview',data)[0],400)
+        self.assertEqual(self.post('/api/trips/manage/execute',{'context':self.context,'token':plan['token']})[0],409)
+        self.assertEqual(self.post('/api/trips/manage/preview',data)[0],409)
         self.assertEqual(self.request('GET','/api/trips/manage?start=2024-01-01&end=2024-01-02')[0],400)
 
     def test_session_file_changes_at_commit_roll_back(self):
@@ -331,7 +331,7 @@ class ManagementWebTests(TripFixtures, unittest.TestCase):
             original_schema(db)
             save(self.app.session_path,{'accessToken':'DIFFERENT','userId':'new-owner'})
         with patch.object(self.app.trip_manager,'_schema',side_effect=switch):
-            self.assertEqual(self.post('/api/trips/manage/execute',{'context':self.context,'token':plan['token']})[0],400)
+            self.assertEqual(self.post('/api/trips/manage/execute',{'context':self.context,'token':plan['token']})[0],409)
         with self.monitor.tracks.connect() as db:
             self.assertEqual(db.execute("SELECT delivery FROM monitor_events WHERE id='one'").fetchone()[0],'pending')
             self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='trip_record_trash'").fetchone())
