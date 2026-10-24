@@ -6,7 +6,8 @@ import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .notifications import DeliveryError, bark_time
+from .notifications import DeliveryError, bark_time, bark_channel
+from .usage_events import project, number
 from .delivery_state import delivery_lock, delivery_clock, add_columns, DeliveryCancelled
 from .summary import updated_at
 from .vehicle_state import decode, numeric
@@ -121,15 +122,30 @@ def bark_message_for(kind, data):
     starting = kind in ('trip_start', 'charge_start')
     when = data.get('start_time') if starting else data.get('end_time')
     lines = [('时间：' if starting else '结束时间：') + bark_time(when)]
-    soc = data.get('start_soc') if starting else data.get('end_soc')
+    soc = number(data.get('start_soc') if starting else data.get('end_soc'),0,100)
     if soc is not None:
         lines.append('当前电量：' + fmt(soc, '%'))
     if data.get('partial'):
         lines.append('本次只有部分记录')
+    if not starting:
+        event=project('bark',kind,data) or {}
+        if event.get('partial') and not data.get('partial'):lines.append('本次只有部分记录')
+        a,b=event.get('start_soc'),event.get('end_soc')
+        if a is not None and b is not None:
+            lines=[line for line in lines if not line.startswith('当前电量：')]
+            lines.append('电量：%s%% → %s%%'%(fmt(a),fmt(b)))
+        seconds=event.get('duration_seconds')
+        if kind=='trip_end':
+            km=event.get('distance_km')
+            lines.append(('已观测里程：'+fmt(km)+' km') if km is not None else '已观测里程未知')
+        else:
+            energy=event.get('estimated_kwh')
+            if energy is not None:lines.append('充入电量估算：'+fmt(energy)+' kWh（SOC × 容量）')
+        if seconds is not None:lines.append('观测时长：'+fmt(seconds/60)+' 分钟')
     if kind == 'trip_end':
-        lines.append('行程详情和路线图由企业微信发送')
+        lines.append('详细报告与路线图请查看企业微信；投递状态见网页。')
     elif kind == 'charge_end':
-        lines.append('充电详情由企业微信发送')
+        lines.append('详细报告请查看企业微信；投递状态见网页。')
     return titles[kind], '\n'.join(lines)
 
 
@@ -650,7 +666,7 @@ class Monitor:
                     claimed = db.execute("UPDATE monitor_event_alerts SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='preparing'", (event_id,)).rowcount
                 if not claimed:continue
                 sender_called = True
-                sender(title, body)
+                bark_channel(sender,'trip' if kind.startswith('trip_') else 'charge')(title, body)
                 sent_at=clock()
             except DeliveryCancelled:
                 delivery, error = 'pending', None

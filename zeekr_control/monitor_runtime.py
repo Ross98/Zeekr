@@ -20,7 +20,7 @@ from .vehicle_state import decode
 from .geocoding import AmapGeocoder
 from .focused_trip_image import FocusedTripImage
 from .profiles import vehicle_profile
-from .notifications import BarkSender, FallbackSender, WeComSender, compact_bark_times
+from .notifications import BarkSender, FallbackSender, WeComSender, compact_bark_times, bark_channel
 from .storage import DEFAULT_PATH, load, save
 from .snapshots import SnapshotStore, session_scope
 from .storage_health import StorageHealth
@@ -225,7 +225,7 @@ class Runner:
         self.sender = sender if sender is not None else WeComSender(self.root / 'wecom-webhook.json')
         self.alert_sender = (alert_sender if alert_sender is not None else
                              BarkSender(self.root / 'bark.json') if sender is None else None)
-        self.reminder_sender = (FallbackSender(self.alert_sender, self.sender, compact_bark_times)
+        self.reminder_sender = (FallbackSender(bark_channel(self.alert_sender,'reminder'), self.sender, compact_bark_times)
                                 if self.alert_sender is not None else self.sender)
         self.auth_failure_alert = AuthFailureAlert(self.root, self.alert_sender)
         self.incidents = CollectionIncidents(self.root)

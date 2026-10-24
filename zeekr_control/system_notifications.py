@@ -6,13 +6,13 @@ import time
 from .archive_reader import _private
 from .sqlite_files import prepare_database_file
 from .delivery_state import delivery_lock, add_columns
-from .notifications import DeliveryError, bark_time
+from .notifications import DeliveryError, bark_time, bark_channel
 from .storage import load
 
 
 class AuthFailureAlert:
     def __init__(self,root,sender=None):
-        self.root=root;self.sender=sender;self.path=root/'system-notifications.sqlite3'
+        self.root=root;self.sender=bark_channel(sender,'collection');self.path=root/'system-notifications.sqlite3'
 
     @contextmanager
     def connect(self):
@@ -110,7 +110,8 @@ class AuthFailureAlert:
                         'AND EXISTS (SELECT 1 FROM auth_state WHERE active=1 AND generation=auth_outbox.generation)',(generation,)).rowcount
                 if not claimed:continue
                 try:
-                    self.sender('⚠️ 极氪采集已中断',body)
+                    title='⚠️ 极氪账号需核对' if context and context[0]=='manual' else '⚠️ 极氪采集暂缓'
+                    self.sender(title,body)
                     state,error='sent',None
                 except DeliveryError as exc:
                     state,error=('uncertain','result_unknown') if exc.ambiguous else ('failed','send_rejected')

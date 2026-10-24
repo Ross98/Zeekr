@@ -194,7 +194,10 @@ class RunnerNotificationWiringTests(unittest.TestCase):
                 self.assertIsInstance(runner.sender, WeComSender)
                 self.assertIsInstance(runner.alert_sender, BarkSender)
                 self.assertIsInstance(runner.reminder_sender, FallbackSender)
-                self.assertIs(runner.storage_health.alert_sender, runner.alert_sender)
+                self.assertEqual(runner.storage_health.alert_sender.config_path, runner.alert_sender.config_path)
+                self.assertEqual(runner.storage_health.alert_sender.category,'storage')
+                self.assertEqual(runner.auth_failure_alert.sender.category,'collection')
+                self.assertEqual(runner.reminder_sender.primary.category,'reminder')
             finally:
                 runner.insight_worker.close()
 

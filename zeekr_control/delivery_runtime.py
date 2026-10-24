@@ -13,7 +13,7 @@ from .storage import DEFAULT_PATH, load, save
 from .sampling import read_settings
 from .snapshots import SnapshotStore, session_scope
 from .personal_store import PersonalStore, account_scope
-from .notifications import WeComSender, BarkSender, FallbackSender, compact_bark_times
+from .notifications import WeComSender, BarkSender, FallbackSender, compact_bark_times, bark_channel
 from .monitor import Monitor
 from .focused_trip_image import FocusedTripImage
 from .geocoding import AmapGeocoder
@@ -81,7 +81,7 @@ class DeliveryWorker:
                 guard()
                 snapshot=SnapshotStore(self.root/'snapshots.sqlite3').read(scope,vehicle)
                 if snapshot:
-                    fallback=(FallbackSender(self.alert_sender,self.sender,compact_bark_times)
+                    fallback=(FallbackSender(bark_channel(self.alert_sender,'reminder'),self.sender,compact_bark_times)
                               if self.alert_sender is not None else self.sender)
                     self.reminders.deliver(owner,vehicle,snapshot['raw'],current_time(),fallback,guard)
                     self.tyres.deliver(owner,vehicle,current_time(),self.alert_sender,self.sender,guard)

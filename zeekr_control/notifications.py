@@ -54,8 +54,16 @@ def compact_bark_times(message):
 
 
 class BarkSender:
-    def __init__(self, config_path):
+    GROUPS = dict(trip='行程',charge='充电',reminder='车辆提醒',collection='采集',service='服务',storage='存储')
+
+    def __init__(self, config_path, category=None):
+        if category is not None and category not in self.GROUPS:
+            raise ValueError('未知 Bark 通知分类。')
         self.config_path = config_path
+        self.category = category
+
+    def for_category(self, category):
+        return BarkSender(self.config_path, category)
 
     def __call__(self, title, body=None):
         if body is None:
@@ -73,7 +81,7 @@ class BarkSender:
         if not isinstance(title, str) or not isinstance(body, str):
             raise DeliveryError('Bark 通知内容无效', permanent=True)
         payload = {'device_key': device_key, 'title': title, 'body': body,
-                   'group': 'Zeekr', 'level': 'active'}
+                   'group': '极氪 · '+self.GROUPS[self.category] if self.category else 'Zeekr', 'level': 'active'}
         request = Request(base_url.rstrip('/') + '/push',
                           data=json.dumps(payload, ensure_ascii=False).encode(),
                           headers={'Content-Type': 'application/json; charset=utf-8'}, method='POST')
@@ -90,6 +98,11 @@ class BarkSender:
         if result['code'] != 200:
             raise DeliveryError('Bark 推送被拒绝，代码 %d' % result['code'],
                                 permanent=400 <= result['code'] < 500 and result['code'] != 429)
+
+
+def bark_channel(sender, category):
+    """Bind routing at the event source; preserve injected two-argument senders."""
+    return sender.for_category(category) if isinstance(sender,BarkSender) else sender
 
 
 class FallbackSender:
