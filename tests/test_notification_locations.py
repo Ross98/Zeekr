@@ -97,10 +97,15 @@ class NotificationLocationTests(unittest.TestCase):
             attempted.append(text)
             raise DeliveryError('synthetic retry')
         self.monitor.deliver(reject, BASE + 600000)
+        # Retry starts after preparation/send time, not exactly at entry + 60s.
+        import math
+        with self.monitor.tracks.connect() as db:
+            retry_seconds=math.ceil((db.execute('SELECT next_attempt FROM monitor_events').fetchone()[0]-BASE)/1000)
+        self.assertGreaterEqual(retry_seconds,660)
         self.record(590)
         self.monitor = Monitor(self.monitor.tracks.path)
         self.monitor.address_resolver = lambda location: self.fail('Frozen report must not re-resolve')
-        text, data = self.send(660)
+        text, data = self.send(retry_seconds)
         self.assertEqual(text, attempted[0])
         self.assertIn('3分钟前可信定位', text)
         self.assertEqual(data['start_location_reference']['state_time'], BASE + 420000)

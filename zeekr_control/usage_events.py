@@ -18,7 +18,7 @@ VALID_ID = re.compile(r'[A-Za-z0-9_-]{1,128}')
 
 
 def number(value, low=0, high=1e12):
-    return value if type(value) in (int, float) and math.isfinite(value) and low <= value <= high else None
+    return value if type(value) in (int, float) and low <= value <= high and math.isfinite(value) else None
 
 
 def total(values):

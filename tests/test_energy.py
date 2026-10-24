@@ -9,6 +9,25 @@ import importlib.util
 
 
 class EnergyTests(unittest.TestCase):
+    def test_unrepresentable_reference_distance_is_invalid_instead_of_dividing_by_zero(self):
+        self.add()
+        for rated in (5e-324,1e-308):
+            with self.subTest(rated=rated):
+                self.profile={'range_km':rated,'range_standard':'CLTC'}
+                result=self.result()
+                self.assertEqual(result['status'],'invalid')
+                self.assertNotIn('ratio',result)
+
+    def test_bad_reference_distance_does_not_crash_other_web_state(self):
+        from zeekr_control.web import App
+        self.add()
+        app=App(self.path.parent/'session.json',database_path=self.path)
+        self.addCleanup(app.close)
+        app.vehicle_key='car-a';app.profile={'range_km':5e-324,'range_standard':'CLTC'}
+        result=app.state()
+        self.assertEqual(result['range_attainment']['status'],'invalid')
+        self.assertIn('recording',result)
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('zeekr_control.energy'), 'Trip attainment is not implemented')
         from zeekr_control import energy
@@ -53,6 +72,20 @@ class EnergyTests(unittest.TestCase):
         self.assertEqual(self.result()['status'], 'available')
         self.assertTrue(self.result()['partial'])
         self.assertAlmostEqual(self.result()['ratio'], 36.63003663)
+
+    def test_unreadable_latest_summary_is_unknown_without_reusing_older_trip(self):
+        from zeekr_control.usage_events import MAX_SUMMARY_BYTES
+        self.add()
+        for encoded in ('['*10000+'0'+']'*10000,
+                        json.dumps(dict(self.trip,unexpected='x'*MAX_SUMMARY_BYTES))):
+            with self.subTest(size=len(encoded)):
+                with sqlite3.connect(self.path) as db:
+                    db.execute('DELETE FROM monitor_events WHERE created=2')
+                    db.execute('INSERT INTO monitor_events VALUES(?,?,?,?)',('car-a','trip_end',encoded,2))
+                before=self.path.read_bytes()
+                self.assertEqual(self.result()['status'],'unavailable')
+                self.assertNotIn('ratio',self.result())
+                self.assertEqual(self.path.read_bytes(),before)
 
     def test_rejects_missing_invalid_and_charging_contaminated_data(self):
         cases = [dict(report_v2={'metrics':{'charge_overlap':True}}),

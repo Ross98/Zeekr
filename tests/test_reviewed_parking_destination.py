@@ -74,11 +74,49 @@ class ReviewedParkingDestinationTests(unittest.TestCase):
             db.execute("UPDATE monitor_events SET vehicle='other' WHERE id='next'")
         self.assertIsNone(self.infer())
 
+    def test_recycled_review_source_is_unavailable_until_restored(self):
+        self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE trip_record_trash(vehicle TEXT,event_id TEXT)')
+            db.execute("INSERT INTO trip_record_trash VALUES('car','next')")
+        self.assertIsNone(self.infer())
+        with sqlite3.connect(self.db) as db:
+            db.execute('DELETE FROM trip_record_trash')
+        self.assertEqual(self.infer(), expected)
+        # Recycling a contradictory trip must not erase physical movement.
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('interior','car','trip_end',json.dumps(dict(start_time=self.end+60000,
+                        end_time=self.next_start-60000)),self.next_start+90000))
+            db.execute("INSERT INTO trip_record_trash VALUES('car','interior')")
+        self.assertIsNone(self.infer())
+
     def test_strict_automatic_path_does_not_accept_unreviewed_fragment(self):
         self.seed()
         with sqlite3.connect(self.db) as db:
             raw=dict(self.raw);raw.pop('reviewed_end_parking');db.execute("UPDATE monitor_events SET summary=? WHERE id='partial'",(json.dumps(raw),))
             self.assertIsNone(parking_destination(db,'car',self.event))
+
+    def test_late_movement_invalidates_reviewed_destination(self):
+        self.seed()
+        for kind, start, end in [('trip_start',self.next_start-60000,self.next_start-60000),
+                                 ('trip_end',self.end+60000,self.next_start-60000),
+                                 ('trip_end',self.end-60000,self.next_start+60000)]:
+            with self.subTest(kind=kind,start=start,end=end):
+                with sqlite3.connect(self.db) as db:
+                    db.execute('INSERT OR REPLACE INTO monitor_events VALUES(?,?,?,?,?)',
+                               ('late','car',kind,json.dumps(dict(start_time=start,end_time=end)),self.next_start+90000))
+                self.assertIsNone(self.infer())
+
+    def test_old_completed_trip_written_during_parking_does_not_invalidate_review(self):
+        self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('old','car','trip_end',json.dumps(dict(start_time=self.end-120000,
+                        end_time=self.end-60000)),self.end+60000))
+        self.assertEqual(self.infer(), expected)
 
 
 if __name__=='__main__':unittest.main()

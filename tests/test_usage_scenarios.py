@@ -21,11 +21,12 @@ class UsageScenarioTests(unittest.TestCase):
                                     profile={'battery_capacity_kwh': 86, 'range_km': 700,
                                              'range_standard': 'CLTC'})
 
-    def charge(self, seconds, soc=50, current=100, km=100):
+    def charge(self, seconds, soc=50, current=100, km=100, observed_seconds=None):
         raw = sample(seconds, soc=soc, km=km, charger=24, dc_lid=1)
         raw['additionalVehicleStatus']['electricVehicleStatus'].update(
             dcChargeSts=12, dcChargePileUAct=400, dcChargePileIAct=current)
-        return self.monitor.observe('synthetic-vehicle', raw, BASE + seconds * 1000,
+        observed=seconds if observed_seconds is None else observed_seconds
+        return self.monitor.observe('synthetic-vehicle', raw, BASE + observed * 1000,
                                     profile={'battery_capacity_kwh': 86, 'range_km': 700,
                                              'range_standard': 'CLTC'})
 
@@ -81,6 +82,38 @@ class UsageScenarioTests(unittest.TestCase):
         self.assertEqual(metrics['charging_time_covered_seconds'], 360)
         self.assertAlmostEqual(metrics['power_coverage'], 2 / 3)
         self.assertIsNone(metrics['average_power_kw'])
+
+    def test_short_known_outage_breaks_power_coverage_across_restart_and_cache(self):
+        self.observe(0, soc=50)
+        self.charge(60, soc=51)
+        self.charge(120, soc=52)
+        self.monitor.mark_sampling_gap('synthetic-vehicle')
+        self.monitor = Monitor(self.monitor.tracks.path)
+        self.charge(120, soc=52, observed_seconds=180)  # A cache must not consume the gap.
+        for second in (240,300,360):self.charge(second, soc=52+(second-120)/60)
+        self.observe(420, soc=56)
+        data=self.events('charge_end')[0]['summary']
+        metrics=data['report_v2']['metrics']
+        self.assertTrue(data['partial'])
+        self.assertEqual(data['soc_delta'],5)
+        self.assertEqual(metrics['power_covered_seconds'],180)
+        self.assertEqual(metrics['charging_time_covered_seconds'],180)
+        self.assertAlmostEqual(metrics['power_coverage'],.5)
+        self.assertIsNone(metrics['average_power_kw'])
+        with self.monitor.tracks.connect() as db:
+            import json
+            rows=[json.loads(row[0]) for row in db.execute('SELECT normalized_payload FROM report_observations WHERE vehicle=? ORDER BY state_time',('synthetic-vehicle',))]
+        self.assertEqual([row['state_time'] for row in rows if row.get('sampling_gap_before')], [BASE+240000])
+
+    def test_outage_while_idle_marks_the_next_trip_partial_without_losing_odometer(self):
+        self.observe(0, km=100)
+        self.monitor.mark_sampling_gap('synthetic-vehicle')
+        self.monitor = Monitor(self.monitor.tracks.path)
+        self.observe(60, km=102, speed=30, engine='engine_on', ready=1)
+        trip=self.monitor.status('synthetic-vehicle')['trip']
+        self.assertTrue(trip['partial'])
+        self.assertEqual(trip['start']['km'],100)
+        self.assertEqual(self.monitor.status('synthetic-vehicle')['last']['km'],102)
 
     def test_fresh_parking_then_repeated_cache_keeps_ten_minute_confirmation(self):
         self.observe(0)

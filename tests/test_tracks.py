@@ -6,6 +6,90 @@ import unittest
 
 
 class TrackTests(unittest.TestCase):
+    def test_non_regular_database_target_is_rejected_before_sqlite(self):
+        import os
+        from unittest.mock import patch
+        from zeekr_control.tracks import TrackStore
+        directory=self.store.path.parent/'directory.sqlite3';directory.mkdir(mode=0o700)
+        targets=[directory]
+        if hasattr(os,'mkfifo'):
+            pipe=self.store.path.parent/'pipe.sqlite3';os.mkfifo(pipe,0o600);targets.append(pipe)
+        with patch('zeekr_control.tracks.sqlite3.connect',side_effect=AssertionError('SQLite must not open')):
+            for target in targets:
+                with self.subTest(target=target.name),self.assertRaises(ValueError):TrackStore(target)
+
+    def test_reinitialization_preserves_live_reader_lock_against_other_process(self):
+        import sqlite3,subprocess,sys
+        from zeekr_control.tracks import TrackStore
+        reader=sqlite3.connect(self.store.path.as_uri()+'?mode=ro',uri=True)
+        try:
+            reader.execute('BEGIN')
+            reader.execute('SELECT * FROM observations').fetchall()
+            TrackStore(self.store.path)
+            probe='''import sqlite3,sys
+db=sqlite3.connect(sys.argv[1],timeout=0)
+blocked=False
+try:
+    db.execute('BEGIN EXCLUSIVE')
+except sqlite3.OperationalError as error:
+    blocked='locked' in str(error)
+finally:
+    db.close()
+raise SystemExit(0 if blocked else 2)
+'''
+            result=subprocess.run([sys.executable,'-c',probe,str(self.store.path)],
+                                  capture_output=True,timeout=3)
+            self.assertEqual(result.returncode,0,result.stderr)
+        finally:reader.close()
+
+    def test_private_database_publication_never_replaces_competing_creator(self):
+        import os,stat
+        from unittest.mock import patch
+        from zeekr_control.sqlite_files import prepare_database_file
+        path=self.store.path.parent/'created.sqlite3'
+        info=prepare_database_file(path)
+        self.assertEqual(stat.S_IMODE(info.st_mode),0o600)
+        self.assertEqual(path.read_bytes(),b'')
+        target=self.store.path.parent/'competing.sqlite3';link=os.link
+        def competing(source,destination):
+            target.write_bytes(b'synthetic competing database');target.chmod(0o600)
+            return link(source,destination)
+        with patch('zeekr_control.sqlite_files.os.link',side_effect=competing):
+            prepare_database_file(target)
+        self.assertEqual(target.read_bytes(),b'synthetic competing database')
+        self.assertEqual(list(target.parent.glob('.competing.sqlite3-*')),[])
+        failed=target.parent/'failed.sqlite3'
+        with patch('zeekr_control.sqlite_files.os.link',side_effect=OSError('synthetic publish failure')):
+            with self.assertRaises(OSError):prepare_database_file(failed)
+        self.assertFalse(failed.exists())
+        self.assertEqual(list(target.parent.glob('.failed.sqlite3-*')),[])
+
+    def test_existing_database_initialization_never_opens_a_raw_file_descriptor(self):
+        import os
+        from unittest.mock import patch
+        from zeekr_control.tracks import TrackStore
+        original=os.open
+        def guarded(path,*args,**kwargs):
+            if Path(path)==self.store.path:
+                raise AssertionError('raw open/close can cancel live SQLite locks')
+            return original(path,*args,**kwargs)
+        with patch('zeekr_control.tracks.os.open',side_effect=guarded):
+            reopened=TrackStore(self.store.path)
+        self.assertEqual(reopened.vehicles(),[])
+
+    def test_failed_index_upgrade_preserves_existing_observations_and_schema(self):
+        import sqlite3
+        from zeekr_control.tracks import TrackStore
+        self.store.record('car-a',self.sample(),1704067231395,180)
+        with self.store.connect() as db:
+            db.execute('DROP INDEX vehicle_time')
+            db.execute('DROP INDEX vehicle_state_time')
+            db.execute('CREATE TABLE vehicle_state_time(sentinel TEXT)')
+        before=self.store.path.read_bytes()
+        with self.assertRaises(sqlite3.OperationalError):TrackStore(self.store.path)
+        self.assertEqual(self.store.path.read_bytes(),before)
+        self.assertEqual(TrackStore(self.store.path,readonly=True).day('car-a','2024-01-01')['count'],1)
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('zeekr_control.tracks'), '轨迹存储尚未实现')
         from zeekr_control.tracks import TrackStore
@@ -44,6 +128,11 @@ class TrackTests(unittest.TestCase):
     def test_invalid_date_rejected(self):
         with self.assertRaises(ValueError):
             self.store.day('car-a', '../../etc')
+
+    def test_date_type_and_calendar_overflow_are_validation_errors(self):
+        from zeekr_control.tracks import day_bounds
+        for date in (None, [], 20240101, '9999-12-31'):
+            with self.subTest(date=date),self.assertRaises(ValueError):day_bounds(date)
 
     def test_connection_closed_after_transaction(self):
         import sqlite3

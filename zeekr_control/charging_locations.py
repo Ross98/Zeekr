@@ -6,6 +6,7 @@ from .commute_tags import _distance
 from .parking_origin import _point, _summary, _telemetry
 from .usage_events import MAX_SUMMARY_BYTES, number
 from .trip_visibility import visible_clause
+from .movement_barriers import trip_movement_between
 
 RADIUS_M = 75
 MAX_SAMPLES = 2048
@@ -26,25 +27,31 @@ def _stationary_between(db, vehicle, event):
     start,end=event.get('start_time'),event['end_time']
     if start is None or not db.execute("SELECT 1 FROM sqlite_master WHERE name='report_observations'").fetchone():return None
     trips=[]
-    rows=db.execute("SELECT CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END FROM monitor_events WHERE vehicle=? AND kind='trip_end' AND "+visible_clause(db)+' ORDER BY created DESC LIMIT 1025',(MAX_SUMMARY_BYTES,vehicle))
-    for index,(encoded,) in enumerate(rows):
+    # Apply the resource limit to relevant candidates. Later trips cannot make
+    # an unchanged historical charging location lose its supporting evidence.
+    rows=db.execute("SELECT id,summary FROM monitor_events WHERE vehicle=? AND kind='trip_end' AND "+visible_clause(db)+
+        ' AND CASE WHEN length(CAST(summary AS BLOB))<=? THEN '
+        "CASE WHEN json_valid(summary) THEN json_type(summary,'$.start_time') IN ('integer','real') "
+        "AND json_type(summary,'$.end_time') IN ('integer','real') "
+        "AND json_extract(summary,'$.start_time')<=? AND json_extract(summary,'$.end_time')>=? "
+        'ELSE 0 END ELSE 0 END ORDER BY created DESC LIMIT 1025',
+        (vehicle,MAX_SUMMARY_BYTES,end+900000,start-900000))
+    for index,(identity,encoded) in enumerate(rows):
         check_cancelled()
         if index>=1024:return None
         raw=_summary(encoded);a=number(raw.get('start_time'),1,32503680000000);b=number(raw.get('end_time'),1,32503680000000)
         if a is not None and b is not None and a<b and raw.get('partial') is False:
-            trips.append(dict(start_time=a,end_time=b,start_location=raw.get('start_location'),end_location=raw.get('end_location')))
+            trips.append(dict(id=identity,start_time=a,end_time=b,start_location=raw.get('start_location'),end_location=raw.get('end_location')))
     arrivals=[r for r in trips if start-900000<=r['end_time']<=start]
     departures=[r for r in trips if end<=r['start_time']<=end+900000]
     if not arrivals or not departures:return None
     previous=max(arrivals,key=lambda r:r['end_time']);following=min(departures,key=lambda r:r['start_time'])
     a,b=previous['end_time'],following['start_time']
-    if any(r['start_time']<b and r['end_time']>a for r in trips if r is not previous and r is not following):return None
     left=_point(previous.get('end_location'),trusted=True);right=_point(following.get('start_location'),trusted=True)
     if not left or not right or _distance(left,right)>RADIUS_M:return None
-    # Recorded movement starts are barriers even when the ending trip is unavailable.
-    for encoded, in db.execute("SELECT CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END FROM monitor_events WHERE vehicle=? AND kind='trip_start' AND created>=? AND created<? LIMIT 257",(MAX_SUMMARY_BYTES,vehicle,a,b)):
-        raw=_summary(encoded);stamp=number(raw.get('start_time'),1,32503680000000)
-        if stamp is None or a<stamp<b:return None
+    # Hidden/partial trips cannot support a point, but still contradict parking.
+    if trip_movement_between(db, vehicle, a, b, exclude_event_ids=(previous['id'],following['id']),
+                             unknown_lower_inclusive=True):return None
     rows=db.execute('SELECT state_time,observed_at,CASE WHEN length(CAST(normalized_payload AS BLOB))<=? THEN normalized_payload END FROM report_observations WHERE vehicle=? AND state_time>=? AND state_time<=? ORDER BY state_time LIMIT ?', (MAX_TELEMETRY_BYTES,vehicle,a,b,MAX_SAMPLES+1))
     stamps=[];odometer=None
     for index,(stamp,observed,encoded) in enumerate(rows):

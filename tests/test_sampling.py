@@ -9,6 +9,26 @@ from zeekr_control.web import App
 from test_monitor import BASE, sample
 
 class SamplingTests(unittest.TestCase):
+    def test_invalid_saved_switch_never_defaults_to_active(self):
+        from zeekr_control.sampling import read_settings
+        from zeekr_control.errors import ApiError
+        for value in ('','False','TRUE','yes','0',' false '):
+            with self.subTest(value=value):
+                save(self.root/'sampling.json',{'enabled':value,'interval':'30'})
+                original=(self.root/'sampling.json').read_bytes()
+                with self.assertRaisesRegex(ApiError,'采集开关'):read_settings(self.root)
+                with self.assertRaises(ApiError):self.runner.tick(BASE)
+                self.assertEqual(self.client.calls,0)
+                self.assertEqual((self.root/'sampling.json').read_bytes(),original)
+
+    def test_missing_and_valid_switches_retain_existing_defaults(self):
+        from zeekr_control.sampling import read_settings
+        self.assertEqual(read_settings(self.root),(True,30))
+        for data,expected in (({'interval':'10'},(True,10)),({'enabled':'false'},(False,30)),
+                              ({'enabled':'true','interval':'60'},(True,60))):
+            save(self.root/'sampling.json',data)
+            self.assertEqual(read_settings(self.root),expected)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -25,6 +45,7 @@ class SamplingTests(unittest.TestCase):
                 return Client.raw
         self.client = Client
         self.runner = Runner(self.session, client_factory=Client, sender=lambda _: None)
+        self.addCleanup(self.runner.insight_worker.close)
 
     def tick(self, t, **kwargs):
         self.client.raw = sample(t, **kwargs)
@@ -56,6 +77,46 @@ class SamplingTests(unittest.TestCase):
         self.runner.tick(BASE + 60000)
         self.assertEqual(self.client.calls, 1)
         self.assertEqual(app.state()['recording']['interval'], 60)
+
+    def test_pause_marks_short_recording_gap_and_preserves_scalars_after_resume(self):
+        from zeekr_control.sampling import save_settings
+        import json
+        self.tick(0)
+        self.tick(20,speed=30,engine='engine_on',ready=1,km=102)
+        calls=self.client.calls
+        save_settings(self.root,False)
+        self.runner.tick(BASE+40000)
+        self.assertEqual(self.client.calls,calls)
+        binding=load(self.root/'monitor-binding.json')['vehicle_key']
+        self.assertTrue(self.runner.monitor.status(binding)['trip']['partial'])
+        save_settings(self.root,True)
+        self.runner=Runner(self.session,client_factory=self.client,sender=lambda _:None)
+        self.addCleanup(self.runner.insight_worker.close)
+        self.tick(100,speed=30,engine='engine_on',ready=1,km=110)
+        trip=self.runner.monitor.status(binding)['trip']
+        self.assertEqual(trip['start']['km'],100)
+        with self.runner.monitor.tracks.connect() as db:
+            payload=db.execute('SELECT normalized_payload FROM report_observations ORDER BY state_time DESC LIMIT 1').fetchone()[0]
+            self.assertTrue(json.loads(payload)['sampling_gap_before'])
+            self.assertEqual(db.execute('SELECT gap_seconds FROM observations ORDER BY id DESC LIMIT 1').fetchone()[0],0)
+
+    def test_pause_does_not_count_toward_parking_confirmation(self):
+        from zeekr_control.sampling import save_settings
+        self.tick(0)
+        self.tick(60,speed=30,engine='engine_on',ready=1,km=101)
+        for second in (120,180,240,300):self.tick(second,km=110)
+        save_settings(self.root,False)
+        self.runner.tick(BASE+360000)
+        save_settings(self.root,True)
+        self.client.raw=sample(300,km=110)
+        for observed in range(420,1020,60):
+            self.runner.tick(BASE+observed*1000)
+            self.assertFalse(self.runner.monitor.events())
+        self.runner.tick(BASE+1020000)
+        events=self.runner.monitor.events()
+        self.assertEqual(len(events),1)
+        self.assertEqual(events[0]['summary']['end_time'],BASE+120000)
+        self.assertTrue(events[0]['summary']['partial'])
 
     def test_idle_points_recorded_and_duplicate_cache_not_added(self):
         self.tick(0)

@@ -10,10 +10,11 @@ import sqlite3
 import stat
 import threading
 import time
+import uuid
 
 from .client import Client
 from .cli import find_vins
-from .errors import ApiError, RateLimited
+from .errors import ApiError, RateLimited, RequestDeferred
 from .monitor import Monitor
 from .vehicle_state import decode
 from .geocoding import AmapGeocoder
@@ -28,7 +29,7 @@ from .commute_tags import CommuteTags
 from .place_tag_rules import PlaceTagRules
 from .custom_reminders import Reminders
 from .tyre_notifications import TyreNotifications, ObservationCancelled
-from .sampling import read_settings, save_settings
+from .sampling import read_settings, read_request_settings, save_settings, SamplingUnavailable
 from .query_policy import QueryPolicy
 from .archive_reader import ArchiveReader
 from .automatic_insights import Analyzer, InsightCache, InsightWorker
@@ -43,6 +44,10 @@ def enable_sampling(root):
 
 def sampling_enabled(root):
     return read_settings(root)[0]
+
+
+class CollectionCancelled(RequestDeferred):
+    """A background gateway request was cancelled before transport began."""
 
 
 def collection_loop(runner, stop, once=False):
@@ -130,7 +135,7 @@ def process_lock(path):
 
 PUBLIC_HEALTH_FIELDS = ('status', 'heartbeat', 'next_check', 'interval', 'last_success',
                         'last_new', 'trip', 'charge', 'data_change', 'state_time',
-                        'refresh_status', 'incident_recording')
+                        'refresh_status', 'incident_recording', 'derived_status')
 
 
 def _safe_error(value):
@@ -142,7 +147,8 @@ def _safe_error(value):
         return '车辆接口返回 1509，后台正在退避重试；期间记录可能不完整。'
     for category, tokens in (
         ('认证状态异常，请检查车辆连接。', ('登录', '认证', '401', '403', 'token')),
-        ('接口暂不可用，后台将按策略处理。', ('网络', 'TLS', 'HTTP 5', '限流', '冷却')),
+        ('接口暂不可用，后台将按策略处理。', ('网络', 'TLS', 'HTTP 5', 'HTTP 408', '限流', '冷却',
+                                             '网关响应', '网关代码 unknown', '车辆列表响应', '有效车辆状态')),
         ('采集后台异常，请检查服务状态。', ())):
         if not tokens or any(token.lower() in text.lower() for token in tokens):
             return category
@@ -153,8 +159,8 @@ def read_status(root, vehicle=None, public=False):
     health = load(root / 'monitor-health.json')
     if not health:
         return {'status': 'not_started', 'events': []}
-    heartbeat = float(health.get('heartbeat', '0'))
-    allowed = max(180000, float(health.get('next_check', '0')) - heartbeat + 60000)
+    from .notification_health import service_heartbeat, number, STATES
+    _, online = service_heartbeat(health,time.time()*1000,collector=True)
     source = ({key: health[key] for key in PUBLIC_HEALTH_FIELDS if key in health}
               if public else dict(health))
     if public:
@@ -162,7 +168,7 @@ def read_status(root, vehicle=None, public=False):
         if '网关代码 1509' in health.get('error', '') and health.get('gateway_reason'):
             from .client import gateway_reason
             source['error'] += ' 网关说明（脱敏）：' + gateway_reason(health['gateway_reason'])
-    result = dict(source, online=health.get('status') != 'stopped' and 0 <= time.time() * 1000 - heartbeat <= allowed, events=[])
+    result = dict(source, online=online, events=[])
     path = root / 'tracks.sqlite3'
     if path.exists():
         db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=5)
@@ -184,9 +190,14 @@ def read_status(root, vehicle=None, public=False):
                     ' FROM monitor_events e' + alert_join +
                     ' ORDER BY e.created DESC,e.rowid DESC LIMIT 10').fetchall()
             if public:
-                result['events'] = [dict(kind=r[0], delivery=r[1], error=_safe_error(r[2]), created=r[3],
-                                         alert_delivery=r[4], alert_error=_safe_error(r[5]),
-                                         image_delivery=r[6], image_error='图片投递需要检查。' if r[7] else '') for r in rows]
+                delivery_states=STATES|{'retry','unknown'}
+                def delivery(value):
+                    if value is None:return None
+                    return value if isinstance(value,str) and value in delivery_states else 'unknown'
+                result['events'] = [dict(kind=r[0] if r[0] in ('trip_start','trip_end','charge_start','charge_end') else 'vehicle_event',
+                                         delivery=delivery(r[1]), error=_safe_error(r[2]), created=number(r[3]),
+                                         alert_delivery=delivery(r[4]), alert_error=_safe_error(r[5]),
+                                         image_delivery=delivery(r[6]), image_error='图片投递需要检查。' if r[7] else '') for r in rows]
             else:
                 result['events'] = [dict(kind=r[0], summary=json.loads(r[1]), delivery=r[2], error=r[3], created=r[4],
                                          alert_delivery=r[5], alert_error=r[6],image_delivery=r[7],image_error=r[8]) for r in rows]
@@ -205,7 +216,8 @@ class Runner:
         if set(active_codes) & set(stopped_codes):
             raise ValueError('充电与停止状态码不可重叠')
         self.vehicle = vehicle
-        self.client_factory = ((lambda session: Client(session, query_policy=QueryPolicy(self.root / 'queries.sqlite3')))
+        self.client_factory = ((lambda session: Client(session, query_policy=QueryPolicy(self.root / 'queries.sqlite3'),
+                                                      request_guard=self._guard_collection_request))
                                if client_factory is Client else client_factory)
         self.monitor = Monitor(self.root / 'tracks.sqlite3', active_codes, stopped_codes,
                                address_resolver=AmapGeocoder(self.root / 'amap-geocoding.json'),
@@ -249,6 +261,21 @@ class Runner:
     def health(self):
         return load(self.root / 'monitor-health.json')
 
+    def _guard_collection_request(self):
+        stop=getattr(self,'stop',None)
+        # Settings I/O can take time; check shutdown again immediately after it.
+        if (stop is not None and stop.is_set() or not read_request_settings(self.root)[0]
+                or stop is not None and stop.is_set()):
+            raise CollectionCancelled('后台采集已暂停或正在退出，未发送网络请求。',retry_after=1)
+
+    def _mark_sampling_gap(self,health):
+        self.monitor.mark_sampling_gap(load(self.root/'monitor-binding.json').get('vehicle_key'))
+        # Persist beyond gap_pending: optional rule processing can lag behind
+        # the first accepted vehicle observation, or resume in another process.
+        if health.get('gap_pending')!='true' or not health.get('sampling_epoch'):
+            health['sampling_epoch']=uuid.uuid4().hex
+        health['gap_pending']='true'
+
     def tick(self, now=None):
         self.analysis_input = None
         live_clock = now is None
@@ -258,7 +285,10 @@ class Runner:
         enabled, interval = read_settings(self.root)
         delay = interval
         fingerprint = None
+        observation_processed = False
         if not enabled:
+            if health.get('status')!='paused' or health.get('gap_pending')!='true':
+                self._mark_sampling_gap(health)
             health.update(status='paused', error='', interval=str(interval), next_check=str(now + interval * 1000))
             save(self.root / 'monitor-health.json', health)
             return interval
@@ -266,8 +296,7 @@ class Runner:
             session = load(self.session_path)
             fingerprint = hashlib.sha256(json.dumps(session, sort_keys=True).encode()).hexdigest()
             if not health.get('gateway_retry') and '网关代码 1509' in health.get('error', ''):
-                self.monitor.mark_sampling_gap(load(self.root / 'monitor-binding.json').get('vehicle_key'))
-                health['gap_pending'] = 'true'
+                self._mark_sampling_gap(health)
             retry = json.loads(health.get('gateway_retry', '{}'))
             if retry.get('session') == fingerprint and now < retry.get('next_at', 0):
                 delay = max(1, (retry['next_at'] - now + 999) // 1000)
@@ -283,7 +312,7 @@ class Runner:
                     raise ApiError('尚未登录，请更新车辆会话后恢复监控')
                 client = self.client_factory(session)
                 vehicles = client.vehicles()
-                if getattr(self,'stop',None) is not None and self.stop.is_set():return interval
+                self._guard_collection_request()
                 binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
                 choices = []
                 for entry in vehicles:
@@ -308,12 +337,19 @@ class Runner:
                 observed = int(time.time() * 1000) if live_clock else now
                 fetched = getattr(client, 'last_query_fetched_at', None)
                 fetched_at = int(fetched * 1000) if type(fetched) in (int, float) else observed
-                publication = SnapshotStore(self.root / 'snapshots.sqlite3').publish(
+                snapshot_store = SnapshotStore(self.root / 'snapshots.sqlite3')
+                publication = snapshot_store.publish(
                     session_scope(session), binding, raw, observed, fetched_at=fetched_at, source='monitor', owner_key=account_scope(session))
+                if publication['change'] == 'superseded':
+                    accepted = snapshot_store.read(session_scope(session),binding)
+                    if accepted is None:
+                        raise ApiError('共享快照已变化，稍后重试。',retryable=True)
+                    raw = accepted['raw']
                 profile = vehicle_profile(binding, choices.index(vin) + 1, len(choices))
                 health['status'] = self.monitor.observe(binding, raw, observed,
                     battery_capacity_kwh=profile.get('battery_capacity_kwh'), profile=profile,
                     track_gap_seconds=0 if health.get('gap_pending') == 'true' else 180)
+                observation_processed = True
                 point = decode(raw, self.monitor.active_codes, self.monitor.stopped_codes)
                 health.update(data_change=publication['change'],
                               state_time=str(int(point['time'])) if point['time'] is not None else '')
@@ -361,25 +397,39 @@ class Runner:
                     current_binding = load(self.root / 'monitor-binding.json').get('vehicle_key')
                     if session_scope(load(self.session_path)) != session_scope(session) or current_binding != binding:
                         raise ApiError('账号会话或绑定车辆已变化，本次自定义提醒已取消')
-                self.reminders.observe(account_scope(session), binding, raw, observed,
-                                       sender=None, guard=reminder_guard)
                 def tyre_guard():
                     reminder_guard()
                     if not sampling_enabled(self.root):
                         raise ObservationCancelled()
-                try:
-                    self.tyre_notifications.observe(account_scope(session), binding, raw, observed,
-                                                    bark=None, wecom=None, guard=tyre_guard)
-                except ObservationCancelled:
-                    pass
-                self.commute_tags.collect(account_scope(session), binding, observed, guard=reminder_guard)
-                self.place_tag_rules.collect(account_scope(session), binding, observed, guard=reminder_guard)
+                # Rule/configuration errors are not vehicle authentication failures.
+                # Core storage errors still escape; each optional update keeps its guard.
+                health['derived_status']='ready'
+                for update in (
+                    lambda:self.reminders.observe(account_scope(session),binding,raw,observed,sender=None,guard=reminder_guard,
+                                                 sampling_epoch=health.get('sampling_epoch')),
+                    lambda:self.tyre_notifications.observe(account_scope(session),binding,raw,observed,bark=None,wecom=None,guard=tyre_guard,
+                                                          sampling_epoch=health.get('sampling_epoch')),
+                    lambda:self.commute_tags.collect(account_scope(session),binding,observed,guard=reminder_guard),
+                    lambda:self.place_tag_rules.collect(account_scope(session),binding,observed,guard=reminder_guard)):
+                    try:update()
+                    except ObservationCancelled:pass
+                    except (ApiError,ValueError):health['derived_status']='unavailable'
                 self.analysis_input = (session_scope(session), binding, observed)
+        except SamplingUnavailable as exc:
+            self._mark_sampling_gap(health)
+            health.update(status='unavailable',error=str(exc))
+        except CollectionCancelled:
+            self._mark_sampling_gap(health)
+            stopping=getattr(self,'stop',None)
+            health.update(status='stopped' if stopping is not None and stopping.is_set() else 'paused',error='')
         except RateLimited as exc:
+            if not observation_processed:self._mark_sampling_gap(health)
             delay = max(60, exc.seconds)
             health.update(status='cooldown', error='接口限流，等待冷却')
         except ApiError as exc:
             error = str(exc)
+            if not observation_processed and not isinstance(exc,RequestDeferred):
+                self._mark_sampling_gap(health)
             if exc.gateway_code == '1509':
                 retry = json.loads(health.get('gateway_retry', '{}'))
                 if retry.get('session') != fingerprint:
@@ -390,7 +440,6 @@ class Runner:
                 retry['next_at'] = finished + delay * 1000
                 health.update(status='retrying', error=error[:400], gateway_retry=json.dumps(retry),
                               gateway_reason=exc.gateway_reason or '', gateway_error_at=str(now), gap_pending='true')
-                self.monitor.mark_sampling_gap(load(self.root / 'monitor-binding.json').get('vehicle_key'))
                 self.auth_failure_alert.record_failure(exc.gateway_code, exc.gateway_reason, now)
                 incident=None
                 try:
@@ -403,16 +452,17 @@ class Runner:
                 eligibility=(dict(incident,attempts=min(incident['attempts'],retry['attempts']),
                                   opened_at=max(incident['opened_at'],retry['first_at'])) if incident else None)
                 recovery=self.refresh_driver.attempt(session,eligibility,now)
+                recovery_at=int(time.time()*1000) if live_clock else now
                 health['refresh_status']=recovery.kind
                 if recovery.kind=='refreshed':
                     delay=1
                     health['error']='凭据已更新，等待目标车辆接口恢复核对。'
                 elif recovery.kind in ('deferred','rate_limited'):
                     delay=max(delay,recovery.wait_seconds)
-                    retry['next_at']=(int(time.time()*1000) if live_clock else now)+delay*1000
+                    retry['next_at']=recovery_at+delay*1000
                     health['gateway_retry']=json.dumps(retry)
                 if incident and recovery.kind in ('refreshed','manual_required','uncertain','rate_limited','storage_error'):
-                    try:self.incidents.classify(incident['id'],recovery.kind,now)
+                    try:self.incidents.classify(incident['id'],recovery.kind,recovery_at)
                     except (ApiError,OSError,ValueError,sqlite3.Error):health['incident_recording']='unavailable'
                 if recovery.kind in ('manual_required','uncertain'):
                     self.auth_failure_alert.blocked(error,now,manual=True,incident_id=incident['id'] if incident else None,
@@ -423,7 +473,7 @@ class Runner:
             elif exc.retry_after:
                 delay = max(interval, exc.retry_after)
                 health.update(status='cooldown', error=error[:150])
-            elif any(token in error for token in ('网络或 TLS', 'HTTP 5', '并发锁')):
+            elif exc.retryable or any(token in error for token in ('网络或 TLS', 'HTTP 5', '并发锁')):
                 self.failures += 1
                 delay = min(900, 60 * 2 ** min(self.failures, 4))
                 health.update(status='retrying', error=error[:150])

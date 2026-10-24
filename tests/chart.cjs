@@ -30,4 +30,8 @@ const soc=context.chartGeometry(shared,'soc',{...bounds,minY:0,maxY:100,step:tru
 assert.equal(power.x(200),soc.x(200),'shared bounds prevent asymmetric missing data from shifting the time axis');
 assert.equal(power.minX,100);assert.equal(power.maxX,300);assert.equal(power.dots[0].y,180,'zero power is valid');
 assert.equal(context.chargingTimeBounds([{time:null}]).minX,undefined);
+const sparse=[{time:100,power_kw:6,soc:20,segment_id:0,lines:{power_kw:1,soc:1}},
+ {time:300,power_kw:7,soc:30,segment_id:0,lines:{power_kw:2,soc:1}}];
+assert.equal((context.chartGeometry(sparse,'power_kw').path.match(/M/g)||[]).length,2,'retained points cannot bridge a downsampled missing-power interval');
+assert.equal((context.chartGeometry(sparse,'soc').path.match(/M/g)||[]).length,1,'valid SOC keeps its own continuity');
 console.log('CHART_PASS');

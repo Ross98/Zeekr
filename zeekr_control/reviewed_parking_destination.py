@@ -2,6 +2,8 @@
 from .commute_tags import _distance
 from .parking_origin import _point, _summary
 from .usage_events import MAX_SUMMARY_BYTES, number
+from .movement_barriers import trip_movement_between
+from .trip_visibility import visible_clause
 
 
 def _sample(db, vehicle, stamp, trusted=False):
@@ -34,15 +36,14 @@ def reviewed_parking_destination(db, vehicle, event, current):
     if not isinstance(next_id, str) or next_id == event['id']:
         return None
     row = db.execute("SELECT summary FROM monitor_events WHERE vehicle=? AND id=? AND kind='trip_end' "
-                     'AND length(CAST(summary AS BLOB))<=?', (vehicle, next_id, MAX_SUMMARY_BYTES)).fetchone()
+                     'AND length(CAST(summary AS BLOB))<=? AND '+visible_clause(db),
+                     (vehicle, next_id, MAX_SUMMARY_BYTES)).fetchone()
     if row is None:
         return None
     next_start = number(_summary(row[0]).get('start_time'), 1, 32503680000000)
     if next_start is None or not 0 < next_start-end <= 3600000 or not 0 < after-next_start <= 180000:
         return None
-    if db.execute("SELECT 1 FROM monitor_events WHERE vehicle=? AND kind IN ('trip_start','trip_end') "
-                  'AND id NOT IN (?,?) AND created>? AND created<? LIMIT 1',
-                  (vehicle, event['id'], next_id, end, next_start)).fetchone():
+    if trip_movement_between(db, vehicle, end, next_start, exclude_event_ids=(event['id'],next_id)):
         return None
     anchor = _sample(db, vehicle, end)
     a, b = _sample(db, vehicle, before, True), _sample(db, vehicle, after, True)

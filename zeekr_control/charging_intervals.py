@@ -1,6 +1,7 @@
 """Read-only battery-side consumption between consecutive saved charges."""
 import json
 from bisect import bisect_right
+from contextlib import contextmanager
 
 from .analysis_cancel import check_cancelled
 from .trip_visibility import visible_clause
@@ -34,9 +35,18 @@ class ChargingIntervals:
     def __init__(self, database):
         self.events = UsageEvents(database)
 
-    def _charges(self, vehicle, lower, upper):
+    @contextmanager
+    def _connect(self, connection=None):
+        check_cancelled()
+        if connection is not None:
+            yield connection
+        else:
+            with self.events.connect() as db:
+                yield db
+
+    def _charges(self, vehicle, lower, upper, *, _connection=None):
         events, invalid, scanned, starts = [], 0, 0, []
-        with self.events.connect() as db:
+        with self._connect(_connection) as db:
             if db is None:
                 return events, invalid, starts
             # Include hidden charges as barriers: deletion must never bridge an actual recharge.
@@ -78,7 +88,7 @@ class ChargingIntervals:
         events.sort(key=lambda e:(e['end_time'],e['id']))
         return events, invalid, sorted(starts)
 
-    def _precharge(self, vehicle, lower, upper):
+    def _precharge(self, vehicle, lower, upper, *, _connection=None):
         """Last observed noncharging state; its time is the cutoff, never extrapolated."""
         def point(raw, stamp, source):
             raw=_object(raw)
@@ -89,9 +99,9 @@ class ChargingIntervals:
             decoder=raw.get('decoder_version')
             return dict(soc=soc,odometer=odometer,time=state,source=source,
                         decoder=decoder if isinstance(decoder,str) and len(decoder)<=128 else None)
-        candidate=None;charging=[]
-        with self.events.connect() as db:
-            if db is None:return None,False
+        candidate=None
+        with self._connect(_connection) as db:
+            if db is None:return None
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_observations'").fetchone():
                 rows=db.execute('SELECT state_time,CASE WHEN length(CAST(normalized_payload AS BLOB))<=? THEN normalized_payload END '
                                 'FROM report_observations WHERE vehicle=? AND state_time>? AND state_time<? '
@@ -101,9 +111,6 @@ class ChargingIntervals:
                     try:raw=json.loads(encoded) if isinstance(encoded,str) else None
                     except (ValueError,TypeError,RecursionError):continue
                     if not isinstance(raw,dict):continue
-                    observed=number(raw.get('observed_at'),1,32503680000000)
-                    if (raw.get('charging') is True and raw.get('state_time')==stamp and observed is not None
-                            and -30000<=observed-stamp<=180000):charging.append(stamp)
                     found=point(raw,stamp,'precharge_observation')
                     if candidate is None and found is not None:candidate=found
             if candidate is None:
@@ -126,10 +133,39 @@ class ChargingIntervals:
                     report=_object(raw.get('report_v2'))
                     found=point(report.get('end',raw.get('report_end')),stamp,'previous_trip_end')
                     if found is not None and (candidate is None or found['time']>candidate['time']):candidate=found
-        blocked=bool(candidate and any(lower<stamp<candidate['time'] for stamp in charging))
-        return candidate,blocked
+        return candidate
 
-    def _interval(self, previous, current, books, invalid, starts, vehicle):
+    def _intermediate_charge(self, vehicle, lower, upper, *, _connection=None):
+        """Charging samples are barriers even when no completed charge was saved."""
+        with self._connect(_connection) as db:
+            if db is None or not db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_observations'").fetchone():
+                return False
+            # Filter to charging evidence, not the latest 256 arbitrary samples.
+            # Bounds are the actual measured endpoints, excluding any later gap.
+            rows = db.execute(
+                'SELECT state_time,normalized_payload FROM report_observations '
+                'WHERE vehicle=? AND state_time>? AND state_time<? AND '
+                'CASE WHEN length(CAST(normalized_payload AS BLOB))<=? THEN '
+                "CASE WHEN json_valid(normalized_payload) THEN json_type(normalized_payload,'$.charging')='true' "
+                'ELSE 0 END ELSE 0 END LIMIT ?',
+                (vehicle, lower, upper, MAX_SUMMARY_BYTES, MAX_SCAN+1))
+            for index, (stamp, encoded) in enumerate(rows):
+                check_cancelled()
+                if index >= MAX_SCAN:
+                    raise ValueError('区间内充电观测过多。')
+                try:
+                    raw = json.loads(encoded)
+                except (ValueError, TypeError, RecursionError):
+                    continue
+                state = number(raw.get('state_time'), 1, 32503680000000)
+                observed = number(raw.get('observed_at'), 1, 32503680000000)
+                if (raw.get('charging') is True and state is not None and state == stamp and observed is not None
+                        and -30000 <= observed-state <= 180000):
+                    return True
+        return False
+
+    def _interval(self, previous, current, books, invalid, starts, vehicle, *, _connection=None):
         row = dict(id=current['id'], previous_id=previous['id'] if previous and previous['visible'] else None,
                    start_time=previous['end_time'] if previous and previous['visible'] else None, end_time=current['start_time'],
                    closed_time=current['end_time'], cross_month=False, start_soc=None, end_soc=None,
@@ -154,9 +190,10 @@ class ChargingIntervals:
         right=None if missing_start else _boundary(current,'start')
         if left is None:return reject('missing_endpoint')
         if right is None:
-            right,blocked=self._precharge(vehicle,previous['end_time'],current['start_time'])
-            if blocked:return reject('unclosed_charge')
+            right=self._precharge(vehicle,previous['end_time'],current['start_time'],_connection=_connection)
             if right is None:return reject('late_start' if missing_start else 'missing_endpoint')
+        if self._intermediate_charge(vehicle, previous['end_time'], right['time'], _connection=_connection):
+            return reject('unclosed_charge')
         row.update(end_time=right['time'],end_boundary_source=right['source'],
                    reference_gap_seconds=(current['start_time']-right['time'])/1000 if right['source']!='charge_start' else None)
         row['cross_month']=date_label(previous['end_time'])[:7]!=date_label(right['time'])[:7]
@@ -182,13 +219,19 @@ class ChargingIntervals:
         return row
 
     def query(self, vehicle, window, now, books):
+        with self.events.connect() as db:
+            if db is not None:
+                db.execute('BEGIN')
+            return self._query(vehicle, window, now, books, db)
+
+    def _query(self, vehicle, window, now, books, connection):
         upper=max(window['start'],min(window['end'],now+1))
-        charges,invalid,starts=self._charges(vehicle,max(0,window['start']-180*DAY),min(upper,now+1))
+        charges,invalid,starts=self._charges(vehicle,max(0,window['start']-180*DAY),min(upper,now+1),_connection=connection)
         rows=[];previous=None
         for charge in charges:
             check_cancelled()
             if charge['visible'] and window['start']<=charge['end_time']<upper:
-                rows.append(self._interval(previous,charge,books,invalid,starts,vehicle))
+                rows.append(self._interval(previous,charge,books,invalid,starts,vehicle,_connection=connection))
             previous=charge
         valid=[r for r in rows if r['reason'] is None]
         priced=[r for r in valid if r['estimated_cents'] is not None]

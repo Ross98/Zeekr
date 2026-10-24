@@ -13,6 +13,7 @@ from .snapshot_archive import BEIJING
 from .periodic_report import PeriodicDelivery
 from .periodic_summary import PeriodicSummary,report_window
 from .notifications import WeComSender
+from .delivery_state import delivery_clock
 
 SCHEDULE = {'day':0,'week':10,'month':20}
 DELIVERY_WINDOW_MS = 6*3600000
@@ -85,6 +86,7 @@ class ScheduledReports:
 
     def tick(self,now=None):
         now=int(time.time()*1000) if now is None else now
+        current_time=delivery_clock(now)
         settings=load(self.settings)
         if settings.get('enabled')!='1':return []
         enabled_at=int(settings['enabled_at']);theme=settings.get('theme','light')
@@ -99,9 +101,13 @@ class ScheduledReports:
                     if state['text']=='sent' and state['image'] in ('sent','failed','unknown','sending','skipped'):continue
                     if state['next_at']>now:continue
                 report=self.summary.query(scope,vehicle,owner,job['period'],job['date'],now=now,vehicle_time=vehicle_time)
-                # Cancel if account/binding/settings changed during the readonly query.
-                if self.context()[:3]!=(scope,owner,vehicle) or load(self.settings)!=settings:break
-                result=self.delivery.deliver(owner,vehicle,report,self.sender,theme)
+                # Recheck after preparation and between independent external sends.
+                def guard():
+                    return (self.context()[:3]==(scope,owner,vehicle)
+                            and load(self.settings)==settings
+                            and current_time()<job['due']+DELIVERY_WINDOW_MS)
+                if not guard():break
+                result=self.delivery.deliver(owner,vehicle,report,self.sender,theme,guard=guard)
                 results.append(dict(period=job['period'],**result))
         save(self.health,dict(status='ready',last_tick=str(now),timezone='Asia/Shanghai',
              **{'next_'+k:v for k,v in next_times(now).items()}))

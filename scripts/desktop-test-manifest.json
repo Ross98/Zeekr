@@ -2,6 +2,7 @@
   "groups": {
     "unit": [
       "tests/test_overview_dashboard.cjs",
+      "tests/test_cache_clocks.cjs",
       "tests/books_overview.cjs",
       "tests/navigation_state.cjs",
       "tests/local_trip_visuals.cjs",
@@ -37,12 +38,14 @@
       "tests/ui_tyre_layout.cjs",
       "tests/ui_energy_workspace.cjs",
       "tests/ui_energy.cjs",
+      "tests/ui_charging_progress.cjs",
       "tests/ui_charge_management.cjs",
       "tests/ui_research_serial.cjs",
       "tests/ui_research_simplification.cjs",
       "tests/ui_review_fixes.cjs",
       "tests/ui_lazy_tools.cjs",
       "tests/ui_async_analysis.cjs",
+      "tests/ui_state_write_race.cjs",
       "tests/ui_analysis_cancel.cjs",
       "tests/ui_overview_benchmark.cjs",
       "tests/ui_local_route_canvas.cjs",
@@ -141,12 +144,6 @@
     {
       "path": "tests/ui_charging_dates.cjs",
       "reason": "Legacy charging dates suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
-      "kind": "coverage-debt",
-      "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
-    },
-    {
-      "path": "tests/ui_charging_progress.cjs",
-      "reason": "Legacy charging progress suite is outside the reviewed routine manifest; its current selectors and desktop-only execution need targeted validation before admission. Z02 records this coverage gap without claiming it passed.",
       "kind": "coverage-debt",
       "review_when": "When this feature changes: compare with registered desktop coverage, migrate remaining desktop assertions or prove a replacement before retiring."
     },

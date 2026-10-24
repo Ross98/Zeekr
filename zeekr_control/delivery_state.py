@@ -5,6 +5,14 @@ import os
 from pathlib import Path
 import stat
 import threading
+import time
+
+
+def delivery_clock(now,started=None):
+    """Advance a caller's millisecond timestamp using monotonic elapsed time."""
+    started=time.monotonic() if started is None else started
+    def current_time():return now+max(0,int((time.monotonic()-started)*1000))
+    return current_time
 
 
 class DeliveryBusy(Exception):
@@ -71,7 +79,9 @@ def normalize_preparation_for_rollback(root):
     with delivery_lock(root/'notifications.lock'),delivery_lock(root/'periodic-delivery.lock'):
         stores=[('tracks.sqlite3',[(table,'delivery') for table in
                 ('monitor_events','monitor_event_media','monitor_event_alerts')]),
-                ('periodic-reports.sqlite3',[('reports','text'),('reports','image')])]
+                ('periodic-reports.sqlite3',[('reports','text'),('reports','image')]),
+                ('personal.sqlite3',[('tyre_outbox','bark'),('tyre_outbox','wecom'),('rule_history','delivery')]),
+                ('system-notifications.sqlite3',[('auth_outbox','state')])]
         for name,targets in stores:
             path=root/name
             if not path.exists() and not path.is_symlink():continue

@@ -22,7 +22,149 @@ def competing_reader(path, events, start):
     events.put(('result', result))
 
 
+def crashing_status_reader(path):
+    import os
+    policy=QueryPolicy(path,clock=lambda:1000.0)
+    policy.run('account','session','status','car',lambda:os._exit(73))
+
+
 class QueryPolicyTests(unittest.TestCase):
+    def test_unrepresentable_retry_after_uses_existing_fallback(self):
+        for value in ('9'*400,'1'+'0'*306):
+            with self.subTest(digits=len(value)):
+                self.assertEqual(retry_seconds(value,now=1000),60)
+        self.assertEqual(retry_seconds(str(10**20),now=1000),10**20)
+
+    def test_http_429_with_unrepresentable_header_still_blocks_other_operations(self):
+        from unittest.mock import Mock,patch
+        from urllib.error import HTTPError
+        from zeekr_control.client import Client
+        opener=Mock()
+        opener.open.side_effect=HTTPError('https://example.invalid',429,'synthetic',{'Retry-After':'9'*400},None)
+        client=Client({'accessToken':'synthetic-access','userId':'synthetic-user'},query_policy=self.policy)
+        with patch('zeekr_control.client.build_opener',return_value=opener):
+            with self.assertRaises(RateLimited) as caught:client.vehicles()
+        self.assertEqual(caught.exception.seconds,60)
+        fetch=Mock(return_value={'accepted':True})
+        self.now+=59
+        with self.assertRaises(ApiError) as deferred:
+            self.policy.run('other-account','other-session','sms','',fetch)
+        self.assertEqual(deferred.exception.retry_after,1)
+        fetch.assert_not_called()
+        self.now+=1
+        self.assertEqual(self.policy.run('other-account','other-session','sms','',fetch),{'accepted':True})
+        opener.open.assert_called_once()
+        fetch.assert_called_once()
+
+    def test_process_exit_during_transport_preserves_status_interval(self):
+        worker=multiprocessing.get_context('spawn').Process(target=crashing_status_reader,args=(self.path,))
+        worker.start();worker.join(5)
+        if worker.is_alive():worker.terminate();worker.join()
+        self.assertEqual(worker.exitcode,73)
+        with self.assertRaises(ApiError):self.run_query(session='replacement-session')
+        self.assertEqual(self.calls,0)
+        self.now+=30
+        self.assertEqual(self.run_query(session='replacement-session')['data']['value'],1)
+
+    def test_keyboard_interrupt_and_system_exit_preserve_status_reservation(self):
+        from unittest.mock import Mock
+        for error in (KeyboardInterrupt,SystemExit):
+            with self.subTest(error=error.__name__):
+                policy=QueryPolicy(self.path.with_name(error.__name__+'.sqlite3'),clock=lambda:1000.0)
+                with self.assertRaises(error):policy.run('account','session','status','car',Mock(side_effect=error))
+                fetch=Mock(return_value={})
+                with self.assertRaises(ApiError):policy.run('account','new-session','status','other-car',fetch)
+                fetch.assert_not_called()
+
+    def checkpoint_policy(self,hook):
+        import sqlite3
+        class CheckpointConnection(sqlite3.Connection):
+            def commit(connection):
+                super().commit()
+                if not getattr(connection,'checkpointed',False):
+                    connection.checkpointed=True;hook()
+        def connect():
+            db=sqlite3.connect(self.path,timeout=25,isolation_level=None,factory=CheckpointConnection)
+            self.path.chmod(0o600)
+            return db
+        return connect
+
+    def test_gateway_cooldown_from_legacy_caller_between_transactions_is_honored(self):
+        import sqlite3
+        from unittest.mock import Mock,patch
+        def legacy():
+            with sqlite3.connect(self.path) as db:db.execute("INSERT OR REPLACE INTO cooldown VALUES('gateway',1120)")
+        fetch=Mock(return_value={})
+        with patch.object(self.policy,'_connect',side_effect=self.checkpoint_policy(legacy)):
+            with self.assertRaises(ApiError) as caught:self.policy.run('account','session','status','car',fetch)
+        self.assertEqual(caught.exception.retry_after,120)
+        self.assertEqual(self.policy.next_query_at,1120)
+        fetch.assert_not_called()
+
+    def test_newer_legacy_status_reservation_is_not_overwritten_or_replayed(self):
+        import sqlite3
+        from unittest.mock import Mock,patch
+        from zeekr_control.query_policy import digest
+        def legacy():
+            self.now=1010.0
+            with sqlite3.connect(self.path) as db:
+                db.execute('UPDATE status_attempts SET attempted=1010')
+                db.execute('UPDATE cooldown SET until=1040 WHERE key=?',('status:'+digest('account'),))
+        fetch=Mock(return_value={})
+        with patch.object(self.policy,'_connect',side_effect=self.checkpoint_policy(legacy)):
+            with self.assertRaises(ApiError) as caught:self.policy.run('account','session','status','car',fetch)
+        self.assertEqual(caught.exception.retry_after,30)
+        fetch.assert_not_called()
+        with sqlite3.connect(self.path) as db:self.assertEqual(db.execute('SELECT attempted FROM status_attempts').fetchone()[0],1010)
+
+    def test_fetch_delivery_busy_is_not_mistaken_for_query_lock_contention(self):
+        from unittest.mock import Mock
+        from zeekr_control.delivery_state import DeliveryBusy
+        fetch=Mock(side_effect=DeliveryBusy('synthetic callback failure'))
+        with self.assertRaises(DeliveryBusy):self.policy.run('account','session','status','car',fetch)
+        fetch.assert_called_once()
+
+    def test_query_file_lock_timeout_never_enters_transport(self):
+        from unittest.mock import Mock,patch
+        from zeekr_control.delivery_state import DeliveryBusy
+        fetch=Mock(return_value={})
+        with patch('zeekr_control.query_policy.delivery_lock',side_effect=DeliveryBusy()),\
+             patch('zeekr_control.query_policy.time.monotonic',side_effect=[0.0,25.0]):
+            with self.assertRaises(ApiError):self.policy.run('account','session','status','car',fetch)
+        fetch.assert_not_called()
+
+    def test_hardlinked_cache_cannot_mutate_another_database_or_reach_transport(self):
+        import os
+        import sqlite3
+        target=self.path.parent/'unrelated.sqlite3'
+        with sqlite3.connect(target) as db:
+            db.execute('CREATE TABLE cache(key TEXT PRIMARY KEY,fetched REAL,expires REAL,data TEXT)')
+            db.execute("INSERT INTO cache VALUES('unrelated',0,0,'preserve')")
+        target.chmod(0o600)
+        os.link(target,self.path)
+        before=target.read_bytes()
+        with self.assertRaises(ApiError):self.run_query()
+        self.assertEqual(self.calls,0)
+        self.assertEqual(target.read_bytes(),before)
+
+    def test_uncacheable_response_keeps_status_attempt_and_is_retryable(self):
+        import sqlite3
+        from zeekr_control.errors import RequestDeferred
+        def malformed():
+            self.calls+=1
+            return {'reading':float('nan')}
+        with self.assertRaises(ApiError) as caught:
+            self.policy.run('account','session','status','car',malformed)
+        with self.assertRaises(RequestDeferred):
+            self.run_query(session='new-session')
+        self.assertTrue(caught.exception.retryable)
+        self.assertEqual(self.calls,1)
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM cache').fetchone()[0],0)
+            self.assertEqual(db.execute('SELECT attempted FROM status_attempts').fetchone()[0],self.now)
+        self.now+=30
+        self.assertEqual(self.run_query()['data']['value'],2)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name) / 'queries.sqlite3'

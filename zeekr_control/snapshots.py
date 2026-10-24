@@ -3,17 +3,48 @@ from contextlib import closing
 import hashlib
 from dataclasses import dataclass
 import json
-import os
+import math
 from pathlib import Path
 import sqlite3
 from .snapshot_archive import SnapshotArchive, validate_timestamp
+from .archive_reader import _private, MAX_PAYLOAD_BYTES
+from .sqlite_files import prepare_database_file
+
+
+class SnapshotUnavailable(OSError):
+    """The local latest-state projection cannot safely be decoded."""
+
+
+def _validate_times(*values):
+    try:
+        for value in values:validate_timestamp(value)
+    except ValueError:
+        raise SnapshotUnavailable('本地车辆快照时间无效。') from None
+
+
+def _validate_metadata(state_time,fetched_at,observed_at,revision):
+    _validate_times(fetched_at,observed_at)
+    if state_time is not None:_validate_times(state_time)
+    if type(revision) is not int or not 1<=revision<=9223372036854775807:
+        raise SnapshotUnavailable('本地车辆快照版本无效。')
+
+
+def _reject_constant(value):
+    raise ValueError('non-finite snapshot value')
+
+
+def _finite_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError('non-finite snapshot value')
+    return number
 
 
 def _time(raw):
     value = raw.get('updateTime') if isinstance(raw, dict) else None
     if type(value) in (int, float) and 0 <= value <= 9999999999999:
         return int(value)
-    if isinstance(value, str) and value.isdigit() and len(value) <= 13:
+    if isinstance(value, str) and len(value) <= 13 and value.isdecimal():
         return int(value)
     return None
 
@@ -24,13 +55,18 @@ class SnapshotStore:
 
     def connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        os.close(fd)
+        _private(self.path.parent,directory=True)
+        prepare_database_file(self.path)
+        _private(self.path)
         db = sqlite3.connect(self.path, timeout=5)
         db.execute('''CREATE TABLE IF NOT EXISTS snapshots (
             scope_key TEXT NOT NULL, vehicle_key TEXT NOT NULL, state_time INTEGER,
             fetched_at INTEGER NOT NULL, observed_at INTEGER NOT NULL,
             revision INTEGER NOT NULL, digest TEXT NOT NULL, raw TEXT NOT NULL,
+            PRIMARY KEY(scope_key, vehicle_key))''')
+        db.execute('''CREATE TABLE IF NOT EXISTS snapshot_publications (
+            scope_key TEXT NOT NULL, vehicle_key TEXT NOT NULL,
+            fetched_at INTEGER NOT NULL, observed_at INTEGER NOT NULL,
             PRIMARY KEY(scope_key, vehicle_key))''')
         db.commit()
         return db
@@ -69,18 +105,37 @@ class SnapshotStore:
             scope_key, vehicle_key, encoded, state_time, observed_at, fetched_at, source)
         with closing(self.connect()) as db, db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT state_time,revision,digest FROM snapshots WHERE scope_key=? AND vehicle_key=?',
-                             (scope_key, vehicle_key)).fetchone()
+            row = db.execute('SELECT state_time,revision,digest,fetched_at,observed_at,raw=? '
+                             'FROM snapshots WHERE scope_key=? AND vehicle_key=?',
+                             (encoded,scope_key, vehicle_key)).fetchone()
             if row:
-                old_time, revision, old_digest = row
+                old_time, revision, old_digest, old_fetched, old_observed, payload_matches = row
+                _validate_metadata(old_time,old_fetched,old_observed,revision)
                 if old_time is not None and (state_time is None or state_time < old_time):
                     return {'changed': False, 'revision': revision,
                             'change': 'time_unknown' if state_time is None else 'regression'}
-                if state_time == old_time and digest == old_digest:
+                if state_time == old_time:
+                    watermark = db.execute('SELECT fetched_at,observed_at FROM snapshot_publications '
+                                           'WHERE scope_key=? AND vehicle_key=?',(scope_key,vehicle_key)).fetchone()
+                    if watermark is not None:_validate_times(*watermark)
+                    if (fetched_at,observed_at) < (watermark or (old_fetched,old_observed)):
+                        kind = 'superseded'
+                        if digest == old_digest:
+                            kind = 'repeat' if state_time is not None else 'time_unknown'
+                        return {'changed':False,'revision':revision,
+                                'change':kind}
+            # Keep read ordering independent of content revisions: a newer
+            # identical read also defeats a delayed, older conflicting payload.
+            db.execute('INSERT OR REPLACE INTO snapshot_publications VALUES (?,?,?,?)',
+                       (scope_key,vehicle_key,fetched_at,observed_at))
+            if row:
+                if state_time == old_time and digest == old_digest and payload_matches:
                     return {'changed': False, 'revision': revision,
                             'change': 'repeat' if state_time is not None else 'time_unknown'}
                 if state_time is not None and state_time == old_time:
                     change = 'revision'
+                if revision==9223372036854775807:
+                    raise SnapshotUnavailable('本地车辆快照版本已达上限。')
                 revision += 1
             else:
                 revision = 1
@@ -91,24 +146,38 @@ class SnapshotStore:
 
     def read(self, scope_key, vehicle_key, known_revision=None):
         """Read a changed snapshot without loading an already-rendered payload."""
-        if not self.path.exists() or not scope_key or not vehicle_key:
+        if not scope_key or not vehicle_key:
             return None
-        if self.path.is_symlink():
-            raise OSError('快照文件不可使用符号链接。')
+        if not self.path.exists() and not self.path.is_symlink():
+            return None
+        _private(self.path.parent,directory=True)
+        _private(self.path)
         with closing(sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as db:
             try:
-                row = db.execute('''SELECT state_time,fetched_at,observed_at,revision,raw
-                                    FROM snapshots WHERE scope_key=? AND vehicle_key=?
-                                    AND (? IS NULL OR revision!=?)''',
-                                 (scope_key, vehicle_key, known_revision, known_revision)).fetchone()
+                row = db.execute('''SELECT state_time,fetched_at,observed_at,revision,
+                                    CASE WHEN (? IS NULL OR revision!=?)
+                                         AND length(CAST(raw AS BLOB))<=? THEN raw END,digest
+                                    FROM snapshots WHERE scope_key=? AND vehicle_key=?''',
+                                 (known_revision,known_revision,MAX_PAYLOAD_BYTES,scope_key, vehicle_key)).fetchone()
             except sqlite3.OperationalError:
                 if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='snapshots'").fetchone():
                     return None
                 raise
         if not row:
             return None
+        _validate_metadata(*row[:4])
+        if known_revision==row[3]:return None
+        encoded = row[4]
+        if not isinstance(encoded,str) or hashlib.sha256(encoded.encode()).hexdigest() != row[5]:
+            raise SnapshotUnavailable('本地车辆快照内容无法校验。')
+        try:
+            raw = json.loads(encoded,parse_constant=_reject_constant,parse_float=_finite_float)
+            if not isinstance(raw,dict):
+                raise ValueError('snapshot must be an object')
+        except (TypeError,ValueError,RecursionError):
+            raise SnapshotUnavailable('本地车辆快照内容无法解析。') from None
         return {'state_time': row[0], 'fetched_at': row[1], 'observed_at': row[2],
-                'revision': row[3], 'raw': json.loads(row[4])}
+                'revision': row[3], 'raw': raw}
 
 
 def session_scope(session):

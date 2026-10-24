@@ -91,6 +91,7 @@ class ChargeComparison:
                     if row is None:
                         quality['excluded']+=1;broken=True;continue
                     continuous=(previous is not None and not broken and 0<stamp-previous['time']<=180000
+                        and raw.get('sampling_gap_before') is not True
                         and 0<=observed-previous['observed_at']<=180000 and row['soc']>=previous['soc']
                         and row['mode']==previous['mode'] and decoder==previous_decoder)
                     if not continuous:segment+=1

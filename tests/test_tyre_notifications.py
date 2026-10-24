@@ -48,6 +48,136 @@ class TyreTransitionTests(unittest.TestCase):
         s,e=self.step(s,40,208);self.assertEqual(e[0]['level'],2)
 
 class TyrePersistenceTests(unittest.TestCase):
+    def test_retry_interval_starts_after_slow_failed_send_not_batch_start(self):
+        from unittest.mock import patch
+        from zeekr_control.notifications import DeliveryError
+        self.observe(0);self.observe(20)
+        clock=[100.0];calls=[]
+        def fail(*arguments):
+            calls.append(True)
+            clock[0]+=20
+            raise DeliveryError('synthetic transient failure')
+        with patch('time.monotonic',side_effect=lambda:clock[0]):
+            self.engine.deliver('owner','vehicle',BASE+20000,fail,None)
+            self.engine.deliver('owner','vehicle',BASE+80000,fail,None)
+            self.assertEqual(calls,[True])
+            with self.store.connect() as db:
+                self.assertEqual(db.execute('SELECT next_bark FROM tyre_outbox').fetchone()[0],BASE+100000)
+            self.engine.deliver('owner','vehicle',BASE+100000,fail,None)
+            self.assertEqual(len(calls),2)
+            with self.store.connect() as db:
+                self.assertEqual(db.execute('SELECT attempts_bark,next_bark FROM tyre_outbox').fetchone(),(2,BASE+240000))
+            for seconds in (240,500,1000):
+                self.engine.deliver('owner','vehicle',BASE+seconds*1000,fail,None)
+            self.engine.deliver('owner','vehicle',BASE+3000000,fail,None)
+        self.assertEqual(len(calls),5)
+        self.assertEqual(self.engine.query('owner','vehicle')['history'][0]['bark'],'failed')
+
+    def test_second_channel_uses_elapsed_time_when_its_cooldown_becomes_due(self):
+        from unittest.mock import patch
+        self.observe(0);self.observe(20)
+        with self.store.connect(write=True) as db,db:
+            db.execute('UPDATE tyre_outbox SET next_wecom=?',(BASE+30000,))
+        clock=[100.0]
+        def slow_bark(*arguments):
+            self.bark.append(arguments)
+            clock[0]+=20
+        with patch('time.monotonic',side_effect=lambda:clock[0]):
+            self.engine.deliver('owner','vehicle',BASE+20000,slow_bark,self.wecom.append)
+        self.assertEqual((len(self.bark),len(self.wecom)),(1,1))
+
+    def test_second_channel_does_not_bypass_remaining_cooldown(self):
+        from unittest.mock import patch
+        self.observe(0);self.observe(20)
+        with self.store.connect(write=True) as db,db:
+            db.execute('UPDATE tyre_outbox SET next_wecom=?',(BASE+50000,))
+        clock=[100.0]
+        def slow_bark(*arguments):clock[0]+=20
+        with patch('time.monotonic',side_effect=lambda:clock[0]):
+            self.engine.deliver('owner','vehicle',BASE+20000,slow_bark,self.wecom.append)
+            self.engine.deliver('owner','vehicle',BASE+49000,None,self.wecom.append)
+            self.assertEqual(self.wecom,[])
+            self.engine.deliver('owner','vehicle',BASE+50000,None,self.wecom.append)
+        self.assertEqual(len(self.wecom),1)
+
+    def test_new_recovery_during_preparation_invalidates_loaded_grouped_payload(self):
+        self.observe(0,right=200);self.observe(20,right=200)
+        identity=self.engine.query('owner','vehicle')['history'][0]['id']
+        changed=[]
+        def guard():
+            with self.store.connect() as db:
+                status=db.execute('SELECT bark FROM tyre_outbox WHERE id=?',(identity,)).fetchone()[0]
+            if status=='preparing' and not changed:
+                changed.append(True)
+                for seconds in (40,100,160):self.observe(seconds,left=260,right=200)
+        self.engine.deliver('owner','vehicle',BASE+20000,lambda *args:self.bark.append(args),None,guard)
+        self.assertEqual(self.bark,[])
+        self.engine.deliver('owner','vehicle',BASE+160000,**self.send())
+        self.assertEqual(len(self.bark),2)
+        self.assertIn('右前',self.bark[0][1]);self.assertNotIn('左前',self.bark[0][1])
+        self.assertIn('恢复',self.bark[1][0])
+
+    def test_config_change_after_preparation_cancels_unsent_channels(self):
+        self.observe(0);self.observe(20)
+        changed=[]
+        def guard():
+            with self.store.connect() as db:status=db.execute('SELECT bark FROM tyre_outbox').fetchone()[0]
+            if status=='preparing' and not changed:
+                changed.append(True)
+                self.engine.update('owner','vehicle',dict(action='save',revision=0,enabled=False,load='light'))
+        self.engine.deliver('owner','vehicle',BASE+20000,lambda *args:self.bark.append(args),None,guard)
+        self.engine.deliver('owner','vehicle',BASE+40000,**self.send())
+        self.assertEqual((self.bark,self.wecom),([],[]))
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT bark,wecom,attempts_bark,attempts_wecom FROM tyre_outbox').fetchone(),
+                             ('cancelled','cancelled',0,0))
+
+    def test_preparation_interruption_recovers_without_ambiguous_send(self):
+        self.observe(0);self.observe(20)
+        def guard():
+            with self.store.connect() as db:status=db.execute('SELECT bark FROM tyre_outbox').fetchone()[0]
+            if status=='preparing':raise KeyboardInterrupt()
+        with self.assertRaises(KeyboardInterrupt):
+            self.engine.deliver('owner','vehicle',BASE+20000,lambda *args:self.bark.append(args),None,guard)
+        self.assertEqual(self.bark,[])
+        self.engine=TyreNotifications(self.store)
+        self.engine.deliver('owner','vehicle',BASE+40000,**self.send())
+        self.assertEqual((len(self.bark),len(self.wecom)),(1,1))
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT bark,attempts_bark FROM tyre_outbox').fetchone(),('sent',1))
+
+    def test_guard_cancellation_after_claim_remains_provably_unsent_and_resumes(self):
+        from zeekr_control.delivery_state import DeliveryCancelled
+        self.observe(0);self.observe(20)
+        def guard():
+            with self.store.connect() as db:
+                status=db.execute('SELECT bark FROM tyre_outbox').fetchone()[0]
+            if status in ('sending','preparing'):raise DeliveryCancelled()
+        with self.assertRaises(DeliveryCancelled):
+            self.engine.deliver('owner','vehicle',BASE+20000,lambda *args:self.bark.append(args),None,guard)
+        self.assertEqual(self.bark,[])
+        with self.store.connect() as db:
+            self.assertEqual(db.execute('SELECT bark,attempts_bark FROM tyre_outbox').fetchone(),('pending',0))
+        self.engine=TyreNotifications(self.store)
+        self.engine.deliver('owner','vehicle',BASE+40000,**self.send())
+        self.assertEqual((len(self.bark),len(self.wecom)),(1,1))
+
+    def test_sampling_epoch_resets_recovery_without_losing_active_level(self):
+        self.observe(0,sampling_epoch='first')
+        self.observe(20,sampling_epoch='first')
+        self.assertEqual(len(self.engine.query('owner','vehicle')['history']),1)
+        self.observe(40,sampling_epoch='outage')
+        self.observe(60,sampling_epoch='outage')
+        self.assertEqual(len(self.engine.query('owner','vehicle')['history']),1)
+        self.observe(80,left=260,sampling_epoch='outage')
+        self.observe(140,left=260,sampling_epoch='second-outage')
+        self.observe(200,left=260,sampling_epoch='second-outage')
+        self.assertEqual(len(self.engine.query('owner','vehicle')['history']),1)
+        self.observe(260,left=260,sampling_epoch='second-outage')
+        history=self.engine.query('owner','vehicle')['history']
+        self.assertEqual(len(history),2)
+        self.assertEqual(history[0]['events'][0]['level'],0)
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.store=PersonalStore(Path(self.temp.name)/'private'/'personal.sqlite3')
@@ -83,13 +213,15 @@ class TyrePersistenceTests(unittest.TestCase):
         self.assertEqual((history[0]['bark'],history[0]['wecom']),('uncertain','sent'))
 
     def test_clear_failure_retries_after_delay_and_has_attempt_limit(self):
+        from unittest.mock import patch
         calls=[]
         def transient(*args):
             calls.append(args);raise DeliveryError('synthetic')
-        self.observe(0);self.observe(20,bark=transient)
-        self.engine.deliver('owner','vehicle',BASE+40000,transient,None)
-        self.assertEqual(len(calls),1)
-        for seconds in (80,200,440,920):self.engine.deliver('owner','vehicle',BASE+seconds*1000,transient,None)
+        with patch('time.monotonic',return_value=100.0):
+            self.observe(0);self.observe(20,bark=transient)
+            self.engine.deliver('owner','vehicle',BASE+40000,transient,None)
+            self.assertEqual(len(calls),1)
+            for seconds in (80,200,440,920):self.engine.deliver('owner','vehicle',BASE+seconds*1000,transient,None)
         self.assertEqual(len(calls),5)
         self.assertEqual(self.engine.query('owner','vehicle')['history'][0]['bark'],'failed')
 

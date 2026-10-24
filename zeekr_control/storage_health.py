@@ -9,7 +9,9 @@ import sys
 import time
 
 from .notifications import DeliveryError
+from .errors import ApiError
 from .storage import load, save
+from .delivery_state import delivery_clock
 
 GIB = 1024**3
 INTERVAL = 300
@@ -104,9 +106,16 @@ class StorageHealth:
 
     def _state(self):
         value = load(self.path).get('state')
-        return json.loads(value) if value else {}
+        state=json.loads(value) if value else {}
+        if not isinstance(state,dict):raise ValueError('存储巡检状态格式错误。')
+        return state
 
     def _save(self, state):
+        # Old readers know one deadline: keep it conservative for rollback.
+        deadlines=[state[key.replace('_state','_retry_at')]
+                   for key in ('notification_state','alert_notification_state')
+                   if state.get(key) in ('pending','failed') and key.replace('_state','_retry_at') in state]
+        if deadlines:state['retry_at']=max(deadlines)
         save(self.path, {'state': json.dumps(state, ensure_ascii=False, allow_nan=False)})
 
     def measure(self):
@@ -123,12 +132,25 @@ class StorageHealth:
                 'scan_complete': complete and archive_ok and trash_ok}
 
     def cached(self):
-        state = self._state()
-        result = dict(state.get('sample') or {'status': 'not_checked', 'checked_at': None})
+        try:
+            state = self._state()
+            sample=state.get('sample')
+            if sample is None:sample={'status':'not_checked','checked_at':None}
+            if not isinstance(sample,dict):raise ValueError('存储巡检样本格式错误。')
+            result=dict(sample)
+        except (ApiError,ValueError,TypeError):
+            # Read-only fallback: never erase uncertain delivery history or
+            # manufacture a fresh sample while displaying current disk usage.
+            return {'status':'unknown','checked_at':None,'monitor_fresh':False,
+                    'notification_state':'unavailable','alert_notification_state':'unavailable',
+                    'last_notification_at':None,'error_code':'storage_state_unavailable'}
         result['notification_state'] = state.get('notification_state', 'none')
         result['alert_notification_state'] = state.get('alert_notification_state', 'none')
         result['last_notification_at'] = state.get('attempt_at')
-        result['monitor_fresh'] = bool(result.get('checked_at') and time.time()-result['checked_at'] <= 900)
+        checked=result.get('checked_at')
+        valid_time=type(checked) in (int,float) and 0<checked<=32503680000
+        if not valid_time:result['checked_at']=None
+        result['monitor_fresh'] = valid_time and 0<=time.time()-checked<=900
         return result
 
     def _message(self, sample):
@@ -160,6 +182,8 @@ class StorageHealth:
 
     def tick(self, now=None, can_send=None):
         now = time.time() if now is None else now
+        elapsed_clock=delivery_clock(int(now*1000))
+        current_time=lambda:elapsed_clock()/1000
         if now < self.next_check: return
         self.next_check = now+INTERVAL
         state = self._state()
@@ -196,9 +220,11 @@ class StorageHealth:
         prior = state.get('notification_level', 'healthy')
         changed = level != prior
         reminder_due = level != 'healthy' and now-state.get('attempt_at', 0) >= REMINDER
-        retry_due = now >= state.get('retry_at', now+3600)
-        detail_failed = state.get('notification_state') in ('failed', 'pending') and level == prior and retry_due
-        alert_failed = state.get('alert_notification_state') in ('failed', 'pending') and level == prior and retry_due
+        legacy_retry=state.get('retry_at',now+3600)
+        detail_failed = (state.get('notification_state') in ('failed', 'pending') and level == prior
+                         and now>=state.get('notification_retry_at',legacy_retry))
+        alert_failed = (state.get('alert_notification_state') in ('failed', 'pending') and level == prior
+                        and now>=state.get('alert_notification_retry_at',legacy_retry))
         due = changed or reminder_due or detail_failed or alert_failed
         if not due or self.sender is None and self.alert_sender is None:
             self._save(state)
@@ -206,36 +232,35 @@ class StorageHealth:
         send_detail = self.sender is not None and (changed or reminder_due or detail_failed)
         send_alert = self.alert_sender is not None and (changed or reminder_due or alert_failed)
         state.update(notification_level=level, attempt_at=now)
-        if send_detail: state['notification_state'] = 'sending'
-        if send_alert: state['alert_notification_state'] = 'sending'
-        self._save(state)  # Durable intent before network; errors never silently hide disk trouble.
-        if send_alert:
-            if can_send is not None and not can_send():
-                state['alert_notification_state'] = 'pending'
-                if send_detail: state['notification_state'] = 'pending'
-                state['retry_at'] = now
-                self._save(state)
-                return
-            try:
-                self.alert_sender(*self._alert(sample))
-                state['alert_notification_state'] = 'sent'
-            except DeliveryError as exc:
-                state['alert_notification_state'] = 'uncertain' if exc.ambiguous else 'failed'
-                state['retry_at'] = now+(3600 if exc.permanent else 900)
-            except Exception:
-                state['alert_notification_state'] = 'uncertain'
-        if send_detail:
-            if can_send is not None and not can_send():
-                state['notification_state'] = 'pending'
-                state['retry_at'] = now
-                self._save(state)
-                return
-            try:
-                self.sender(self._message(sample))
-                state['notification_state'] = 'sent'
-            except DeliveryError as exc:
-                state['notification_state'] = 'uncertain' if exc.ambiguous else 'failed'
-                state['retry_at'] = now+(3600 if exc.permanent else 900)
-            except Exception:
-                state['notification_state'] = 'uncertain'
+        if send_detail:state.update(notification_state='pending',notification_retry_at=now)
+        if send_alert:state.update(alert_notification_state='pending',alert_notification_retry_at=now)
         self._save(state)
+        if send_alert:
+            if not self._deliver_channel(state,'alert_notification_state',lambda:self._alert(sample),
+                                         self.alert_sender,current_time,can_send):return
+        if send_detail:
+            self._deliver_channel(state,'notification_state',lambda:(self._message(sample),),
+                                  self.sender,current_time,can_send)
+
+    def _deliver_channel(self,state,key,prepare,sender,current_time,can_send):
+        # Preparation is known unsent. Each channel gets its own durable intent
+        # and acknowledgement before the next channel can start.
+        try:arguments=prepare()
+        except Exception:
+            state[key]='failed'
+            state[key.replace('_state','_retry_at')]=current_time()+900
+            self._save(state)
+            return True
+        if can_send is not None and not can_send():return False
+        state[key]='sending'
+        self._save(state)
+        try:
+            sender(*arguments)
+            state[key]='sent'
+        except DeliveryError as exc:
+            state[key]='uncertain' if exc.ambiguous else 'failed'
+            state[key.replace('_state','_retry_at')]=current_time()+(3600 if exc.permanent else 900)
+        except Exception:
+            state[key]='uncertain'
+        self._save(state)
+        return True

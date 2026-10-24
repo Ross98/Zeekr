@@ -128,8 +128,8 @@ class ChargeLedger:
                     source_event_id=source_event_id,source_event_removed=source_event_removed,
                     estimated_cents=estimated,estimate_basis=basis if estimated is not None else None)
 
-    def batch_change(self,owner,vehicle,action,identities,revision,guard=None):
-        return self.store.change_many(owner,vehicle,'charges',action,identities,revision,guard=guard)
+    def batch_change(self,owner,vehicle,action,identities,revision,guard=None,*,connection=None):
+        return self.store.change_many(owner,vehicle,'charges',action,identities,revision,guard=guard,connection=connection)
 
     @staticmethod
     def totals(entries):

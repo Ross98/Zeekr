@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .summary import updated_at
 from .trip_visibility import visible_clause
-from .usage_events import project
+from .usage_events import project, MAX_SUMMARY_BYTES
 
 
 def _number(value, low, high):
@@ -16,21 +16,24 @@ def _number(value, low, high):
 
 def read_attainment(database_path, vehicle, profile):
     path = Path(database_path)
-    if not vehicle or not path.exists():
+    if not vehicle:
         return {'status': 'no_trip'}
     try:
+        if not path.exists():return {'status': 'no_trip'}
         db = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=1)
         try:
             if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_events'").fetchone():
                 return {'status': 'no_trip'}
-            row = db.execute("SELECT summary FROM monitor_events WHERE vehicle=? AND kind='trip_end' AND "
-                             +visible_clause(db)+" ORDER BY created DESC,rowid DESC LIMIT 1", (vehicle,)).fetchone()
+            row = db.execute("SELECT CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END "
+                             "FROM monitor_events WHERE vehicle=? AND kind='trip_end' AND "
+                             +visible_clause(db)+" ORDER BY created DESC,rowid DESC LIMIT 1",
+                             (MAX_SUMMARY_BYTES,vehicle)).fetchone()
         finally:
             db.close()
         if not row:
             return {'status': 'no_trip'}
         trip = json.loads(row[0])
-    except (sqlite3.Error, ValueError, OSError, TypeError):
+    except (sqlite3.Error, ValueError, OSError, TypeError, RecursionError):
         return {'status': 'unavailable'}
     if not isinstance(trip, dict):
         return {'status': 'invalid'}
@@ -60,6 +63,8 @@ def read_attainment(database_path, vehicle, profile):
     if not (_number(rated, 0, 3000) and rated > 0 and standard in ('CLTC', 'WLTP', 'NEDC', 'EPA')):
         return dict(result, status='no_rating')
     reference = rated * used / 100
+    if not math.isfinite(reference) or reference<=0:
+        return result
     ratio = distance / reference * 100
     if not math.isfinite(ratio):
         return result

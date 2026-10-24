@@ -235,7 +235,11 @@ class ChargingPlaces:
         if not 0<=time.time()-issued<=300:raise ValueError('地点预览已过期，请重新预览。')
         body,affected,digest=self._proposal(owner,vehicle,data)
         if not hmac.compare_digest(token,self._token(digest,issued)):raise ValueError('地点或记录已变化，请重新预览。')
-        return self._write(owner,vehicle,'save',body['record_id'],body,data['revision'],guard,commit_lock)
+        def write_guard():
+            if guard:guard()
+            if not 0<=time.time()-issued<=300:
+                raise ValueError('地点预览已过期，请重新预览。')
+        return self._write(owner,vehicle,'save',body['record_id'],body,data['revision'],write_guard,commit_lock)
 
     def candidates(self,owner,vehicle,identity,provider):
         detail=self.detail(owner,vehicle,identity);location=detail['location']

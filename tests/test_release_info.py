@@ -1,10 +1,43 @@
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 
 
 class ReleaseInfoTests(unittest.TestCase):
+    def test_invalid_manifest_storage_is_bounded_and_never_followed(self):
+        from zeekr_control.release_info import read_release
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);path=root/'release-manifest.json'
+            target=root/'target';target.write_text('PRIVATE')
+            for kind in ('oversized','directory','symlink','invalid-utf8'):
+                with self.subTest(kind=kind):
+                    if kind=='directory':path.mkdir()
+                    elif kind=='symlink':path.symlink_to(target)
+                    else:path.write_bytes(b' '*65537 if kind=='oversized' else b'\xff')
+                    self.assertEqual(read_release(root),dict(status='invalid',base_version=None,features=[]))
+                    if kind=='directory':path.rmdir()
+                    else:path.unlink()
+            self.assertEqual(target.read_text(),'PRIVATE')
+
+    def test_deep_manifest_is_invalid_instead_of_crashing_state(self):
+        from zeekr_control.release_info import read_release
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            (root/'release-manifest.json').write_text('['*10000+'0'+']'*10000)
+            self.assertEqual(read_release(root),dict(status='invalid',base_version=None,features=[]))
+
+    @unittest.skipUnless(hasattr(os,'mkfifo'),'requires FIFO support')
+    def test_manifest_pipe_is_rejected_without_waiting_for_writer(self):
+        import subprocess,sys
+        with tempfile.TemporaryDirectory() as temp:
+            os.mkfifo(Path(temp)/'release-manifest.json',0o600)
+            code=('import sys;from zeekr_control.release_info import read_release;'
+                  'assert read_release(sys.argv[1])["status"]=="invalid"')
+            result=subprocess.run([sys.executable,'-c',code,temp],capture_output=True,timeout=2)
+            self.assertEqual(result.returncode,0,result.stderr)
+
     def test_notification_features_verify_their_running_sources(self):
         from zeekr_control.release_info import read_release, write_manifest, FEATURES
         with tempfile.TemporaryDirectory() as temp:

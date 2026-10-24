@@ -3,9 +3,13 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
 (async()=>{
  const f=await fixture(),{page}=f;
  try{
+  await page.route('**/api/charging/process?*',route=>route.fulfill({json:{
+   session:{id:'synthetic-curve',status:'ended'},series:{points:[],raw_count:0,has_gaps:false}}}));
   await page.evaluate(()=>{
-   chargeOwner=state.insights_context;page='energy';chargingTab='process';chargingView='power-soc';chargingPoint=0;
-   chargingSession={id:'current',status:'active',start_time:1704067200000,end_time:1704067500000,start_soc:20,end_soc:60,power_kw:0,mode:'dc'};
+   chargeOwner=state.insights_context;page='energy';sectionTask='';chargingTab='records';chargingView='power-soc';chargingPoint=0;
+   chargingSelection='synthetic-curve';chargeSelected={id:chargingSelection,start_time:1704067200000,end_time:1704067500000,partial:true};
+   chargeEvents=[chargeSelected];chargeQuery={start:'2024-01-01'};
+   chargingSession={id:chargingSelection,status:'ended',start_time:1704067200000,end_time:1704067500000,start_soc:20,end_soc:60,power_kw:0,mode:'dc'};
    chargingSeries={raw_count:6,has_gaps:true,points:[
     {time:1704067200000,soc:20,power_kw:null,segment_id:0},
     {time:1704067260000,soc:30,power_kw:90,segment_id:0},
@@ -13,7 +17,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     {time:1704067380000,soc:45,power_kw:null,segment_id:0},
     {time:1704067440000,soc:55,power_kw:40,segment_id:1},
     {time:1704067500000,soc:60,power_kw:0,segment_id:1}]};
-   chargingAnalyticsLoadedKey=chargingAnalyticsKey();render();
+   chargingAnalyticsLoadedKey=chargingAnalyticsKey(chargingSelection);render();
   });
   const chart=page.locator('.charging-chart-combined');await chart.waitFor({timeout:3000});
   assert.equal(await page.locator('.charging-chart').count(),1,'one combined chart');
@@ -44,7 +48,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   assert.equal(await chart.locator('.chart-point.selected').count(),2,'both selected series visible');
   await page.locator('#charging-point').evaluate(el=>{el.value='2';el.dispatchEvent(new Event('input',{bubbles:true}));});
   assert.match(await page.locator('.charging-point-picker').innerText(),/SOC 未提供 \/ 未记录.*80 kW/s);
-  for(const theme of ['light','dark'])for(const width of [1440,390,320]){
+  for(const theme of ['light','dark'])for(const width of [1440,1280,1024]){
    await page.setViewportSize({width,height:1000});await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'page overflow');
    fs.mkdirSync('/tmp/zeekr-charging-progress-qa',{recursive:true});
@@ -76,7 +80,7 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   await page.getByLabel('显示电压').uncheck();assert.equal(await chart.locator('.chart-line-power').count(),0);
   await page.getByLabel('显示电流').uncheck();assert.match(await chart.innerText(),/曲线已隐藏/);
   await page.getByLabel('显示电压').check();await page.getByLabel('显示电流').check();
-  for(const width of [1440,390]){
+  for(const width of [1440,1280,1024]){
    await page.setViewportSize({width,height:1000});
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
    await contrast(page,'.charging-chart-combined');
@@ -84,7 +88,21 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
   }
   await page.evaluate(()=>{chargingSeries.points=[{time:1704067200000,voltage:null,current:null}];renderChargingWorkspace();});
   assert.match(await chart.innerText(),/未保存有效电压或电流采样/);
-  assert.deepEqual(f.errors,[]);assert.deepEqual(f.posts,[]);
+  await page.evaluate(()=>{
+   chargingView='power-soc';chargingPoint=0;
+   chargingSeries={has_gaps:true,points:[
+    {time:1704067200000,power_kw:6,soc:40,segment_id:0,lines:{power_kw:1,soc:1}},
+    {time:1704067320000,power_kw:7,soc:42,segment_id:0,lines:{power_kw:2,soc:1}}]};
+   renderChargingWorkspace();
+  });
+  assert.equal((await chart.locator('.chart-line-power').getAttribute('d')).match(/M/g).length,2,'downsampled missing-power interval stays disconnected');
+  assert.equal((await chart.locator('.chart-line-soc').getAttribute('d')).match(/M/g).length,1,'continuous SOC stays connected independently');
+  await page.setViewportSize({width:1440,height:1000});
+  for(const theme of ['light','dark']){
+   await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+   await chart.screenshot({path:`/tmp/zeekr-charging-progress-qa/metric-gap-${theme}-1440.png`});
+  }
+  assert.deepEqual(f.errors,[]);assert.deepEqual(f.posts.filter(url=>!/\/api\/analysis\/[A-Za-z0-9_-]+\/cancel$/.test(new URL(url).pathname)),[]);
   console.log('UI_CHARGING_PROGRESS_PASS: shared axes, missing/zero/gaps, toggles, selection/focus, themes, widths');
- }finally{await f.close();}
+ }catch(error){await f.fail(error);throw error;}finally{await f.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

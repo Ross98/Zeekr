@@ -34,7 +34,7 @@
     return [...selected.values()].sort((a,b)=>b.end_time-a.end_time);
   }
   function create({getState,request,escape:esc,active,openRecord,openTool,attention,time}){
-    let owner='',key='',serial=0,report=null,ledger=null,errors=[],loading=false,loadedAt=0,left=false;
+    let owner='',key='',serial=0,report=null,ledger=null,errors=[],loading=false,loadedAt=null,left=false;
     const span=7;
     let filter='all',returnPoint=null;
     let pending=null,summaryCache=null,heights=new Map();
@@ -90,15 +90,16 @@
         if(result.status==='fulfilled'&&result.value.context===context){if(i===0)report=result.value;else ledger=result.value;}
         else{if(i===0)report=null;else ledger=null;errors.push(i===0?'行程汇总读取失败，请重试':'费用汇总读取失败，请重试');}
       });
-      loadedAt=Date.now();loading=false;paint();
+      loadedAt=performance.now();loading=false;paint();
     }
     function mount(){
       const context=scope(),stamp=identity();
-      if(stamp!==key){if(owner!==context)heights.clear();serial++;key=stamp;owner=context;report=ledger=null;pending=summaryCache=null;errors=[];loading=false;loadedAt=0;}
+      if(stamp!==key){if(owner!==context)heights.clear();serial++;key=stamp;owner=context;report=ledger=null;pending=summaryCache=null;errors=[];loading=false;loadedAt=null;}
       paint();
-      if(!loading&&(left||Date.now()-loadedAt>30000)){left=false;load();}
+      if(!loading&&(loadedAt===null||left||performance.now()-loadedAt>30000)){left=false;load();}
     }
     function suspend(){left=true;}
+    function refreshDate(){if(active()&&key&&!document.hidden&&identity()!==key)mount();}
     function remember(){returnPoint={scroll:scrollY,context:scope()};}
     function restore(){if(!returnPoint)return false;const point=returnPoint;returnPoint=null;if(point.context===scope())scrollTo(0,point.scroll);return true;}
     function backButton(){return returnPoint?.context===scope()?'<button class="button secondary overview-back" data-overview-back>← 返回总览原位置</button>':'';}
@@ -111,7 +112,7 @@
       else{const record=summary().events.find(e=>e.id===button.dataset.overviewRecord);if(record){remember();openRecord(record);}}
       return true;
     }
-    return {mount,suspend,handle,backButton,restore};
+    return {mount,suspend,refreshDate,handle,backButton,restore};
   }
   const exports={summarize,selectRecords,create};
   if(typeof module!=='undefined')module.exports=exports;else root.OverviewDashboard=exports;

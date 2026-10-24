@@ -125,9 +125,11 @@ let chargingVisible = {power_kw:true,soc:true,voltage:true,current:true};
 let chargingSession = null, chargingSeries = null, chargingStats = null, chargingAnalyticsError = '', chargingAnalyticsBusy = false, chargingAnalyticsRequest = 0, chargingPoint = 0;
 let chargingAnalyticsLoadedKey = '', chargingAnalyticsLoadingKey = '';
 let connectionFailures = 0, polling = false;
+let pollFinished=Promise.resolve(),pollFollowup=null;
+let stateChangeVersion=0,stateChangesPending=0;
 let refreshMessage = '';
 let samplingDraft = null;
-const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unchanged:'已读取云端，返回重复缓存，车辆时间与内容均未变化。',revision:'已读取云端，同一车辆时间的状态内容有修订。',regression:'已读取云端，返回的车辆时间倒退，保留最后有效状态。',new:'已获得新车辆数据。',time_unknown:'已读取云端，车辆更新时间未知。'};
+const refreshMessages = {cached:'已复用本机缓存，未请求云端。',unchanged:'已读取云端，返回重复缓存，车辆时间与内容均未变化。',revision:'已读取云端，同一车辆时间的状态内容有修订。',superseded:'较旧的读取结果晚到，已保留较新的状态。',regression:'已读取云端，返回的车辆时间倒退，保留最后有效状态。',new:'已获得新车辆数据。',time_unknown:'已读取云端，车辆更新时间未知。'};
 
 const vehiclePage = window.VehiclePage.create({getState:()=>state,request:api,redraw:render,escape:esc,age,active:()=>page==='car'});
 
@@ -201,16 +203,18 @@ function navigation() {
   for(const button of compact.querySelectorAll('[data-page]'))button.classList.toggle('active',page===button.dataset.page||button.dataset.page==='more'&&!['overview','car','tracks'].includes(page));
 }
 function focusPageHeading(){ navigationRestoreSerial++;navigationRestoring=false;$('#page-heading')?.focus({preventScroll:true}); }
+function samplingSeconds(value){return Number.isFinite(value)&&value>0?`${value} 秒`:'未知';}
 function samplingDescription(recording){
   const p=recording?.policy||{},normal=recording?.interval,wait=recording?.effective_interval;
-  const seconds=value=>Number.isFinite(value)&&value>0?`${value} 秒`:'未知';
-  return `正常采样间隔 ${seconds(normal)}；后台最近等待 ${seconds(wait)}。${p.parking_mode==='same_as_normal'?'停车保持相同间隔。':''}${p.backoff_enabled?'故障或限流时会延长等待。':''}更快查询不保证车辆上传更快。`;
+  return `正常采样间隔 ${samplingSeconds(normal)}；后台最近等待 ${samplingSeconds(wait)}。${p.parking_mode==='same_as_normal'?'停车保持相同间隔。':''}${p.backoff_enabled?'故障或限流时会延长等待。':''}更快查询不保证车辆上传更快。`;
 }
 window.samplingDescription=samplingDescription;
 
 async function api(path, data, timeout = 50000, analysisOptions = {}) {
+  const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+  const stateResponse=['/api/state','/api/refresh','/api/recording'].includes(path.split('?')[0]);
   const analysis=data===undefined&&/^\/api\/(?:insights\/(?:calendar|parking|report|quality|charging-review|charging-place)|charging\/(?:process|statistics|series)|timeline|trip-overview|place-history|year-review|place-corrections)(?:\?|$)/.test(path);
-  const identity=state?.insights_context,originPage=page,originTask=sectionTask,deadline=Date.now()+600000;
+  const identity=state?.insights_context,originPage=page,originTask=sectionTask,deadline=performance.now()+600000;
   const requestKey=state?.request_key||'';
   const options=data===undefined?{cache:'no-store',...(analysis?{headers:{Prefer:'respond-async'}}:{})}:{method:'POST',headers:{'Content-Type':'application/json','X-Request-Key':requestKey},body:JSON.stringify(data)};
   const lifetime=new AbortController();
@@ -219,31 +223,47 @@ async function api(path, data, timeout = 50000, analysisOptions = {}) {
   const check=()=>{
     if(identity!==state?.insights_context){cancelReason='车辆或账号已切换，请重新读取分析。';stop();}
     else if(page!==originPage||sectionTask!==originTask||analysisOptions.active?.()===false)stop();
-    else if(Date.now()>=deadline){cancelReason='分析等待超过 10 分钟，请稍后重试。';stop();}
+    else if(performance.now()>=deadline){cancelReason='分析等待超过 10 分钟，请稍后重试。';stop();}
   };
   const monitor=analysis?setInterval(check,100):null;
   if(analysis){analysisOptions.signal?.addEventListener('abort',stop,{once:true});window.addEventListener('pagehide',stop);if(analysisOptions.signal?.aborted)stop();}
+  const changing=data!==undefined;
+  if(changing){stateChangeVersion++;stateChangesPending++;}
   try{
     while(true){
       if(analysis){check();if(lifetime.signal.aborted)throw Error(cancelReason);}
       const controller=new AbortController(),abort=()=>controller.abort();
       lifetime.signal.addEventListener('abort',abort,{once:true});
-      const timer=setTimeout(abort,analysis?Math.min(timeout,deadline-Date.now()):timeout);
+      const timer=setTimeout(abort,analysis?Math.min(timeout,deadline-performance.now()):timeout);
       let response,value;
       try{
         response=await fetch(target,{...options,signal:controller.signal});
         if(response.status===401){location.replace('/');throw Error('请重新登录。');}
-        try{value=await response.json();}catch{throw Error('本机服务响应无效，请重试。');}
-        if(!response.ok)throw Error(value.error||'请求失败，请稍后重试。');
+        try{value=await response.json();}catch(error){
+          if(controller.signal.aborted||error.name==='AbortError')throw error;
+          throw Error('本机服务响应无效，请重试。');
+        }
+        if(!object(value))throw Error('本机服务响应无效，请重试。');
+        if(!response.ok)throw Error(typeof value.error==='string'&&value.error.trim()?value.error:'请求失败，请稍后重试。');
+        if(stateResponse&&(
+          typeof value.request_key!=='string'||!value.request_key||typeof value.authenticated!=='boolean'||
+          !object(value.recording)||!object(value.monitoring)||
+          !(value.recording.active===null||typeof value.recording.active==='boolean')||
+          !(value.recording.interval===null||Number.isInteger(value.recording.interval))||
+          typeof value.recording.status!=='string'||
+          !(value.model===null||object(value.model)&&
+            ['metrics','charging','lock','closure','metric_details'].every(key=>object(value.model[key]))&&
+            ['fields','doors','tyres'].every(key=>Array.isArray(value.model[key])))))
+          throw Error('本机服务响应无效，请重试。');
         if(analysis&&response.status===202){
           if(!/^\/api\/analysis\/[a-f0-9]{32}$/.test(value.analysis_job_url||''))throw Error('本机分析任务地址无效，请重新读取。');
           target=ticket=value.analysis_job_url;
         }
-      }catch(error){if(error.name==='AbortError')throw Error(lifetime.signal.aborted?cancelReason:'本机服务响应超时，请稍后重试。');throw error;}
+      }catch(error){if(controller.signal.aborted||error.name==='AbortError')throw Error(lifetime.signal.aborted?cancelReason:'本机服务响应超时，请稍后重试。');throw error;}
       finally{clearTimeout(timer);lifetime.signal.removeEventListener('abort',abort);}
       if(analysis){check();if(lifetime.signal.aborted)throw Error(cancelReason);}
       if(analysis&&response.status===202){
-        const wait=Math.min(5000,Math.max(50,Number(value.retry_after_ms)||1000),Math.max(0,deadline-Date.now()));
+        const wait=Math.min(5000,Math.max(50,Number(value.retry_after_ms)||1000),Math.max(0,deadline-performance.now()));
         await new Promise(resolve=>{
           const finish=()=>{clearTimeout(delay);lifetime.signal.removeEventListener('abort',finish);resolve();};
           const delay=setTimeout(finish,wait);lifetime.signal.addEventListener('abort',finish,{once:true});
@@ -254,6 +274,7 @@ async function api(path, data, timeout = 50000, analysisOptions = {}) {
       return value;
     }
   }finally{
+    if(changing){stateChangesPending--;stateChangeVersion++;}
     clearInterval(monitor);analysisOptions.signal?.removeEventListener('abort',stop);window.removeEventListener('pagehide',stop);
     if(ticket&&!completed){
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),2000);
@@ -434,12 +455,13 @@ function chartGeometry(points, key, options={}) {
   points.forEach((point,index)=>{
     if(!Number.isFinite(point.time)||!Number.isFinite(point[key])) { previous=null;return; }
     const px=x(point.time),py=y(point[key]);
-    const connected=previous&&previous.segment_id===point.segment_id;
+    const line=point.lines?.[key]??point.segment_id;
+    const connected=previous&&previous.segment_id===line;
     if(connected&&options.step) commands.push(`H${px.toFixed(1)} V${py.toFixed(1)}`);
     else commands.push(`${connected?'L':'M'}${px.toFixed(1)},${py.toFixed(1)}`);
     if(!connected&&lastDot) gaps.push({x:(lastDot.x+px)/2});
-    const dot={x:px,y:py,index,time:point.time,segment_id:point.segment_id};
-    dots.push(dot);lastDot=dot;previous=point;
+    const dot={x:px,y:py,index,time:point.time,segment_id:line};
+    dots.push(dot);lastDot=dot;previous=dot;
   });
   return {path:commands.join(' '),dots,gaps,minX,maxX,minY,maxY,x,y};
 }
@@ -1009,10 +1031,10 @@ function openAttention(target){
 function collectionSummary(){
   const recording=state?.recording||{},monitor=state?.monitoring||{};
   const online=monitor.online===true;
-  return `<section id="collection-status" class="collection-status" aria-label="采集运行状态"><div><h2>采集运行状态</h2><dl><div><dt>采集配置</dt><dd>${recording.active?'已启用':'已暂停'}</dd></div><div><dt>后台进程</dt><dd>${online?'在线':'未在线'}</dd></div><div><dt>最近成功观测</dt><dd>${esc(recording.last_new||'未知')}</dd></div></dl>${!online?'<p>页面连接正常不代表采集后台在线。请查看采集诊断；恢复后台需在运行服务的设备上处理。</p>':''}</div><button class="button secondary" data-collection-diagnosis>查看采集诊断</button></section>`;
+  return `<section id="collection-status" class="collection-status" aria-label="采集运行状态"><div><h2>采集运行状态</h2><dl><div><dt>采集配置</dt><dd>${recording.active===true?'已启用':recording.active===false?'已暂停':'未知'}</dd></div><div><dt>后台进程</dt><dd>${online?'在线':'未在线'}</dd></div><div><dt>最近成功观测</dt><dd>${esc(recording.last_new||'未知')}</dd></div></dl>${!online?'<p>页面连接正常不代表采集后台在线。请查看采集诊断；恢复后台需在运行服务的设备上处理。</p>':''}</div><button class="button secondary" data-collection-diagnosis>查看采集诊断</button></section>`;
 }
 
-let notificationHealth={context:'',data:null,error:'',loading:false,serial:0,loadedAt:0};
+let notificationHealth={context:null,data:null,error:'',loading:false,serial:0,loadedAt:0};
 const notificationStates={pending:'等待发送',preparing:'正在准备',ready:'准备完成',retry:'等待重试',sending:'发送中',sent:'已发送（接口确认）',failed:'发送失败',uncertain:'结果待确认',unknown:'结果待确认',skipped:'按规则跳过',cancelled:'已取消',local:'仅保存本地',historical:'历史补录，未推送'};
 const notificationErrors={result_unknown:'发送结果待确认',service_unavailable:'服务状态需要检查',image_prepare_failed:'图片准备失败，未调用发送器',preparation_failed:'图片准备失败，未调用发送器',delivery_failed:'发送失败',delivery_uncertain:'发送结果待确认',send_failed:'发送失败',send_uncertain:'发送结果待确认',unavailable:'状态暂不可用'};
 function notificationPart(part){
@@ -1023,7 +1045,7 @@ function notificationPart(part){
   return esc(label+(detail?' · '+detail:''))+(facts.length?`<br><small>${esc(facts.join(' · '))}</small>`:'');
 }
 function notificationHealthMarkup(){
-  const current=state?.insights_context||'';
+  const current=state?.insights_context??null;
   if(notificationHealth.context!==current)notificationHealth={context:current,data:null,error:'',loading:false,serial:notificationHealth.serial+1,loadedAt:0};
   const {data,error,loading}=notificationHealth;
   const serviceRows=Object.entries(data?.services||{}).map(([key,value])=>row({collector:'车辆采集',delivery:'通知发送',reports:'定期报表'}[key]||'后台任务',value.enabled===false?'未启用':value.error_code?'服务状态需要检查':value.online?'后台在线':'后台运行尚未确认')).join('');
@@ -1039,28 +1061,28 @@ function paintNotificationHealth(){const node=$('#notification-health');if(node)
 async function loadNotificationHealth(force=false){
   if(page!=='settings'||sectionTask||!$('[data-detail="settings-notifications"]')?.open)return;
   notificationHealthMarkup();
-  if(notificationHealth.loading||!force&&notificationHealth.data&&Date.now()-notificationHealth.loadedAt<30000)return;
+  if(notificationHealth.loading||!force&&notificationHealth.data&&performance.now()-notificationHealth.loadedAt<30000)return;
   const current=notificationHealth.context,serial=++notificationHealth.serial;
   notificationHealth.loading=true;notificationHealth.error='';paintNotificationHealth();
   try{
     const data=await api('/api/notifications/health');
-    if(serial!==notificationHealth.serial||current!==state?.insights_context)return;
+    if(serial!==notificationHealth.serial||current!==(state?.insights_context??null))return;
     if(data.context!==current)throw Error('账号或车辆已切换，请重新读取。');
-    notificationHealth.data=data;notificationHealth.loadedAt=Date.now();
-  }catch(error){if(serial===notificationHealth.serial&&current===state?.insights_context)notificationHealth.error=error.message;}
+    notificationHealth.data=data;notificationHealth.loadedAt=performance.now();
+  }catch(error){if(serial===notificationHealth.serial&&current===(state?.insights_context??null))notificationHealth.error=error.message;}
   finally{if(serial===notificationHealth.serial){notificationHealth.loading=false;paintNotificationHealth();}}
 }
 document.addEventListener('toggle',event=>{if(event.target.matches?.('[data-detail="settings-notifications"]')&&event.target.open)loadNotificationHealth();},true);
 
 function monitoringPanel() {
   const monitor = state?.monitoring || {status:'not_started',events:[]};
-  const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',parked_waiting:'采集正常，等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',paused:'已暂停',unavailable:'状态暂不可用'};
+  const labels = {not_started:'尚未启用',fresh:'获得新数据',unchanged:'等待车辆更新',parked_waiting:'采集正常，等待车辆更新',stale:'车辆缓存过旧',blocked:'需要处理',cooldown:'接口冷却中',retrying:'连接重试中',stopped:'已停止',paused:'已暂停',unavailable:'状态暂不可用',degraded:'运行异常',error:'运行异常'};
   const activity = {waiting:'下电等待 10 分钟',driving:'行程记录中',idle:'暂无进行中的记录',charging:'充电记录中',unknown:'待确认'};
-  const label = monitor.status === 'not_started' ? labels.not_started : monitor.online ? labels[monitor.status] || '运行中' : '监控未在线';
-  const changes={new:'新车辆状态',repeat:'重复缓存，车辆时间与内容均未变化',revision:'同一车辆时间的内容修订',regression:'车辆时间倒退，保留最后有效状态',time_unknown:'车辆更新时间未知'};
+  const label = monitor.status === 'not_started' ? labels.not_started : monitor.online===true ? labels[monitor.status] || '状态待确认' : '监控未在线';
+  const changes={new:'新车辆状态',repeat:'重复缓存，车辆时间与内容均未变化',revision:'同一车辆时间的内容修订',superseded:'较旧读取晚到，保留较新状态',regression:'车辆时间倒退，保留最后有效状态',time_unknown:'车辆更新时间未知'};
   const observation=monitor.data_change?row('最近读取',changes[monitor.data_change]||'待确认'):'';
   const parking=monitor.status==='parked_waiting'?'<p class="subtle">最后已知状态为停车。云端仍返回重复缓存，当前车况待更新；旧值不作为新样本或新提醒依据。</p>':'';
-  return `<section class="card section-gap"><div class="card-head"><h2>自动行程与充电通知</h2>${pill(label,monitor.online && !['blocked','stale','retrying','cooldown'].includes(monitor.status)?'good':'warn')}</div><div class="card-body"><p class="subtle">后台正常每 ${esc(state?.recording?.interval || 30)} 秒检查，停车、行驶和充电均保持此频率；故障或限流时退避。确认下电后等待 10 分钟发送行程总结；充电开始、停止时发送通知。云端数据延迟或缺失时，确认和通知也会延后。</p>${observation}${parking}${row('行程',activity[monitor.trip] || '待确认')}${row('充电',activity[monitor.charge] || '待确认')}${row('通知渠道','Bark 状态提醒＋企业微信详细报告')}${monitor.error?`<p class="unknown">${esc(monitor.error)}</p>`:''}<p class="subtle">采集与投递分别在后台运行；关闭浏览器不停止。暂停会停止新采集和常规通知领取，存储巡检与已启用报表继续；发送中的请求仍会完成。服务重启后默认恢复采集。</p>${notificationHealthMarkup()}</div></section>`;
+  return `<section class="card section-gap"><div class="card-head"><h2>自动行程与充电通知</h2>${pill(label,state?.recording?.active===true && monitor.online===true && ['fresh','unchanged','parked_waiting'].includes(monitor.status)?'good':'warn')}</div><div class="card-body"><p class="subtle">正常采样间隔 ${esc(samplingSeconds(state?.recording?.interval))}；停车、行驶和充电沿用此配置，故障或限流时退避。确认下电后等待 10 分钟发送行程总结；充电开始、停止时发送通知。云端数据延迟或缺失时，确认和通知也会延后。</p>${observation}${parking}${row('行程',activity[monitor.trip] || '待确认')}${row('充电',activity[monitor.charge] || '待确认')}${row('通知渠道','Bark 状态提醒＋企业微信详细报告')}${monitor.error?`<p class="unknown">${esc(monitor.error)}</p>`:''}<p class="subtle">采集与投递分别在后台运行；关闭浏览器不停止。暂停会停止新采集和常规通知领取，存储巡检与已启用报表继续；发送中的请求仍会完成。服务重启后默认恢复采集。</p>${notificationHealthMarkup()}</div></section>`;
 }
 
 function releaseSummary(){
@@ -1071,7 +1093,7 @@ function releaseSummary(){
 function settings() {
   const recording = state?.recording || {active:true,interval:30,last_sample:'未知',last_new:'未知'};
   return `${collectionSummary()}<section class="card"><div class="card-head"><h2>连接与隐私</h2>${pill('Web 服务已连接')}</div><div class="card-body"><div class="settings-row" id="settings-account"><div><h3 id="settings-account-title" tabindex="-1">账号会话</h3><p>${accountNeedsAttention()?'车辆账号未连接或认证异常，点击重新连接完成短信验证。':state?.authenticated?'已发现车辆会话；可用性以最近一次车辆读取结果为准。':'尚未连接车辆账号，点击重新连接完成短信验证。'}</p></div><div class="vehicle-account-actions">${pill(accountNeedsAttention()?'需要重新连接':state?.authenticated?'会话已保存':'未登录',accountNeedsAttention()?'warn':'')}<button class="button secondary" data-vehicle-login aria-label="重新连接车辆账号">重新连接</button></div></div><div class="settings-row"><div><h3>总览位置显示</h3><p>总览地图默认显示，行程与轨迹地图默认隐藏，两处独立控制。此开关控制总览位置。隐藏后清除当前页面的地图与坐标；不会删除已有本地记录或停止采集。</p></div>${action(showPosition?'隐藏位置':'显示位置并加载地图',showPosition?'hide-position':'show-position','secondary')}</div></div></section><details class="settings-detail" data-detail="settings-notifications"><summary>通知状态与规则说明</summary>${monitoringPanel()}</details>
-  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会停止自动检查和常规通知领取，已有记录保留；存储巡检与已启用报表继续。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">${esc(samplingDescription(recording))}</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="${esc(recording.policy?.min_interval??10)}" max="${esc(recording.policy?.max_interval??60)}" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval)}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${row('已保存间隔', `${recording.interval} 秒`)}${row('后台最近等待间隔', `${recording.effective_interval || recording.interval} 秒`)}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',`${((state?.storage_bytes||0)/1024).toFixed(1)} KB`)}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><details class="settings-detail" data-detail="settings-storage"><summary>存储与归档管理</summary><div id="settings-storage-root"><section hidden></section></div></details>${releaseSummary()}<section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section><div id="insights-workspace"></div>`;
+  <section class="card section-gap"><div class="card-head"><h2>本地轨迹采集</h2>${pill(({active:'采集中',paused:'已暂停',failed:'需要处理',offline:'后台未在线'})[recording.status] || '等待后台',recording.status==='active'?'good':'warn')}</div><div class="card-body"><div class="notice info">${icon('info')}服务启动默认开启；由同一后台保存轨迹并检测行程和充电。暂停会停止自动检查和常规通知领取，已有记录保留；存储巡检与已启用报表继续。网络故障退避重试；账号失效需更新会话。</div><div class="settings-row"><div><h3>采样间隔</h3><p id="sampling-help">${esc(samplingDescription(recording))}</p></div><div class="settings-control">${action(recording.active?'暂停采集':'开始采集','recording',recording.active?'secondary':'')}</div></div><div class="settings-row"><label for="interval">正常采样间隔（秒）</label><div class="settings-control"><input id="interval" type="number" min="${esc(recording.policy?.min_interval??10)}" max="${esc(recording.policy?.max_interval??60)}" step="1" aria-describedby="sampling-help" value="${esc(samplingDraft ?? recording.interval ?? '')}" ${busy?'disabled':''}>${action('保存间隔','save-interval','secondary')}</div></div>${recording.error?`<p class="unknown">${esc(recording.error)}</p>`:''}${row('已保存间隔', samplingSeconds(recording.interval))}${row('后台最近等待间隔', samplingSeconds(recording.effective_interval))}${row('最近采样检查',recording.last_sample)}${row('最近新增观测',recording.last_new)}${row('轨迹数据库大小',Number.isFinite(state?.storage_bytes)&&state.storage_bytes>=0?`${(state.storage_bytes/1024).toFixed(1)} KB`:'未知')}<div class="subtle">数据保存在运行服务的设备上；默认不自动删除历史记录。</div></div></section><details class="settings-detail" data-detail="settings-storage"><summary>存储与归档管理</summary><div id="settings-storage-root"><section hidden></section></div></details>${releaseSummary()}<section class="card section-gap"><div class="card-head"><h2>关于数据</h2></div><div class="card-body"><p class="subtle">界面依据已核对的字段规则解释车辆数据。社区接口可能变化；字段存在不代表硬件可用，更不代表远程控制已接入。</p>${row('Web 连接','当前页面已连接服务')}${row('数据来源','GW2 云端缓存')}</div></section><div id="insights-workspace"></div>`;
 }
 
 function updateHeartbeat() {
@@ -1265,13 +1287,19 @@ async function refresh() {
 
 async function updateRecording(saveInterval = false) {
   if (busy) return;
-  const interval = saveInterval ? Number($('#interval')?.value) : state.recording.interval;
+  const recording=state?.recording||{};
+  const repair=typeof recording.active!=='boolean'||!Number.isInteger(recording.interval)||recording.interval<10||recording.interval>60;
+  const interval = saveInterval||repair ? Number($('#interval')?.value) : recording.interval;
   if (!Number.isInteger(interval) || interval<10 || interval>60) { toast('采样间隔须为 10–60 秒的整数。'); return; }
+  if(saveInterval&&typeof recording.active!=='boolean'){
+    toast('采集开关状态未知，请填写有效间隔后点击“开始采集”恢复。');return;
+  }
   busy=true;
   try {
-    const payload = saveInterval ? {active:state.recording.active,interval} : {active:!state.recording.active};
+    const payload = saveInterval?{operation:'interval'}:{active:!recording.active};
+    if(saveInterval||repair)payload.interval=interval;
     state = await api('/api/recording',payload);
-    if(saveInterval) samplingDraft=null;
+    if(saveInterval||repair) samplingDraft=null;
     transientError='';
     toast(saveInterval?`正常采样间隔已保存为 ${state.recording.interval} 秒。`:state.recording.active?'已启用统一采集，请查看后台运行状态。':'自动采集与通知检测已暂停，已有记录保留。');
   } catch(error) { transientError=error.message; }
@@ -1515,10 +1543,20 @@ new MutationObserver(()=>queueMicrotask(persistNavigation)).observe($('#main'),{
 window.addEventListener('scroll',()=>{if(navigationReady&&!navigationRestoring)history.replaceState({...history.state,scroll:scrollY},'',location.href);},{passive:true});
 
 async function pollState(force = false) {
-  if(polling || busy || (!force && document.hidden)) return;
+  if(busy || stateChangesPending || (!force && document.hidden)) return;
+  if(polling){
+    if(!force)return;
+    if(!pollFollowup)pollFollowup=pollFinished.then(()=>{pollFollowup=null;return pollState(true);});
+    return pollFollowup;
+  }
+  const version=stateChangeVersion;
+  const current=()=>version===stateChangeVersion&&!stateChangesPending&&!busy;
   polling=true;
+  let finish;
+  pollFinished=new Promise(resolve=>{finish=resolve;});
   try {
     const latest=await api('/api/state',undefined,8000);
+    if(!current())return;
     const changed=!state || latest.read_time!==state.read_time || latest.error!==state.error ||
       latest.authenticated!==state.authenticated ||
       latest.monitoring?.status!==state.monitoring?.status || latest.monitoring?.online!==state.monitoring?.online ||
@@ -1543,20 +1581,35 @@ async function pollState(force = false) {
       if(page==='tracks' && !sectionTask && trackSource==='local' && refreshLocalTrips()) {updateConnection();updateClock();}
       else if(!chargingReview.deferRefresh(render))render();
     }
-    else { if(insightSections.includes(page))insightsPage.mount($('#insights-workspace'),page);if(page==='tracks'&&!sectionTask&&trackSource==='tags')tripTagsPage.mount($('#trip-tags-workspace'));updateHeartbeat(); }
+    else {
+      if(page==='overview')overviewDashboard.refreshDate();
+      if(insightSections.includes(page))insightsPage.mount($('#insights-workspace'),page);
+      if(page==='tracks'&&!sectionTask&&trackSource==='tags')tripTagsPage.mount($('#trip-tags-workspace'));
+      updateHeartbeat();
+    }
   } catch(error) {
+    if(!current())return;
     connectionFailures=state?connectionFailures+1:2;
     updateConnection();
     if(!state) $('#main').innerHTML=`<section class="card">${empty('本机服务未连接','检查本机服务后点击上方“重新连接”。')}</section>`;
-  } finally {polling=false;}
+  } finally {polling=false;finish();}
 }
 pollState(true);
 setInterval(pollState,5000);
 setInterval(updateClock,1000);
 
-document.querySelector("#logout").addEventListener("click", async () => {
-  const response = await fetch("/auth/logout", {method:"POST", headers:{"Content-Type":"application/json"},body:"{}"});
-  if(response.ok) location.replace("/");
+document.querySelector("#logout").addEventListener("click", async event => {
+  const button=event.currentTarget;
+  if(button.disabled)return;
+  const label=button.textContent;
+  button.disabled=true;button.textContent='正在退出…';
+  try{
+    await api('/auth/logout',{},8000);
+    location.replace('/');
+  }catch(error){
+    const detail=error instanceof TypeError?'连接失败，请重试。':error?.message||'请稍后重试。';
+    toast('退出结果尚未确认：'+detail);
+  }finally{button.disabled=false;button.textContent=label;}
 });
 
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&overviewDetailOpen){closeOverviewDetail(true);event.preventDefault();}});

@@ -366,6 +366,23 @@ class InsightsApiTests(unittest.TestCase):
         self.assertEqual(code,400)
         self.assertEqual(self.app.personal_store.read(account_scope(self.session),self.vehicle,'charges')['revision'],0)
 
+    def test_account_switch_during_result_reconstruction_cancels_http_save(self):
+        context=self.get('/api/state')[1]['insights_context']
+        read=self.app.personal_store._read
+        def switched(*args,**kwargs):
+            result=read(*args,**kwargs)
+            if args[1][2]=='charges' and result['revision']==1:
+                save(self.path,{'accessToken':'SYNTHETIC-NEW-ACCOUNT'})
+            return result
+        with patch.object(self.app.personal_store,'_read',side_effect=switched):
+            code,result=self.post_ledger({'context':context,'action':'save','revision':0,'event_id':'',
+                                          'date':'2026-09-20','source':'home','amount':'99'})
+        self.assertEqual(code,400,result)
+        self.assertIn('保存期间',result['error'])
+        saved=self.app.personal_store.read(account_scope(self.session),self.vehicle,'charges')
+        self.assertEqual(saved['revision'],0)
+        self.assertEqual(saved['records'],[])
+
     def test_rule_create_preview_and_account_scope(self):
         payload=dict(context=self.get('/api/state')[1]['insights_context'],action='save',revision=0,
                      name='合成低电量',kind='low_soc',threshold=80,enabled=True,

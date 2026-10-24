@@ -5,7 +5,7 @@ import json
 
 from .snapshot_archive import BEIJING
 from .tracks import day_bounds
-from .usage_events import UsageEvents, total, number
+from .usage_events import UsageEvents, total, number, MAX_SUMMARY_BYTES
 from .analysis_work import TimeMap
 
 DAY = 86400000
@@ -18,19 +18,22 @@ def date_label(stamp):
 def period_window(period, date):
     lower, _ = day_bounds(date)
     day = datetime.fromtimestamp(lower/1000, BEIJING)
-    if period == 'week':
-        start = day-timedelta(days=day.weekday())
-        end, previous = start+timedelta(days=7), start-timedelta(days=7)
-    elif period == 'month':
-        start = day.replace(day=1)
-        end = (start.replace(day=28)+timedelta(days=4)).replace(day=1)
-        previous = (start-timedelta(days=1)).replace(day=1)
-    else:
-        raise ValueError('请选择周报或月报。')
-    return {'period': period, 'start': int(start.timestamp()*1000), 'end': int(end.timestamp()*1000),
-            'start_date': start.strftime('%Y-%m-%d'), 'end_date': (end-timedelta(days=1)).strftime('%Y-%m-%d'),
-            'previous_date': previous.strftime('%Y-%m-%d'), 'next_date': end.strftime('%Y-%m-%d'),
-            'days': (end-start).days}
+    try:
+        if period == 'week':
+            start = day-timedelta(days=day.weekday())
+            end, previous = start+timedelta(days=7), start-timedelta(days=7)
+        elif period == 'month':
+            start = day.replace(day=1)
+            end = (start.replace(day=28)+timedelta(days=4)).replace(day=1)
+            previous = (start-timedelta(days=1)).replace(day=1)
+        else:
+            raise ValueError('请选择周报或月报。')
+        return {'period': period, 'start': int(start.timestamp()*1000), 'end': int(end.timestamp()*1000),
+                'start_date': start.strftime('%Y-%m-%d'), 'end_date': (end-timedelta(days=1)).strftime('%Y-%m-%d'),
+                'previous_date': previous.strftime('%Y-%m-%d'), 'next_date': end.strftime('%Y-%m-%d'),
+                'days': (end-start).days}
+    except (OverflowError,OSError):
+        raise ValueError('日期超出可计算范围。') from None
 
 
 def aggregate(events, window, as_of):
@@ -90,14 +93,17 @@ class UsageReports:
         if not self.events.path.exists(): return None
         with self.events.connect() as db:
             if db is None or not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_state'").fetchone(): return None
-            row=db.execute('SELECT payload FROM monitor_state WHERE vehicle=?',(vehicle,)).fetchone()
-        if not row or len(row[0])>2*1024*1024: return None
+            row=db.execute('SELECT CASE WHEN length(CAST(payload AS BLOB))<=? THEN payload END '
+                           'FROM monitor_state WHERE vehicle=?',(MAX_SUMMARY_BYTES,vehicle)).fetchone()
+        if not row or not isinstance(row[0],str): return None
         try: state=json.loads(row[0])
-        except (ValueError,TypeError): return None
+        except (ValueError,TypeError,RecursionError): return None
         if not isinstance(state,dict): return None
         trip=state.get('trip')
         if not isinstance(trip,dict): return None
-        start,last=trip.get('start') or {},state.get('last') or {}
+        # Match the trip view: a frozen arrival remains the endpoint throughout
+        # parking confirmation, even when later parking observations arrive.
+        start,last=trip.get('start') or {},trip.get('stop') or state.get('last') or {}
         if not isinstance(start,dict) or not isinstance(last,dict): return None
         a,b=number(start.get('time'),1,32503680000000),number(last.get('time'),1,32503680000000)
         if a is None or b is None or not a<=b<=now: return None

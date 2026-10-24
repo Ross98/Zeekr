@@ -23,6 +23,115 @@ def sample(seconds, speed=0, engine='engine_off', ready=0, soc=80, km=100,
 
 
 class MonitorTests(unittest.TestCase):
+    def test_failed_index_upgrade_preserves_existing_monitor_state_and_schema(self):
+        import sqlite3
+        from zeekr_control.monitor import Monitor
+        self.observe(0)
+        state=self.monitor.status('test-vehicle')
+        with self.monitor.tracks.connect() as db:
+            db.execute('DROP INDEX monitor_delivery')
+            db.execute('DROP INDEX monitor_vehicle_kind_created')
+            db.execute('CREATE TABLE monitor_vehicle_kind_created(sentinel TEXT)')
+        before=self.path.read_bytes()
+        with self.assertRaises(sqlite3.OperationalError):Monitor(self.path)
+        self.assertEqual(self.path.read_bytes(),before)
+        self.assertEqual(self.monitor.status('test-vehicle'),state)
+
+    def test_trip_report_can_use_frozen_rated_range_without_capacity(self):
+        profile=dict(range_km=546,range_standard='CLTC')
+        def ingest(seconds,**values):
+            self.monitor.observe('test-vehicle',sample(seconds,**values),BASE+seconds*1000,profile=profile)
+        ingest(0)
+        ingest(60,speed=30,engine='engine_on',ready=1,km=101)
+        ingest(120,km=110,soc=76)
+        for seconds in range(180,721,60):ingest(seconds,km=110,soc=76)
+        report=self.monitor.events()[0]['summary']['report_v2']
+        self.assertAlmostEqual(report['metrics']['range_attainment_percent'],10/(546*.04)*100)
+        self.assertIsNone(report['metrics']['estimated_kwh'])
+        self.assertIsNone(report['metrics']['estimated_kwh_100km'])
+
+    def test_trip_report_keeps_zero_pressure_raw_but_excludes_delta(self):
+        def ingest(seconds,**values):
+            raw=sample(seconds,**values)
+            raw['additionalVehicleStatus']['maintenanceStatus']['tyreStatusDriver']=260 if seconds<=60 else 0
+            self.monitor.observe('test-vehicle',raw,BASE+seconds*1000)
+        ingest(0)
+        ingest(60,speed=30,engine='engine_on',ready=1,km=101)
+        ingest(120,km=110,soc=76)
+        for seconds in range(180,721,60):ingest(seconds,km=110,soc=76)
+        events=self.monitor.events()
+        self.assertEqual(len(events),1)
+        metrics=events[0]['summary']['report_v2']['metrics']
+        self.assertEqual(metrics['distance_km'],10)
+        self.assertIsNone(metrics['tyre_changes'][0]['pressure_delta'])
+        self.assertEqual(events[0]['summary']['report_v2']['end']['tyres'][0]['pressure']['value'],0)
+        json.dumps(events[0]['summary'],allow_nan=False)
+
+    def test_restart_finishes_trip_with_legacy_missing_temperature_marked_valid(self):
+        from zeekr_control.monitor import Monitor
+        self.observe(0)
+        self.observe(60,speed=30,engine='engine_on',ready=1,km=101)
+        state=self.monitor.status('test-vehicle')
+        state['trip']['report_start']['inside_temp']=dict(value=None,validity='valid',field_time=BASE+60000)
+        with self.monitor.tracks.connect() as db:
+            db.execute('UPDATE monitor_state SET payload=? WHERE vehicle=?',(json.dumps(state),'test-vehicle'))
+        self.monitor=Monitor(self.path)
+        for seconds in range(120,721,60):
+            raw=sample(seconds,km=110,soc=76)
+            raw['additionalVehicleStatus']['climateStatus']={
+                'temperatureUpdateTime':BASE+seconds*1000,'interiorTemp':25,'exteriorTemp':18}
+            self.monitor.observe('test-vehicle',raw,BASE+seconds*1000)
+        events=self.monitor.events()
+        self.assertEqual(len(events),1)
+        self.assertEqual(events[0]['summary']['distance_km'],10)
+        self.assertEqual(events[0]['summary']['soc_delta'],-4)
+        self.assertIsNone(events[0]['summary']['report_v2']['metrics']['inside_temp_delta'])
+
+    def test_missing_temperature_with_fresh_timestamp_does_not_block_trip_end(self):
+        def ingest(seconds,**values):
+            raw=sample(seconds,**values)
+            raw['additionalVehicleStatus']['climateStatus']={'temperatureUpdateTime':BASE+seconds*1000}
+            return self.monitor.observe('test-vehicle',raw,BASE+seconds*1000)
+        ingest(0)
+        ingest(60,speed=30,engine='engine_on',ready=1,km=101)
+        ingest(120,km=110,soc=76)
+        for seconds in range(180,721,60):ingest(seconds,km=110,soc=76)
+        events=self.monitor.events()
+        self.assertEqual(len(events),1)
+        self.assertEqual(events[0]['summary']['distance_km'],10)
+        self.assertEqual(events[0]['summary']['soc_delta'],-4)
+        self.assertIsNone(events[0]['summary']['report_v2']['metrics']['inside_temp_delta'])
+
+    def test_overflowed_optional_metric_does_not_poison_saved_driving_state(self):
+        self.observe(0)
+        raw=sample(60,speed=30,engine='engine_on',ready=1,km=101,soc=79)
+        raw['additionalVehicleStatus']['maintenanceStatus']['tyreStatusDriver']='1e999999999'
+        self.monitor.observe('test-vehicle',raw,BASE+60000)
+        state=self.monitor.status('test-vehicle')
+        self.assertEqual(state['last']['km'],101)
+        self.assertEqual(state['last']['soc'],79)
+        json.dumps(state,allow_nan=False)
+        self.assertIsNone(state['trip']['report_start']['tyres'][0]['pressure']['value'])
+
+    def test_invalid_coordinate_cannot_discard_trip_distance_and_energy(self):
+        def ingest(seconds,**values):
+            raw=sample(seconds,**values)
+            raw['position']['latitude']='1e999999999'
+            return self.monitor.observe('test-vehicle',raw,BASE+seconds*1000)
+        ingest(0)
+        ingest(60,speed=30,engine='engine_on',ready=1,km=101)
+        ingest(120,km=110,soc=76)
+        for seconds in range(180,721,60):ingest(seconds,km=110,soc=76)
+        events=self.monitor.events()
+        self.assertEqual(len(events),1)
+        self.assertEqual(events[0]['kind'],'trip_end')
+        self.assertEqual(events[0]['summary']['distance_km'],10)
+        self.assertEqual(events[0]['summary']['soc_delta'],-4)
+        self.assertFalse(events[0]['summary']['start_location']['valid'])
+        self.assertFalse(events[0]['summary']['end_location']['valid'])
+        with self.monitor.tracks.connect() as db:
+            self.assertGreater(db.execute('SELECT COUNT(*) FROM observations').fetchone()[0],0)
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('zeekr_control.monitor'), '监控模块尚未实现')
         from zeekr_control.monitor import Monitor
@@ -109,6 +218,121 @@ class MonitorTests(unittest.TestCase):
         trips = [e for e in self.monitor.events() if e['kind'] == 'trip_end']
         self.assertEqual(len(trips), 2)
         self.assertEqual(trips[1]['summary']['distance_km'], 10)
+
+    def test_newer_stale_parking_cache_after_outage_confirms_frozen_trip(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, km=110, soc=76)
+        self.monitor.mark_sampling_gap('test-vehicle')
+        before = self.monitor.status('test-vehicle')
+        track_count = self.monitor.tracks.day('test-vehicle', '2024-01-01')['count']
+        cached = sample(180, km=110, soc=75)
+        for observed in range(2000, 2600, 60):
+            self.assertEqual(self.monitor.observe('test-vehicle', cached, BASE + observed * 1000), 'stale')
+            self.assertEqual(self.monitor.events(), [])
+        from zeekr_control.monitor import Monitor
+        self.monitor = Monitor(self.path)
+        self.monitor.observe('test-vehicle', cached, BASE + 2600000)
+        state = self.monitor.status('test-vehicle')
+        self.assertIsNone(state['trip'])
+        self.assertEqual(state['last'], before['last'])
+        self.assertEqual(self.monitor.tracks.day('test-vehicle', '2024-01-01')['count'], track_count)
+        data = self.monitor.events()[0]['summary']
+        self.assertEqual(data['distance_km'], 10)
+        self.assertEqual(data['end_time'], BASE + 120000)
+        self.assertEqual(data['end_soc'], 76)
+        self.assertTrue(data['partial'])
+        self.assertIn('sampling_interrupted', data['report_v2']['quality']['quality_reasons'])
+        self.monitor.observe('test-vehicle', cached, BASE + 2660000)
+        self.assertEqual(len(self.monitor.events()), 1)
+
+    def test_unsafe_stale_parking_caches_never_confirm_trip(self):
+        from zeekr_control.monitor import Monitor
+        for case in ('odometer', 'missing_odometer', 'moving', 'unknown_power', 'charging', 'future', 'regressed'):
+            with self.subTest(case=case):
+                self.monitor = Monitor(self.path.with_name(case + '.sqlite3'))
+                self.observe(0)
+                self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+                self.observe(120, km=110)
+                self.monitor.mark_sampling_gap('test-vehicle')
+                for observed in range(2000, 2661, 60):
+                    raw = sample(180, km=110)
+                    if case == 'odometer': raw['additionalVehicleStatus']['maintenanceStatus']['odometer'] = 111
+                    if case == 'missing_odometer': raw['additionalVehicleStatus']['maintenanceStatus']['odometer'] = None
+                    if case == 'moving': raw['basicVehicleStatus']['speed'] = 20
+                    if case == 'unknown_power': raw['basicVehicleStatus']['engineStatus'] = 'unknown'
+                    if case == 'charging': raw = sample(180, km=110, code='charging', current=10, voltage=350, plug=1, charger=7, dc_lid=1)
+                    if case == 'future': raw['updateTime'] = BASE + (observed + 60) * 1000
+                    if case == 'regressed': raw['updateTime'] = BASE + 60000
+                    self.monitor.observe('test-vehicle', raw, BASE + observed * 1000)
+                self.assertEqual(self.monitor.events(), [])
+                self.assertIsNotNone(self.monitor.status('test-vehicle')['trip'])
+
+    def test_parking_cache_timestamp_regression_cannot_advance_confirmation(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, km=110)
+        self.monitor.mark_sampling_gap('test-vehicle')
+        self.monitor.observe('test-vehicle', sample(180, km=110), BASE + 2000000)
+        for observed in range(2060, 2601, 60):
+            self.monitor.observe('test-vehicle', sample(120, km=110), BASE + observed * 1000)
+        self.assertEqual(self.monitor.events(), [])
+        self.monitor.observe('test-vehicle', sample(180, km=110), BASE + 2660000)
+        self.assertEqual(self.monitor.events(), [], 'a long gap must restart the confirmation window')
+
+    def test_new_fresh_parking_samples_still_update_last_observation(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, km=110)
+        self.observe(180, km=110)
+        self.assertEqual(self.monitor.status('test-vehicle')['last']['time'], BASE + 180000)
+
+    def test_conflicting_stale_cache_restarts_parking_confirmation(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, km=110)
+        self.monitor.mark_sampling_gap('test-vehicle')
+        for observed in (2000, 2060):
+            self.monitor.observe('test-vehicle', sample(180, km=110), BASE + observed * 1000)
+        self.monitor.observe('test-vehicle', sample(210, km=110, engine='unknown', ready=None), BASE + 2120000)
+        for observed in range(2180, 2780, 60):
+            self.monitor.observe('test-vehicle', sample(240, km=110), BASE + observed * 1000)
+            self.assertEqual(self.monitor.events(), [])
+        self.monitor.observe('test-vehicle', sample(240, km=110), BASE + 2780000)
+        self.assertEqual(len(self.monitor.events()), 1)
+
+    def test_same_timestamp_conflicting_cache_also_restarts_confirmation(self):
+        self.observe(0)
+        self.observe(60, speed=30, engine='engine_on', ready=1, km=101)
+        self.observe(120, km=110)
+        cached = sample(120, km=110)
+        for observed in (180, 240):
+            self.monitor.observe('test-vehicle', cached, BASE + observed * 1000)
+        conflict = sample(120, km=110, engine='unknown', ready=None)
+        self.monitor.observe('test-vehicle', conflict, BASE + 300000)
+        for observed in range(360, 960, 60):
+            self.monitor.observe('test-vehicle', cached, BASE + observed * 1000)
+            self.assertFalse(self.monitor.events())
+        self.monitor.observe('test-vehicle', cached, BASE + 960000)
+        self.assertEqual(len(self.monitor.events()), 1)
+
+    def test_fresh_parking_after_known_gap_keeps_endpoint_and_restarts_timer(self):
+        from zeekr_control.monitor import Monitor
+        for resumed in (420,1200):
+            with self.subTest(resumed=resumed):
+                self.monitor=Monitor(self.path.with_name('fresh-gap-'+str(resumed)+'.sqlite3'))
+                self.observe(0)
+                self.observe(60,speed=30,engine='engine_on',ready=1,km=101)
+                for second in (120,180,240,300):self.observe(second,km=110)
+                self.monitor.mark_sampling_gap('test-vehicle')
+                self.observe(resumed,km=110)
+                trip=self.monitor.status('test-vehicle')['trip']
+                self.assertEqual(trip['stop']['time'],BASE+120000)
+                for second in range(resumed+60,resumed+600,60):
+                    self.observe(second,km=110)
+                    self.assertFalse(self.monitor.events())
+                self.observe(resumed+600,km=110)
+                self.assertEqual(self.monitor.events()[0]['summary']['end_time'],BASE+120000)
 
     def test_trip_start_alert_created_once_for_first_movement(self):
         self.observe(0)

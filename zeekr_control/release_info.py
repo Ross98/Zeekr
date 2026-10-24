@@ -2,8 +2,10 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import stat
 
 FEATURES={
  'place-tag-rules':dict(label='地点关联行程自动标注',files=['zeekr_control/place_tag_rules.py','zeekr_control/trip_tags.py','zeekr_control/monitor_runtime.py','zeekr_control/web.py','zeekr_control/static/place-tag-rules.js','zeekr_control/static/trip-tags.js','zeekr_control/static/insights.css','zeekr_control/static/index.html']),
@@ -30,10 +32,16 @@ def read_release(root=None):
     root=Path(root) if root is not None else Path(__file__).resolve().parent.parent
     unknown=dict(status='unrecorded',base_version=None,features=[])
     path=root/'release-manifest.json'
-    if not path.exists():return unknown
     try:
-        if path.stat().st_size>65536 or path.is_symlink():raise ValueError()
-        manifest=json.loads(path.read_text(encoding='utf-8'))
+        try:fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        except FileNotFoundError:return unknown
+        try:
+            info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size>65536:raise ValueError()
+            with os.fdopen(fd,'rb',closefd=False) as stream:payload=stream.read(65537)
+            if len(payload)>65536:raise ValueError()
+        finally:os.close(fd)
+        manifest=json.loads(payload.decode('utf-8'))
         base=manifest['base_version'];entries=manifest['features']
         if not isinstance(base,str) or not re.fullmatch('[0-9a-f]{40}',base) or not isinstance(entries,dict) or set(entries)-set(FEATURES):raise ValueError()
         features=[]
@@ -43,7 +51,7 @@ def read_release(root=None):
             matched=all((root/file).is_file() and digest(root/file)==value for file,value in hashes.items())
             features.append(dict(id=key,label=config['label'],status='matched' if matched else 'mismatch'))
         return dict(status='recorded',base_version=base,features=features)
-    except (OSError,ValueError,KeyError,TypeError):return dict(unknown,status='invalid')
+    except (OSError,ValueError,KeyError,TypeError,RecursionError):return dict(unknown,status='invalid')
 
 
 def write_manifest(root,base,features):

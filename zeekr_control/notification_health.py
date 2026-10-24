@@ -1,6 +1,7 @@
 """Authenticated, read-only notification projection. Never returns message payloads."""
 from contextlib import contextmanager
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
@@ -10,6 +11,7 @@ from .periodic_report import report_id
 from .periodic_schedule import next_times
 from .storage import load
 from .errors import ApiError
+from .usage_events import MAX_SUMMARY_BYTES
 
 STATES={'pending','preparing','ready','sending','sent','failed','uncertain','skipped','cancelled','local'}
 ACTIVE={'pending','preparing','ready','sending'}
@@ -46,19 +48,34 @@ def part(state,attempts=0,next_at=None,sent_at=None,error=None,preparations=0):
                 prepare_attempts=number(preparations) or 0,next_attempt_at=number(next_at),last_sent_at=number(sent_at))
 
 
+def _heartbeat_time(value):
+    try:
+        stamp=float(value)
+        return stamp if math.isfinite(stamp) and stamp>0 else 0
+    except (ValueError,TypeError,OverflowError):return 0
+
+
+def service_heartbeat(data,now,*,collector=False):
+    """Finite heartbeat evidence, shared by status and notification diagnostics."""
+    stamp=_heartbeat_time(data.get('heartbeat',data.get('last_tick','0')))
+    allowance=180000 if collector else 90000
+    if collector:
+        next_check=_heartbeat_time(data.get('next_check','0'))
+        allowance=max(allowance,next_check-stamp+60000)
+    online=(data.get('status','not_started') not in ('stopped','not_started') and stamp>0
+            and 0<=now-stamp<=allowance)
+    return stamp,online
+
+
 def service(root,name,now):
     try:data=load(root/name)
     except Exception:data={}
-    try:stamp=int(data.get('heartbeat',data.get('last_tick','0')))
-    except (ValueError,TypeError):stamp=0
+    stamp,online=service_heartbeat(data,now,collector=name=='monitor-health.json')
     status=data.get('status','not_started')
     allowed={'fresh','unchanged','running','ready','paused','cooldown','retrying','blocked','degraded','error','stopped','not_started'}
-    status=status if status in allowed else 'degraded'
-    allowance=90000
     if name=='monitor-health.json':
-        try:allowance=max(180000,int(data.get('next_check',0))-stamp+60000)
-        except (ValueError,TypeError):pass
-    online=status not in ('stopped','not_started') and stamp>0 and 0<=now-stamp<=allowance
+        allowed.update(('stale','parked_waiting'))
+    status=status if status in allowed else 'degraded'
     return dict(status=status,online=online,last_heartbeat_at=stamp or None,
                 error_code='service_unavailable' if status in ('blocked','degraded','error') else None)
 
@@ -90,7 +107,8 @@ def read_health(root,*,owner=None,vehicle=None,context=None,now_ms=None):
         sent=[p['last_sent_at'] for p in parts if p['last_sent_at'] is not None]
         if sent:summary['last_sent_at']=max(summary['last_sent_at'] or 0,*sent)
     def unavailable(source):
-        result.setdefault('unavailable_sources',[]).append(source)
+        sources=result.setdefault('unavailable_sources',[])
+        if source not in sources:sources.append(source)
     if vehicle:
         try:
             with readonly(root/'tracks.sqlite3') as db:
@@ -120,15 +138,22 @@ def read_health(root,*,owner=None,vehicle=None,context=None,now_ms=None):
                     # a read never adopts or changes an unscoped record.
                     metadata=columns(db,'report_delivery_metadata')
                     scope=' WHERE (m.owner_key=? AND m.vehicle_key=?) OR m.owner_key IS NULL' if metadata else ''
-                    projection='r.*,m.owner_key,m.vehicle_key,m.created_at,m.updated_at,m.text_sent_at,m.image_sent_at,m.text_error,m.image_error,m.image_prepare_attempts' if metadata else 'r.*'
+                    projection=('r.id,CASE WHEN length(CAST(r.payload AS BLOB))<=? THEN r.payload END AS payload,'
+                                'r.text,r.image,r.text_attempts,r.image_attempts,r.next_at')
+                    if metadata:
+                        projection+=',m.owner_key,m.vehicle_key,m.created_at,m.updated_at,m.text_sent_at,m.image_sent_at,m.text_error,m.image_error,m.image_prepare_attempts'
                     join=' LEFT JOIN report_delivery_metadata m USING(id)' if metadata else ''
-                    rows=db.execute('SELECT '+projection+' FROM reports r'+join+scope+' ORDER BY r.rowid DESC',(owner,vehicle) if scope else ())
+                    rows=db.execute('SELECT '+projection+' FROM reports r'+join+scope+' ORDER BY r.rowid DESC',
+                                    (MAX_SUMMARY_BYTES,owner,vehicle) if scope else (MAX_SUMMARY_BYTES,))
                     for raw in rows:
                         r=dict(raw)
+                        if not isinstance(r['payload'],str) or not r['payload']:
+                            unavailable('reports');continue
                         try:
                             payload=json.loads(r['payload']);period=payload['period'];start=payload['start_date'];end=payload['end_date']
                             if period not in ('day','week','month') or r['id']!=report_id(owner,vehicle,period,start,end):continue
-                        except (ValueError,TypeError,KeyError):continue
+                        except (ValueError,TypeError,KeyError,RecursionError):
+                            unavailable('reports');continue
                         event=dict(id=r['id'],period=period,start_date=start,end_date=end,
                             created_at=number(r.get('created_at') or payload.get('generated_at')),parts={
                             'text':part(r['text'],r['text_attempts'],r['next_at'],r.get('text_sent_at'),r.get('text_error')),
@@ -152,10 +177,11 @@ def read_health(root,*,owner=None,vehicle=None,context=None,now_ms=None):
         except (OSError,ValueError,sqlite3.Error):unavailable('personal')
     try:
         state=json.loads(load(root/'storage-health.json').get('state','{}'))
+        if not isinstance(state,dict):raise ValueError('存储巡检状态格式错误。')
         result['system_alerts']['storage']={'parts':{
             'text':part(state.get('notification_state')),'bark':part(state.get('alert_notification_state'))},
             'last_attempt_at':number(state.get('attempt_at',0)*1000)}
-    except (OSError,ValueError,TypeError,ApiError):unavailable('storage')
+    except (OSError,ValueError,TypeError,ApiError,RecursionError):unavailable('storage')
     try:
         with readonly(root/'system-notifications.sqlite3') as db:
             if columns(db,'auth_outbox'):

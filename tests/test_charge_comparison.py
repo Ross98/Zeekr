@@ -31,6 +31,14 @@ def add_curve(database,identity,vehicle,points,partial=False):
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_short_known_sampling_gap_is_not_used_as_continuous_elapsed_time(self):
+        points=[curve_point(self.start+i*60000,soc) for i,soc in enumerate((20,30,40,50,60))]
+        points[2]['sampling_gap_before']=True
+        self.seed(a=points)
+        result=self.api.query('car','a','b')['a']
+        self.assertEqual(result['timing']['reason'],'gaps_or_reset')
+        self.assertIsNone(result['timing']['minimum_seconds'])
+
     def setUp(self):
         from zeekr_control.charge_comparison import ChargeComparison
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)

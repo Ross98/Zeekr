@@ -11,12 +11,14 @@ import json
 from pathlib import Path
 import secrets
 import sqlite3
+import stat
 import threading
 import time
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
 from .client import ApiError, Client
+from .sampling import SamplingBusy
 from .vehicle_login import VehicleLogin
 from .query_policy import QueryPolicy
 from .cli import find_vins
@@ -83,6 +85,10 @@ class AnalysisBusy(ValueError):
 
 class AnalysisChanged(ValueError):
     pass
+
+
+class ReadContextUnavailable(ValueError):
+    """A controlled connection prerequisite message, safe for the local UI."""
 
 
 @dataclass(frozen=True)
@@ -156,6 +162,7 @@ class App:
         self.next_query_at = None
         self.profile = None
         self.error = None
+        self.snapshot_error = None
         self.store = None
         self.monitor_thread = None
         self.snapshot_revision = None
@@ -172,6 +179,7 @@ class App:
         self.read_at = self.snapshot_revision = None
         self.query_cached = False
         self.refresh_result = self.next_query_at = self.error = None
+        self.snapshot_error = None
 
     def _read_session(self):
         try:
@@ -212,9 +220,28 @@ class App:
                 storage_error = None
             except Exception:
                 archives, storage_error = [], '本地轨迹存储暂不可用。'
+            try:
+                info=self.database_path.stat()
+                if not stat.S_ISREG(info.st_mode):raise OSError('not a database file')
+                storage_bytes=info.st_size
+            except FileNotFoundError:
+                storage_bytes=0
+            except OSError:
+                storage_bytes=None
+                storage_error='本地轨迹存储暂不可用。'
             from .sampling import read_settings, public_policy
-            enabled, interval = read_settings(self.session_path.parent)
-            status = ('paused' if not enabled else 'offline' if not monitoring.get('online') else
+            recording_error = None
+            try:
+                enabled, interval = read_settings(self.session_path.parent)
+            except ApiError:
+                enabled, interval = None, None
+                recording_error = '采集配置暂不可读或无效，请检查设置与存储权限。'
+            try:
+                effective_interval = int(monitoring.get('interval', interval))
+                if effective_interval <= 0:effective_interval = None
+            except (TypeError, ValueError, OverflowError):
+                effective_interval = None
+            status = ('failed' if recording_error else 'paused' if not enabled else 'offline' if not monitoring.get('online') else
                       'failed' if monitoring.get('status') in ('blocked', 'unavailable') else 'active')
             try:
                 field_reviews = self.field_review_store.read(self.vehicle_key)
@@ -256,16 +283,16 @@ class App:
                     'query_cached': self.query_cached, 'refresh_result': self.refresh_result,
                     'snapshot_revision': self.snapshot_revision,
                     'next_query_at': self.next_query_at, 'profile': self.profile, 'archived_vehicles': archives,
-                    'error': self.error or session_error or storage_error,
+                    'error': self.error or session_error or self.snapshot_error or storage_error,
                     'recording': {'active': enabled, 'interval': interval,
                                   'policy': public_policy(),
-                                  'effective_interval': int(monitoring.get('interval', interval)),
-                                  'status': status, 'error': monitoring.get('error'),
+                                  'effective_interval': effective_interval,
+                                  'status': status, 'error': recording_error or monitoring.get('error'),
                                   'last_sample': updated_at(monitoring.get('last_success')),
                                   'last_new': updated_at(monitoring.get('last_new'))},
                     'monitoring': monitoring, 'recent_events': recent_events,
                     'range_attainment': read_attainment(self.database_path, self.vehicle_key, self.profile),
-                    'storage_bytes': self.database_path.stat().st_size if self.database_path.exists() else 0}
+                    'storage_bytes': storage_bytes}
 
     def _restore_snapshot(self, session, vehicle=None):
         if not session.get('accessToken'):
@@ -277,10 +304,17 @@ class App:
         key = self.vehicle_key or binding
         if not key:
             return
-        snapshot = self.snapshot_store.read(session_scope(session), key, known_revision=self.snapshot_revision)
+        try:
+            snapshot = self.snapshot_store.read(session_scope(session), key, known_revision=self.snapshot_revision)
+            if snapshot:
+                self.snapshot_store.bind_archive(session_scope(session),key,account_scope(session))
+        except (OSError,sqlite3.Error):
+            self.snapshot_error = '本地车辆缓存暂不可用，请重新读取车辆或检查存储。'
+            self.snapshot_revision = None
+            return
+        self.snapshot_error = None
         if not snapshot:
             return
-        self.snapshot_store.bind_archive(session_scope(session),key,account_scope(session))
         self.vehicle_key = key
         self.raw = snapshot['raw']
         self.model = build_model(self.raw, vehicle=vehicle)
@@ -473,11 +507,11 @@ class App:
         with self.lock:
             session = self._read_session()
             if not session.get('accessToken'):
-                raise ValueError('请先连接车辆账号。')
+                raise ReadContextUnavailable('请先连接车辆账号。')
             self._restore_snapshot(session)
             vehicle = self._archive_vehicle() if allow_archive else self.vehicle_key
             if not vehicle:
-                raise ValueError('等待当前账号的车辆缓存后再读取。')
+                raise ReadContextUnavailable('等待当前账号的车辆缓存后再读取。')
             return ReadContext(session_scope(session), account_scope(session), vehicle,
                                self._insights_context(), int(time.time()*1000))
 
@@ -700,6 +734,7 @@ class App:
                     if (record['deleted'] == expected_deleted and isinstance(event, dict)
                             and event.get('id') in selected):
                         linked.append({'id':record['id'],'event_id':event['id'],
+                                       'updated_at':record['updated_at'],
                                        'date':record['body'].get('date'),'source':record['body'].get('source'),
                                        'has_actual':record['body'].get('actual_cents') is not None,
                                        'has_metered':record['body'].get('metered_kwh') is not None})
@@ -708,16 +743,16 @@ class App:
                     raise ValueError('账本记录已变化，请重新预览。')
                 result = self.charge_manager.preview(self.vehicle_key, data.get('action'), selected,
                     data.get('revision'), bound_owner, linked_bills=linked,
-                    with_linked_bills=together, ledger_revision=ledger['revision'])
+                    with_linked_bills=together, ledger_revision=ledger['revision'], ledger_owner=owner_scope)
                 guard()
             elif operation == 'execute':
                 owner_scope = account_scope(session)
-                def linked_change(plan):
+                def linked_change(plan,connection):
                     action = 'delete' if plan['action'] == 'trash' else 'restore'
                     self.charge_ledger.batch_change(owner_scope, self.vehicle_key, action,
-                        [row['id'] for row in plan['linked_bills']], plan['ledger_revision'], guard=guard)
+                        [row['id'] for row in plan['linked_bills']], plan['ledger_revision'], guard=guard,connection=connection)
                 result = self.charge_manager.execute(data.get('token'), bound_owner, guard=guard,
-                                                     linked_change=linked_change)
+                                                     linked_change=linked_change,linked_database=self.personal_store.path)
             else:
                 raise ValueError('充电记录管理操作无效。')
             result['context'] = context
@@ -773,9 +808,14 @@ class App:
             self.store = TrackStore(self.database_path)
         return self.store
 
-    def recording(self, active, interval=None):
-        from .sampling import save_settings
-        save_settings(self.session_path.parent, active, interval)
+    def recording(self, active, interval=None, operation='settings'):
+        from .sampling import save_settings,save_interval
+        if operation=='interval':
+            if active is not None:raise ValueError('仅保存间隔时不可同时提交采集开关。')
+            save_interval(self.session_path.parent,interval)
+        elif operation=='settings':
+            save_settings(self.session_path.parent, active, interval)
+        else:raise ValueError('采集设置操作无效。')
         return self.state()
 
     def location(self):
@@ -982,10 +1022,19 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
 
         def read_json(self, limit):
             try:
-                length = int(self.headers.get('Content-Length', '0'))
+                lengths=self.headers.get_all('Content-Length',[])
+                if len(lengths)!=1 or self.headers.get_all('Transfer-Encoding',[]):
+                    raise ValueError()
+                declared=lengths[0].strip()
+                if not declared.isascii() or not declared.isdecimal():
+                    raise ValueError()
+                length = int(declared)
                 if not 0 < length <= limit or self.headers.get('Content-Type', '').split(';')[0] != 'application/json':
                     raise ValueError()
-                data = json.loads(self.rfile.read(length))
+                body=self.rfile.read(length)
+                if len(body)!=length:
+                    raise ValueError()
+                data = json.loads(body)
                 # Python's decoder permits nonfinite numbers and lone Unicode
                 # surrogates. Reject both before hashing, storing or responding.
                 json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8')
@@ -1013,13 +1062,10 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     return self.send(429, {'error': '尝试过多，请五分钟后再试。'})
                 days = data.get('remember_days', 0)
                 token = auth.login(data.get('password'), remember_days=days,
-                                   client_ip=self.client_ip(), user_agent=self.headers.get('User-Agent', ''))
+                                   client_ip=self.client_ip(), user_agent=self.headers.get('User-Agent', ''),
+                                   previous_token=self.token())
                 if not token:
                     return self.send(401, {'error': '密码错误或尝试过多。'})
-                # A fresh login replaces this browser's old credential, including
-                # when the user changes their choice back to “不记住”.
-                if self.token():
-                    auth.logout(self.token())
                 max_age = days * 86400 if days else 43200
                 return self.send(200, {}, cookie='zeekr_session=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d' % max_age + secure)
             except ValueError as exc:
@@ -1279,6 +1325,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                 self.send(409, {'error': str(exc), 'code': 'data_changed'})
             except AnalysisCapacity as exc:
                 self.send(503, {'error': str(exc), 'code': 'analysis_capacity'})
+            except ReadContextUnavailable as exc:
+                self.send(400, {'error': str(exc)})
             except ValueError:
                 self.send(400, {'error': '日期或参数无效。'})
             except Exception:
@@ -1337,10 +1385,15 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                 if self.path == '/api/field-reviews':
                     return self.send(200, app.review_field(data))
                 if self.path == '/api/recording':
-                    return self.send(200, app.recording(data.get('active'), data.get('interval')))
+                    operation=data.get('operation','settings')
+                    if operation=='interval' and 'active' in data:
+                        raise ValueError('仅保存间隔时不可同时提交采集开关。')
+                    return self.send(200, app.recording(data.get('active'), data.get('interval'),operation))
                 return self.send(404, {'error': '操作不存在。'})
             except ValueError as exc:
                 self.send(400, {'error': str(exc)[:150]})
+            except SamplingBusy as exc:
+                self.send(503, {'error': str(exc)})
             except ApiError as exc:
                 self.send(502, {'error': str(exc)})
             except Exception:

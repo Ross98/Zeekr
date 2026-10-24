@@ -4,6 +4,33 @@ import unittest
 
 
 class WebModelTests(unittest.TestCase):
+    def test_extreme_coordinates_are_rejected_before_scale_conversion(self):
+        for field in ('latitude','longitude'):
+            for value in ('1e999999999','-1e999999999'):
+                with self.subTest(field=field,value=value):
+                    point={'latitude':111600000,'longitude':435600000,'marsCoordinates':False}
+                    point[field]=value
+                    result=self.location({'position':point})
+                    self.assertFalse(result['valid'])
+                    self.assertFalse(result['plottable'])
+                    self.assertIsNone(result['latitude'])
+                    self.assertIsNone(result['longitude'])
+        for latitude,longitude in ((324000000,648000000),(-324000000,-648000000)):
+            result=self.location({'position':{'latitude':latitude,'longitude':longitude,'marsCoordinates':False}})
+            self.assertTrue(result['valid'])
+            self.assertEqual(result['latitude'],latitude/3600000)
+            self.assertEqual(result['longitude'],longitude/3600000)
+
+    def test_extreme_numeric_exponents_are_unknown_without_losing_valid_metrics(self):
+        for value in ('1e999999999','-1e999999999','1000000000000.0000000000000000000000001'):
+            with self.subTest(value=value):
+                model=self.build({'additionalVehicleStatus':{'electricVehicleStatus':{
+                    'chargeLevel':62,'distanceToEmptyOnBatteryOnly':value}}})
+                self.assertEqual(model['metrics']['battery'],'62%')
+                self.assertEqual(model['metrics']['range'],'未知')
+                self.assertIsNone(model['metric_details']['range']['value'])
+                self.assertEqual(model['metric_details']['range']['evidence'],'未知')
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('zeekr_control.web_model'), 'Web 展示模型尚未实现')
         from zeekr_control.web_model import build_model, parse_location

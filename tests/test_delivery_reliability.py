@@ -12,6 +12,118 @@ from zeekr_control.storage import save
 
 
 class DeliveryReliabilityTests(unittest.TestCase):
+    def test_watchdog_uses_time_after_slow_storage_phase(self):
+        from zeekr_control.delivery_runtime import DeliveryWorker
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'private';save(root/'sampling.json',{'enabled':'false'})
+            worker=DeliveryWorker(root/'session.json',sender=Mock(),alert_sender=Mock())
+            worker.resource_watchdog=Mock();elapsed=[0.0]
+            def storage(*args,**kwargs):elapsed[0]=20.0
+            with patch('zeekr_control.delivery_runtime.time.monotonic',side_effect=lambda:elapsed[0]),\
+                 patch.object(worker.storage,'tick',side_effect=storage),\
+                 patch('zeekr_control.delivery_runtime.observer_sample',return_value={}) as sample:
+                worker.tick(1000000)
+            sample.assert_called_once_with(root,1020)
+            self.assertEqual(worker.resource_watchdog.tick.call_args.args[1],1020)
+
+    def test_rollback_requeues_tyre_preparation_but_preserves_actual_send_claim(self):
+        from zeekr_control.personal_store import PersonalStore
+        from zeekr_control.tyre_notifications import TyreNotifications
+        from zeekr_control.delivery_state import normalize_preparation_for_rollback
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);store=PersonalStore(root/'personal.sqlite3')
+            with store.connect(write=True) as db,db:
+                TyreNotifications._tables(db)
+                for status in ('preparing','sending','uncertain','sent'):
+                    db.execute('INSERT INTO tyre_outbox(id,owner,vehicle,signature,created,payload,bark,wecom,attempts_bark) VALUES(?,?,?,?,?,?,?,?,?)',
+                               (status,'owner','vehicle','sig',1000,'{}',status,status,2))
+            normalize_preparation_for_rollback(root)
+            with store.connect() as db:
+                for identity,bark,wecom,attempts in db.execute('SELECT id,bark,wecom,attempts_bark FROM tyre_outbox'):
+                    expected='pending' if identity=='preparing' else identity
+                    self.assertEqual((bark,wecom,attempts),(expected,expected,2))
+
+    def test_bark_preparation_failure_is_unsent_but_ambiguous_send_is_not_retried(self):
+        from zeekr_control.monitor import Monitor
+        from zeekr_control.notifications import DeliveryError
+        with tempfile.TemporaryDirectory() as folder:
+            monitor=Monitor(Path(folder)/'tracks.sqlite3')
+            with monitor.tracks.connect() as db:
+                db.execute("INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES('event','car','trip_start','[]','safe',1000)")
+                db.execute("INSERT INTO monitor_event_alerts(event_id) VALUES('event')")
+            sender=Mock()
+            monitor._deliver_alerts(sender,1000)
+            sender.assert_not_called()
+            with monitor.tracks.connect() as db:
+                self.assertEqual(db.execute('SELECT delivery,attempts FROM monitor_event_alerts').fetchone(),('failed',0))
+                db.execute("UPDATE monitor_events SET summary=? WHERE id='event'",(json.dumps({'start_time':1000}),))
+                db.execute("UPDATE monitor_event_alerts SET delivery='pending'")
+            sender.side_effect=DeliveryError('synthetic timeout',ambiguous=True)
+            monitor._deliver_alerts(sender,2000)
+            monitor._deliver_alerts(sender,3000)
+            self.assertEqual(sender.call_count,1)
+            with monitor.tracks.connect() as db:
+                self.assertEqual(db.execute('SELECT delivery,attempts FROM monitor_event_alerts').fetchone(),('uncertain',1))
+
+    def test_interrupted_bark_preparation_can_resume_without_counting_a_send(self):
+        from unittest.mock import patch
+        from zeekr_control.monitor import Monitor
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'tracks.sqlite3';monitor=Monitor(path)
+            with monitor.tracks.connect() as db:
+                db.execute("INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES('event','car','trip_start',?,'safe',1000)",
+                           (json.dumps({'start_time':1000}),))
+                db.execute("INSERT INTO monitor_event_alerts(event_id) VALUES('event')")
+            sender=Mock()
+            with patch('zeekr_control.monitor.bark_message_for',side_effect=KeyboardInterrupt),self.assertRaises(KeyboardInterrupt):
+                monitor._deliver_alerts(sender,1000)
+            sender.assert_not_called()
+            with monitor.tracks.connect() as db:
+                self.assertEqual(db.execute('SELECT delivery,attempts FROM monitor_event_alerts').fetchone(),('preparing',0))
+            monitor=Monitor(path)
+            monitor.deliver(Mock(),2000,alert_sender=sender)
+            self.assertEqual(sender.call_count,1)
+            with monitor.tracks.connect() as db:
+                self.assertEqual(db.execute('SELECT delivery,attempts FROM monitor_event_alerts').fetchone(),('sent',1))
+
+    def test_bark_rechecks_delivery_guard_after_preparation(self):
+        from unittest.mock import patch
+        from zeekr_control.delivery_runtime import DeliveryWorker
+        from zeekr_control.sampling import save_settings
+        from zeekr_control.snapshots import session_scope
+        for change in ('pause','account','vehicle','shutdown','deadline'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as folder:
+                root=Path(folder)/'private';session={'accessToken':'synthetic-original'}
+                save(root/'session.json',session);save(root/'monitor-binding.json',{'vehicle_key':'car'})
+                save_settings(root,True)
+                bark=Mock();worker=DeliveryWorker(root/'session.json',sender=Mock(),alert_sender=bark)
+                with worker.monitor.tracks.connect() as db:
+                    db.execute("INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES('event','car','trip_start',?,'safe',1000)",
+                               (json.dumps({'start_time':1000,'end_time':2000,'partial':True}),))
+                    db.execute("INSERT INTO monitor_event_alerts(event_id) VALUES('event')")
+                def prepare(*args):
+                    if change=='pause':save_settings(root,False)
+                    elif change=='account':save(root/'session.json',{'accessToken':'synthetic-other'})
+                    elif change=='vehicle':save(root/'monitor-binding.json',{'vehicle_key':'other-car'})
+                    elif change=='shutdown':worker.stop.set()
+                    else:worker.deadline=0
+                    return 'synthetic title','synthetic body'
+                guard=lambda:worker.guard(session_scope(session),'car')
+                with patch('zeekr_control.monitor.bark_message_for',side_effect=prepare):
+                    worker.monitor._deliver_alerts(bark,1000,guard,'car')
+                bark.assert_not_called()
+                with worker.monitor.tracks.connect() as db:
+                    row=db.execute('SELECT delivery,attempts FROM monitor_event_alerts').fetchone()
+                    self.assertEqual(row,('pending',0))
+                save_settings(root,True);save(root/'session.json',session)
+                save(root/'monitor-binding.json',{'vehicle_key':'car'})
+                worker.stop.clear();worker.deadline=None
+                worker.monitor._deliver_alerts(bark,2000,guard,'car')
+                self.assertEqual(bark.call_count,1)
+                worker.monitor._deliver_alerts(bark,3000,guard,'car')
+                self.assertEqual(bark.call_count,1)
+
     def test_health_merges_latest_events_before_limiting_each_page(self):
         from zeekr_control.monitor import Monitor
         from zeekr_control.personal_store import PersonalStore

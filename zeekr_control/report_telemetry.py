@@ -33,7 +33,8 @@ def capability_registry():
 def _metric(value, unit, state_time, minimum=None, maximum=None, *, capability='enabled',
             origin='vehicle', field_time=None, source=(), time_validity=None):
     parsed = numeric(value, minimum, maximum) if capability == 'enabled' else None
-    validity = time_validity or ('valid' if parsed is not None else ('unverified' if capability == 'pending_evidence' else 'missing'))
+    validity = ((time_validity or 'valid') if parsed is not None
+                else 'unverified' if capability == 'pending_evidence' else 'missing')
     if validity == 'invalid': parsed = None
     return {'value': parsed, 'unit': unit, 'source_paths': list(source), 'origin': origin,
             'capability': capability, 'validity': validity, 'state_time': state_time,

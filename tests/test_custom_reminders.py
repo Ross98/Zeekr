@@ -9,6 +9,188 @@ from test_monitor import BASE, sample
 
 
 class ReminderTests(unittest.TestCase):
+    def test_preparation_delay_rechecks_observation_freshness_at_send(self):
+        from unittest.mock import patch
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        clock=[100.0];calls=[];messages=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:clock[0]+=2
+        with patch('time.monotonic',side_effect=lambda:clock[0]):
+            self.rules.deliver('owner','car',sample(60,soc=20),BASE+239000,messages.append,guard)
+        self.assertEqual(messages,[])
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
+
+    def test_slow_first_send_cannot_keep_later_queue_items_artificially_fresh(self):
+        from unittest.mock import patch
+        self.save(delivery='wecom')
+        self.save(name='第二条提醒',revision=1,delivery='wecom')
+        self.observe(0);self.observe(60)
+        clock=[100.0];messages=[]
+        def sender(message):
+            messages.append(message)
+            clock[0]+=2
+        with patch('time.monotonic',side_effect=lambda:clock[0]):
+            self.rules.deliver('owner','car',sample(60,soc=20),BASE+239000,sender)
+        self.assertEqual(len(messages),1)
+        self.assertEqual(sorted(row['delivery'] for row in self.query()['history']),['cancelled','sent'])
+
+    def test_event_age_expires_during_preparation_even_with_fresh_observation(self):
+        from unittest.mock import patch
+        self.save(delivery='wecom');self.observe(0);self.observe(60);self.observe(659)
+        clock=[100.0];calls=[];messages=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:clock[0]+=2
+        with patch('time.monotonic',side_effect=lambda:clock[0]):
+            self.rules.deliver('owner','car',sample(659,soc=20),BASE+659000,messages.append,guard)
+        self.assertEqual(messages,[])
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
+
+    def test_observation_exactly_at_freshness_limit_is_still_allowed(self):
+        from unittest.mock import patch
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        clock=[100.0];calls=[];messages=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:clock[0]+=1
+        with patch('time.monotonic',side_effect=lambda:clock[0]):
+            self.rules.deliver('owner','car',sample(60,soc=20),BASE+239000,messages.append,guard)
+        self.assertEqual(len(messages),1)
+        self.assertEqual(self.query()['history'][0]['delivery'],'sent')
+
+    def test_delivery_recovery_time_is_included_in_freshness_budget(self):
+        from unittest.mock import patch
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        clock=[100.0];messages=[]
+        original=self.rules._recover
+        def recover():
+            original()
+            clock[0]+=2
+        with patch('time.monotonic',side_effect=lambda:clock[0]),patch.object(self.rules,'_recover',side_effect=recover):
+            self.rules.deliver('owner','car',sample(60,soc=20),BASE+239000,messages.append)
+        self.assertEqual(messages,[])
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
+
+    def test_worker_includes_earlier_delivery_phase_time_before_reminder_call(self):
+        from unittest.mock import Mock,patch
+        from zeekr_control.delivery_runtime import DeliveryWorker
+        from zeekr_control.snapshots import SnapshotStore,session_scope
+        from zeekr_control.storage import save
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        root=self.store.path.parent
+        session={'accessToken':'synthetic'}
+        save(root/'session.json',session)
+        save(root/'monitor-binding.json',{'vehicle_key':'car'})
+        SnapshotStore(root/'snapshots.sqlite3').publish(session_scope(session),'car',sample(60,soc=20),BASE+60000)
+        sender=Mock()
+        worker=DeliveryWorker(root/'session.json',sender=sender,alert_sender=None)
+        clock=[100.0]
+        def slow_storage(*args,**kwargs):clock[0]+=2
+        with patch('time.monotonic',side_effect=lambda:clock[0]), \
+                patch.object(worker.storage,'tick',side_effect=slow_storage), \
+                patch('zeekr_control.delivery_runtime.account_scope',return_value='owner'):
+            worker.tick(BASE+239000)
+        sender.assert_not_called()
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
+
+    def test_rule_disabled_after_preparation_does_not_send_old_reminder(self):
+        saved=self.save(delivery='wecom');self.observe(0);self.observe(60)
+        messages=[];calls=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:self.save(id=saved['id'],revision=1,delivery='wecom',enabled=False)
+        self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,messages.append,guard)
+        self.assertEqual(messages,[])
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
+
+    def test_newer_recovery_during_preparation_invalidates_old_raised_reminder(self):
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        messages=[];calls=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:
+                self.observe(120,soc=80);self.observe(180,soc=80)
+        self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,messages.append,guard)
+        self.assertEqual(messages,[])
+        self.rules.deliver('owner','car',sample(180,soc=80),BASE+180000,messages.append)
+        self.assertEqual(len(messages),1)
+        self.assertIn('条件恢复',messages[0])
+        self.assertEqual({row['kind']:row['delivery'] for row in self.query()['history']},
+                         {'raised':'cancelled','recovered':'sent'})
+
+    def test_newer_unconfirmed_reversal_also_blocks_old_condition_message(self):
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        messages=[];calls=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:self.observe(120,soc=80)
+        self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,messages.append,guard)
+        self.assertEqual(messages,[])
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
+
+    def test_delivery_mode_change_during_preparation_cancels_external_reminder(self):
+        saved=self.save(delivery='wecom');self.observe(0);self.observe(60)
+        messages=[];calls=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:self.save(id=saved['id'],revision=1,delivery='in_app')
+        self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,messages.append,guard)
+        self.assertEqual(messages,[])
+        self.assertEqual(self.query()['history'][0]['delivery'],'cancelled')
+
+    def test_preparation_interruption_can_resume_without_ambiguous_send(self):
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        messages=[];calls=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:raise KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,messages.append,guard)
+        self.assertEqual(self.query()['history'][0]['delivery'],'preparing')
+        self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,messages.append)
+        self.assertEqual(len(messages),1)
+        self.assertEqual(self.query()['history'][0]['delivery'],'sent')
+
+    def test_actual_send_interruption_remains_uncertain_without_replay(self):
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        calls=[]
+        def sender(message):
+            calls.append(message)
+            raise KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,sender)
+        self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,sender)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(self.query()['history'][0]['delivery'],'uncertain')
+
+    def test_rollback_requeues_reminder_preparation_only(self):
+        from zeekr_control.delivery_state import normalize_preparation_for_rollback
+        self.save(delivery='wecom');self.observe(0);self.observe(60)
+        identity=self.query()['history'][0]['id']
+        with self.store.connect(write=True) as db,db:
+            db.execute("UPDATE rule_history SET delivery='preparing'")
+            for status in ('sending','uncertain','sent','failed'):
+                db.execute('INSERT INTO rule_history SELECT ?,owner,vehicle,rule_id,signature,kind,name,created,state_time,?,message,error '
+                           'FROM rule_history WHERE id=?',('phase_'+status,status,identity))
+        result=normalize_preparation_for_rollback(self.store.path.parent)
+        self.assertEqual(result['rule_history.delivery'],1)
+        with self.store.connect() as db:
+            states=dict(db.execute('SELECT id,delivery FROM rule_history'))
+        self.assertEqual(states[identity],'pending')
+        for status in ('sending','uncertain','sent','failed'):
+            self.assertEqual(states['phase_'+status],status)
+
+    def test_rule_edit_after_sender_entry_preserves_actual_sent_result(self):
+        saved=self.save(delivery='wecom');self.observe(0);self.observe(60)
+        calls=[]
+        def sender(message):
+            calls.append(message)
+            self.save(id=saved['id'],revision=1,enabled=False)
+        self.rules.deliver('owner','car',sample(60,soc=20),BASE+60000,sender)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(self.query()['history'][0]['delivery'],'sent')
+
     def setUp(self):
         from zeekr_control.custom_reminders import Reminders
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
@@ -78,6 +260,25 @@ class ReminderTests(unittest.TestCase):
         for second in range(240,601,60):self.observe(second)
         self.assertEqual(len(self.query()['history']),2)
         self.observe(660);self.observe(720)
+        self.assertEqual(len(self.query()['history']),3)
+
+    def test_sampling_epoch_resets_candidates_but_preserves_active_and_cooldown(self):
+        self.save()
+        self.observe(0,sampling_epoch='first')
+        self.observe(60,sampling_epoch='first')
+        self.assertEqual(len(self.query()['history']),1)
+        self.observe(120,sampling_epoch='outage')
+        self.observe(180,sampling_epoch='outage')
+        self.assertEqual(len(self.query()['history']),1)
+        # A second outage during recovery cannot confirm across its boundary.
+        self.observe(240,40,sampling_epoch='outage')
+        self.observe(300,40,sampling_epoch='second-outage')
+        self.assertEqual(len(self.query()['history']),1)
+        self.observe(360,40,sampling_epoch='second-outage')
+        self.assertEqual([row['kind'] for row in self.query()['history']],['recovered','raised'])
+        for second in (420,480):self.observe(second,sampling_epoch='second-outage')
+        self.assertEqual(len(self.query()['history']),2)
+        self.observe(660,sampling_epoch='second-outage')
         self.assertEqual(len(self.query()['history']),3)
 
     def test_scope_isolated_and_only_enabled_rules_run(self):

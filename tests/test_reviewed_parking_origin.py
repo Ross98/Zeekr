@@ -74,6 +74,37 @@ class ReviewedParkingOriginTests(unittest.TestCase):
             db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',('other-trip','car','trip_start','{}',self.current-100000))
         self.assertIsNone(self.infer())
 
+    def test_late_movement_invalidates_reviewed_origin(self):
+        self.seed()
+        for kind, start, end in [('trip_start',self.current-60000,self.current-60000),
+                                 ('trip_end',self.previous_end+60000,self.current-60000),
+                                 ('trip_end',self.previous_end-60000,self.current+60000)]:
+            with self.subTest(kind=kind,start=start,end=end):
+                with sqlite3.connect(self.db) as db:
+                    db.execute('INSERT OR REPLACE INTO monitor_events VALUES(?,?,?,?,?)',
+                               ('late','car',kind,json.dumps(dict(start_time=start,end_time=end)),self.current+90000))
+                self.assertIsNone(self.infer())
+
+    def test_old_completed_trip_written_during_parking_does_not_invalidate_origin(self):
+        self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('old','car','trip_end',json.dumps(dict(start_time=self.previous_end-120000,
+                        end_time=self.previous_end-60000)),self.park+60000))
+        self.assertEqual(self.infer(), expected)
+
+    def test_recycled_review_source_is_unavailable_until_restored(self):
+        self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE trip_record_trash(vehicle TEXT,event_id TEXT)')
+            db.execute("INSERT INTO trip_record_trash VALUES('car','previous')")
+        self.assertIsNone(self.infer())
+        with sqlite3.connect(self.db) as db:
+            db.execute('DELETE FROM trip_record_trash')
+        self.assertEqual(self.infer(), expected)
+
     def test_automatic_partial_inference_stays_disabled_and_limits_are_enforced(self):
         self.seed()
         with sqlite3.connect(self.db) as db:

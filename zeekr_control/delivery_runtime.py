@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from .delivery_state import delivery_lock, DeliveryBusy, DeliveryCancelled
+from .delivery_state import delivery_lock, delivery_clock, DeliveryBusy, DeliveryCancelled
 from .storage import DEFAULT_PATH, load, save
 from .sampling import read_settings
 from .snapshots import SnapshotStore, session_scope
@@ -49,8 +49,10 @@ class DeliveryWorker:
 
     def tick(self,now=None,image_limit=1,budget_seconds=None):
         now=int(time.time()*1000) if now is None else now
+        started=time.monotonic()
+        current_time=delivery_clock(now,started)
         self.error=''
-        self.deadline=time.monotonic()+budget_seconds if budget_seconds is not None else None
+        self.deadline=started+budget_seconds if budget_seconds is not None else None
         with delivery_lock(self.root/'notifications.lock'):
             # Server storage alerts deliberately remain active when vehicle sampling is paused.
             if self.stop.is_set():return
@@ -60,7 +62,8 @@ class DeliveryWorker:
                 print('存储巡检或预警状态无法保存，请检查存储。',flush=True)
             try:
                 if self.resource_watchdog is not None:
-                    self.resource_watchdog.tick(observer_sample(self.root,now/1000),now/1000,
+                    watchdog_now=current_time()/1000
+                    self.resource_watchdog.tick(observer_sample(self.root,watchdog_now),watchdog_now,
                         can_send=lambda:not self.stop.is_set() and (self.deadline is None or time.monotonic()<self.deadline))
             except Exception:
                 self.error='resource_watchdog_unavailable'
@@ -80,9 +83,9 @@ class DeliveryWorker:
                 if snapshot:
                     fallback=(FallbackSender(self.alert_sender,self.sender,compact_bark_times)
                               if self.alert_sender is not None else self.sender)
-                    self.reminders.deliver(owner,vehicle,snapshot['raw'],now,fallback,guard)
-                    self.tyres.deliver(owner,vehicle,now,self.alert_sender,self.sender,guard)
-                self.monitor.deliver(self.sender,now,self.alert_sender,guard,image_limit,vehicle)
+                    self.reminders.deliver(owner,vehicle,snapshot['raw'],current_time(),fallback,guard)
+                    self.tyres.deliver(owner,vehicle,current_time(),self.alert_sender,self.sender,guard)
+                self.monitor.deliver(self.sender,current_time(),self.alert_sender,guard,image_limit,vehicle)
             except DeliveryCancelled:
                 self.status='paused' if not read_settings(self.root)[0] else 'running'
 

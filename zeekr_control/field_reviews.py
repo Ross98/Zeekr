@@ -1,10 +1,11 @@
 """Vehicle-local manual annotations. Never used by vehicle decoders or notifications."""
 import json
 import math
-import os
 from pathlib import Path
 import sqlite3
 import time
+from .archive_reader import _private
+from .sqlite_files import prepare_database_file
 
 
 class FieldReviewStore:
@@ -13,19 +14,27 @@ class FieldReviewStore:
 
     def connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        os.close(fd)
+        _private(self.path.parent,directory=True)
+        prepare_database_file(self.path)
+        _private(self.path)
         db = sqlite3.connect(self.path, timeout=5)
-        db.execute('CREATE TABLE IF NOT EXISTS revisions (vehicle TEXT PRIMARY KEY, revision INTEGER NOT NULL)')
-        db.execute('''CREATE TABLE IF NOT EXISTS reviews (vehicle TEXT, path TEXT, scope TEXT,
-                      value TEXT, body TEXT NOT NULL, PRIMARY KEY(vehicle,path,scope,value))''')
-        db.commit()
-        return db
+        try:
+            with db:
+                db.execute('BEGIN IMMEDIATE')
+                db.execute('CREATE TABLE IF NOT EXISTS revisions (vehicle TEXT PRIMARY KEY, revision INTEGER NOT NULL)')
+                db.execute('''CREATE TABLE IF NOT EXISTS reviews (vehicle TEXT, path TEXT, scope TEXT,
+                              value TEXT, body TEXT NOT NULL, PRIMARY KEY(vehicle,path,scope,value))''')
+            return db
+        except BaseException:
+            db.close()
+            raise
 
     def read(self, vehicle):
-        if not vehicle or not self.path.exists():
+        if not vehicle or not self.path.exists() and not self.path.is_symlink():
             return {'vehicle': vehicle, 'revision': 0, 'records': []}
-        db = self.connect()
+        _private(self.path.parent,directory=True)
+        _private(self.path)
+        db = sqlite3.connect(self.path.absolute().as_uri()+'?mode=ro',uri=True,timeout=5)
         try:
             db.execute('BEGIN')
             return self._read(db, vehicle)
@@ -67,12 +76,21 @@ class FieldReviewStore:
             if observed is not None and (type(observed) is not int or not 0 <= observed <= 9999999999999):
                 raise ValueError('观测时间无效。')
             if status == 'confirmed':
-                if not record['meaning'] or raw in ('未知', ''):
+                # Catalogue raw values retain JSON types; missing/container
+                # placeholders are not evidence for a concrete scalar meaning.
+                try:value=json.loads(raw)
+                except (ValueError,RecursionError):value=raw
+                if (not record['meaning'] or raw in ('未知','','—','[非标量值]','[无效数值]')
+                        or value is None or isinstance(value,(dict,list))
+                        or isinstance(value,str) and not value.strip()
+                        or type(value) is float and not math.isfinite(value)):
                     raise ValueError('请填写确认含义；缺失值不能确认。')
                 if scope == 'field':
                     try:
-                        valid = math.isfinite(float(raw))
-                    except ValueError:
+                        # The complete parameter catalogue preserves JSON types,
+                        # including numeric gateway strings such as '"48.5"'.
+                        valid = type(value) in (str,int,float) and math.isfinite(float(value))
+                    except (ValueError,OverflowError):
                         valid = False
                     if not valid:
                         raise ValueError('字段级确认仅用于数值参数，枚举请按具体值确认。')
@@ -96,8 +114,9 @@ class FieldReviewStore:
                     db.execute('INSERT OR REPLACE INTO reviews VALUES (?,?,?,?,?)',
                                (*key, json.dumps(record, ensure_ascii=False)))
                 db.execute('INSERT OR REPLACE INTO revisions VALUES (?,?)', (vehicle, current['revision'] + 1))
+                result=self._read(db,vehicle)
                 if guard is not None:
                     guard()
-                return self._read(db, vehicle)
+                return result
         finally:
             db.close()

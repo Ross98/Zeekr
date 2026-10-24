@@ -68,13 +68,14 @@ class CredentialCoordinator:
         try:
             with lock_context('credential'),delivery_lock(self.root/'credential-coordination.lock'):
                 with database(self.root/'credential-coordination.sqlite3') as db:
-                    db.execute('CREATE TABLE IF NOT EXISTS credential_operations (op_id TEXT PRIMARY KEY,kind TEXT,phase TEXT,active_slot INTEGER UNIQUE,baseline TEXT,refresh_fp TEXT,owner TEXT,claimed INTEGER,expected TEXT)')
-                    add_columns(db,'credential_operations',{'previous_refresh_state':'TEXT'})
-                    db.execute('CREATE TABLE IF NOT EXISTS refresh_states (fingerprint TEXT PRIMARY KEY,state TEXT NOT NULL)')
-                    db.execute('CREATE TABLE IF NOT EXISTS refresh_reuse_trials(id TEXT PRIMARY KEY,fingerprint TEXT,baseline TEXT,operation TEXT)')
-                    db.execute('CREATE UNIQUE INDEX IF NOT EXISTS refresh_reuse_trial_once ON refresh_reuse_trials(fingerprint)')
-                    db.execute('CREATE TABLE IF NOT EXISTS refresh_reuse_contracts(fingerprint TEXT PRIMARY KEY,authorization TEXT,confirmed_scope TEXT)')
-                    db.commit()
+                    with db:
+                        db.execute('BEGIN IMMEDIATE')
+                        db.execute('CREATE TABLE IF NOT EXISTS credential_operations (op_id TEXT PRIMARY KEY,kind TEXT,phase TEXT,active_slot INTEGER UNIQUE,baseline TEXT,refresh_fp TEXT,owner TEXT,claimed INTEGER,expected TEXT)')
+                        add_columns(db,'credential_operations',{'previous_refresh_state':'TEXT'})
+                        db.execute('CREATE TABLE IF NOT EXISTS refresh_states (fingerprint TEXT PRIMARY KEY,state TEXT NOT NULL)')
+                        db.execute('CREATE TABLE IF NOT EXISTS refresh_reuse_trials(id TEXT PRIMARY KEY,fingerprint TEXT,baseline TEXT,operation TEXT)')
+                        db.execute('CREATE UNIQUE INDEX IF NOT EXISTS refresh_reuse_trial_once ON refresh_reuse_trials(fingerprint)')
+                        db.execute('CREATE TABLE IF NOT EXISTS refresh_reuse_contracts(fingerprint TEXT PRIMARY KEY,authorization TEXT,confirmed_scope TEXT)')
                     yield db
         except DeliveryBusy:
             raise CredentialBusy('凭据操作正在进行，请稍候。') from None

@@ -7,9 +7,11 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import stat
 
 from .web_model import parse_location
 from .summary import number, updated_at
+from .sqlite_files import prepare_database_file
 
 
 MAX_GAP_SECONDS = 180
@@ -17,10 +19,14 @@ MAX_POINTS = 5000
 
 
 def day_bounds(date):
+    if not isinstance(date,str):raise ValueError('日期格式应为 YYYY-MM-DD。')
     start = datetime.strptime(date, '%Y-%m-%d').replace(tzinfo=ZoneInfo('Asia/Shanghai'))
     if start.strftime('%Y-%m-%d') != date:
         raise ValueError('日期格式应为 YYYY-MM-DD。')
-    return int(start.timestamp() * 1000), int((start + timedelta(days=1)).timestamp() * 1000)
+    try:
+        return int(start.timestamp() * 1000), int((start + timedelta(days=1)).timestamp() * 1000)
+    except (OverflowError,OSError):
+        raise ValueError('日期超出可计算范围。') from None
 
 
 def valid_timestamp(value):
@@ -51,13 +57,11 @@ class TrackStore:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.path.parent.stat().st_mode & 0o077 or self.path.parent.stat().st_uid != os.getuid():
             raise ValueError('轨迹目录必须为当前用户所有且权限为 700。')
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        try:
-            if os.fstat(fd).st_uid != os.getuid() or os.fstat(fd).st_mode & 0o077:
-                raise ValueError('轨迹文件必须为当前用户所有且权限为 600。')
-        finally:
-            os.close(fd)
+        info=prepare_database_file(self.path)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise ValueError('轨迹文件必须为当前用户所有且权限为 600 的普通文件。')
         with self.connect() as connection:
+            connection.execute('BEGIN')
             connection.execute('''CREATE TABLE IF NOT EXISTS observations (
                 id INTEGER PRIMARY KEY, vehicle TEXT NOT NULL, cache_key TEXT NOT NULL,
                 state_time INTEGER, observed_time INTEGER NOT NULL, gap_seconds INTEGER NOT NULL,

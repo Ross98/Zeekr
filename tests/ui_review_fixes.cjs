@@ -28,7 +28,8 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   assert.doesNotMatch(await page.locator('#insights-workspace').innerText(),/默认采集间隔 60 秒|降至 300 秒/);
   await page.getByRole('button',{name:'采集与设置',exact:true}).click();
   const health={context,as_of:Date.now(),services:{reports:{status:'disabled',enabled:false,online:false,next_due:null}},summary:{failed_events:1,uncertain_events:0,pending_events:0},events:[{id:'synthetic',kind:'trip_end',created_at:Date.now(),parts:{bark:{state:'sent'},text:{state:'sent'},image:{state:'failed',error_code:'image_prepare_failed'}}}],periodic_reports:[]};
-  await page.route('**/api/notifications/health',r=>r.fulfill({json:health}));
+  let healthStatus=200,healthError='合成诊断读取失败';
+  await page.route('**/api/notifications/health',r=>r.fulfill({status:healthStatus,json:healthStatus===200?health:{error:healthError}}));
   await page.locator('[data-detail="settings-notifications"] > summary').click();
   await page.locator('#notification-health').getByText('图片准备失败',{exact:false}).waitFor();
   assert.match(await page.locator('#notification-health').innerText(),/未启用/);
@@ -39,6 +40,46 @@ const {fixture}=require('./ui_insight_helpers.cjs');
   await page.locator('#notification-health').getByText('部分通知来源暂不可用',{exact:false}).waitFor();
   assert.match(await page.locator('#notification-health').innerText(),/下次计划：日报 2026-10-09 00:10/);
   assert.match(await page.locator('#notification-health').innerText(),/2026-10-07 — 2026-10-07/);
+  const unbound=await page.evaluate(()=>({...structuredClone(state),insights_context:null}));
+  await page.route('**/api/state',r=>r.fulfill({json:unbound}));
+  health.context=null;health.events=[];health.periodic_reports=[];
+  health.services={collector:{enabled:true,online:true},reports:{enabled:false,online:false}};
+  health.summary={complete:true,failed_events:0,uncertain_events:0,pending_events:0};
+  healthStatus=400;healthError='请先连接车辆账号。';
+  await page.evaluate(async value=>{
+   state=value;render();document.querySelector('[data-detail="settings-notifications"]').open=true;
+   await loadNotificationHealth(true);
+  },unbound);
+  assert.equal(await page.evaluate(()=>notificationHealth.data),null,'unbound context clears previous vehicle diagnostics');
+  assert.match(await page.locator('#notification-health').innerText(),/请先连接车辆账号/);
+  assert.doesNotMatch(await page.locator('#notification-health').innerText(),/图片准备失败|2026-10-07 — 2026-10-07/,'previous vehicle diagnostics are cleared');
+  healthStatus=503;healthError='合成诊断读取失败';await page.evaluate(()=>loadNotificationHealth(true));
+  assert.match(await page.locator('#notification-health').innerText(),/合成诊断读取失败/);
+  assert.equal(await page.locator('[data-notification-health]').isEnabled(),true);
+  assert.equal(await page.evaluate(()=>notificationHealth.data),null,'failed retry cannot restore old vehicle diagnostics');
+  healthStatus=200;health.context=context;unbound.insights_context=context;
+  await page.evaluate(async value=>{state=value;render();document.querySelector('[data-detail="settings-notifications"]').open=true;await loadNotificationHealth(true);},unbound);
+  assert.equal(await page.locator('#notification-health [role="alert"]').count(),0);
+  assert.match(await page.locator('#notification-health').innerText(),/车辆采集.*后台在线/s);
+  const cacheReads=await page.evaluate(async payload=>{
+    const originalFetch=window.fetch,originalDate=Date.now,own=Object.getOwnPropertyDescriptor(performance,'now'),results=[];
+    try{
+      for(const expire of [false,true]){
+        let wall=originalDate(),elapsed=0,reads=0;
+        Date.now=()=>wall;Object.defineProperty(performance,'now',{configurable:true,value:()=>elapsed});
+        window.fetch=(url,options)=>String(url)==='/api/notifications/health'
+          ?(reads++,Promise.resolve(new Response(JSON.stringify(payload)))):originalFetch(url,options);
+        await loadNotificationHealth(true);
+        wall+=expire?-3600000:3600000;elapsed=expire?31001:1000;
+        await loadNotificationHealth();results.push(reads);
+      }
+      return results;
+    }finally{
+      window.fetch=originalFetch;Date.now=originalDate;
+      if(own)Object.defineProperty(performance,'now',own);else delete performance.now;
+    }
+  },health);
+  assert.deepEqual(cacheReads,[1,2],'notification cache follows elapsed expiry and not wall-clock corrections');
   assert.ok(f.posts.every(url=>{
     const target=new URL(url);
     return target.origin===f.origin&&/^\/api\/analysis\/[a-f0-9]{32}\/cancel$/.test(target.pathname)&&url===f.origin+target.pathname;

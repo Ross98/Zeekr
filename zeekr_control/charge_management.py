@@ -5,11 +5,12 @@ import secrets
 import sqlite3
 import threading
 import time
+from pathlib import Path
 
 from .archive_reader import _private
 from .events import _cursor, _decode
 from .tracks import day_bounds, valid_timestamp
-from .trip_visibility import has_charge_trash, charge_revision
+from .trip_visibility import has_charge_trash, charge_revision, has_sending_delivery, cancel_event_delivery
 from .usage_events import UsageEvents, VALID_ID, MAX_SUMMARY_BYTES, MAX_SCAN, project
 
 
@@ -102,7 +103,7 @@ class ChargeRecordManager(UsageEvents):
             row = db.execute(sql, (vehicle, identity)).fetchone()
             if row is None or (row[5] is not None) != (action == 'restore'):
                 raise ValueError('充电记录不存在、状态已变化或不属于当前车辆，请重新读取。')
-            if row[2] == 'sending':
+            if has_sending_delivery(db,identity):
                 raise ValueError('所选充电记录正在发送通知，请稍后重新预览。')
             if row[4] > MAX_SUMMARY_BYTES:
                 raise ValueError('所选充电摘要过大，暂不能通过网页管理。')
@@ -110,19 +111,30 @@ class ChargeRecordManager(UsageEvents):
         return rows
 
     def preview(self, vehicle, action, identities, expected_revision, owner, *, linked_bills=None,
-                with_linked_bills=False, ledger_revision=None):
+                with_linked_bills=False, ledger_revision=None, ledger_owner=None):
         if (not isinstance(vehicle, str) or not vehicle or not isinstance(owner, str) or not owner
                 or action not in ('trash', 'restore') or type(expected_revision) is not int
                 or not isinstance(identities, list) or not 1 <= len(identities) <= 100
                 or any(not isinstance(i, str) or not VALID_ID.fullmatch(i) or i == 'current' for i in identities)
                 or len(set(identities)) != len(identities)):
             raise ValueError('请选择 1 至 100 条已结束充电记录及有效操作。')
+        linked_bills = list(linked_bills or [])
+        ledger_owner = ledger_owner or owner
         with self.connect() as db:
             if db is not None:
                 db.execute('BEGIN')
             if charge_revision(db, vehicle) != expected_revision:
                 raise ValueError('充电记录已变化，请重新读取后选择。')
             rows = self._checked_rows(db, vehicle, identities, action)
+            if action == 'restore':
+                # Only restore the exact bill revisions moved by this recycle
+                # operation. Legacy/manual deletions have no such provenance.
+                moved = set()
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='charge_record_linked_bills'").fetchone():
+                    moved = set(db.execute('SELECT event_id,bill_id,updated_at FROM charge_record_linked_bills '
+                                           'WHERE owner=? AND vehicle=?', (ledger_owner, vehicle)))
+                linked_bills = [bill for bill in linked_bills
+                                if (bill['event_id'], bill['id'], bill.get('updated_at')) in moved]
         with self.lock:
             now = self.clock()
             self.plans = {key: plan for key, plan in self.plans.items() if plan['expires'] > now}
@@ -132,7 +144,8 @@ class ChargeRecordManager(UsageEvents):
             self.plans[token] = {'vehicle': vehicle, 'action': action, 'ids': list(identities),
                                  'owner': owner, 'revision': expected_revision, 'expires': now+300,
                                  'fingerprints': [row[0] for row in rows],
-                                 'linked_bills': list(linked_bills or []),
+                                 'linked_bills': linked_bills,
+                                 'ledger_owner': ledger_owner,
                                  'with_linked_bills': with_linked_bills,
                                  'ledger_revision': ledger_revision}
         return {'token': token, 'action': action, 'items': [row[1] for row in rows],
@@ -145,8 +158,9 @@ class ChargeRecordManager(UsageEvents):
         db.execute('CREATE TABLE IF NOT EXISTS charge_record_trash (vehicle TEXT NOT NULL,event_id TEXT NOT NULL,removed_at INTEGER NOT NULL,PRIMARY KEY(vehicle,event_id))')
         db.execute('CREATE TABLE IF NOT EXISTS charge_record_revisions (vehicle TEXT PRIMARY KEY,revision INTEGER NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS charge_record_audit (id INTEGER PRIMARY KEY,vehicle TEXT NOT NULL,revision INTEGER NOT NULL,action TEXT NOT NULL,event_ids TEXT NOT NULL,created INTEGER NOT NULL)')
+        db.execute('CREATE TABLE IF NOT EXISTS charge_record_linked_bills (owner TEXT NOT NULL,vehicle TEXT NOT NULL,event_id TEXT NOT NULL,bill_id TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(owner,vehicle,event_id,bill_id))')
 
-    def execute(self, token, owner, guard=None, linked_change=None):
+    def execute(self, token, owner, guard=None, linked_change=None, linked_database=None):
         with self.lock:
             plan = self.plans.get(token) if isinstance(token, str) else None
             if not plan or plan['owner'] != owner or self.clock() >= plan['expires']:
@@ -156,7 +170,27 @@ class ChargeRecordManager(UsageEvents):
         _private(self.path)
         db = sqlite3.connect(self.path.absolute().as_uri()+'?mode=rw', uri=True, timeout=5)
         try:
+            together = bool(plan['with_linked_bills'] and plan['linked_bills'])
+            if together:
+                if linked_change is None or linked_database is None:
+                    raise ValueError('关联账单操作不可用。')
+                linked_database = Path(linked_database)
+                _private(linked_database.parent, directory=True)
+                _private(linked_database)
+                if linked_database.resolve() == self.path.resolve():
+                    raise ValueError('关联账单数据库无效。')
+                db.execute('ATTACH DATABASE ? AS ledger', (linked_database.absolute().as_uri()+'?mode=rw',))
+                for schema in ('main','ledger'):
+                    db.execute(f'PRAGMA {schema}.synchronous=FULL')
             db.execute('BEGIN IMMEDIATE')
+            if self.clock()>=plan['expires']:
+                raise ValueError('预览已过期，请重新预览。')
+            if together:
+                # Check while both databases are reserved; a journal-mode change
+                # before BEGIN must not invalidate the multi-database commit.
+                for schema in ('main','ledger'):
+                    if db.execute(f'PRAGMA {schema}.journal_mode').fetchone()[0] not in ('delete','persist','truncate'):
+                        raise ValueError('数据库日志模式不支持关联账单原子修改。')
             if charge_revision(db, plan['vehicle']) != plan['revision']:
                 raise ValueError('充电记录已变化，请重新读取并预览。')
             rows = self._checked_rows(db, plan['vehicle'], plan['ids'], plan['action'])
@@ -167,8 +201,7 @@ class ChargeRecordManager(UsageEvents):
             for identity in plan['ids']:
                 if plan['action'] == 'trash':
                     db.execute('INSERT INTO charge_record_trash VALUES (?,?,?)', (plan['vehicle'], identity, now))
-                    db.execute("UPDATE monitor_events SET delivery='cancelled',error='充电记录已移入回收区，未发送。',next_attempt=0 WHERE vehicle=? AND id=? AND delivery='pending'",
-                               (plan['vehicle'], identity))
+                    cancel_event_delivery(db,plan['vehicle'],identity,'充电记录已移入回收区，未发送。')
                 else:
                     db.execute('DELETE FROM charge_record_trash WHERE vehicle=? AND event_id=?', (plan['vehicle'], identity))
             new_revision = plan['revision']+1
@@ -179,10 +212,24 @@ class ChargeRecordManager(UsageEvents):
                        (plan['vehicle'], plan['vehicle']))
             if guard:
                 guard()
-            if plan['with_linked_bills'] and plan['linked_bills']:
-                if linked_change is None:
-                    raise ValueError('关联账单操作不可用。')
-                linked_change(plan)
+            if together:
+                linked_change(plan, db)
+                if guard:
+                    guard()
+            for identity in plan['ids']:
+                db.execute('DELETE FROM charge_record_linked_bills WHERE vehicle=? AND event_id=?',
+                           (plan['vehicle'], identity))
+            if together and plan['action'] == 'trash':
+                for bill in plan['linked_bills']:
+                    saved = db.execute("SELECT updated_at,deleted FROM ledger.records WHERE owner=? "
+                                       "AND vehicle=? AND collection='charges' AND id=?",
+                                       (plan['ledger_owner'], plan['vehicle'], bill['id'])).fetchone()
+                    if not saved or saved[1] != 1:
+                        raise ValueError('关联账单回收结果未确认，本次修改已取消。')
+                    db.execute('INSERT INTO charge_record_linked_bills VALUES(?,?,?,?,?)',
+                               (plan['ledger_owner'], plan['vehicle'], bill['event_id'], bill['id'], saved[0]))
+            if self.clock()>=plan['expires']:
+                raise ValueError('预览已过期，请重新预览。')
             db.commit()
             return {'action': plan['action'], 'count': len(plan['ids']), 'revision': new_revision}
         finally:

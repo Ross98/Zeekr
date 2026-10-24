@@ -5,6 +5,8 @@ import math
 from .commute_tags import _distance
 from .trip_place_geometry import RADIUS_M
 from .usage_events import MAX_SUMMARY_BYTES, number
+from .movement_barriers import trip_start_between
+from .trip_visibility import visible_clause
 
 
 MAX_PARKING_AGE_MS = 31 * 86400000
@@ -36,6 +38,29 @@ def _telemetry(summary, side):
     report = summary.get('report_v2')
     value = report.get(side) if isinstance(report, dict) else None
     return value if isinstance(value, dict) else {}
+
+
+def _previous_arrival(db, vehicle, identity, start):
+    """Latest vehicle arrival or contradiction; never skip a bad newest row."""
+    row = db.execute(
+        'WITH encoded AS (SELECT id,created,('+visible_clause(db)+') AS visible, '
+        'CASE WHEN length(CAST(summary AS BLOB))<=? '
+        'THEN CASE WHEN json_valid(summary) THEN summary END END AS summary '
+        "FROM monitor_events WHERE vehicle=? AND kind='trip_end' AND id!=?), "
+        'timed AS (SELECT id,created,visible,summary, '
+        "CASE WHEN json_type(summary,'$.end_time') IN ('integer','real') "
+        "AND json_extract(summary,'$.end_time') BETWEEN 1 AND 32503680000000 "
+        "THEN json_extract(summary,'$.end_time') END AS vehicle_end, "
+        "CASE WHEN json_type(summary,'$.start_time') IN ('integer','real') "
+        "AND json_extract(summary,'$.start_time') BETWEEN 1 AND 32503680000000 "
+        "THEN json_extract(summary,'$.start_time') END AS vehicle_start FROM encoded) "
+        'SELECT id,summary,visible FROM timed WHERE vehicle_end<? '
+        'OR (vehicle_end IS NULL AND created<?) '
+        'OR (vehicle_end>=? AND (vehicle_start<? OR (vehicle_start IS NULL AND created<?))) '
+        'ORDER BY COALESCE(vehicle_end,created) DESC,created DESC,id DESC LIMIT 1',
+        (MAX_SUMMARY_BYTES,vehicle,identity,start,start,start,start,start)).fetchone()
+    # A hidden latest source is a stop, never permission to use an older trip.
+    return row[:2] if row is not None and row[2] else None
 
 
 def parking_origin(db, vehicle, event):
@@ -79,9 +104,7 @@ def parking_origin(db, vehicle, event):
     if (point is None or number(observed, 1, 32503680000000) is None or not stamp <= observed <= stamp+60000
             or _distance(origin, point) > 15):
         return None
-    previous = db.execute("SELECT id,CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END "
-                          "FROM monitor_events WHERE vehicle=? AND kind='trip_end' "
-                          'AND created<? ORDER BY created DESC,id DESC LIMIT 1', (MAX_SUMMARY_BYTES, vehicle, start)).fetchone()
+    previous = _previous_arrival(db, vehicle, event['id'], start)
     if not previous:
         return None
     previous_id, encoded = previous
@@ -94,8 +117,7 @@ def parking_origin(db, vehicle, event):
             or number(arrival.get('odometer')) != odo):
         return None
     # A recorded intervening start without an ending defeats the parking estimate.
-    if db.execute("SELECT 1 FROM monitor_events WHERE vehicle=? AND kind='trip_start' "
-                  'AND created>? AND created<? LIMIT 1', (vehicle, end, start)).fetchone():
+    if trip_start_between(db, vehicle, end, start):
         return None
     anchor = _point(previous.get('end_location'), trusted=True)
     if anchor is None:

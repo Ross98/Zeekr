@@ -66,6 +66,48 @@ const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
    await isolated.setExtraHTTPHeaders({'User-Agent':'Different Synthetic Browser'});
    assert.equal((await isolated.request.get(`${origin}/api/state`)).status(),401);
    await isolated.setExtraHTTPHeaders({});
+   if(days==='7'){
+    let release,attempts=0;
+    const pending=new Promise(resolve=>{release=resolve;});
+    await login.route('**/auth/logout',async route=>{
+     attempts++;await pending;
+     await route.fulfill({status:503,json:{error:'合成撤销故障，请稍后重试。'}});
+    });
+    try{
+     await login.locator('#logout').click();
+     assert.equal(await login.locator('#logout').isDisabled(),true,'pending logout blocks duplicate submissions');
+     await login.locator('#logout').evaluate(button=>button.click());
+    }finally{release();}
+    await login.waitForFunction(()=>!document.querySelector('#toast').hidden&&document.querySelector('#toast').textContent.includes('合成撤销故障'));
+    assert.equal(attempts,1);
+    assert.equal(await login.locator('#logout').isEnabled(),true);
+    assert.equal((await isolated.request.get(`${origin}/api/state`)).status(),200,'a rejected logout keeps the existing session');
+    await login.unroute('**/auth/logout');
+    await login.route('**/auth/logout',route=>route.abort());
+    await login.locator('#logout').click();
+    await login.waitForFunction(()=>!document.querySelector('#toast').hidden&&document.querySelector('#toast').textContent.includes('连接失败'));
+    assert.equal(await login.locator('#logout').isEnabled(),true);
+    assert.ok((await isolated.cookies()).some(value=>value.name==='zeekr_session'));
+    await login.unroute('**/auth/logout');
+   }
+   if(days==='30'){
+    let release,heldRequest;
+    const pending=new Promise(resolve=>{release=resolve;});
+    await login.route('**/auth/logout',async route=>{
+     heldRequest=route.request();await pending;
+     if(!heldRequest.failure())await route.abort();
+    });
+    try{
+     const aborted=login.waitForEvent('requestfailed',{predicate:request=>new URL(request.url()).pathname==='/auth/logout',timeout:12000});
+     await login.locator('#logout').click();
+     await login.waitForFunction(()=>!document.querySelector('#toast').hidden&&document.querySelector('#toast').textContent.includes('响应超时'),{},{timeout:12000});
+     assert.equal(await login.locator('#logout').isEnabled(),true);
+     await aborted;
+     assert.ok(heldRequest.failure(),'timeout aborts the held request');
+     assert.ok((await isolated.cookies()).some(value=>value.name==='zeekr_session'));
+    }finally{release();}
+    await login.unroute('**/auth/logout');
+   }
    await login.getByRole('button',{name:'退出登录',exact:true}).click();
    await login.waitForSelector('#password');
    assert.ok(!(await isolated.cookies()).some(cookie=>cookie.name==='zeekr_session'));
@@ -78,11 +120,45 @@ const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
   await page.getByRole('button',{name:'登录',exact:true}).click();await page.waitForSelector('#logout');
   const restarted=nextLine();server.stdin.write('restart\n');assert.equal(await restarted,'restarted');
   await page.reload();await page.waitForSelector('#password');
+  let releaseLogin;
+  const pendingLogin=new Promise(resolve=>{releaseLogin=resolve;});
+  await page.route('**/auth/login',async route=>{
+   await pendingLogin;
+   if(!route.request().failure())await route.abort().catch(error=>{if(!error.message.includes('already handled'))throw error;});
+  });
+  await page.getByLabel('访问密码').fill('synthetic browser password');
+  await page.evaluate(()=>{
+   window.__originalLoginFetch=window.fetch;window.__loginRequests=0;
+   window.fetch=(url,options)=>{if(String(url).endsWith('/auth/login'))window.__loginRequests++;return window.__originalLoginFetch(url,options);};
+  });
+  try{
+   const aborted=page.waitForEvent('requestfailed',{predicate:request=>new URL(request.url()).pathname==='/auth/login',timeout:12000});
+   aborted.catch(()=>{});
+   await page.getByRole('button',{name:'登录',exact:true}).click();
+   const pending=await page.evaluate(()=>{
+    document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+    return {requests:window.__loginRequests,passwordDisabled:document.querySelector('#password').disabled,rememberDisabled:document.querySelector('#remember').disabled};
+   });
+   assert.deepEqual(pending,{requests:1,passwordDisabled:true,rememberDisabled:true},'pending credentials stay frozen and duplicate submissions cannot create another session');
+   await page.waitForFunction(()=>document.querySelector('#error').textContent.includes('响应超时'),{},{timeout:12000});
+   await aborted;
+   assert.match(await page.locator('#error').innerText(),/结果尚未确认/);
+   assert.equal(await page.getByRole('button',{name:'登录',exact:true}).isEnabled(),true);
+   assert.equal(await page.getByLabel('访问密码').isEnabled(),true);
+   assert.equal(await page.getByLabel('下次免输密码').isEnabled(),true);
+  }finally{
+   releaseLogin();await page.unroute('**/auth/login');
+   await page.evaluate(()=>{window.fetch=window.__originalLoginFetch;delete window.__originalLoginFetch;});
+  }
   await page.route('**/auth/login',route=>route.abort());
   await page.getByLabel('访问密码').fill('synthetic browser password');
   await page.getByRole('button',{name:'登录',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('#error').textContent==='连接失败，请重试。');
+  await page.waitForFunction(()=>document.querySelector('#error').textContent.includes('连接失败'));
+  assert.match(await page.locator('#error').innerText(),/结果尚未确认/);
   assert.equal(await page.getByRole('button',{name:'登录',exact:true}).isEnabled(),true);
+  await page.unroute('**/auth/login');
+  await page.getByRole('button',{name:'登录',exact:true}).click();
+  await page.waitForSelector('#logout');
   assert.deepEqual(errors,[]);
   console.log('Remembered login: real cookies, restart, logout, browser isolation, default expiry, error recovery and layouts PASS');
  }catch(error){if(evidence)await evidence.fail(error);throw error;}finally{if(evidence)await evidence.finish();if(browser)await browser.close();lines.close();server.stdin.end();server.kill();}

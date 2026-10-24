@@ -43,7 +43,10 @@ METRICS = ('sampled_peak_kw', 'average_power_kw', 'power_sample_count',
 
 
 def number(value):
-    return value if type(value) in (int, float) and math.isfinite(value) else None
+    try:
+        return value if type(value) in (int, float) and math.isfinite(value) else None
+    except OverflowError:
+        return None
 
 
 def remaining_charge_minutes(value):

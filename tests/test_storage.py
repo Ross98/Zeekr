@@ -10,6 +10,35 @@ from zeekr_control.client import ApiError
 
 
 class StorageTests(unittest.TestCase):
+    @unittest.skipUnless(Path('/dev/fd').is_dir(),'requires descriptor inventory')
+    def test_directory_rejection_does_not_leak_file_descriptors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            before=len(os.listdir('/dev/fd'))
+            for _ in range(10):
+                with self.assertRaises(ApiError):load(Path(directory))
+            self.assertEqual(len(os.listdir('/dev/fd')),before)
+
+    def test_deep_json_is_a_controlled_storage_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'session.json'
+            path.write_text('['*10000+'0'+']'*10000)
+            path.chmod(0o600)
+            with self.assertRaises(ApiError):load(path)
+
+    @unittest.skipUnless(hasattr(os,'mkfifo'),'requires FIFO support')
+    def test_named_pipe_is_rejected_without_waiting_for_a_writer(self):
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'session.json'
+            os.mkfifo(path,0o600)
+            code=('import sys; from zeekr_control.storage import load; from zeekr_control.errors import ApiError\n'
+                  'try: load(sys.argv[1])\n'
+                  'except ApiError: sys.exit(0)\n'
+                  'sys.exit(1)\n')
+            result=subprocess.run([sys.executable,'-c',code,str(path)],capture_output=True,timeout=2)
+            self.assertEqual(result.returncode,0,result.stderr)
+
     def test_round_trip_private_atomic_storage(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'private' / 'session.json'

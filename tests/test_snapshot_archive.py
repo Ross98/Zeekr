@@ -116,6 +116,33 @@ class SnapshotArchiveTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.store.publish('scope', 'vehicle', {}, self.now + 1)
 
+    def test_archive_hardlink_cannot_modify_an_unrelated_database_or_publish_latest(self):
+        import os
+        self.store.publish('scope','vehicle',{'value':1},self.now)
+        other = self.root/'unrelated.sqlite3'
+        with sqlite3.connect(other) as db:
+            db.execute('CREATE TABLE sentinel(value TEXT)')
+            db.execute("INSERT INTO sentinel VALUES('preserve')")
+        other.chmod(0o600)
+        self.database().unlink()
+        os.link(other,self.database())
+        before = other.read_bytes()
+        error = None
+        try:
+            self.store.publish('scope','vehicle',{'value':2},self.now+1)
+        except OSError as caught:
+            error = caught
+        self.assertTrue(other.read_bytes()==before,'archive writer modified the unrelated hardlinked database')
+        self.assertIsInstance(error,OSError)
+        self.assertEqual(self.store.read('scope','vehicle')['raw']['value'],1)
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE type='table'",other),[('sentinel',)])
+        # Removing only the bad archive alias allows later collection to resume.
+        self.database().unlink()
+        self.store.publish('scope','vehicle',{'value':3},self.now+2)
+        self.assertEqual(self.store.read('scope','vehicle')['raw']['value'],3)
+        self.assertEqual(self.rows('SELECT COUNT(*) FROM reads'),[(1,)])
+        self.assertTrue(other.read_bytes()==before)
+
     def test_invalid_capture_metadata_does_not_create_archive(self):
         for observed, fetched in ((True, 0), (-1, 0), (0, float('inf'))):
             with self.assertRaises(ValueError):

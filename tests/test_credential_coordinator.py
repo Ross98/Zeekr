@@ -37,6 +37,68 @@ def crash_after_response(path):
 
 
 class CredentialCoordinatorTests(unittest.TestCase):
+    def test_successful_legacy_upgrade_keeps_refresh_uncertainty_and_session(self):
+        import sqlite3
+        from zeekr_control.credential_coordinator import refresh_fingerprint
+        path=self.path.parent/'credential-coordination.sqlite3'
+        db=sqlite3.connect(path)
+        try:
+            db.execute('CREATE TABLE credential_operations(op_id TEXT PRIMARY KEY,kind TEXT,phase TEXT,active_slot INTEGER UNIQUE,baseline TEXT,refresh_fp TEXT,owner TEXT,claimed INTEGER,expected TEXT)')
+            db.execute('CREATE TABLE refresh_states(fingerprint TEXT PRIMARY KEY,state TEXT NOT NULL)')
+            db.execute('INSERT INTO refresh_states VALUES(?,?)',(refresh_fingerprint(OLD),'uncertain'))
+            db.commit()
+        finally:db.close()
+        path.chmod(0o600);before=self.path.read_bytes()
+        self.assertEqual(self.c.refresh_state(OLD),'uncertain')
+        with self.assertRaises(CredentialBusy):self.reserve()
+        self.assertEqual(self.c.refresh_state(OLD),'uncertain')
+        self.assertEqual(self.path.read_bytes(),before)
+        with self.c.locked() as db:
+            self.assertIn('previous_refresh_state',{row[1] for row in db.execute('PRAGMA table_info(credential_operations)')})
+
+    def test_failed_schema_upgrade_preserves_existing_coordination_and_session(self):
+        import sqlite3
+        from zeekr_control.errors import ApiError
+        path=self.path.parent/'credential-coordination.sqlite3'
+        db=sqlite3.connect(path)
+        try:
+            db.execute('CREATE TABLE credential_operations(op_id TEXT PRIMARY KEY,kind TEXT,phase TEXT,active_slot INTEGER UNIQUE,baseline TEXT,refresh_fp TEXT,owner TEXT,claimed INTEGER,expected TEXT)')
+            db.execute('CREATE TABLE refresh_reuse_trials(id TEXT PRIMARY KEY,fingerprint TEXT,baseline TEXT,operation TEXT)')
+            db.executemany('INSERT INTO refresh_reuse_trials VALUES(?,?,?,NULL)',
+                           [('one','duplicate','baseline'),('two','duplicate','baseline')])
+            db.commit()
+        finally:db.close()
+        path.chmod(0o600);before=path.read_bytes();session=self.path.read_bytes()
+        with self.assertRaisesRegex(ApiError,'凭据协调记录不可用'):
+            with self.c.locked():pass
+        self.assertEqual(path.read_bytes(),before)
+        self.assertEqual(self.path.read_bytes(),session)
+
+    def test_corrupt_coordination_database_closes_failed_initial_connection(self):
+        import sqlite3
+        from unittest.mock import patch
+        from zeekr_control.errors import ApiError
+        path=self.path.parent/'credential-coordination.sqlite3'
+        path.write_bytes(b'synthetic invalid SQLite file');path.chmod(0o600)
+        before=path.read_bytes();session=self.path.read_bytes()
+        connections=[];connect=sqlite3.connect
+        class TrackedConnection(sqlite3.Connection):
+            closed=False
+            def close(self):
+                self.closed=True
+                super().close()
+        def tracked(*args,**kwargs):
+            connection=connect(*args,**kwargs,factory=TrackedConnection)
+            connections.append(connection);self.addCleanup(connection.close)
+            return connection
+        with patch('zeekr_control.private_state.sqlite3.connect',side_effect=tracked):
+            with self.assertRaisesRegex(ApiError,'凭据协调记录不可用'):
+                with self.c.locked():pass
+        self.assertEqual(len(connections),1)
+        self.assertTrue(connections[0].closed)
+        self.assertEqual(path.read_bytes(),before)
+        self.assertEqual(self.path.read_bytes(),session)
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.path=Path(self.tmp.name)/'private/session.json';save(self.path,OLD)

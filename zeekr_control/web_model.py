@@ -175,7 +175,7 @@ def timestamp(value):
 
 def metric_detail(value, unit, time, minimum=None, maximum=None):
     valid = number(value, minimum, maximum)
-    if valid is not None and abs(valid) > 1e12:
+    if valid is not None and valid.copy_abs() > 1e12:
         valid = None
     return {'value': float(valid) if valid is not None else None, 'unit': unit,
             'updated_time': time, 'evidence': '已返回' if valid is not None else '未知'}
@@ -287,7 +287,8 @@ def parse_location(data):
     data = section(data)
     # GW2 places position on the status envelope; some responses nest under basic status.
     position = section(data.get('position')) or section(section(data.get('basicVehicleStatus')).get('position'))
-    latitude, longitude = number(position.get('latitude')), number(position.get('longitude'))
+    latitude = number(position.get('latitude'), -90*3600000, 90*3600000)
+    longitude = number(position.get('longitude'), -180*3600000, 180*3600000)
     valid = latitude is not None and longitude is not None
     if valid:
         # Do not silently reinterpret degree values as the observed integer format.

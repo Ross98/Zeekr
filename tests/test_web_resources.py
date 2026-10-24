@@ -82,9 +82,9 @@ class WebResourceTests(unittest.TestCase):
         with self.monitor.tracks.connect() as db:
             db.executemany('INSERT INTO monitor_events (id,vehicle,kind,summary,message,created) '
                            'VALUES (?,?,?,?,?,?)', [
-                               ('old', 'car', 'trip_end', '{"distance_km": 1}', '', 1),
-                               ('a', 'car', 'trip_end', '{"distance_km": 2}', '', 2),
-                               ('b', 'car', 'trip_end', '{"distance_km": 3}', '', 2),
+                               ('old', 'car', 'trip_end', '{"distance_km": 1, "end_time": 1704067200000}', '', 1),
+                               ('a', 'car', 'trip_end', '{"distance_km": 2, "end_time": 1704067200000}', '', 2),
+                               ('b', 'car', 'trip_end', '{"distance_km": 3, "end_time": 1704067200000}', '', 2),
                                ('bad', 'car', 'trip_end', 'invalid', '', 3),
                                ('scalar', 'car', 'trip_end', 'null', '', 4),
                                ('other', 'other-car', 'charge_end', '{}', '', 5)])
@@ -135,6 +135,9 @@ class WebResourceTests(unittest.TestCase):
         self.assertIsNone(store.read('scope', 'car'))
         self.assertFalse(path.exists())
         sqlite3.connect(path).close()
+        path.chmod(0o644)
+        with self.assertRaises(OSError):store.read('scope', 'car')
+        path.chmod(0o600)
         self.assertIsNone(store.read('scope', 'car'))
         db = sqlite3.connect(path)
         try:

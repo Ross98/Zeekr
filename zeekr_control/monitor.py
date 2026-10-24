@@ -2,11 +2,12 @@
 import hashlib
 import json
 import math
+import sqlite3
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .notifications import DeliveryError, bark_time
-from .delivery_state import delivery_lock, add_columns, DeliveryCancelled
+from .delivery_state import delivery_lock, delivery_clock, add_columns, DeliveryCancelled
 from .summary import updated_at
 from .vehicle_state import decode, numeric
 from .tracks import TrackStore
@@ -22,6 +23,7 @@ from .report_attention import build as build_attention
 from .start_evidence import build as start_evidence, project as project_start
 from .start_evidence import from_summary as saved_start_evidence, MAX_GAP
 from .notification_location import select_location, reference_suffix
+from .trip_visibility import visible_clause, cancel_event_delivery
 
 MAX_AGE = MAX_GAP
 STOP_WAIT = 600000
@@ -138,6 +140,7 @@ class Monitor:
         self.tracks = TrackStore(database_path)
         self.active_codes, self.stopped_codes = active_codes, stopped_codes
         with self.tracks.connect() as db:
+            db.execute('BEGIN')
             db.execute('CREATE TABLE IF NOT EXISTS monitor_state (vehicle TEXT PRIMARY KEY, payload TEXT NOT NULL)')
             db.execute('''CREATE TABLE IF NOT EXISTS monitor_events (
                 id TEXT PRIMARY KEY, vehicle TEXT NOT NULL, kind TEXT NOT NULL, summary TEXT NOT NULL,
@@ -201,6 +204,14 @@ class Monitor:
             for table in ('monitor_events','monitor_event_media','monitor_event_alerts'):
                 db.execute("UPDATE "+table+" SET delivery='uncertain',error='发送期间进程中断，结果未确认' WHERE delivery='sending'")
                 db.execute("UPDATE "+table+" SET delivery=CASE WHEN prepare_attempts>=3 THEN 'failed' ELSE 'pending' END,error='准备期间进程中断，尚未发送' WHERE delivery='preparing'")
+            # Older versions left auxiliary work queued after recycling. Retire
+            # only unsent work, before any sender can claim it after restart.
+            hidden = db.execute("SELECT e.vehicle,e.id FROM monitor_events e WHERE NOT ("
+                + visible_clause(db,'e') + ") AND (e.delivery IN ('pending','preparing') "
+                "OR EXISTS (SELECT 1 FROM monitor_event_alerts a WHERE a.event_id=e.id AND a.delivery IN ('pending','preparing')) "
+                "OR EXISTS (SELECT 1 FROM monitor_event_media m WHERE m.event_id=e.id AND m.delivery IN ('pending','preparing'))) ").fetchall()
+            for vehicle,event_id in hidden:
+                cancel_event_delivery(db,vehicle,event_id,'记录已移入回收区，未发送。')
 
     def status(self, vehicle):
         with self.tracks.connect() as db:
@@ -214,17 +225,17 @@ class Monitor:
             row=db.execute('SELECT payload FROM monitor_state WHERE vehicle=?',(vehicle,)).fetchone()
             if not row: return
             state=json.loads(row[0])
-            changed=False
+            state['sampling_gap_pending']=True
             for kind in ('trip','charge'):
                 activity=state.get(kind)
                 if activity:
                     activity['partial']=True
                     activity['sampling_interrupted']=True
                     if kind=='trip' and activity.get('stop'):
-                        activity['stop_confirmation']={'started':0,'observed':0}
-                    changed=True
-            if changed:
-                db.execute('UPDATE monitor_state SET payload=? WHERE vehicle=?',(json.dumps(state),vehicle))
+                        confirmation=activity.get('stop_confirmation') or {}
+                        activity['stop_confirmation']={'started':0,'observed':0,
+                            'state_time':confirmation.get('state_time',state['last']['time'])}
+            db.execute('UPDATE monitor_state SET payload=? WHERE vehicle=?',(json.dumps(state),vehicle))
 
     def _event(self, db, vehicle, kind, data, now):
         identity = '%s:%s:%s' % (vehicle, kind, data['start_time'])
@@ -238,6 +249,10 @@ class Monitor:
             if kind in ('trip_end', 'charge_end'):
                 try:
                     report['comparison'] = compare(db, vehicle, report)
+                except (sqlite3.Error,OSError):
+                    # Storage failure may already have aborted this transaction.
+                    # Never continue event writes as a fresh, partial commit.
+                    raise
                 except Exception:
                     report['comparison'] = {'version': 'history-v1', 'available': False, 'reason': 'unavailable'}
             message, omitted = render(kind, data['report_v2'], event_id)
@@ -344,15 +359,24 @@ class Monitor:
             if activity and activity.get('report_start', {}).get('decoder_version') != telemetry.get('decoder_version'):
                 activity['decoder_changed'] = True
                 activity['partial'] = True
-        repeated_stop = (previous and trip and trip['stop'] and timestamp == previous['time']
+        confirmation = (trip.get('stop_confirmation') or {}) if trip else {}
+        # A newer cache can already be stale when collection recovers. It may
+        # confirm the frozen parking endpoint, but is not a new driving sample.
+        parking_cache = (previous and trip and trip['stop'] and timestamp is not None
+                         and timestamp >= max(previous['time'], confirmation.get('state_time', previous['time']))
+                         and now - timestamp >= -30000)
+        confirmation_cache = parking_cache and (timestamp == previous['time'] or now - timestamp > MAX_AGE)
+        repeated_stop = (confirmation_cache
                          and point['off'] is True and point['charging'] is False
-                         and point['speed'] in (None, 0) and point['km'] == trip['stop']['km'])
+                         and point['speed'] in (None, 0) and point['km'] is not None
+                         and point['km'] == trip['stop']['km'])
         if repeated_stop:
             confirmation = trip.get('stop_confirmation') or {
                 'started': trip['stop']['observed'], 'observed': trip['stop']['observed']}
             if not 0 <= now - confirmation['observed'] <= MAX_AGE:
                 confirmation['started'] = now
             confirmation['observed'] = now
+            confirmation['state_time'] = timestamp
             trip['stop_confirmation'] = confirmation
             with self.tracks.connect() as db:
                 if now - confirmation['started'] >= STOP_WAIT:
@@ -361,10 +385,20 @@ class Monitor:
                 db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)',
                            (vehicle, json.dumps(state)))
             return 'stale' if not -30000 <= now - timestamp <= MAX_AGE else 'unchanged'
+        if confirmation_cache:
+            # Contradictory/unknown cached state cannot bridge ten minutes
+            # of parking confirmation, nor may an older cache undo it.
+            trip['partial'] = True
+            trip['stop_confirmation'] = {'started':0, 'observed':0, 'state_time':timestamp}
+            with self.tracks.connect() as db:
+                db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)',
+                           (vehicle, json.dumps(state)))
         if (timestamp is None or not -30000 <= now - timestamp <= MAX_AGE) and not reclassified_charge_stop:
             return 'stale'
         if previous and timestamp <= previous['time'] and not reclassified_charge_stop:
             return 'unchanged'
+        sampling_gap=state.pop('sampling_gap_pending',False) is True
+        if sampling_gap:telemetry['sampling_gap_before']=True
         observed = previous.get('observed', now) if reclassified_charge_stop else now
         point['observed'] = observed
         if reclassified_charge_stop:
@@ -378,6 +412,12 @@ class Monitor:
         trip_started = False
         moving = point['speed'] is not None and point['speed'] > 0
         distance_moved = continuous and previous['km'] is not None and point['km'] is not None and point['km'] > previous['km']
+        if (sampling_gap and trip and trip['stop'] and point['off'] is True
+                and point['charging'] is False and not moving and point['km'] is not None
+                and point['km']==trip['stop']['km']):
+            # Fresh corroboration after an outage restarts the observed wait;
+            # it must not replace the already frozen arrival with recovery time.
+            trip['stop_confirmation']={'started':now,'observed':now,'state_time':timestamp}
         confirmation = trip.get('stop_confirmation') if trip else None
         parking_continuous = (trip and trip['stop'] and confirmation
                               and 0 <= now - confirmation['observed'] <= MAX_AGE
@@ -389,7 +429,8 @@ class Monitor:
             start = previous if continuous and previous.get('charging') is not True else point
             start_raw = start.get('_report', telemetry)
             seed_telemetry = start_raw
-            trip = {'start': start, 'stop': None, 'partial': not continuous, 'charging_time': None,
+            trip = {'start': start, 'stop': None, 'partial': not continuous or sampling_gap, 'charging_time': None,
+                    'sampling_interrupted':sampling_gap,
                     'report_start': start_raw, 'report_end': telemetry, 'samples': [start_raw],
                     'profile': profile, 'parking': None,
                     'start_evidence': start_evidence('trip', previous, point, continuous)}
@@ -450,7 +491,8 @@ class Monitor:
                 self._finish_trip(db, vehicle, trip, now, battery_capacity_kwh, profile)
                 trip = None
             if point['charging'] is True and charge is None:
-                charge = {'start': point, 'partial': not continuous or previous['charging'] is not False,
+                charge = {'start': point, 'partial': not continuous or previous['charging'] is not False or sampling_gap,
+                          'sampling_interrupted':sampling_gap,
                           'report_start': telemetry, 'samples': [telemetry], 'profile': profile,
                           'start_evidence': start_evidence('charge', previous, point, continuous)}
                 start_data = summary(point, point, charge['partial'])
@@ -498,19 +540,21 @@ class Monitor:
                      alert_delivery=r[9], alert_error=r[10]) for r in rows]
 
     def deliver(self, sender, now, alert_sender=None, guard=None, image_limit=10, vehicle=None):
+        clock=delivery_clock(now)
         with delivery_lock(self.tracks.path.parent/'notifications.lock'):
             self._recover_delivery()
-            self._deliver(sender,now,alert_sender,guard,image_limit,vehicle)
+            self._deliver(sender,now,alert_sender,guard,image_limit,vehicle,_clock=clock)
 
-    def _deliver(self, sender, now, alert_sender=None, guard=None, image_limit=10, vehicle=None):
+    def _deliver(self, sender, now, alert_sender=None, guard=None, image_limit=10, vehicle=None,*,_clock=None):
+        clock=delivery_clock(now) if _clock is None else _clock
         selected_vehicle=vehicle
         if alert_sender is not None:
-            self._deliver_alerts(alert_sender, now, guard, vehicle)
+            self._deliver_alerts(alert_sender, now, guard, vehicle,_clock=clock)
         # One worker owns the process lock; compare-and-set also guards claims.
         with self.tracks.connect() as db:
             extra = " AND kind!='trip_start'" + (" AND kind!='charge_start'" if alert_sender is not None else '')
             if vehicle is not None:extra += ' AND vehicle=?'
-            args=(now,vehicle) if vehicle is not None else (now,)
+            args=(clock(),vehicle) if vehicle is not None else (clock(),)
             rows = db.execute("SELECT id,message,attempts,kind,summary,vehicle FROM monitor_events WHERE delivery='pending' AND next_attempt<=?" + extra + " ORDER BY created,rowid LIMIT 10", args).fetchall()
         for event_id, message, attempts, kind, encoded, vehicle in rows:
             if guard:guard()
@@ -550,12 +594,12 @@ class Monitor:
                             references={prefix: data.get(prefix + '_location_reference') for prefix in ('start', 'end')})
                         data['report_v2']['render'] = {'version': 'zh-text-v2', 'omitted': omitted,
                                                        'message_frozen': True, 'bytes': len(message.encode()),
-                                                       'frozen_at': now,
+                                                       'frozen_at': clock(),
                                                        'sha256': hashlib.sha256(message.encode()).hexdigest()}
                     else:
                         message = message_for(kind, data, event_id)
                     with self.tracks.connect() as db:
-                        db.execute('UPDATE monitor_events SET summary=?,message=? WHERE id=?',
+                        db.execute("UPDATE monitor_events SET summary=?,message=? WHERE id=? AND delivery='preparing'",
                                    (json.dumps(data, ensure_ascii=False), message, event_id))
                 if guard:guard()
                 with self.tracks.connect() as db:
@@ -566,59 +610,72 @@ class Monitor:
                     sender.send_markdown(markdown_for(message))
                 else:
                     sender(message)
-                delivery, sent_at = 'sent', now
+                delivery, sent_at = 'sent', clock()
             except DeliveryCancelled:
                 delivery,error='pending',None
             except DeliveryError as exc:
                 delivery = 'uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts >= 5 else 'pending'
                 error = str(exc)[:100]
-                next_attempt = now + min(3600, 60 * 2 ** attempts) * 1000
+                next_attempt = clock() + min(3600, 60 * 2 ** attempts) * 1000
             except Exception:
                 if sender_called:
                     delivery, error = 'uncertain', '发送结果未确认'
                 else:
                     delivery, error = 'failed', '报告准备失败，未调用发送器'
             with self.tracks.connect() as db:
-                db.execute('UPDATE monitor_events SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE id=?',
-                           (delivery, error, next_attempt, sent_at, event_id))
+                db.execute('UPDATE monitor_events SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE id=? AND delivery=?',
+                           (delivery, error, next_attempt, sent_at, event_id,'sending' if sender_called else 'preparing'))
         if hasattr(sender, 'send_image'):
-            self._deliver_images(sender, now, guard, image_limit, selected_vehicle)
+            self._deliver_images(sender, now, guard, image_limit, selected_vehicle,_clock=clock)
 
-    def _deliver_alerts(self, sender, now, guard=None, vehicle=None):
+    def _deliver_alerts(self, sender, now, guard=None, vehicle=None,*,_clock=None):
+        clock=delivery_clock(now) if _clock is None else _clock
         with self.tracks.connect() as db:
             rows = db.execute('''SELECT a.event_id,a.attempts,e.kind,e.summary
                 FROM monitor_event_alerts a JOIN monitor_events e ON e.id=a.event_id
                 WHERE a.delivery='pending' AND a.next_attempt<=? AND (? IS NULL OR e.vehicle=?)
-                ORDER BY e.created,e.rowid LIMIT 10''', (now,vehicle,vehicle)).fetchall()
+                ORDER BY e.created,e.rowid LIMIT 10''', (clock(),vehicle,vehicle)).fetchall()
         for event_id, attempts, kind, encoded in rows:
             if guard:guard()
             with self.tracks.connect() as db:
-                claimed = db.execute("UPDATE monitor_event_alerts SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='pending'", (event_id,)).rowcount
+                claimed = db.execute("UPDATE monitor_event_alerts SET delivery='preparing',prepare_attempts=prepare_attempts+1 WHERE event_id=? AND delivery='pending'", (event_id,)).rowcount
             if not claimed:
                 continue
-            delivery, error, next_attempt, sent_at = 'sent', None, 0, now
+            delivery, error, next_attempt, sent_at = 'sent', None, 0, None
+            sender_called = False
             try:
                 title, body = bark_message_for(kind, json.loads(encoded))
+                if guard:guard()
+                with self.tracks.connect() as db:
+                    claimed = db.execute("UPDATE monitor_event_alerts SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='preparing'", (event_id,)).rowcount
+                if not claimed:continue
+                sender_called = True
                 sender(title, body)
+                sent_at=clock()
+            except DeliveryCancelled:
+                delivery, error = 'pending', None
             except DeliveryError as exc:
                 delivery = 'uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts >= 5 else 'pending'
                 error = str(exc)[:100]
-                next_attempt = now + min(3600, 60 * 2 ** attempts) * 1000
+                next_attempt = clock() + min(3600, 60 * 2 ** attempts) * 1000
             except Exception:
-                delivery, error = 'uncertain', 'Bark 发送结果未确认'
+                delivery, error = (('uncertain', 'Bark 发送结果未确认') if sender_called else
+                                   ('failed', 'Bark 通知准备失败，未调用发送器'))
             with self.tracks.connect() as db:
-                db.execute('UPDATE monitor_event_alerts SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE event_id=?',
-                           (delivery, error, next_attempt, sent_at if delivery == 'sent' else None, event_id))
+                db.execute('UPDATE monitor_event_alerts SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE event_id=? AND delivery=?',
+                           (delivery, error, next_attempt, sent_at if delivery == 'sent' else None, event_id,
+                            'sending' if sender_called else 'preparing'))
                 if kind in ('trip_start', 'charge_start'):
                     db.execute("UPDATE monitor_events SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE id=? AND delivery='pending'",
                                (delivery, error, next_attempt, sent_at if delivery == 'sent' else None, event_id))
 
-    def _deliver_images(self, sender, now, guard=None, image_limit=10, vehicle=None):
+    def _deliver_images(self, sender, now, guard=None, image_limit=10, vehicle=None,*,_clock=None):
+        clock=delivery_clock(now) if _clock is None else _clock
         with self.tracks.connect() as db:
             rows = db.execute('''SELECT m.event_id,m.attempts,e.vehicle,e.summary,m.prepare_attempts
                 FROM monitor_event_media m JOIN monitor_events e ON e.id=m.event_id
                 WHERE m.delivery='pending' AND m.next_attempt<=? AND e.delivery='sent' AND (? IS NULL OR e.vehicle=?)
-                ORDER BY e.created,e.rowid LIMIT ?''', (now,vehicle,vehicle,image_limit)).fetchall()
+                ORDER BY e.created,e.rowid LIMIT ?''', (clock(),vehicle,vehicle,image_limit)).fetchall()
         for event_id, attempts, vehicle, encoded, prepare_attempts in rows:
             if guard:guard()
             # Apply the policy to images queued before this rule, too. Never
@@ -634,7 +691,7 @@ class Monitor:
             with self.tracks.connect() as db:
                 claimed=db.execute("UPDATE monitor_event_media SET delivery='preparing',prepare_attempts=prepare_attempts+1 WHERE event_id=? AND delivery='pending'",(event_id,)).rowcount
             if not claimed: continue
-            delivery,error,next_attempt,sent_at='sent',None,0,now
+            delivery,error,next_attempt,sent_at='sent',None,0,None
             called=False
             try:
                 data=json.loads(encoded); report=data.get('report_v2')
@@ -660,11 +717,12 @@ class Monitor:
                     claimed=db.execute("UPDATE monitor_event_media SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='preparing'",(event_id,)).rowcount
                 if not claimed:continue
                 called=True; sender.send_image(content)
+                sent_at=clock()
             except DeliveryCancelled:
                 delivery,error='pending',None
             except DeliveryError as exc:
                 delivery='uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts>=5 else 'pending'
-                error=str(exc)[:100]; next_attempt=now+min(3600,60*2**attempts)*1000
+                error=str(exc)[:100]; next_attempt=clock()+min(3600,60*2**attempts)*1000
             except Exception as exc:
                 if called:
                     delivery,error='uncertain','图片发送结果未确认'
@@ -673,7 +731,8 @@ class Monitor:
                     delivery='pending' if retryable and prepare_attempts<2 else 'failed'
                     reason=str(exc) if isinstance(exc,ImagePreparationError) else '行程图片准备失败'
                     error=reason+'，未调用发送器'
-                    next_attempt=now+60*2**prepare_attempts*1000 if delivery=='pending' else 0
+                    next_attempt=clock()+60*2**prepare_attempts*1000 if delivery=='pending' else 0
             with self.tracks.connect() as db:
-                db.execute('UPDATE monitor_event_media SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE event_id=?',
-                           (delivery,error,next_attempt,sent_at if delivery=='sent' else None,event_id))
+                db.execute('UPDATE monitor_event_media SET delivery=?,error=?,next_attempt=?,sent_at=? WHERE event_id=? AND delivery=?',
+                           (delivery,error,next_attempt,sent_at if delivery=='sent' else None,event_id,
+                            'sending' if called else 'preparing'))

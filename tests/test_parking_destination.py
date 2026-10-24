@@ -108,6 +108,22 @@ class ParkingDestinationTests(unittest.TestCase):
         with sqlite3.connect(self.db) as db:db.execute('DROP TABLE report_observations')
         self.assertIsNone(self.infer())
 
+    def test_delayed_movement_start_blocks_destination_inference(self):
+        self.seed()
+        stamp = self.end+30000
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('late-start','car','trip_start',json.dumps({'start_time':stamp}),self.park+30000))
+        self.assertIsNone(self.infer())
+
+    def test_late_write_of_older_movement_does_not_block_destination(self):
+        self.seed()
+        expected = self.infer()
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                       ('old-start','car','trip_start',json.dumps({'start_time':self.end-60000}),self.end+30000))
+        self.assertEqual(self.infer(), expected)
+
     def test_long_sampling_gap_and_truncated_stream_are_rejected(self):
         self.seed();later=self.end+600000
         self.change_summary(lambda r:r['report_v2'].update(parking=self.telemetry(later)))

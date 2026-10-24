@@ -24,6 +24,29 @@ def ok(data):
 
 
 class ClientTests(unittest.TestCase):
+    def test_refresh_omitted_or_empty_optional_secret_keeps_old_value(self):
+        for extra in ({},{'refreshToken':None},{'refreshToken':''},{'clientId':None},{'clientId':''}):
+            with self.subTest(extra=extra):
+                session={'accessToken':'old-access','userId':'user','clientId':'client','deviceId':'stable'}
+                client=Client(session,Transport({'code':'1000','data':dict(accessToken='new-access',**extra)}))
+                candidate=client.refresh_gw2('old-refresh')
+                self.assertEqual(candidate['refreshToken'],'old-refresh')
+                self.assertEqual(candidate['clientId'],'client')
+                self.assertEqual(client.session,session)
+
+    def test_oversized_and_deep_json_responses_are_retryable_safe_errors(self):
+        from unittest.mock import MagicMock
+        from zeekr_control.client import transport
+        for raw in (b'x'*(4*1024*1024+1),b'['*10000+b'0'+b']'*10000):
+            with self.subTest(size=len(raw)):
+                response=MagicMock();response.__enter__.return_value=response
+                response.read.return_value=raw
+                with patch('zeekr_control.client.build_opener') as opener:
+                    opener.return_value.open.return_value=response
+                    with self.assertRaises(ApiError) as caught:
+                        transport('GET','https://synthetic.invalid',{},None)
+                self.assertTrue(caught.exception.retryable)
+
     def test_jwt_exchange_then_read_shared_vehicles(self):
         wire = Transport(ok({'YIKAT_NEW': 'code'}), ok({
             'accessToken': 'access', 'userId': 'user', 'clientId': 'client'}),
@@ -122,8 +145,21 @@ class ClientTests(unittest.TestCase):
     def test_malformed_success_not_empty_vehicle_list(self):
         for response in ([], {}, ok({}), ok({'list': 'bad'}), ok({'list': [5]})):
             client = Client({'accessToken': 'a', 'userId': 'u'}, Transport(response))
-            with self.assertRaises(ApiError):
+            with self.assertRaises(ApiError) as raised:
                 client.vehicles()
+            self.assertTrue(raised.exception.retryable)
+
+    def test_html_response_is_retryable_without_exposing_response_content(self):
+        from unittest.mock import MagicMock
+        from zeekr_control.client import transport
+        response=MagicMock();response.__enter__.return_value=response
+        response.read.return_value=b'<html>maintenance PRIVATE</html>'
+        with patch('zeekr_control.client.build_opener') as opener:
+            opener.return_value.open.return_value=response
+            with self.assertRaises(ApiError) as raised:
+                transport('GET','https://synthetic.invalid',{},None)
+        self.assertTrue(raised.exception.retryable)
+        self.assertNotIn('PRIVATE',str(raised.exception))
 
     def test_missing_user_id_rejects_login(self):
         client = Client(transport=Transport(ok({'YIKAT_NEW': 'c'}), ok({'accessToken': 'a'})))
