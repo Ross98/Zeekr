@@ -84,9 +84,10 @@ def aggregate(events, window, as_of):
 
 
 class UsageReports:
-    def __init__(self, database, archive, clock=None):
+    def __init__(self, database, archive, clock=None, *, store=None):
         self.events = UsageEvents(database)
         self.archive = archive
+        self.store = store
         self.clock = clock or (lambda: int(time.time()*1000))
 
     def _open_trip(self, vehicle, now):
@@ -137,14 +138,27 @@ class UsageReports:
             if day['date'] in dates:day['coverage'] = 'observed'
         result['coverage'] = counts
 
-    def query(self, scope, vehicle, period, date, now=None):
+    def query(self, scope, vehicle, period, date, now=None, *, owner=None):
         now = self.clock() if now is None else now
         current_window = period_window(period,date)
         previous_window = period_window(period,current_window['previous_date'])
         found = self.events.between(vehicle,previous_window['start'],current_window['end'])
         current = aggregate(found['events'],current_window,now)
         previous = aggregate(found['events'],previous_window,now)
-        for result in (current,previous):self._coverage(scope,vehicle,result,now)
+        # One private-store snapshot for both periods. Owner is stable across token refreshes.
+        saved = self.store.read(owner,vehicle,'charges') if self.store is not None and owner else None
+        bills = [row['body'] for row in saved['records'] if not row['deleted']] if saved else []
+        linked = {bill['event'].get('id') for bill in bills if isinstance(bill.get('event'),dict)}
+        for result in (current,previous):
+            self._coverage(scope,vehicle,result,now)
+            window = result['window']
+            selected = [bill for bill in bills if isinstance(bill.get('date'),str)
+                        and window['start_date'] <= bill['date'] <= min(window['end_date'],date_label(now))]
+            amounts = [bill.get('actual_cents') for bill in selected]
+            amounts = [value if type(value) is int and 0 <= value <= 100000000 else None for value in amounts]
+            result['totals']['charging_paid_cents'] = total(amounts)
+            result['payments'] = dict(bill_count=len(selected),unpriced_bill_count=sum(v is None for v in amounts),
+                pending_charge_bill_count=sum(e['kind']=='charge_end' and e['id'] not in linked for e in result['events']))
         comparable = current['status']=='closed' and previous['status']=='closed'
         metrics = {}
         for key in ('distance_km','trip_count','charge_count','duration_seconds','trip_estimated_kwh'):

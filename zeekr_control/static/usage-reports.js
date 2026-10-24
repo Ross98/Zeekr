@@ -3,7 +3,7 @@
   const num=value=>Number.isFinite(value)?new Intl.NumberFormat('zh-CN',{maximumFractionDigits:2}).format(value):'—';
   const currentDate=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
   const statusText={closed:'周期已结束',ongoing:'本期进行中',upcoming:'未来周期'};
-  const reasons={period_open:'本期未结束，不计算全期涨跌',missing_samples:'有效样本不足',zero_base:'上期基数为零'};
+  const reasons={period_open:'本期未结束，不计算全期涨跌',missing_samples:'有效样本不足',zero_base:'上期基数为零',incomplete_bills:'账单待补，仅展示已录实付'};
   function analyze(current){
     const distance=value=>Number.isFinite(value)&&value>=0?value:null;
     const days=current.days.map(day=>{
@@ -20,6 +20,19 @@
       coveredDays:days.filter(day=>day.coverage==='observed').length,
       days:days.map(day=>({...day,ratio:day.distance===null?null:peakDistance>0?day.distance/peakDistance:0}))
     };
+  }
+  function compareValues(previous,current,closed){
+    const valid=v=>Number.isFinite(v)&&v>=0;
+    const a=valid(previous)?previous:null,b=valid(current)?current:null;
+    const reason=!closed?'period_open':a===null||b===null?'missing_samples':a===0?'zero_base':null;
+    return {previous:a,current:b,difference:a===null||b===null?null:Math.round((b-a)*1e6)/1e6,
+      percent:reason?null:Math.round((b-a)/a*10000)/100,reason};
+  }
+  function pairedDays(current,previous){
+    const now=analyze(current).days,before=analyze(previous).days;
+    const max=Math.max(0,...now.concat(before).filter(d=>d.distance!==null).map(d=>d.distance));
+    const scale=d=>d?{...d,ratio:d.distance===null?null:max>0?d.distance/max:0}:null;
+    return now.map((day,i)=>({current:scale(day),previous:scale(before[i])}));
   }
   function create({getState,request,escape:esc,active,time}){
     let node=null,owner='',period='week',date=currentDate(),data=null,error='',loading=false,attempted=false,serial=0;
@@ -55,14 +68,37 @@
         <article><span>已过日期的归档覆盖</span><strong>${analysis.elapsedDays?`${analysis.coveredDays} / ${analysis.elapsedDays}`:'—'} <small>天</small></strong><p>${analysis.elapsedDays?'有读取的日期 / 截至统计时间的日期。当天可能尚未结束；不是车辆在线率。':'所选周期尚未开始。未来日期不参与覆盖计算。'}</p></article>
       </div></section>`;
     }
+    const periodName=()=>data.period==='week'?['上周','本周']:['上期','本期'];
+    function comparisonCard(key,label,unit,scale=1,note='',id=''){
+      const [before,now]=periodName(),previous=data.previous.totals[key],current=data.current.totals[key];
+      const r=compareValues(previous,current,data.comparison.comparable);
+      const amount=v=>key==='charging_paid_cents'&&Number.isFinite(v)?(v/scale).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2}):num(v===null?null:v/scale);
+      const max=Math.max(1,r.previous||0,r.current||0);
+      const paymentPartial=key==='charging_paid_cents'&&[data.current,data.previous].some(p=>p.payments?.unpriced_bill_count||p.payments?.pending_charge_bill_count);
+      const reason=paymentPartial?'incomplete_bills':r.reason;
+      const difference=r.difference===null?'—':(r.difference>0?'+':'')+amount(r.difference);
+      return `<article class="report-graph-card" ${id?`id="${id}"`:''} data-report-metric="${key}"><span>${label}</span><strong>${amount(r.current)} <small>${unit}</small></strong><p class="report-change">较${before} ${difference} ${unit} · ${reason?esc(reasons[reason]):`${r.percent>0?'+':''}${num(r.percent)}%`}</p>
+        <div class="report-pair">${[[before,r.previous,'previous'],[now,r.current,'current']].map(([name,value,cl])=>`<div class="${cl}"><span>${name}</span><i aria-hidden="true"><b style="width:${value===null?0:value/max*100}%" ${value===0?'class="zero"':''}></b></i><span>${amount(value)}</span></div>`).join('')}</div>${note?`<p class="insight-note">${esc(note)}</p>`:''}</article>`;
+    }
+    function comparisonSummary(){
+      const s=data.current.samples,t=data.current.totals;
+      return `<div class="report-comparison report-graph-grid" id="report-graph-summary">${comparisonCard('distance_km','已观测行程里程','km',1,`${s.distance} 条有效里程样本，含 ${s.partial_distance} 条片段`,'report-distance')}${comparisonCard('trip_count','结束行程','次',1,`完整 ${t.complete_trip_count} 次 · 片段 ${t.partial_trip_count} 次`)}${comparisonCard('duration_seconds','行程观测时段','小时',3600,`${s.duration} 条有效时段；非全程驾驶时长`)}${comparisonCard('estimated_kwh_per_100km','百公里电量估算','kWh/100km',1,`${s.efficiency} 条至少 10 km 且耗电至少 3 个百分点的样本`)}</div>`;
+    }
+    function energyComparison(){
+      const [before,now]=periodName();
+      return `<section class="card insight-panel" id="report-energy-comparison"><div class="insight-heading"><h3>耗电、充电与实付，${data.period==='week'?'两周':'两期'}对照</h3><span class="insight-note">${before} ${esc(data.previous.window.start_date)} — ${esc(data.previous.window.end_date)}</span></div><div class="report-energy-grid">${comparisonCard('trip_estimated_kwh','行程电量估算','kWh')}${comparisonCard('charge_count','结束充电','次')}${comparisonCard('charge_estimated_kwh','补入电量估算','kWh')}${comparisonCard('charging_paid_cents','充电实付','元',100)}</div><p class="insight-note report-chart-legend">各指标独立刻度，从 0 起算。电量按事件容量 × SOC 变化估算，非桩端计量；实付按账单日期汇总，不是${now}行驶成本。无有效值为“—”，已录免费账单为 0；费用待补时不算实付环比。</p></section>`;
+    }
     function dailyChart(analysis){
-      return `<section class="card insight-panel"><div class="insight-heading"><div><h3>每日里程趋势</h3><p class="insight-note">完整与片段均计入 · 按结束日期归属 · km</p></div>${dayFilter?button('显示整个周期','clear-day'):''}</div>
-        <p class="insight-note">点击日期看下方事件。柱高从 0 起算${analysis.peakDistance===null?'；暂无有效里程':`，本期最高 ${num(analysis.peakDistance)} km`}。窄屏可左右滑动。</p>
-        <div class="report-chart-scroll" tabindex="0" role="region" aria-label="每日里程图，可横向滚动"><div class="report-daily-chart" style="--day-count:${analysis.days.length}">${analysis.days.map(day=>{
+      const [before,now]=periodName(),days=pairedDays(data.current,data.previous);
+      const value=d=>!d?'无对应日':d.state==='future'?'未到':num(d.distance);
+      const bar=(d,cl)=>`<i class="${cl}${d?.partial_trip_count?' partial':''}${d?.distance===0?' report-zero':''}" style="height:${(d?.ratio||0)*100}%"></i>`;
+      return `<section class="card insight-panel" id="report-daily-comparison"><div class="insight-heading"><div><h3>每日里程趋势</h3><p class="insight-note">${data.period==='week'?'按星期':'按月内日期'}对齐 · 完整与片段均计入 · 按结束日期归属 · km</p></div><div class="report-series-legend"><span class="previous">${before}</span><span class="current">${now}</span><span class="partial">含片段</span>${dayFilter?button('显示整个周期','clear-day'):''}</div></div>
+        <p class="insight-note">点击${now}日期看下方事件。两期使用同一刻度，柱高从 0 起算${analysis.peakDistance===null?'；本期暂无有效里程':`，本期最高 ${num(analysis.peakDistance)} km`}。</p>
+        <div class="report-chart-scroll" tabindex="0" role="region" aria-label="每日里程两期对比图，可横向滚动"><div class="report-daily-chart report-paired-days" style="--day-count:${days.length}">${days.map(({current:day,previous})=>{
           const coverage={observed:'有归档观测',missing:'无归档观测',future:'未来日期'}[day.coverage];
-          const label=`${day.date}，${day.state==='future'?'未来日期':day.distance===null?'无有效已观测里程':`已观测 ${num(day.distance)} km`}，行程 ${day.trip_count}，充电 ${day.charge_count}，${coverage}`;
-          return `<button data-report="day" data-date="${esc(day.date)}" data-distance-state="${day.state}" aria-label="${esc(label)}" title="${esc(label)}" aria-pressed="${dayFilter===day.date}" ${day.state==='future'?'disabled':''}><span class="report-day-value">${day.state==='future'?'未到':num(day.distance)}</span><span class="report-day-track" aria-hidden="true"><i style="height:${(day.ratio||0)*100}%" ${day.distance===0?'class="report-zero"':''}></i></span><span class="report-day-date">${day.date.slice(8)}</span><span class="report-day-coverage" aria-hidden="true">${day.coverage==='observed'?'●':day.coverage==='missing'?'○':''}</span></button>`;
-        }).join('')}</div></div><p class="insight-note report-chart-legend">— 无有效里程 · 0 已记录零里程 · 未到 未来日期<br>● 有归档读取 · ○ 无归档读取。归档与行程事件来源不同；无归档日期仍可能有里程。缺记录不代表未用车。</p></section>`;
+          const label=`${day.date}，${day.state==='future'?'未来日期':day.distance===null?'无有效已观测里程':`已观测 ${num(day.distance)} km`}，行程 ${day.trip_count}，充电 ${day.charge_count}，${coverage}；${before} ${previous?previous.date:''} ${value(previous)}${previous?.distance!==null&&previous?' km':''}${day.partial_trip_count?'；本期含片段':''}`;
+          return `<button data-report="day" data-date="${esc(day.date)}" data-distance-state="${day.state}" aria-label="${esc(label)}" title="${esc(label)}" aria-pressed="${dayFilter===day.date}" ${day.state==='future'?'disabled':''}><span class="report-day-value"><span class="previous">${value(previous)}</span><span>${value(day)}</span></span><span class="report-day-track" aria-hidden="true">${bar(previous,'previous')}${bar(day,'current')}</span><span class="report-day-date">${data.period==='week'?['日','一','二','三','四','五','六'][new Date(day.date+'T12:00:00+08:00').getUTCDay()]+' · ':''}${day.date.slice(8)}</span><span class="report-day-coverage" aria-hidden="true">${day.charge_count?'充电 '+day.charge_count+' 次':day.coverage==='observed'?'●':day.coverage==='missing'?'○':''}</span></button>`;
+        }).join('')}</div></div><p class="insight-note report-chart-legend">— 无有效里程 · 0 已记录零里程 · 未到 未来日期 · 无对应日 上期没有该日期<br>● 有归档读取 · ○ 无归档读取。归档与行程事件来源不同；无归档日期仍可能有里程。缺记录不代表未用车；两期覆盖不同，不代表真实用车必然增减。</p></section>`;
     }
     function paint(){
       return root.RefreshView?root.RefreshView.preserve(node,paintContent):paintContent();
@@ -72,13 +108,11 @@
       if(!node?.isConnected||!active())return;
       const focus=node.contains(document.activeElement)?document.activeElement.id:null;
       const c=data?.current,t=c?.totals,s=c?.samples,w=c?.window,analysis=c?analyze(c):null;
-      node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">用车周报 · 月报</span><h2>把一段用车生活，放在一起看</h2><p>里程、行程、充电与记录覆盖，各有依据。</p></div><span class="insight-source">本地结束事件</span></section>
+      node.innerHTML=`<section class="insight-hero"><div><span class="insight-eyebrow">用车周报 · 月报</span><h2>把两期放在一起，看清变化</h2><p>先看与上一周期的差异，再看每天的用车变化。</p></div><span class="insight-source">本地结束事件</span></section>
         <section class="card insight-panel"><div class="insight-toolbar"><label>报告周期<select id="report-period" aria-label="报告周期"><option value="week" ${period==='week'?'selected':''}>自然周</option><option value="month" ${period==='month'?'selected':''}>自然月</option></select></label><label>周期内日期<input id="report-date" type="date" value="${esc(date)}"></label>${button('查看报告','load',!owner||!date,'id="report-load"')}</div>${!data&&!loading&&owner?'<p class="insight-note">选择查询条件后，点击查询按钮显示结果。</p>':''}${loading?button('停止分析','stop')+'<p role="status">正在汇总本地记录…</p>':''}${error?`<div class="notice error" role="alert">${esc(error)}${data?' · 保留上次报告和原周期。':''}</div>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可查看报告。</p>':''}
         ${data?`<div class="report-period-head"><div><h3 id="report-title">${esc(w.start_date)} — ${esc(w.end_date)}</h3><p class="insight-note">北京时间 · ${data.period==='week'?'周一至周日':'自然月'} · ${statusText[c.status]} · 统计截至 ${esc(time(data.as_of))}</p></div><div class="insight-actions">${button('上一周期','previous')}${button('下一周期','next')}</div></div>`:''}</section>
-        ${data?`<div class="insight-metrics report-totals">${metric('已观测行程里程',t.distance_km,'km',`${s.distance} 条有效里程样本，含 ${s.partial_distance} 条片段`,'report-distance')}${metric('结束行程',t.trip_count,'次',`完整 ${t.complete_trip_count} 次 · 片段 ${t.partial_trip_count} 次`)}${metric('结束充电',t.charge_count,'次',`完整 ${t.complete_charge_count} 次 · 片段 ${t.partial_charge_count} 次`)}${metric('行程观测时段',t.duration_seconds===null?null:t.duration_seconds/3600,'小时',`${s.duration} 条有效时段，含 ${s.partial_duration} 条片段；非全程驾驶时长`)}</div>
-        ${observations(analysis)}${dailyChart(analysis)}
-        <section class="card insight-panel"><h3>电量估算与片段</h3><div class="parking-row-values">${metric('行程电量估算',t.trip_estimated_kwh,'kWh',`${s.trip_energy} 条有效样本；事件记录容量 × SOC 变化`)}${metric('补入电量估算',t.charge_estimated_kwh,'kWh',`${s.charge_energy} 条有效样本；不是桩端计量电量`)}${metric('百公里电量估算',t.estimated_kwh_per_100km,'kWh/100km',`${s.efficiency} 条至少 10 km 且耗电至少 3 个百分点的样本`)}${metric('其中：片段已观测里程',t.partial_distance_km,'km',`${s.partial_distance} 条有效片段，已计入总里程；不重复相加`)}</div><p class="insight-note">完整与片段记录均按有效指标计入，未观测部分不补算。电量估算需起止时间与 SOC 端点可核对、容量有效、没有充电混入或解码口径变化。未结束事件单列；无有效样本显示“—”。</p></section>
-        <section class="card insight-panel"><h3>与上一周期比较</h3><p class="insight-note">上期 ${esc(data.previous.window.start_date)} — ${esc(data.previous.window.end_date)}。比较的是已记录数据；覆盖不同不代表真实用车必然增减。</p><div class="report-comparison">${[['distance_km','已观测里程','km'],['trip_count','结束行程','次'],['charge_count','结束充电','次'],['duration_seconds','观测时长','小时']].map(([key,label,unit])=>{const r=data.comparison.metrics[key],scale=key==='duration_seconds'?3600:1;return `<article><strong>${label}</strong><span>上期 ${num(r.previous===null?null:r.previous/scale)} ${unit}</span><span>本期 ${num(r.current===null?null:r.current/scale)} ${unit}</span><b>${r.percent===null?esc(reasons[r.reason]):`${r.percent>0?'+':''}${num(r.percent)}%`}</b></article>`;}).join('')}</div></section>
+        ${data?`${comparisonSummary()}${energyComparison()}${dailyChart(analysis)}${observations(analysis)}
+        <p class="insight-note">其中：片段已观测里程 ${num(t.partial_distance_km)} km，已计入总里程，不重复相加。电量估算需起止时间与 SOC 端点可核对、容量有效、没有充电混入或解码口径变化。未观测部分不补算。</p>
         <section class="card insight-panel"><h3>归档覆盖</h3><div class="parking-row-values">${metric('本期有归档读取的日期',c.coverage.days_with_reads,'天',`周期共 ${w.days} 天；有读取不等于全天覆盖`)}${metric('有效不同车辆时间',c.coverage.new_states,'个',`${c.coverage.reads} 次读取 · 重复 ${c.coverage.repeats} 次 · 修订 ${c.coverage.revisions} 次`)}${metric('旧值或异常观测',c.coverage.invalid_or_stale,'次','不算有效新状态')}${metric('上期有归档读取的日期',data.previous.coverage.days_with_reads,'天',`上期共 ${data.previous.window.days} 天`)}</div><p class="insight-note">本期首次读取 ${esc(time(c.coverage.first_read))}，最后读取 ${esc(time(c.coverage.last_read))}。归档覆盖按当前账号统计；事件保留当前车辆已有历史。没有归档不等于没有行程。${data.history_quality.unreadable_or_undated?`另有 ${data.history_quality.unreadable_or_undated} 条车辆历史记录格式或结束时间无效，无法归期（非仅本期）。`:''}</p></section>
         <section class="card insight-panel"><h3>常见出发时段</h3><p class="insight-note">按本期结束行程的已知开始时间统计，含片段。跨午夜行程仍按自身出发时刻计数。</p><div class="report-hours">${Array.from({length:6},(_,i)=>{const count=c.departure_hours.slice(i*4,i*4+4).reduce((a,b)=>a+b,0),max=Math.max(1,...Array.from({length:6},(_,j)=>c.departure_hours.slice(j*4,j*4+4).reduce((a,b)=>a+b,0)));return `<div><span>${String(i*4).padStart(2,'0')}—${String(i*4+3).padStart(2,'0')} 时</span><i aria-hidden="true" style="--bar:${count/max*100}%"></i><strong>${count} 次</strong></div>`;}).join('')}</div></section>
         <section class="card insight-panel"><div class="insight-heading"><h3>本期结束事件${dayFilter?' · '+esc(dayFilter):''}</h3><div class="insight-toolbar"><label>事件类型<select id="report-kind" aria-label="事件类型">${[['all','全部事件'],['trip_end','行程'],['charge_end','充电']].map(([k,v])=>`<option value="${k}" ${kind===k?'selected':''}>${v}</option>`).join('')}</select></label><label>事件完整性<select id="report-quality" aria-label="事件完整性">${[['all','全部记录'],['complete','完整记录'],['partial','片段记录']].map(([k,v])=>`<option value="${k}" ${quality===k?'selected':''}>${v}</option>`).join('')}</select></label></div></div><div id="report-events"></div></section>`:''}`;
@@ -141,5 +175,5 @@
     }
     return {mount,handle};
   }
-  root.UsageReportPage={create,analyze};
+  root.UsageReportPage={create,analyze,compareValues,pairedDays};
 })(window);

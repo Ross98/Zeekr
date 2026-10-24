@@ -269,7 +269,7 @@ if __name__ == '__main__':
             query=app.usage_reports.query
             # The web read context supplies now explicitly; setting only the
             # module clock cannot freeze this real HTTP/analysis path.
-            app.usage_reports.query=lambda scope,vehicle,period,date,now=None:query(scope,vehicle,period,date,now=fixed_report_now)
+            app.usage_reports.query=lambda scope,vehicle,period,date,now=None,**kwargs:query(scope,vehicle,period,date,now=fixed_report_now,**kwargs)
         server = make_server(app, args.port)
         print(server.server_port, flush=True)
         try:

@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');
 const {fixture,layouts}=require('./ui_insight_helpers.cjs');
 (async()=>{
-  const f=await fixture({reportNow:'2026-10-05'}),{page}=f;
+  const f=await fixture({reportNow:'2026-10-05',demo:true}),{page}=f;
   try{
     await page.getByRole('button',{name:'用车周报',exact:true}).click();
     await page.getByLabel('报告周期',{exact:true}).selectOption('month');
@@ -9,6 +9,14 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByRole('button',{name:'查看报告',exact:true}).click();
     await page.getByRole('heading',{name:'2026-09-01 — 2026-09-30',exact:true}).waitFor();
     assert.match(await page.locator('#report-distance').innerText(),/67/);
+    assert.equal(await page.locator('#report-graph-summary [data-report-metric]').count(),4);
+    assert.equal(await page.locator('#report-energy-comparison [data-report-metric]').count(),4);
+    assert.match(await page.locator('#report-energy-comparison [data-report-metric="charging_paid_cents"] strong').innerText(),/30\.10/);
+    assert.ok(await page.evaluate(()=>!!(document.querySelector('#report-energy-comparison').compareDocumentPosition(document.querySelector('#report-daily-comparison'))&Node.DOCUMENT_POSITION_FOLLOWING)), 'energy/payment comparison precedes daily chart');
+    assert.match(await page.locator('#report-distance').innerText(),/上期.*30/s);
+    assert.equal(await page.locator('[data-date="2026-09-16"] .report-day-track .current.partial').count(),1);
+    assert.equal(await page.locator('[data-date="2026-09-16"] .report-day-track .previous').count(),1);
+
     assert.match(await page.locator('#report-distance').innerText(),/含 1 条片段/);
     assert.match(await page.locator('#report-observations').innerText(),/每条记录平均里程/);
     assert.match(await page.locator('#report-observations').innerText(),/22.33 km/);
@@ -46,6 +54,12 @@ const {fixture,layouts}=require('./ui_insight_helpers.cjs');
     await page.getByLabel('报告周期',{exact:true}).selectOption('week');
     await page.getByRole('button',{name:'查看报告',exact:true}).click();
     await page.getByRole('heading',{name:'2026-08-31 — 2026-09-06',exact:true}).waitFor();
+    await page.getByLabel('周期内日期',{exact:true}).fill('2026-09-20');
+    await page.getByRole('button',{name:'查看报告',exact:true}).click();
+    await page.getByRole('heading',{name:'2026-09-14 — 2026-09-20',exact:true}).waitFor();
+    assert.equal(await page.locator('.report-daily-chart [data-report="day"]').count(),7);
+    assert.match(await page.locator('#report-energy-comparison h3').innerText(),/两周对照/);
+    await layouts(page,'usage-week-comparison');
     await page.getByLabel('周期内日期',{exact:true}).fill('2026-10-05');
     await page.getByRole('button',{name:'查看报告',exact:true}).click();
     await page.getByText(/本期进行中/).waitFor();

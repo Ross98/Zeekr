@@ -264,4 +264,39 @@ class UsageReportsTests(unittest.TestCase):
             with self.assertRaises(ValueError):store.get(car,key)
 
 
+class UsageReportPaymentsTests(unittest.TestCase):
+    setUp = UsageReportsTests.setUp
+    add = UsageReportsTests.add
+    def test_two_period_payments_use_stable_owner_bill_date_and_no_private_body(self):
+        from zeekr_control.personal_store import PersonalStore
+        store=PersonalStore(self.root/'personal.sqlite3')
+        body=dict(date='2026-09-15',actual_cents=0,note='PRIVATE-NOTE',event=None)
+        store.change('owner','car','charges','save','free',body,0)
+        store.change('owner','car','charges','save','unknown',dict(body,actual_cents=None),1)
+        store.change('owner','car','charges','save','previous',dict(body,date='2026-09-08',actual_cents=1234),2)
+        store.change('other','car','charges','save','private',dict(body,actual_cents=99999),0)
+        reports=UsageReports(self.db,self.archive,store=store)
+        result=reports.query('session-version','car','week','2026-09-20',now=self.now,owner='owner')
+        self.assertEqual(result['current']['totals']['charging_paid_cents'],0)
+        self.assertEqual(result['current']['payments']['unpriced_bill_count'],1)
+        self.assertEqual(result['previous']['totals']['charging_paid_cents'],1234)
+        self.assertNotIn('PRIVATE',json.dumps(result))
+        self.assertNotIn('note',json.dumps(result))
+        store.change('owner','car','charges','delete','free',None,3)
+        result=reports.query('session-version','car','week','2026-09-20',now=self.now,owner='owner')
+        self.assertIsNone(result['current']['totals']['charging_paid_cents'])
+        self.assertEqual(result['current']['payments']['bill_count'],1)
+
+    def test_future_and_other_vehicle_bills_are_not_current_payments(self):
+        from zeekr_control.personal_store import PersonalStore
+        store=PersonalStore(self.root/'personal.sqlite3')
+        bill=dict(date='2026-09-20',actual_cents=2000,event=None)
+        store.change('owner','car','charges','save','future',bill,0)
+        store.change('owner','other','charges','save','other-car',dict(bill,date='2026-09-15'),0)
+        report=UsageReports(self.db,self.archive,store=store).query('scope','car','week','2026-09-20',
+            now=day_bounds('2026-09-16')[0],owner='owner')
+        self.assertIsNone(report['current']['totals']['charging_paid_cents'])
+        self.assertEqual(report['current']['payments']['bill_count'],0)
+
+
 if __name__=='__main__':unittest.main()
