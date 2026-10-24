@@ -4,6 +4,51 @@ from pathlib import Path
 from zeekr_control.focused_trip_image import build_geometry,fit_geometry,render_focused_trip_png,FocusedTripImage
 
 class FocusedTripTests(unittest.TestCase):
+ def test_decimal_and_colon_share_numeric_baseline(self):
+  from zeekr_control.focused_trip_image import _atlas
+  index,masks=_atlas()
+  for size in (17,21,35,42):
+   def rows(char):
+    offset,w,h,_=index[str(size)+':'+char]
+    return [y for y in range(h) if any(masks[offset+y*w:offset+(y+1)*w])]
+   digit,dot=rows('8'),rows('.')
+   self.assertGreater(min(dot), (min(digit)+max(digit))/2)
+   self.assertLessEqual(abs(max(dot)-max(digit)),2)
+
+ def test_background_budget_is_shared_across_map_cells_and_networks(self):
+  import sqlite3
+  with tempfile.TemporaryDirectory() as folder:
+   self.corner_network(folder)
+   p=Path(folder)/'region.sqlite3'
+   with sqlite3.connect(p) as db:
+    coords=db.execute('SELECT coords FROM roads LIMIT 1').fetchone()[0]
+    bounds=db.execute('SELECT minx,maxx,miny,maxy FROM road_index LIMIT 1').fetchone()
+    for i in range(2,10004):
+     db.execute('INSERT INTO roads VALUES (?,?,?,?,?,?,?)',(i,i*10,i*10+1,0,'',100,coords))
+     db.execute('INSERT INTO road_index VALUES (?,?,?,?,?)',(i,)+bounds)
+   from zeekr_control.road_network import build_network
+   build_network({'elements':[{'type':'node','id':900001,'lon':121.1,'lat':31.1},
+     {'type':'node','id':900002,'lon':121.101,'lat':31.101},
+     {'type':'way','id':900003,'nodes':[900001,900002],'tags':{'highway':'primary'}}]},Path(folder)/'z-region.sqlite3')
+   route=self.corner_route();route['segments'][0].append(dict(route['segments'][0][-1],longitude=121.101,latitude=31.101))
+   geometry=build_geometry(route,folder)
+   self.assertTrue(geometry['background_limited'])
+   self.assertLessEqual(len(geometry['roads']),10000)
+   self.assertLessEqual(sum(map(len,geometry['roads'])),60000)
+   self.assertTrue(any(road[-1][0]>geometry['segments'][0][-1][0]-1 for road in geometry['roads']))
+
+ def test_partial_matching_and_limited_background_are_explicit(self):
+  from zeekr_control.focused_trip_image import Surface
+  route=self.route();geometry=build_geometry(route)
+  geometry.update(matched=[geometry['segments'][0]],fallback=[geometry['segments'][1]],background_limited=True)
+  text=[];original=Surface.text
+  def capture(surface,x,y,value,*args,**kwargs):
+   text.append(str(value));return original(surface,x,y,value,*args,**kwargs)
+  with patch.object(Surface,'text',capture):render_focused_trip_png({'metrics':{}},route,geometry)
+  self.assertIn('底图已简化',text)
+  self.assertIn('实线：路网推断',text)
+  self.assertIn('虚线：采样连线',text)
+
  def corner_route(self):
   points=[dict(state_time=1704067200000+i*60000,observed_time=1704067200000+i*60000,
                longitude=lon,latitude=lat,trusted=True,plottable=True,
@@ -105,7 +150,7 @@ class FocusedTripTests(unittest.TestCase):
  def test_fixed_copy_glyphs_exist(self):
   from zeekr_control.focused_trip_image import _atlas
   index,_=_atlas()
-  for size,text in [(21,'行程里程观测时长电量估算能耗月日:'),(42,'0123456789.→—'),(18,'测试起点…'),(17,'kWh/100km路网推断虚线为采样连线')]:
+  for size,text in [(21,'行程里程观测时长电量估算能耗月日:'),(42,'0123456789.→—'),(18,'测试起点…'),(17,'kWh/100km实线：路网推断虚线：采样连线部分匹配未'),(13,'底图已简化')]:
    for char in text:self.assertIn(str(size)+':'+char,index)
  def test_background_reads_real_roads_without_label_data(self):
   from zeekr_control.road_network import build_network

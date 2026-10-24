@@ -49,27 +49,42 @@ def build_geometry(route,network_dir=None):
     def pixel(lon,lat):
         x,y=project(lon,lat);return [(x-cx)*world,(y-cy)*world]
     lines=[[pixel(*p) for p in s] for s in raw]
-    roads=[];seen=set();vertices=0;truncated=False
+    roads=[];seen=set();truncated=False
     if network_dir is not None and systems=={'WGS84（社区解释）'}:
         lons,lats=zip(*flat);pad=max(.025,max(max(lons)-min(lons),max(lats)-min(lats))*.15)
         box=(min(lons)-pad,min(lats)-pad,max(lons)+pad,max(lats)+pad)
-        for path in sorted(Path(network_dir).glob('*.sqlite3'))[:8]:
-            if path.is_symlink() or path.stat().st_size>64*1024*1024:continue
+        networks=[p for p in sorted(Path(network_dir).glob('*.sqlite3'))[:8]
+                  if not p.is_symlink() and p.is_file() and p.stat().st_size<=64*1024*1024]
+        # Share the bounded background budget across regions and spatial cells.
+        # A dense city at the start must not consume the entire map's allowance.
+        columns,rows_count=12,8
+        quota=10000//(columns*rows_count)
+        vertex_quota=60000//(columns*rows_count)
+        cells={}
+        for path in networks:
             try:
                 with sqlite3.connect(path.absolute().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
                     meta=dict(db.execute('SELECT key,value FROM meta'));lon0=float(meta['lon0']);lat0=float(meta['lat0'])
                     scale=EARTH*math.cos(math.radians(lat0))*math.pi/180;yscale=EARTH*math.pi/180
                     a=(box[0]-lon0)*scale;c=(box[2]-lon0)*scale;b=(box[1]-lat0)*yscale;d=(box[3]-lat0)*yscale
-                    # No label/name columns are read: there is no background text layer.
-                    rows=db.execute('SELECT r.f,r.t,r.coords FROM roads r JOIN road_index i ON i.id=r.id WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? LIMIT 10001',(a,c,b,d))
-                    for f,t,encoded in rows:
-                        if (f,t) in seen:continue
-                        coords=json.loads(encoded)
-                        if len(roads)>=10000 or vertices+len(coords)>60000:truncated=True;break
-                        seen.add((f,t));vertices+=len(coords)
-                        roads.append([pixel(lon0+x/scale,lat0+y/yscale) for x,y in coords])
+                    for row in range(rows_count):
+                        for column in range(columns):
+                            cell=cells.setdefault((row,column),[0,0])
+                            left=a+(c-a)*column/columns;right=a+(c-a)*(column+1)/columns
+                            top=b+(d-b)*row/rows_count;bottom=b+(d-b)*(row+1)/rows_count
+                            # No label/name columns are read. One extra row detects
+                            # local simplification without an unbounded road scan.
+                            candidates=db.execute('SELECT r.f,r.t,r.coords FROM roads r JOIN road_index i ON i.id=r.id WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? ORDER BY r.id LIMIT ?',
+                                                  (left,right,top,bottom,quota+1)).fetchall()
+                            if len(candidates)>quota:truncated=True
+                            for f,t,encoded in candidates[:quota]:
+                                if (f,t) in seen:continue
+                                coords=json.loads(encoded)
+                                if cell[0]>=quota or cell[1]+len(coords)>vertex_quota:
+                                    truncated=True;continue
+                                seen.add((f,t));cell[0]+=1;cell[1]+=len(coords)
+                                roads.append([pixel(lon0+x/scale,lat0+y/yscale) for x,y in coords])
             except (sqlite3.Error,ValueError,KeyError,OSError,TypeError):continue
-            if truncated:break
     # Run inside the existing bounded image worker. A nested matcher would have
     # an 8-second wall budget despite the monitor's 15% CPU quota.
     matched=[];covered=set();status='unavailable'
@@ -265,11 +280,13 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
     tip=(x+dx*16,y+dy*16)
     for sign in (-1,1):map_surface.line(tip,(tip[0]-dx*9+sign*dy*5,tip[1]-dy*9-sign*dx*5),(51,76,67),2)
     map_surface.text(x+dx*32-7,y+dy*32-7,'北',15,(51,76,67));map_surface.text(855,101,'地图已旋转',13,(86,112,103))
+    if geometry.get('background_limited'):map_surface.text(20,496,'底图已简化',13,(86,112,103))
     if geometry['roads']:map_surface.text(680,496,'© OpenStreetMap contributors',12,(86,112,103))
     else:map_surface.text(700,496,'本区域无道路背景',13,(86,112,103))
     for y in range(520):surface.data[((y+114)*WIDTH+56)*3:((y+114)*WIDTH+1012)*3]=map_surface.data[y*956*3:(y+1)*956*3]
     surface.circle(65,663,9,(0,120,99));surface.text(84,650,'A 首个采样',18,MUTED);surface.circle(245,663,9,(175,91,17));surface.text(264,650,'B 末个采样',18,MUTED)
-    if geometry['roads']:surface.text(869,650,'OpenStreetMap',17,MUTED)
+    surface.text(455,650,'实线：路网推断',17,MUTED)
+    surface.text(680,650,'虚线：采样连线',17,MUTED)
     surface.rect(56,696,956,1,(51,67,72))
     metrics=report.get('metrics',{});left=report.get('start',{});right=report.get('end',{});duration=metrics.get('duration_seconds')
     cards=[('行程里程',_number(metrics.get('distance_km')),'km'),('观测时长',_number(duration/60 if type(duration) in (float,int) else None),'分钟'),('电量','%s → %s'%(_number(left.get('soc')),_number(right.get('soc'))),'%'),('估算能耗',_number(metrics.get('estimated_kwh_100km')),'kWh/100km')]
@@ -281,8 +298,8 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
         if i:surface.rect(x-18,724,1,85,(51,67,72))
     count=route.get('count');count=count if type(count) is int and 0<=count<=20000 else 0
     gaps=len(route.get('gaps',[]));footer='云端缓存采样 · %s 个位置点'%count+(' · %s 处采样间断'%gaps if gaps else '')
-    footer+=' · 路网推断' if road_lines else ' · 连线不代表实走道路'
-    if geometry.get('fallback'):footer+=' · 虚线为采样连线'
+    footer+=' · 部分路网匹配' if road_lines and geometry.get('fallback') else (' · 路网匹配' if road_lines else ' · 未匹配路网')
+    footer+=' · 连线不代表实走道路'
     surface.text(56,842,footer,17,MUTED,956);content=surface.png()
     if len(content)>2*1024*1024:raise ValueError('图片超过2MB')
     return content
