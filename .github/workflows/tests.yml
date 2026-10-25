@@ -52,8 +52,12 @@ jobs:
       - name: Run Python suite
         run: python -m unittest discover -s tests
 
-  desktop:
-    name: Desktop tests
+  desktop_shards:
+    name: Desktop shard ${{ matrix.shard }}/2
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     runs-on: ubuntu-24.04
     env:
       BROWSER_ARTIFACT_DIR: test-results/browser-failures
@@ -76,16 +80,18 @@ jobs:
       - name: Use the locked Chromium in every browser check
         run: node -e "console.log('CHROMIUM_EXECUTABLE=' + require('playwright').chromium.executablePath())" >> "$GITHUB_ENV"
       - name: Check JavaScript syntax
+        if: ${{ matrix.shard == 1 }}
         run: npm run check:js
       - name: Run JavaScript unit checks
+        if: ${{ matrix.shard == 1 }}
         run: npm run test:unit
       - name: Run desktop browser checks
-        run: npm run test:desktop
+        run: npm run test:desktop -- --shard=${{ matrix.shard }}/2
       - name: Upload browser evidence and per-file results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: desktop-browser-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          name: desktop-browser-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}
           path: |
             test-results/browser-failures/*/page.png
             test-results/browser-failures/*/diagnostic.json
@@ -94,3 +100,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           compression-level: 0
+
+  desktop:
+    name: Desktop tests
+    needs: desktop_shards
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every desktop shard to succeed
+        env:
+          SHARD_RESULT: ${{ needs.desktop_shards.result }}
+        run: test "$SHARD_RESULT" = success
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Download only this run attempt's shard evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: desktop-browser-${{ github.run_id }}-${{ github.run_attempt }}-shard-*
+          path: test-results/desktop-shards
+          merge-multiple: true
+      - name: Verify complete desktop coverage and current CI identity
+        run: node scripts/test-desktop.cjs verify-shards test-results/desktop-shards/desktop 2

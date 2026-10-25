@@ -33,12 +33,46 @@ function trackTree(child,signal){
  }catch{child.cleanupError=true;}
  if(signal)killGroup(child,signal);
 }
+function partition(files,shard){
+ return shard?files.filter((_,i)=>i%shard.total===shard.index-1):files;
+}
+function ciIdentity(){
+ const value={sha:process.env.GITHUB_SHA||null,run_id:process.env.GITHUB_RUN_ID||null,run_attempt:process.env.GITHUB_RUN_ATTEMPT||null};
+ if(Object.values(value).some(v=>v!==null)&&(!/^[a-f0-9]{40}$/.test(value.sha||'')||!/^\d+$/.test(value.run_id||'')||!/^\d+$/.test(value.run_attempt||'')||Number(value.run_id)<1||Number(value.run_attempt)<1))throw Error('Invalid CI identity');
+ return value;
+}
+function verifyShards(files,directory,total){
+ if(!/^[1-9]\d*$/.test(total||'')||Number(total)>64||Number(total)>files.length)throw Error('Invalid shard total');
+ total=Number(total);const identity=ciIdentity();
+ const reports=fs.readdirSync(directory).filter(name=>/^desktop-shard-.*\.json$/.test(name));
+ if(reports.length!==total)throw Error('Missing or duplicate desktop shard receipts');
+ const seen=new Set();
+ for(const file of reports){
+  const r=JSON.parse(fs.readFileSync(path.join(directory,file),'utf8')),shard=r.shard;
+  if(r.schema!==1||r.group!=='desktop'||r.passed!==true||r.interrupted!==false||!shard||shard.total!==total||!Number.isInteger(shard.index)||shard.index<1||shard.index>total||seen.has(shard.index)||!r.ci||Object.keys(identity).some(k=>r.ci[k]!==identity[k]))throw Error('Invalid, failed or stale desktop shard receipt');
+  const expected=partition(files,shard);
+  if(!Array.isArray(r.results)||r.results.length!==expected.length||r.results.some((row,i)=>row.file!==expected[i]||row.status!=='passed'||row.exit_code!==0||row.signal!==null))throw Error('Incomplete or unsuccessful desktop shard coverage');
+  seen.add(shard.index);
+ }
+ console.log(`DESKTOP_SHARDS_VERIFIED: ${files.length} files exactly once across ${total} shards; current CI identity.`);
+}
 async function main(){
  const {manifest:{groups}}=loadAndValidate();
  groups.desktop=[...groups.smoke,...groups.review];groups.all=[...groups.unit,...groups.desktop];
  const group=process.argv[2]||'all',syntax=group==='syntax';
- const files=syntax?['zeekr_control/static','scripts','tests'].flatMap(d=>syntaxFiles(path.join(root,d))):groups[group];
- if(!files)throw Error('Choose all, unit, smoke, review, desktop or syntax.');
+ if(group==='verify-shards'){
+  if(process.argv.length!==5)throw Error('Expected verify-shards directory total');
+  return verifyShards(groups.desktop,process.argv[3],process.argv[4]);
+ }
+ let shard=null;
+ if(process.argv.length>3){
+  const match=process.argv[3].match(/^--shard=([1-9]\d*)\/([1-9]\d*)$/);
+  if(group!=='desktop'||process.argv.length!==4||!match||Number(match[1])>Number(match[2])||Number(match[2])>64||Number(match[2])>groups.desktop.length)throw Error('Invalid desktop shard');
+  shard={index:Number(match[1]),total:Number(match[2])};
+ }
+ const identity=ciIdentity();
+ const files=syntax?['zeekr_control/static','scripts','tests'].flatMap(d=>syntaxFiles(path.join(root,d))):partition(groups[group]||[],shard);
+ if(!syntax&&!groups[group])throw Error('Choose all, unit, smoke, review, desktop or syntax.');
  const timeout=Number(process.env.DESKTOP_TEST_TIMEOUT_MS||180000);
  if(!Number.isInteger(timeout)||timeout<100||timeout>1200000)throw Error('Invalid DESKTOP_TEST_TIMEOUT_MS');
  const started=Date.now(),results=[];let interrupted=false,current,stopTimer;
@@ -74,7 +108,7 @@ async function main(){
  }finally{process.off('SIGTERM',stop);process.off('SIGINT',stop);if(current)trackTree(current,'SIGKILL');}
  const passed=!interrupted&&results.every(r=>r.status==='passed');
  const directory=path.resolve(root,process.env.DESKTOP_RESULT_DIR||'test-results/desktop');fs.mkdirSync(directory,{recursive:true});
- fs.writeFileSync(path.join(directory,`${group}-${process.pid}.json`),JSON.stringify({schema:1,group,passed,interrupted,seconds:(Date.now()-started)/1000,results},null,2)+'\n');
+ fs.writeFileSync(path.join(directory,`${group}${shard?`-shard-${shard.index}-of-${shard.total}`:''}-${process.pid}.json`),JSON.stringify({schema:1,group,shard,ci:identity,passed,interrupted,seconds:(Date.now()-started)/1000,results},null,2)+'\n');
  console.log(`\n${results.filter(r=>r.status==='passed').length}/${files.length} ${group} files passed in ${((Date.now()-started)/1000).toFixed(1)}s; desktop only.`);
  process.exitCode=passed?0:1;
 }
