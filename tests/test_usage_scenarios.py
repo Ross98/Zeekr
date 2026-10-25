@@ -224,7 +224,7 @@ class UsageScenarioTests(unittest.TestCase):
                 self.monitor = Monitor(self.monitor.tracks.path)
         starts = self.events('charge_start')
         self.assertEqual(len(starts), 1)
-        self.assertIn('开始充电｜交流', starts[0]['message'])
+        self.assertIn('充电方式：交流充电', starts[0]['message'])
         trip = self.events('trip_end')[0]['summary']
         self.assertEqual(trip['end_time'], BASE + 120000)
         self.assertEqual(trip['end_soc'], 76)

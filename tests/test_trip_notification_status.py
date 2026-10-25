@@ -17,10 +17,11 @@ class TripNotificationStatusTests(unittest.TestCase):
         report['attention']=build('trip_end',report['end'],parking,report['event_created_at'])
         return report
 
-    def test_normal_trip_keeps_core_and_omits_status_inventory(self):
+    def test_normal_trip_keeps_core_and_confirmed_parking_summary(self):
         text,_=render('trip_end',self.report(),'synthetic')
         for value in ['2 公里','电量：80% → 79%','估算耗电：约 0.9 kWh']:self.assertIn(value,text)
-        for value in ['锁车','四门','四窗','尾门','胎压','胎温','温度与轮胎','停车后状态','需留意']:self.assertNotIn(value,text)
+        self.assertIn('已锁车 · 四门、四窗、尾门已关闭',text)
+        for value in ['胎压','胎温','温度与轮胎','停车后状态','需留意']:self.assertNotIn(value,text)
 
     def test_confirmed_exception_is_shown_without_other_normal_states(self):
         report=self.report(dc_lid='open')
@@ -38,7 +39,7 @@ class TripNotificationStatusTests(unittest.TestCase):
         report=self.report(dc_lid='open',state_time=BASE-600000)
         text,_=render('trip_end',report,'synthetic')
         self.assertNotIn('直流口盖打开',text)
-        self.assertIn('旧观测',text)
+        self.assertNotIn('已锁车',text);self.assertNotIn('【停车状态】',text)
 
     def test_budget_fallback_keeps_exception_and_partial_warning(self):
         report=self.report(dc_lid='open');report['partial']=True

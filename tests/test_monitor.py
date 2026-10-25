@@ -178,7 +178,7 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(events[0]['summary']['distance_km'], 10)
         self.assertEqual(events[0]['summary']['soc_delta'], -4)
         self.assertEqual(events[0]['summary']['duration_seconds'], 120)
-        self.assertIn('kWh：暂无可靠数据', events[0]['message'])
+        self.assertIn('估算耗电：未知', events[0]['message'])
         self.observe(780, km=110)
         self.assertEqual(len(self.monitor.events()), 1)
         self.assertGreater(self.monitor.tracks.day('test-vehicle', '2024-01-01')['count'], 0)
@@ -651,13 +651,13 @@ class EstimatedEnergyTests(unittest.TestCase):
         data = dict(start_time=BASE, end_time=BASE+60000, duration_seconds=60,
                     distance_km=9, start_soc=48, end_soc=90, soc_delta=42,
                     partial=False, battery_capacity_kwh=86)
-        self.assertIn('估算充入电量：36.1 kWh', message_for('charge_end', data, 'test'))
+        self.assertIn('估算充入：约36.1 kWh', message_for('charge_end', data, 'test'))
         data.update(start_soc=90, end_soc=88, soc_delta=-2)
-        self.assertIn('估算耗电量：1.7 kWh', message_for('trip_end', data, 'test'))
+        self.assertIn('估算耗电：约 1.7 kWh', message_for('trip_end', data, 'test'))
         for changes in ({'soc_delta': None}, {'battery_capacity_kwh': None},
                         {'soc_delta': 2}, {'start_soc': None}):
             invalid = dict(data, **changes)
-            self.assertNotIn('估算耗电量：', message_for('trip_end', invalid, 'test'))
+            self.assertIn('估算耗电：未知', message_for('trip_end', invalid, 'test'))
 
 
 if __name__ == '__main__':

@@ -44,8 +44,8 @@ class StartEvidenceTests(unittest.TestCase):
         self.assertEqual((event['summary']['distance_km'], event['summary']['duration_seconds']), (10, 120))
         public = EventStore(self.path).query('car-a', '2024-01-01', 'trip_end')['events'][0]
         self.assertEqual(public['start_evidence'], evidence)
-        self.assertIn('可能开始范围', event['message'])
-        self.assertIn('系统首次发现', event['message'])
+        self.assertIn('开始时间为相邻观测范围', event['message'])
+        self.assertNotIn('系统首次发现', event['message'])
 
     def test_charge_start_and_end_keep_distinct_observation_time(self):
         self.observe(0)
