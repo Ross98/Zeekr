@@ -181,14 +181,16 @@ class RenderTests(unittest.TestCase):
         report = {'start_time': BASE, 'end_time': BASE + 60000,
                   'start': start, 'end': end, 'partial': True, 'metrics': {}}
         text, _ = render('charge_start', report, 'synthetic-ac')
-        self.assertIn('开始充电｜交流', text)
-        self.assertIn('接口观测电压：220 V', text)
-        self.assertIn('接口观测电流：16 A', text)
+        self.assertIn('充电方式：交流充电', text)
+        self.assertEqual(start['ac_voltage']['value'],220)
+        self.assertNotIn('接口观测电压',text)
+        self.assertEqual(start['ac_current']['value'],16)
+        self.assertNotIn('接口观测电流',text)
         self.assertNotIn('桩侧', text)
         self.assertNotIn('360 V', text)
-        self.assertIn('交流观测功率：3.5 kW（电压×电流）', text)
+        self.assertNotIn('观测功率', text)
         text, _ = render('charge_end', report, 'synthetic-ac')
-        self.assertIn('类型：交流', text)
+        self.assertIn('充电方式：交流充电', text)
         self.assertNotIn('停止观测：', text)
         self.assertNotIn('桩侧', text)
         self.assertNotIn('停止原因：未确认', text)
@@ -203,15 +205,17 @@ class RenderTests(unittest.TestCase):
                               'power_coverage': .8, 'max_gap_seconds': 60},
                   'quality': {'observation_count': 10}}
         text, _ = render('charge_start', report, 'synthetic-id')
-        self.assertIn('车辆估计剩余30分钟', text)
+        self.assertNotIn('车辆估计剩余', text)
+        self.assertEqual(start['remaining_minutes'],30)
         text, _ = render('trip_end', report, 'synthetic-id')
         self.assertIn('10 公里 · 10 分钟', text)
-        self.assertIn('最大间隔60秒', text)
+        self.assertNotIn('最大间隔', text)
         text, _ = render('charge_end', report, 'synthetic-id')
         self.assertNotIn('功率有效覆盖：', text)
         start['remaining_minutes'] = 0
         text, _ = render('charge_start', report, 'synthetic-id')
-        self.assertIn('车辆估计剩余0分钟', text)
+        self.assertNotIn('车辆估计剩余', text)
+        self.assertEqual(start['remaining_minutes'],0)
 
     def test_control_text_is_flat_and_message_is_bounded(self):
         self.assertEqual(clean_text('站点\n伪造标题\x00'), '站点 伪造标题')
@@ -234,7 +238,7 @@ class RenderTests(unittest.TestCase):
         self.assertLessEqual(len(text.encode()),2048)
         self.assertIn('部分记录',text)
         self.assertNotIn('锁车、门窗及尾门',text)
-        self.assertIn('缓存',text)
+        self.assertIn('云端观测，可能延迟',text)
         self.assertTrue(omitted)
 
 

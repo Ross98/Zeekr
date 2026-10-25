@@ -13,12 +13,12 @@ class ChargeNotificationBriefTests(unittest.TestCase):
           comparison={'items':[{'metric':'average_power_kw','note':'相近电量','n':10,'current':51.6,'median':50}]})
     def test_normal_report_is_core_only(self):
         text,_=render('charge_end',self.report(),'synthetic')
-        for value in ['充电已停止','45 分钟','35% → 80%','38.7 kWh','增加190公里','类型：直流','120 kW','51.6 kW']:self.assertIn(value,text)
+        for value in ['充电已停止','45 分钟','35% → 80%','38.7 kWh','充电方式：直流快充','【充电概况】','SOC × 容量']:self.assertIn(value,text)
         for value in ['四门','锁车','胎压','停止观测','停止原因','目标电量','充电枪','后段较前段','历史参考','独立观测','直流口盖打开']:self.assertNotIn(value,text)
     def test_insufficient_samples_and_partial_remain_explicit(self):
         report=self.report();report['partial']=True;report['metrics'].update(average_power_kw=None,power_coverage=.4,power_covered_seconds=1080,estimated_kwh=None)
         text,_=render('charge_end',report,'synthetic')
-        for value in ['部分记录','平均功率：未知','估算充入：未知','功率有效覆盖','仅汇总已观测区间']:self.assertIn(value,text)
+        for value in ['部分记录','估算充入：未知','仅汇总已观测区间']:self.assertIn(value,text)
         self.assertNotIn('充满',text)
     def test_verified_alert_survives_budget_and_stale_alert_is_suppressed(self):
         report=self.report();report['attention']['items']=[{'key':'verified','level':'warning','text':'已核验异常示例'}]
@@ -29,5 +29,5 @@ class ChargeNotificationBriefTests(unittest.TestCase):
     def test_real_zero_is_kept_and_source_unchanged(self):
         report=self.report();report['metrics'].update(estimated_kwh=0,average_power_kw=0);before=copy.deepcopy(report)
         text,_=render('charge_end',report,'synthetic')
-        self.assertIn('估算充入：约0 kWh',text);self.assertIn('平均功率：0 kW',text)
+        self.assertIn('估算充入：约0 kWh',text);self.assertNotIn('平均功率',text)
         self.assertEqual(report,before)

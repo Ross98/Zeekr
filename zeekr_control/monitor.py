@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 from .notifications import DeliveryError, bark_time, bark_channel
 from .usage_events import project, number
 from .delivery_state import delivery_lock, delivery_clock, add_columns, DeliveryCancelled
-from .summary import updated_at
 from .vehicle_state import decode, numeric
 from .tracks import TrackStore
 from .web_model import parse_location
@@ -23,7 +22,7 @@ from .report_history import compare
 from .report_attention import build as build_attention
 from .start_evidence import build as start_evidence, project as project_start
 from .start_evidence import from_summary as saved_start_evidence, MAX_GAP
-from .notification_location import select_location, reference_suffix
+from .notification_location import select_location
 from .trip_visibility import visible_clause, cancel_event_delivery
 
 MAX_AGE = MAX_GAP
@@ -73,47 +72,17 @@ def fmt(value, unit=''):
 
 
 def message_for(kind, data, event_id):
-    title = {'trip_start': '检测到行程开始', 'trip_end': '本次行程已结束',
-             'charge_start': '检测到开始充电', 'charge_end': '充电已停止'}[kind]
-    lines = [title]
-    if kind in ('trip_start', 'trip_end'):
-        lines.append('出发地：' + _notification_address(data, 'start'))
-        if kind == 'trip_end':
-            lines.append('到达地：' + _notification_address(data, 'end'))
-    else:
-        lines += ['充电地点：' + _notification_address(data, 'start')]
-    if kind in ('trip_start', 'charge_start'):
-        lines += ['观测时间：' + updated_at(data['start_time']), '电量：' + fmt(data['start_soc'], '%')]
-        if data['partial']:
-            lines += ['实际开始时间未知；首次观测时已在%s。' % ('行驶' if kind == 'trip_start' else '充电')]
-    else:
-        lines += ['开始：' + updated_at(data['start_time']), '结束：' + updated_at(data['end_time']),
-                  '观测时长：' + fmt(data['duration_seconds'] / 60, ' 分钟')]
-        if kind == 'trip_end':
-            lines += ['里程：' + fmt(data['distance_km'], ' km')]
-        lines += ['电量：%s → %s' % (fmt(data['start_soc'], '%'), fmt(data['end_soc'], '%')),
-                  '电量变化：' + fmt(data['soc_delta'], ' 个百分点')]
-        capacity = numeric(data.get('battery_capacity_kwh'), .1, 1000)
-        start = numeric(data.get('start_soc'), 0, 100)
-        end = numeric(data.get('end_soc'), 0, 100)
-        delta = numeric(data.get('soc_delta'), -100, 100)
-        expected = (end - start) if start is not None and end is not None else None
-        amount = delta if kind == 'charge_end' else -delta if delta is not None else None
-        if (capacity is not None and amount is not None and amount >= 0
-                and expected is not None and abs(expected - delta) < .001):
-            label = '估算充入电量' if kind == 'charge_end' else '估算耗电量'
-            lines += [label + '：%.1f kWh' % (capacity * amount / 100)]
-        else:
-            lines += ['kWh：暂无可靠数据']
-        if data['partial']:
-            lines += ['数据不完整：起点或期间观测存在缺口，仅汇总已观测部分。']
-    lines += ['来源：车辆云端缓存，时间可能延迟。', '事件编号：' + event_id[:12]]
-    return '\n'.join(lines)
-
-
-def _notification_address(data, prefix):
-    address = data.get(prefix + '_address')
-    return address + reference_suffix(data.get(prefix + '_location_reference')) if address else '位置未知'
+    """Legacy summaries share the current layout without inventing telemetry."""
+    event = project('notification', kind, data) or {}
+    report = dict(start_time=data.get('start_time'), end_time=data.get('end_time'),
+                  partial=data.get('partial') or event.get('partial', False),
+                  start_evidence=saved_start_evidence(data, kind),
+                  start={'soc':number(data.get('start_soc'),0,100),
+                         'range_km':number(data.get('start_range_km'))},
+                  end={'soc':number(data.get('end_soc'),0,100)}, metrics=event)
+    return render(kind, report, event_id,
+                  {side:data.get(side+'_address') for side in ('start','end')},
+                  references={side:data.get(side+'_location_reference') for side in ('start','end')})[0]
 
 
 def bark_message_for(kind, data):
@@ -495,7 +464,9 @@ class Monitor:
             _append_sample(charge, telemetry)
         with self.tracks.connect() as db:
             if trip_started:
-                self._event(db, vehicle, 'trip_start', summary(point, point, trip['partial']), now)
+                start_data = summary(point, point, trip['partial'])
+                start_data.update(start_evidence=trip.get('start_evidence'), start_range_km=telemetry.get('range_km'))
+                self._event(db, vehicle, 'trip_start', start_data, now)
             if (trip and trip['stop'] and charge is None
                     and point['charging'] is True and point['off'] is True
                     and continuous and not moving and not distance_moved
