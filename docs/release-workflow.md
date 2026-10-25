@@ -72,3 +72,15 @@ python3 scripts/release/client.py deploy --transport /private/tmp/transport.json
 手动回滚和切换失败后的自动回滚均先确认全部服务停下，再以服务用户调用失败候选的 `delivery_state.normalize_preparation_for_rollback`。函数取得通知与报表两把独占锁，只把已证明尚未发送的 `preparing` / `ready` 改回旧版本认识的 `pending`，保留尝试次数、冻结内容和全部已发送记录。`sending`、`unknown`、`uncertain` 不转换、不自动重发；任何规范化失败都会阻止旧代码切换，等待排查。没有该模块的旧候选无需此步骤。
 
 周期报表新增信息放在 `report_delivery_metadata` 旁表，原 `reports` 八列保持不变，旧版本仍能按原格式插入。回滚只切代码并兼容未发送状态，不用旧备份覆盖后续个人记录或业务数据。Linux 发布验收仍须验证采集进程、投递子进程与图片进程共享的 15% CPU / 128 MiB 预算；本机离线功能检查不替代该项资源验证。
+
+## 桌面 CI 分片与 GitHub 查询重试
+
+GitHub 的桌面浏览器清单按稳定顺序交错分为两片，两个独立 runner 并行；每片内部仍串行，保留进程树清理、超时与桌面范围。语法和 JavaScript 单元检查在第一片执行一次。失败不取消另一片，方便保留完整诊断。
+
+必要检查名称仍为 `Desktop tests`：汇总任务始终运行，先要求矩阵全部成功，再下载当前 run/attempt 的回执。逐片核对 SHA、run ID、attempt、分片编号、预期文件顺序与成功退出码；缺片、重复、失败、中断、旧回执或漏项一律失败。原有另外三项必要检查、精确提交与最新 push CI 判据不变。GitHub 的 PR 合并结果和 push 提交仍各自校验，本轮不修改触发策略或分支保护。
+
+本地可运行 `npm run test:desktop -- --shard=1/2` 和 `--shard=2/2`，用 `node scripts/test-desktop.cjs verify-shards <回执目录> 2` 汇总。原有不带分片参数的全量入口保持可用。全局清单仍由库存检查约束，不能靠分片缩小覆盖。
+
+发布工具的 GitHub API 只读查询最多尝试三次，单次超时 15 秒，间隔 1、2 秒；仅超时、已知网络错误及 HTTP 5xx 重试。鉴权、权限、404、429、无效 JSON／结构、CI 未完成／失败及缺少必要任务仍直接拦截。持续不可读不复用本地回执、不找旧绿灯、不停止生产服务。重试不包括部署写操作。
+
+工作流文件只在 GitHub 生效，不复制到运行目录；候选仍叠加已提交的 runner、查询门禁、测试与本文档，并按后端／发布工具改动由实际服务用户运行一次全量。

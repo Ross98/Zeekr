@@ -4,16 +4,45 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
 
 REQUIRED_JOBS=('Python tests','Desktop tests','macOS native tests','Workflow checks')
 
 
+def _transient(error):
+    if isinstance(error, subprocess.TimeoutExpired):
+        return True
+    if not isinstance(error, subprocess.CalledProcessError):
+        return False
+    detail = error.stderr or ''
+    if isinstance(detail, bytes):
+        detail = detail.decode('utf-8', errors='replace')
+    status = re.search(r'\bHTTP(?:/\S+)?\s+(\d{3})\b', detail, re.I)
+    if status:
+        return 500 <= int(status.group(1)) < 600
+    return any(reason in detail.lower() for reason in (
+        'tls handshake timeout', 'connection reset', 'connection refused',
+        'unexpected eof', ': eof', 'i/o timeout', 'network is unreachable',
+        'could not resolve host', 'temporary failure in name resolution',
+        'no such host', 'failed to connect', 'error connecting to', 'context deadline exceeded'))
+
+
 def github_json(endpoint):
-    try:
-        result=subprocess.run(['gh','api',endpoint],capture_output=True,text=True,check=True,timeout=15)
-        return json.loads(result.stdout)
-    except (OSError,subprocess.SubprocessError,ValueError):
-        raise ValueError('GitHub CI evidence unavailable; release blocked') from None
+    # Read-only transport retries only. Never retry a returned CI failure or
+    # auth/rate-limit rejection, and never select an older successful run.
+    for attempt in range(3):
+        try:
+            result = subprocess.run(['gh', 'api', endpoint], capture_output=True,
+                                    text=True, check=True, timeout=15)
+            value = json.loads(result.stdout)
+            if not isinstance(value, dict):
+                raise ValueError('Invalid GitHub response')
+            return value
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            if attempt < 2 and _transient(error):
+                time.sleep(attempt + 1)
+                continue
+            raise ValueError('GitHub CI evidence unavailable; release blocked') from None
 
 
 def repository():

@@ -46,3 +46,47 @@ class CIGateTests(unittest.TestCase):
         def fetch(endpoint):raise AssertionError('must not query')
         with self.assertRaises(ValueError):ci.verify_commit('HEAD',repo='owner/project',fetch=fetch)
         with self.assertRaises(ValueError):ci.verify_commit(self.sha,repo='../private',fetch=fetch)
+
+
+class GitHubReadRetryTests(unittest.TestCase):
+    def read(self, effects):
+        from unittest.mock import patch
+        with patch.object(ci.subprocess,'run',side_effect=effects) as run, patch.object(ci.time,'sleep') as sleep:
+            value=ci.github_json('repos/owner/project/actions/runs')
+            return value,run,sleep
+
+    def test_transient_timeout_and_5xx_recover_with_bounded_backoff(self):
+        import subprocess
+        for error in (subprocess.TimeoutExpired(['gh'],15),
+                      subprocess.CalledProcessError(1,['gh'],stderr='HTTP 502: Bad Gateway'),
+                      subprocess.CalledProcessError(1,['gh'],stderr='TLS handshake timeout'),
+                      subprocess.CalledProcessError(1,['gh'],stderr='error connecting to api.github.com')):
+            value,run,sleep=self.read([error,subprocess.CompletedProcess(['gh'],0,stdout='{"workflow_runs":[]}')])
+            self.assertEqual(value,{'workflow_runs':[]});self.assertEqual(run.call_count,2)
+            sleep.assert_called_once_with(1)
+            self.assertEqual(run.call_args.args[0],['gh','api','repos/owner/project/actions/runs'])
+
+    def test_exhausted_transport_errors_stop_after_three_reads(self):
+        import subprocess
+        from unittest.mock import patch,call
+        with patch.object(ci.subprocess,'run',side_effect=subprocess.TimeoutExpired(['gh'],15)) as run, patch.object(ci.time,'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError,'release blocked'):ci.github_json('test')
+            self.assertEqual(run.call_count,3);self.assertEqual(sleep.call_args_list,[call(1),call(2)])
+
+    def test_auth_rate_limit_missing_cli_and_invalid_json_do_not_retry(self):
+        import subprocess
+        from unittest.mock import patch
+        for effect in [subprocess.CalledProcessError(1,['gh'],stderr='HTTP %s; EOF'%code) for code in (401,403,404,429)]+[
+                FileNotFoundError('gh'),subprocess.CompletedProcess(['gh'],0,stdout='bad-json'),
+                subprocess.CompletedProcess(['gh'],0,stdout='[]')]:
+            with patch.object(ci.subprocess,'run',side_effect=[effect] if isinstance(effect,Exception) else None,
+                              return_value=effect) as run,patch.object(ci.time,'sleep') as sleep:
+                with self.assertRaises(ValueError):ci.github_json('test')
+                self.assertEqual(run.call_count,1);sleep.assert_not_called()
+
+    def test_latest_failed_run_is_not_retried_or_replaced_by_older_green(self):
+        from unittest.mock import Mock
+        failed=dict(id=2,run_attempt=1,head_sha='a'*40,status='completed',conclusion='failure',event='push')
+        fetch=Mock(return_value={'workflow_runs':[failed,dict(failed,id=1,conclusion='success')]})
+        with self.assertRaises(ValueError):ci.verify_commit('a'*40,repo='owner/project',fetch=fetch)
+        self.assertEqual(fetch.call_count,1)
