@@ -209,11 +209,40 @@ GitHub 保留四项必要检查：`Python tests`、`Desktop tests`、`macOS nati
 
 ## 界面样例
 
-以下为隔离合成数据的桌面截图，不含实车账号、轨迹或账目；布局以当前运行版本为准。更多样例与重拍方法见 [截图说明](docs/images/README.md)。
+以下为当前页面在隔离测试服务中的桌面截图，均标有“合成数据截图”。车辆名称、日期、地点、里程与金额全部为演示值；未连接真实车辆，未打开地图。重拍方法与隐私检查见 [截图说明](docs/images/README.md)。
 
 ![行程与轨迹：连续出行链与出行节奏，合成数据](docs/images/local-trips.png)
 
 ![能源与充电：月度回顾与费用分析，合成数据](docs/images/charging-review.png)
+
+<details>
+<summary>查看费用环图、图形化报告、账本与行程标签</summary>
+
+### 费用总览
+
+分类环图与对应支出明细并排展示，支持按分类查看记录。
+
+![费用总览：分类环图与支出明细，合成数据](docs/images/costs-overview.png)
+
+### 图形化周月报
+
+以下选取自然月演示：对照上期里程、耗电、充电与实付，保留未知和片段说明。
+
+![图形化报告：两期变化、能源与实付对照，合成数据](docs/images/usage-report.png)
+
+### 充电账本
+
+![充电账本：已填费用、未关联充电与账单管理，合成数据](docs/images/charging-ledger.png)
+
+### 生活账本
+
+![生活账本：分类支出与流水，合成数据](docs/images/expense-ledger.png)
+
+### 行程标签
+
+![行程标签：标签分布、通勤分析与逐趟标注，合成数据](docs/images/trip-tags.png)
+
+</details>
 
 ## 文档导航
 
