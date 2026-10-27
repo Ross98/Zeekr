@@ -56,6 +56,46 @@ class NotificationLocationTests(unittest.TestCase):
         self.assertNotIn('参考位置', text)
         self.assertNotIn('start_location_reference', data)
 
+    def test_saved_label_has_priority_over_geocoder_and_is_frozen(self):
+        from unittest.mock import Mock
+        self.start_charge(trusted=True)
+        self.monitor.place_resolver=lambda vehicle,kind,data,identity: {
+            'start':dict(name='我标注的车库',reference=dict(source='saved_place',side='start',position_source='direct'))}
+        self.monitor.address_resolver=Mock(side_effect=AssertionError('Saved label must skip external geocoder'))
+        text,data=self.send()
+        self.assertIn('充电地点：我标注的车库附近（已标注地点）',text)
+        self.assertEqual(data['start_location_reference']['source'],'saved_place')
+        self.monitor.address_resolver.assert_not_called()
+        self.monitor.place_resolver=lambda *args:self.fail('Frozen message must not reread labels')
+        with self.monitor.tracks.connect() as db:db.execute("UPDATE monitor_events SET delivery='pending'")
+        self.assertEqual(self.send()[0],text)
+
+    def test_charge_notification_uses_actual_saved_region_without_map_request(self):
+        from unittest.mock import Mock
+        from zeekr_control.notification_places import NotificationPlaces
+        from zeekr_control.personal_store import PersonalStore
+        store=PersonalStore(Path(self.temp.name)/'personal.sqlite3')
+        store.change('owner','test-vehicle','place_names','save','named-garage',
+            dict(name='我的车库',latitude=31,longitude=121,radius_m=150),0)
+        service=NotificationPlaces(self.monitor.tracks.path,store)
+        self.monitor.place_resolver=lambda vehicle,kind,data,identity:service.resolve('owner',vehicle,kind,data,identity)
+        self.monitor.address_resolver=Mock()
+        self.start_charge(trusted=True)
+        text,data=self.send()
+        self.assertIn('充电地点：我的车库附近（已标注充电地点',text)
+        self.assertEqual(data['start_location_reference']['source'],'saved_charge_place')
+        self.monitor.address_resolver.assert_not_called()
+
+    def test_saved_label_qualifier_survives_small_report_budget(self):
+        from zeekr_control.report_render import render
+        self.start_charge()
+        _,data=self.send()
+        reference=dict(source='saved_charge_place',scope='single',label_only=True)
+        for target in (1900,1100,300):
+            text,_=render('charge_start',data['report_v2'],'synthetic',
+                {'start':'我标注的充电站'},target=target,references={'start':reference})
+            if '充电地点：' in text:self.assertIn('本次充电已确认，无可信定位',text)
+
     def test_five_minute_boundary_and_missing_current_location(self):
         self.record(300)
         self.start_charge(missing=True)

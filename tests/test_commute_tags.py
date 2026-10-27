@@ -88,6 +88,17 @@ class CommuteTagTests(unittest.TestCase):
                 self.assertEqual([places[s]['name'] for s in ('start','end')],['公司','家'])
             else:self.assertEqual(places,{})
 
+    def test_notification_commute_uses_saved_home_alias_but_keeps_inference(self):
+        effective=self.save_rule()['effective_at']
+        self.trip('out',effective+1000,(31.2,121.4),(31.21,121.41))
+        self.tags.store.change('owner','car','place_names','save','named-home',
+            dict(name='我标注的小区',latitude=31.2,longitude=121.4,radius_m=150),0)
+        event=dict(id='out',kind='trip_end',start_time=effective+1000,end_time=effective+1201000,partial=False)
+        place=self.tags.commute.notification_places('owner','car',event)['start']
+        self.assertEqual(place['name'],'我标注的小区')
+        self.assertEqual(place['reference']['source'],'commute_rule')
+        self.assertEqual(place['reference']['named_region_id'],'named-home')
+
     def test_manual_exclusion_survives_rule_edit(self):
         effective=self.save_rule()['effective_at']
         self.trip('out',effective+1000,(31.2,121.4),(31.21,121.41))

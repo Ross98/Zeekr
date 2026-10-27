@@ -20,6 +20,7 @@ from .geocoding import AmapGeocoder
 from .custom_reminders import Reminders
 from .tyre_notifications import TyreNotifications
 from .commute_tags import CommuteTags
+from .notification_places import NotificationPlaces
 from .storage_health import StorageHealth
 from .system_notifications import AuthFailureAlert
 from .resource_monitor import ResourceHealth, observer_enabled, observer_sample
@@ -37,6 +38,7 @@ class DeliveryWorker:
                              map_renderer=FocusedTripImage(self.root/'road-networks'))
         self.reminders=Reminders(PersonalStore(self.root/'personal.sqlite3'))
         self.commute=CommuteTags(self.reminders.store,self.root/'tracks.sqlite3')
+        self.places=NotificationPlaces(self.root/'tracks.sqlite3',self.reminders.store)
         self.tyres=TyreNotifications(self.reminders.store)
         self.storage=StorageHealth(self.root,self.sender,self.alert_sender)
         self.auth_alert=AuthFailureAlert(self.root,self.alert_sender)
@@ -83,6 +85,8 @@ class DeliveryWorker:
                 guard()
                 self.monitor.commute_resolver=lambda selected,event:self.commute.notification_places(
                     owner,selected,event,guard=guard) if selected==vehicle else {}
+                self.monitor.place_resolver=lambda selected,kind,data,identity:self.places.resolve(
+                    owner,selected,kind,data,identity,guard=guard) if selected==vehicle else {}
                 snapshot=SnapshotStore(self.root/'snapshots.sqlite3').read(scope,vehicle)
                 if snapshot:
                     fallback=(FallbackSender(bark_channel(self.alert_sender,'reminder'),self.sender,compact_bark_times)

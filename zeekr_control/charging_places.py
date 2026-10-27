@@ -100,6 +100,18 @@ class ChargingPlaces:
             result[event['id']]=place
         return result
 
+    def notification_place(self, owner, vehicle, event):
+        """Reuse page confirmations, respecting single-event versus place scope."""
+        result=self._resolved(owner,vehicle,[event]).get(event['id'])
+        if not result or result['name_source']!='manual':return None
+        name=result['name']
+        station=result.get('station_name')
+        if station and station!=name:name+=' · '+station
+        return dict(name=name,reference=dict(source='saved_charge_place',side='start',
+            correction_id=result.get('correction_id'),scope=result.get('correction_scope','region'),
+            position_source=result['evidence']['source'],position_reference=result['reference'],
+            label_only=result['point'] is None))
+
     def detail(self,owner,vehicle,identity):
         event=self.events.get(vehicle,identity)
         if event['kind']!='charge_end':raise ValueError('请选择已结束充电记录。')

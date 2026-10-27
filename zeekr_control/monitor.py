@@ -122,6 +122,7 @@ class Monitor:
     def __init__(self, database_path, active_codes=(), stopped_codes=(), address_resolver=None, map_renderer=None):
         self.address_resolver = address_resolver
         self.commute_resolver = None
+        self.place_resolver = None
         self.map_renderer = map_renderer
         self.tracks = TrackStore(database_path)
         self.active_codes, self.stopped_codes = active_codes, stopped_codes
@@ -561,7 +562,19 @@ class Monitor:
                     if (data.get('report_v2') and
                             data['report_v2'].get('render', {}).get('version') not in (None, 'zh-text-v2')):
                         raise ValueError('未知渲染器版本')
+                    named = {}
+                    if self.place_resolver:
+                        try:
+                            named = self.place_resolver(vehicle, kind, data, event_id)
+                        except DeliveryCancelled:
+                            raise
+                        except (ValueError, OSError, sqlite3.Error):
+                            pass
                     for prefix in ('start', 'end') if kind == 'trip_end' else ('start',):
+                        if prefix in named:
+                            data[prefix+'_address'] = named[prefix]['name']
+                            data[prefix+'_location_reference'] = named[prefix]['reference']
+                            continue
                         address = None
                         if self.address_resolver:
                             try:

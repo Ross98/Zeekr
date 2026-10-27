@@ -162,11 +162,20 @@ class CommuteTags:
                 or evidence.get('direction') not in ('outbound', 'backward')):
             return {}
         labels = ('家', '公司') if evidence['direction'] == 'outbound' else ('公司', '家')
-        return {side: dict(name=label, reference=dict(source='commute_rule', side=side,
+        # A uniquely named region containing the configured home/work centre
+        # is an explicit alias, still an inference rather than endpoint GPS.
+        from .trip_place_names import TripPlaceNames
+        with self.store.connect() as db:
+            version=next((row for row in self._versions(db,owner,vehicle)
+                          if row[0]==evidence['rule_revision']),None)
+        aliases=TripPlaceNames(self.store).apply(owner,vehicle,dict(places=[]),self._public(version))
+        roles=('home','work') if evidence['direction']=='outbound' else ('work','home')
+        return {side: dict(name=aliases['commute_place_names'].get(role,label), reference=dict(source='commute_rule', side=side,
                     rule_revision=evidence['rule_revision'],
+                    named_region_id=aliases['commute_place_regions'].get(role),
                     sample_time=evidence.get(side+'_sample_time'),
                     place_evidence=evidence.get(side+'_place_evidence')))
-                for side, label in zip(('start', 'end'), labels)}
+                for side, label, role in zip(('start', 'end'), labels, roles)}
 
     @staticmethod
     def _evidence(db, owner, vehicle, event_id):
