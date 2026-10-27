@@ -55,6 +55,39 @@ class CommuteTagTests(unittest.TestCase):
         self.assertEqual(first['events'],second['events'])
         self.assertEqual(first['groups'][0]['count'],2)
 
+    def test_notification_places_share_commute_evidence_and_owner_scope(self):
+        from zeekr_control.commute_tags import CommuteTags
+        effective=self.save_rule()['effective_at']
+        self.trip('out',effective+1000,(31.2,121.4),(31.21,121.41))
+        commute=CommuteTags(self.tags.store,self.db)
+        event=dict(id='out',kind='trip_end',start_time=effective+1000,
+                   end_time=effective+1201000,partial=False)
+        places=commute.notification_places('owner','car',event)
+        self.assertEqual(places['start']['name'],'家')
+        self.assertEqual(places['end']['name'],'公司')
+        self.assertEqual(places['start']['reference']['source'],'commute_rule')
+        self.assertEqual(commute.notification_places('other','car',event),{})
+        self.assertEqual(commute.notification_places('owner','other',event),{})
+        self.assertEqual(commute.notification_places('owner','car',dict(event,partial=True)),{})
+        self.assertEqual(commute.notification_places('owner','car',dict(event,kind='trip_start')),{})
+        commute.exclude('owner','car','out',True)
+        self.assertEqual(commute.notification_places('owner','car',event),{})
+
+    def test_notification_return_trip_labels_reverse_without_guessing_outside(self):
+        from zeekr_control.commute_tags import CommuteTags
+        effective=self.save_rule()['effective_at']
+        commute=CommuteTags(self.tags.store,self.db)
+        for identity,offset,origin,destination in (
+                ('back',1000,(31.21,121.41),(31.2,121.4)),
+                ('outside',2000000,(31.2,121.4),(31.23,121.41))):
+            self.trip(identity,effective+offset,origin,destination)
+            event=dict(id=identity,kind='trip_end',start_time=effective+offset,
+                       end_time=effective+offset+1200000,partial=False)
+            places=commute.notification_places('owner','car',event)
+            if identity=='back':
+                self.assertEqual([places[s]['name'] for s in ('start','end')],['公司','家'])
+            else:self.assertEqual(places,{})
+
     def test_manual_exclusion_survives_rule_edit(self):
         effective=self.save_rule()['effective_at']
         self.trip('out',effective+1000,(31.2,121.4),(31.21,121.41))

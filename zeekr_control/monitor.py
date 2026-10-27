@@ -121,6 +121,7 @@ def bark_message_for(kind, data):
 class Monitor:
     def __init__(self, database_path, active_codes=(), stopped_codes=(), address_resolver=None, map_renderer=None):
         self.address_resolver = address_resolver
+        self.commute_resolver = None
         self.map_renderer = map_renderer
         self.tracks = TrackStore(database_path)
         self.active_codes, self.stopped_codes = active_codes, stopped_codes
@@ -574,6 +575,22 @@ class Monitor:
                             except Exception:
                                 pass
                         data[prefix + '_address'] = ' '.join(address.split())[:100] if isinstance(address, str) else None
+                    # Same owner-scoped decision as the dashboard; labels are
+                    # explicit inferences, never replacement GPS/route samples.
+                    if kind == 'trip_end' and self.commute_resolver and any(
+                            not data.get(side+'_address') for side in ('start', 'end')):
+                        try:
+                            inferred = self.commute_resolver(vehicle, dict(
+                                project(event_id, kind, data) or {}, kind=kind))
+                        except DeliveryCancelled:
+                            raise
+                        except (ValueError, OSError, sqlite3.Error):
+                            inferred = {}
+                        for side in ('start', 'end'):
+                            place = inferred.get(side)
+                            if not data.get(side+'_address') and place:
+                                data[side+'_address'] = place['name']
+                                data[side+'_location_reference'] = place['reference']
                     data['addresses_resolved'] = True
                     if data.get('report_v2'):
                         message, omitted = render(kind, data['report_v2'], event_id,

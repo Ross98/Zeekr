@@ -149,6 +149,25 @@ class CommuteTags:
     def _match(self, vehicle, event, rule):
         return self._evaluate(vehicle, event, rule)[0]
 
+    def notification_places(self, owner, vehicle, event, guard=None):
+        """Project the shared commute decision as labels, never GPS coordinates."""
+        if event.get('kind') != 'trip_end' or event.get('partial') is not False:
+            return {}
+        decision = self.decisions(owner, vehicle, [event], guard=guard).get(event['id'])
+        if not decision:
+            return {}
+        result, excluded, evidence = decision
+        if (result != 'matched' or excluded or not isinstance(evidence, dict)
+                or evidence.get('legacy') or evidence.get('partial') is not False
+                or evidence.get('direction') not in ('outbound', 'backward')):
+            return {}
+        labels = ('家', '公司') if evidence['direction'] == 'outbound' else ('公司', '家')
+        return {side: dict(name=label, reference=dict(source='commute_rule', side=side,
+                    rule_revision=evidence['rule_revision'],
+                    sample_time=evidence.get(side+'_sample_time'),
+                    place_evidence=evidence.get(side+'_place_evidence')))
+                for side, label in zip(('start', 'end'), labels)}
+
     @staticmethod
     def _evidence(db, owner, vehicle, event_id):
         if db is None or not db.execute("SELECT 1 FROM sqlite_master WHERE name='commute_evidence'").fetchone():

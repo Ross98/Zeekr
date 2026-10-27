@@ -166,6 +166,73 @@ class NotificationLocationTests(unittest.TestCase):
         self.assertIn('充电地点：位置未知', text)
         self.assertNotIn('参考位置', text)
 
+    def test_commute_fallback_is_labeled_frozen_and_never_becomes_gps(self):
+        calls=[]
+        def resolve(vehicle, event):
+            calls.append(event)
+            return {'start': {'name':'家','reference':{'source':'commute_rule','rule_revision':1}}}
+        self.monitor.commute_resolver=resolve
+        self.start_charge()
+        text,_=self.send()
+        self.assertEqual(calls,[])
+        self.assertIn('充电地点：位置未知',text)
+        # A separate finished trip, with no trustworthy endpoint GPS.
+        with self.monitor.tracks.connect() as db:
+            db.execute('DELETE FROM monitor_events')
+            db.execute('DELETE FROM monitor_state')
+        for seconds,changes in ((900,dict(speed=30,engine='engine_on',ready=1)),(960,dict(km=110))):
+            raw=sample(seconds,**changes);raw['position']['posCanBeTrusted']=False
+            self.monitor.observe('test-vehicle',raw,BASE+seconds*1000)
+        for seconds in range(1020,1561,60):
+            raw=sample(seconds,km=110);raw['position']['posCanBeTrusted']=False
+            self.monitor.observe('test-vehicle',raw,BASE+seconds*1000)
+        text,data=self.send()
+        self.assertIn('出发地：家附近（通勤规则推断，非精确起点）',text)
+        self.assertIs(data['start_location']['trusted'],False)
+        self.assertEqual(data['start_location_reference']['source'],'commute_rule')
+        from zeekr_control.report_preview import preview
+        self.assertIn('通勤规则推断',preview(database_path=self.monitor.tracks.path,event_id=self.monitor.events()[0]['id'])['text'])
+        self.monitor.commute_resolver=lambda *args:self.fail('Frozen message must not rematch')
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET delivery='pending'")
+        repeated,_=self.send()
+        self.assertEqual(repeated,text)
+
+    def test_trusted_address_wins_over_commute_fallback(self):
+        self.start_charge(trusted=True)
+        self.monitor.commute_resolver=lambda *args:self.fail('Do not need fallback')
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET kind='trip_end'")
+        text,_=self.send()
+        self.assertIn('出发地：浦东新区·测试园区附近',text)
+        self.assertNotIn('规则推断',text)
+
+    def test_finished_trip_resolves_from_real_shared_commute_decision(self):
+        from unittest.mock import patch
+        from zeekr_control.commute_tags import CommuteTags
+        from zeekr_control.personal_store import PersonalStore
+        commute=CommuteTags(PersonalStore(Path(self.temp.name)/'personal.sqlite3'),self.monitor.tracks.path)
+        with patch('zeekr_control.commute_tags.time.time',return_value=BASE/1000-1):
+            commute.update('owner','test-vehicle',dict(action='commute-save',revision=0,
+                home=dict(latitude=31,longitude=121,radius_m=300),
+                work=dict(latitude=31.01,longitude=121.01,radius_m=300)))
+        self.monitor.commute_resolver=lambda vehicle,event:commute.notification_places('owner',vehicle,event)
+        for seconds,changes in ((0,{}),(60,dict(speed=30,engine='engine_on',ready=1,km=101)),
+                                (240,dict(km=110))):
+            raw=sample(seconds,**changes);raw['position']['posCanBeTrusted']=False
+            self.monitor.observe('test-vehicle',raw,BASE+seconds*1000)
+        self.record(120)
+        self.record(180,latitude=111636000,longitude=435636000)
+        for seconds in range(300,841,60):
+            raw=sample(seconds,km=110);raw['position']['posCanBeTrusted']=False
+            self.monitor.observe('test-vehicle',raw,BASE+seconds*1000)
+        self.monitor.address_resolver=None
+        text,data=self.send(840)
+        self.assertIn('出发地：家附近（通勤规则推断，非精确起点）',text)
+        self.assertIn('到达地：公司附近（通勤规则推断，非精确终点）',text)
+        self.assertIs(data['start_location']['trusted'],False)
+        self.assertIs(data['end_location']['trusted'],False)
+
     def test_charge_end_references_charge_start_instead_of_stop_location(self):
         self.record(420)
         self.start_charge()
