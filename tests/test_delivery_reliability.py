@@ -35,6 +35,12 @@ class DeliveryReliabilityTests(unittest.TestCase):
                 self.assertEqual(resolve.call_count,1)
                 save(root/'session.json',{'accessToken':'other-synthetic','userId':'other-user'})
                 with self.assertRaises(DeliveryCancelled):resolve.call_args.kwargs['guard']()
+            with patch.object(worker.places,'resolve',return_value={}) as places:
+                worker.monitor.place_resolver('car','charge_end',{},'synthetic-event')
+                self.assertEqual(places.call_args.args,(account_scope(session),'car','charge_end',{},'synthetic-event'))
+                worker.monitor.place_resolver('other-car','charge_end',{},'synthetic-event')
+                self.assertEqual(places.call_count,1)
+                with self.assertRaises(DeliveryCancelled):places.call_args.kwargs['guard']()
 
     def test_watchdog_uses_time_after_slow_storage_phase(self):
         from zeekr_control.delivery_runtime import DeliveryWorker
