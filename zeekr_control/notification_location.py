@@ -33,6 +33,9 @@ def select_location(db, vehicle, location, event_time):
 def reference_suffix(reference):
     if not isinstance(reference, dict):
         return ''
+    if reference.get('source') == 'commute_rule':
+        side = '终点' if reference.get('side') == 'end' else '起点'
+        return '（通勤规则推断，非精确%s）' % side
     age = reference.get('age_seconds')
     if type(age) not in (int, float) or not math.isfinite(age) or not 0 <= age <= 300:
         return ''

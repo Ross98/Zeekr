@@ -12,6 +12,30 @@ from zeekr_control.storage import save
 
 
 class DeliveryReliabilityTests(unittest.TestCase):
+    def test_commute_projection_uses_current_account_vehicle_and_guard(self):
+        from zeekr_control.delivery_runtime import DeliveryWorker
+        from zeekr_control.personal_store import account_scope
+        from zeekr_control.delivery_state import DeliveryCancelled
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'private'
+            session={'accessToken':'synthetic','userId':'synthetic-user'}
+            save(root/'session.json',session)
+            save(root/'monitor-binding.json',{'vehicle_key':'car'})
+            worker=DeliveryWorker(root/'session.json',sender=Mock(),alert_sender=None)
+            with patch.object(worker.storage,'tick'), patch.object(worker.monitor,'deliver'),\
+                 patch.object(worker.auth_alert,'deliver'):
+                worker.tick(1000)
+            event={'id':'synthetic'}
+            with patch.object(worker.commute,'notification_places',return_value={}) as resolve:
+                worker.monitor.commute_resolver('car',event)
+                self.assertEqual(resolve.call_args.args,(account_scope(session),'car',event))
+                resolve.call_args.kwargs['guard']()
+                worker.monitor.commute_resolver('other-car',event)
+                self.assertEqual(resolve.call_count,1)
+                save(root/'session.json',{'accessToken':'other-synthetic','userId':'other-user'})
+                with self.assertRaises(DeliveryCancelled):resolve.call_args.kwargs['guard']()
+
     def test_watchdog_uses_time_after_slow_storage_phase(self):
         from zeekr_control.delivery_runtime import DeliveryWorker
         from unittest.mock import patch
