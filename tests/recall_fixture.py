@@ -79,6 +79,17 @@ if __name__=='__main__':
             left=dict(time=start-7200000,observed=start-7200000,km=200,soc=60,off=True,charging=False)
             right=dict(left,time=start+36000000,observed=start+36000000,km=226,soc=50)
             MileageGaps(app.database_path.parent/'mileage-gaps.sqlite3').record(hashlib.sha256(b'insights-fixture-car').hexdigest(),left,right)
+            # A fully priced synthetic refill makes the completion cost visible.
+            from zeekr_control.charge_ledger import ChargeLedger
+            from zeekr_control.personal_store import account_scope
+            car=hashlib.sha256(b'insights-fixture-car').hexdigest()
+            summary=dict(start_time=start+6*3600000,end_time=start+6*3600000+1200000,
+                         duration_seconds=1200,start_soc=0,end_soc=50,soc_delta=50,battery_capacity_kwh=86,partial=False)
+            with Monitor(app.database_path).tracks.connect() as db:
+                db.execute("INSERT INTO monitor_events(id,vehicle,kind,summary,message,created,delivery) VALUES('gap-prior-charge',?,'charge_end',?,'',?,'cancelled')",
+                           (car,json.dumps(summary),summary['end_time']))
+            ChargeLedger(app.personal_store,app.database_path).update(account_scope(session),car,
+                dict(action='save',revision=0,event_id='gap-prior-charge',date='2026-09-20',source='home',amount='30',metered_kwh='43'))
         server=make_server(app,args.port);print(server.server_port,flush=True)
         try:server.serve_forever()
         finally:server.server_close();app.close()

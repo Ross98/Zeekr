@@ -129,3 +129,68 @@ class MileageCompletionTests(unittest.TestCase):
         events=UsageEvents(self.tracks).between('cross',boundary,right+1)['events']
         self.assertEqual([e['distance_km'] for e in events],[26])
         self.assertEqual(self.gaps.between('cross',left,right+1,right),[])
+
+    def test_confirmed_soc_calculates_energy_without_changing_mileage_or_raw_evidence(self):
+        data=self.payload();data.update(energy_basis='confirmed_soc',start_soc=50,end_soc=44)
+        result=self.gaps.update('owner','car',data,profile={'battery_capacity_kwh':86},now=BASE+20000000)
+        event=UsageEvents(self.tracks).get('car',result['event_id'])
+        self.assertEqual(event['estimated_kwh'],5.16)
+        self.assertEqual(event['energy_source'],'manual_soc_capacity_estimate')
+        self.assertTrue(event['partial'])
+        self.assertEqual(event['distance_km'],26)
+        self.assertEqual(self.gaps.history('owner','car',BASE,BASE+20000000,BASE+20000000)[0]['soc_after'],44)
+        data.update(revision=1,end_soc=45)
+        edited=self.gaps.update('owner','car',data,profile={'battery_capacity_kwh':86},now=BASE+20000000)
+        self.assertEqual(edited['event_id'],result['event_id'])
+        self.assertEqual(UsageEvents(self.tracks).get('car',result['event_id'])['estimated_kwh'],4.3)
+        self.assertEqual(len(self.monitor.events()),1)
+        data.update(revision=2,energy_basis='none')
+        self.gaps.update('owner','car',data,profile={'battery_capacity_kwh':86},now=BASE+20000000)
+        self.assertIsNone(UsageEvents(self.tracks).get('car',result['event_id'])['estimated_kwh'])
+        self.assertEqual(len(self.monitor.events()),1)
+
+    def test_preview_is_read_only_and_validates_soc_and_server_capacity(self):
+        data=self.payload();data.update(operation='preview',energy_basis='confirmed_soc',start_soc=50,end_soc=44)
+        result=self.gaps.update('owner','car',data,profile={'battery_capacity_kwh':86},now=BASE+20000000)
+        self.assertEqual(result['event']['estimated_kwh'],5.16)
+        self.assertEqual(self.monitor.events(),[])
+        self.assertEqual(self.gaps.history('owner','car',BASE,BASE+20000000,BASE+20000000)[0]['status'],'pending')
+        for change in ({'start_soc':True},{'end_soc':101},{'end_soc':60},{'energy_basis':'fake'},{'battery_capacity_kwh':100}):
+            bad=dict(data,**change)
+            with self.subTest(change=change),self.assertRaises(ValueError):
+                self.gaps.update('owner','car',bad,profile={'battery_capacity_kwh':86},now=BASE+20000000)
+        with self.assertRaisesRegex(ValueError,'电池容量'):
+            self.gaps.update('owner','car',data,profile={},now=BASE+20000000)
+
+    def test_preview_and_saved_trip_share_existing_weighted_bill_cost(self):
+        from zeekr_control.personal_store import PersonalStore
+        from zeekr_control.charge_ledger import ChargeLedger
+        from zeekr_control.usage_calendar import UsageCalendar
+        from zeekr_control.archive_reader import ArchiveReader
+        store=PersonalStore(self.tracks.parent/'personal.sqlite3')
+        summary=dict(start_time=BASE+600000,end_time=BASE+1200000,duration_seconds=600,
+                     start_soc=20,end_soc=50,soc_delta=30,battery_capacity_kwh=86,partial=False)
+        with self.monitor.tracks.connect() as db:
+            db.execute("INSERT INTO monitor_events(id,vehicle,kind,summary,message,created) VALUES('charge','car','charge_end',?,'',?)",(json.dumps(summary),BASE+1200000))
+        ledger=ChargeLedger(store,self.tracks)
+        ledger.update('owner','car',dict(action='save',revision=0,event_id='charge',date='2024-01-01',source='public',amount='30',metered_kwh='30'))
+        calendar=UsageCalendar(self.tracks,ArchiveReader(self.tracks.parent/'archive'),clock=lambda:BASE+20000000,store=store)
+        data=self.payload();data.update(operation='preview',energy_basis='confirmed_soc',start_soc=50,end_soc=44)
+        proposal=self.gaps.update('owner','car',data,profile={'battery_capacity_kwh':86},now=BASE+20000000)
+        preview=self.gaps.preview_cost(calendar,'scope','owner','car',proposal)
+        self.assertAlmostEqual(preview['energy_kwh'],5.16)
+        self.assertAlmostEqual(preview['kwh_per_100km'],19.846154)
+        self.assertEqual(preview['energy_cost']['status'],'partial')
+        self.assertAlmostEqual(preview['energy_cost']['estimated_cents'],360)
+        foreign=self.gaps.preview_cost(calendar,'scope','other','car',proposal)
+        self.assertIsNone(foreign['energy_cost']['estimated_cents'])
+        data['operation']='save'
+        result=self.gaps.update('owner','car',data,profile={'battery_capacity_kwh':86},now=BASE+20000000)
+        saved=calendar.query('scope','car','2024-01-01',owner='owner')
+        trip=next(e for e in saved['events'] if e['id']==result['event_id'])
+        self.assertEqual(trip['energy_cost'],preview['energy_cost'])
+        self.assertEqual(saved['totals']['actual_cents'],3000)
+        from zeekr_control.usage_reports import aggregate,period_window
+        totals=aggregate([trip],period_window('month','2024-01-01'),BASE+20000000)['totals']
+        self.assertAlmostEqual(totals['trip_estimated_kwh'],5.16)
+        self.assertAlmostEqual(totals['estimated_kwh_per_100km'],19.846154)
