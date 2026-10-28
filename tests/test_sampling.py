@@ -248,15 +248,16 @@ class SamplingTests(unittest.TestCase):
         self.tick(30)
         self.assertEqual(self.client.calls, 1)
 
-    def test_rate_limit_and_network_backoff_do_not_shrink_with_setting(self):
+    def test_rate_limit_stays_protected_and_network_backoff_is_bounded(self):
         from zeekr_control.errors import ApiError, RateLimited
         save(self.root / 'sampling.json', {'interval':'10'})
         with patch.object(self.client, 'status', side_effect=RateLimited(120)):
             self.assertEqual(self.tick(0), 120)
         self.assertEqual(self.runner.health()['interval'], '120')
         with patch.object(self.client, 'status', side_effect=ApiError('网络或 TLS 错误')):
-            self.assertEqual(self.tick(120), 120)
-            self.assertEqual(self.tick(240), 240)
+            self.assertEqual(self.tick(120), 40)
+            self.assertEqual(self.tick(160), 60)
+            self.assertEqual(self.tick(220), 60)
 
     def test_loop_reschedules_normal_wait_but_preserves_backoff(self):
         from zeekr_control.monitor_runtime import collection_loop
