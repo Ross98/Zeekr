@@ -132,6 +132,20 @@ class ChargeLedger:
                     estimated_cents=estimated,estimate_basis=basis if estimated is not None else None)
 
     def batch_change(self,owner,vehicle,action,identities,revision,guard=None,*,connection=None):
+        if action=='restore' and isinstance(identities,list):
+            key=self.store._key(owner,vehicle,'charges')
+            records=(self.store._read(connection,key,'ledger')['records'] if connection is not None
+                     else self.store.read(owner,vehicle,'charges')['records'])
+            def event_id(record):
+                event=record['body'].get('event')
+                return event.get('id') if isinstance(event,dict) else None
+            active={event_id(record) for record in records if not record['deleted']}
+            for record in records:
+                if not record['deleted'] or record['id'] not in identities:continue
+                linked=event_id(record)
+                if linked is None:continue
+                if linked in active:raise ValueError('此充电记录已关联其他账单，不能重复恢复。')
+                active.add(linked)
         return self.store.change_many(owner,vehicle,'charges',action,identities,revision,guard=guard,connection=connection)
 
     @staticmethod

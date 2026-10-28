@@ -988,10 +988,10 @@ function overviewAttentionItems(){
   else if(monitor.status==='retrying')add('采集连接重试中','quality',false);
   if(recording.active===false)add('采集已暂停');
   // Public health contains only the latest ten events. Count each event once,
-  // even if both channels failed; charge-start uses the Bark channel only.
+  // even if both channels failed; charge-start uses Bark when its row exists.
   let failed=0,uncertain=0;
   for(const event of monitor.events||[]){
-    const deliveries=event.kind==='charge_start'?[event.alert_delivery]:[event.alert_delivery,event.delivery,event.image_delivery];
+    const deliveries=event.kind==='charge_start'&&event.alert_delivery!=null?[event.alert_delivery]:[event.alert_delivery,event.delivery,event.image_delivery];
     if(deliveries.includes('failed'))failed++;
     else if(deliveries.includes('uncertain'))uncertain++;
   }
@@ -1041,7 +1041,7 @@ function collectionSummary(){
 
 let notificationHealth={context:null,data:null,error:'',loading:false,serial:0,loadedAt:0};
 const notificationStates={pending:'等待发送',preparing:'正在准备',ready:'准备完成',retry:'等待重试',sending:'发送中',sent:'已发送（接口确认）',failed:'发送失败',uncertain:'结果待确认',unknown:'结果待确认',skipped:'按规则跳过',cancelled:'已取消',local:'仅保存本地',historical:'历史补录，未推送'};
-const notificationErrors={result_unknown:'发送结果待确认',service_unavailable:'服务状态需要检查',image_prepare_failed:'图片准备失败，未调用发送器',preparation_failed:'图片准备失败，未调用发送器',delivery_failed:'发送失败',delivery_uncertain:'发送结果待确认',send_failed:'发送失败',send_uncertain:'发送结果待确认',unavailable:'状态暂不可用'};
+const notificationErrors={result_unknown:'发送结果待确认',service_unavailable:'服务状态需要检查',image_prepare_failed:'图片准备失败，未调用发送器',preparation_failed:'通知准备失败，未调用发送器',delivery_failed:'发送失败',delivery_uncertain:'发送结果待确认',send_failed:'发送失败',send_uncertain:'发送结果待确认',unavailable:'状态暂不可用'};
 function notificationPart(part){
   if(part===null)return '不适用';if(!part)return '未记录';
   const label=notificationStates[part.state]||'状态未知';

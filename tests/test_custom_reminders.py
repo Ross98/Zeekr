@@ -9,6 +9,45 @@ from test_monitor import BASE, sample
 
 
 class ReminderTests(unittest.TestCase):
+    def test_recovery_only_supersedes_its_own_rule(self):
+        first=self.save(delivery='wecom',name='低于25')
+        self.save(revision=1,delivery='wecom',name='低于10',threshold=10,recovery=False)
+        for seconds,soc in ((0,5),(60,5),(120,15),(180,15)):
+            self.observe(seconds,soc)
+        messages=[]
+        self.rules.deliver('owner','car',sample(180,soc=15),BASE+180000,messages.append)
+        self.assertEqual(len(messages),1)
+        self.assertIn('低于25',messages[0])
+        first_history=[row for row in self.query()['history'] if row['rule_id']==first['id']]
+        self.assertEqual(first_history[0]['delivery'],'sent')
+
+
+    def test_legacy_pending_warning_does_not_revive_after_recovery(self):
+        self.save(delivery='wecom',recovery=False)
+        for seconds,soc in ((0,20),(60,20),(120,40),(180,40)):
+            self.observe(seconds,soc)
+        # Older versions left raised events pending even after local recovery.
+        with self.store.connect(write=True) as db,db:
+            db.execute("UPDATE rule_history SET delivery='pending' WHERE kind='raised'")
+        messages=[]
+        # A single matching sample is not a new confirmed warning.
+        self.observe(240,20,sender=messages.append)
+        self.assertEqual(messages,[])
+        self.assertEqual(self.query()['history'][-1]['delivery'],'cancelled')
+
+
+    def test_new_confirmed_cycle_supersedes_pending_old_warning(self):
+        self.save(delivery='wecom',cooldown_minutes=1)
+        for seconds,soc in ((0,20),(60,20),(120,40),(180,40),(240,20),(300,20)):
+            self.observe(seconds,soc)
+        history=self.query()['history']
+        self.assertEqual([row['delivery'] for row in history],['pending','cancelled','cancelled'])
+        messages=[]
+        self.rules.deliver('owner','car',sample(300,soc=20),BASE+300000,messages.append)
+        self.assertEqual(len(messages),1)
+        self.assertIn(history[0]['id'][:16],messages[0])
+
+
     def test_preparation_delay_rechecks_observation_freshness_at_send(self):
         from unittest.mock import patch
         self.save(delivery='wecom');self.observe(0);self.observe(60)

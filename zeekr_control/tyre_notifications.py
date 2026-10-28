@@ -22,6 +22,8 @@ def transition(previous,pressures,stamp,now,base):
         for wheel in state.get('wheels',{}).values():wheel.pop('candidate',None)
         return state,events
     if last is not None and (stamp<=last or now<=observed):
+        if stamp<last or now<observed:
+            for wheel in state.get('wheels',{}).values():wheel.pop('candidate',None)
         if stamp==last and pressures!=state.get('pressures'):
             for wheel in state.get('wheels',{}).values():wheel.pop('candidate',None)
             state['pressures']=pressures

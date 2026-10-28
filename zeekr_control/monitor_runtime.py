@@ -171,8 +171,10 @@ def read_status(root, vehicle=None, public=False):
     result = dict(source, online=online, events=[])
     path = root / 'tracks.sqlite3'
     if path.exists():
-        db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=5)
+        db = sqlite3.connect(path.absolute().as_uri() + '?mode=ro', uri=True, timeout=5)
         try:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_events'").fetchone():
+                return result
             has_alerts = bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='monitor_event_alerts'").fetchone())
             alert_columns = ',a.delivery,a.error' if has_alerts else ',NULL,NULL'
             alert_join = ' LEFT JOIN monitor_event_alerts a ON a.event_id=e.id' if has_alerts else ''

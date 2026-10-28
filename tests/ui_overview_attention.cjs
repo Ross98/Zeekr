@@ -19,6 +19,8 @@ const {fixture,contrast}=require('./ui_insight_helpers.cjs');
     }
     await show();
     assert.equal(await page.locator('#overview-attention').isVisible(),false,'healthy summary occupies no space');
+    await show({monitoring:{...healthy.monitoring,events:[{kind:'charge_start',delivery:'failed',alert_delivery:null}]}});
+    assert.match(await page.locator('#overview-attention').innerText(),/最近 1 条通知失败/);
     await show({model:{...healthy.model,updated_time:Date.now()-7200000},read_time:Date.now()});
     await page.getByRole('button',{name:/车况已 2 小时.*未更新/}).waitFor({timeout:1500});
     assert.match(await page.locator('#overview-attention').innerText(),/缓存提示/);

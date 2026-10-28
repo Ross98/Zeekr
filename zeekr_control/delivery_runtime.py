@@ -57,6 +57,12 @@ class DeliveryWorker:
         current_time=delivery_clock(now,started)
         self.error=''
         self.deadline=started+budget_seconds if budget_seconds is not None else None
+        def attempt(action,*args):
+            self.guard()
+            try:return action(*args)
+            except DeliveryCancelled:raise
+            except Exception:
+                self.status='degraded';self.error='delivery_unavailable'
         with delivery_lock(self.root/'notifications.lock'):
             # Server storage alerts deliberately remain active when vehicle sampling is paused.
             if self.stop.is_set():return
@@ -74,9 +80,9 @@ class DeliveryWorker:
                 print('资源巡检心跳检查失败，请检查存储与权限。',flush=True)
             if not read_settings(self.root)[0]:
                 self.status='paused';return
-            self.status='running'
+            self.status='degraded' if self.error else 'running'
             try:
-                self.auth_alert.deliver(self.guard)
+                attempt(self.auth_alert.deliver,self.guard)
                 session=load(self.session_path);scope=session_scope(session)
                 vehicle=load(self.root/'monitor-binding.json').get('vehicle_key')
                 if not vehicle:return
@@ -87,15 +93,15 @@ class DeliveryWorker:
                     owner,selected,event,guard=guard) if selected==vehicle else {}
                 self.monitor.place_resolver=lambda selected,kind,data,identity:self.places.resolve(
                     owner,selected,kind,data,identity,guard=guard) if selected==vehicle else {}
-                snapshot=SnapshotStore(self.root/'snapshots.sqlite3').read(scope,vehicle)
+                snapshot=attempt(SnapshotStore(self.root/'snapshots.sqlite3').read,scope,vehicle)
                 if snapshot:
                     fallback=(FallbackSender(bark_channel(self.alert_sender,'reminder'),self.sender,compact_bark_times)
                               if self.alert_sender is not None else self.sender)
-                    self.reminders.deliver(owner,vehicle,snapshot['raw'],current_time(),fallback,guard)
-                    self.tyres.deliver(owner,vehicle,current_time(),self.alert_sender,self.sender,guard)
-                self.monitor.deliver(self.sender,current_time(),self.alert_sender,guard,image_limit,vehicle)
+                    attempt(self.reminders.deliver,owner,vehicle,snapshot['raw'],current_time(),fallback,guard)
+                    attempt(self.tyres.deliver,owner,vehicle,current_time(),self.alert_sender,self.sender,guard)
+                attempt(self.monitor.deliver,self.sender,current_time(),self.alert_sender,guard,image_limit,vehicle)
             except DeliveryCancelled:
-                self.status='paused' if not read_settings(self.root)[0] else 'running'
+                self.status='paused' if not read_settings(self.root)[0] else 'degraded' if self.error else 'running'
 
     def heartbeat(self):
         save(self.root/'delivery-health.json',{'status':self.status,'heartbeat':str(int(time.time()*1000)),
