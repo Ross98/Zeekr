@@ -117,6 +117,17 @@ class ConditionTests(unittest.TestCase):
         self.assertEqual(self.sender.call_count,1)
         self.assertIn('采集',self.sender.call_args.args[1])
 
+    def test_live_collector_with_failed_reads_alerts_once_then_recovers(self):
+        failed=healthy(collection_health=dict(enabled=True,online=True,readable=False,network_code='timeout'))
+        self.ticks(failed)
+        self.assertEqual(self.sender.call_count,1)
+        self.assertIn('连接或读取超时',self.sender.call_args.args[1])
+        self.ticks(failed,1180)
+        self.assertEqual(self.sender.call_count,1)
+        self.ticks(healthy(collection_health=dict(enabled=True,online=True,readable=True)),1360)
+        self.assertEqual(self.sender.call_count,2)
+        self.assertIn('恢复',self.sender.call_args.args[0])
+
     def test_scope_migration_keeps_real_service_delivery_and_recovery(self):
         self.monitor.save(dict(checked_at=940,level='critical',
             incident='endpoint:local=critical|memory_pressure=warning',

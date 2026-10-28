@@ -6,6 +6,17 @@ from zeekr_control.daily_timeline import DailyTimeline
 
 
 class TimelineTests(unittest.TestCase):
+    def test_mileage_gap_is_separate_from_ended_trip_summary(self):
+        from pathlib import Path
+        from zeekr_control.mileage_gaps import MileageGaps
+        left=dict(time=self.start,observed=self.start,km=100,soc=50,off=True,charging=False)
+        right=dict(left,time=self.start+18000000,observed=self.start+18000000,km=126,soc=44)
+        MileageGaps(Path(self.db).parent/'mileage-gaps.sqlite3').record('car',left,right)
+        result=self.day(now=self.start+20000000)
+        self.assertEqual(result['summary']['pending_mileage_km'],26)
+        self.assertEqual(result['summary']['trip_count'],1)
+        self.assertEqual(result['mileage_gaps'][0]['basis'],'odometer_gap')
+
     trip=fixtures.CommuteTagTests.trip
     def setUp(self):
         fixtures.CommuteTagTests.setUp(self)

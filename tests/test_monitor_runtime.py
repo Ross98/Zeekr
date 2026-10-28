@@ -11,6 +11,22 @@ from test_monitor import BASE, sample
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_network_retry_stays_bounded_and_records_diagnostic_incident(self):
+        from zeekr_control.errors import ApiError
+        from zeekr_control.personal_store import account_scope
+        class Client:
+            def __init__(self,session):pass
+            def vehicles(self):return [{'vin':'L6T79X2Z0NP000001'}]
+            def status(self,vin):raise ApiError('synthetic timeout',retryable=True,network_code='timeout')
+        runner=self.runner(Client);self.addCleanup(runner.insight_worker.close)
+        for index in range(8):self.assertLessEqual(runner.tick(BASE+index*60000),60)
+        incident=runner.incidents.current(account_scope(load(self.root/'session.json')),
+                                         load(self.root/'monitor-binding.json')['vehicle_key'])
+        self.assertEqual(incident['attempts'],8)
+        self.assertEqual(runner.health()['network_error_code'],'timeout')
+        with runner.incidents.connect() as db:
+            self.assertEqual({r['kind'] for r in db.execute('SELECT kind FROM probes')},{'network:timeout'})
+
     def test_refresh_completion_time_includes_exchange_elapsed_time(self):
         from unittest.mock import Mock
         from zeekr_control.errors import ApiError

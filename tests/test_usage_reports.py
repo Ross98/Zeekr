@@ -12,6 +12,17 @@ from zeekr_control.usage_events import UsageEvents
 
 
 class UsageReportsTests(unittest.TestCase):
+    def test_mileage_gap_is_visible_without_becoming_a_trip_or_confirmed_total(self):
+        from zeekr_control.mileage_gaps import MileageGaps
+        left=dict(time=self.day+3600000,observed=self.day+3600000,km=100,soc=50,off=True,charging=False)
+        right=dict(left,time=self.day+7200000,observed=self.day+7200000,km=126,soc=44)
+        MileageGaps(self.root/'mileage-gaps.sqlite3').record('car',left,right)
+        result=self.reports.query('scope','car','month','2026-09-15',now=self.now)
+        day=next(d for d in result['current']['days'] if d['date']=='2026-09-15')
+        self.assertEqual(day['pending_mileage_km'],26)
+        self.assertIsNone(day['distance_km'])
+        self.assertEqual(day['trip_count'],0)
+
     def test_period_calendar_overflow_is_a_validation_error(self):
         for period,date in (('month','9999-12-01'),('week','9999-12-28')):
             with self.subTest(period=period),self.assertRaises(ValueError):period_window(period,date)

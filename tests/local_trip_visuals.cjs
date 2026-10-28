@@ -1,5 +1,9 @@
 const assert=require('node:assert/strict');
 const V=require('../zeekr_control/static/local-trip-visuals.js');
+const gapSummary=V.summary({summary:{trip_count:0,pending_mileage_km:26},coverage:{coverage:'observed'}},'2026-10-28');
+assert.match(gapSummary,/中断待核对里程/);
+assert.match(gapSummary,/26/);
+assert.match(gapSummary,/实际行驶日期、起止时间和趟数未知/);
 const at=value=>Date.parse('2026-10-'+value+'+08:00');
 const place=(key,label=key)=>({key,label,source:'manual',issues:[]});
 const trip=(id,a,b,start,end)=>({id,type:'trip',start_time:at(start),end_time:at(end),start_place:place(a),end_place:place(b),distance_km:10,duration_seconds:600});

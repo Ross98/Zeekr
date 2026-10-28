@@ -14,6 +14,8 @@ from .tracks import day_bounds
 from .usage_calendar import UsageCalendar
 from .usage_events import UsageEvents, total
 from .usage_reports import date_label
+from .mileage_gaps import MileageGaps
+from pathlib import Path
 
 
 def digest(value):
@@ -162,10 +164,12 @@ class DailyTimeline:
         summary=dict(distance_km=total(r['distance_km'] for r in trips),duration_seconds=total(r['duration_seconds'] for r in trips),
                      trip_count=len(trips),charge_count=sum(r['type']=='charge' for r in ended),
                      actual_cents=day['actual_cents'],pending_count=day['pending_count'],unpriced_count=day['unpriced_count'])
-        revision=digest(dict(records=records,summary=summary,meta=meta))
+        gaps=MileageGaps(Path(self.database).parent/'mileage-gaps.sqlite3').between(vehicle,lower,upper,now)
+        summary['pending_mileage_km']=total(g['distance_km'] for g in gaps)
+        revision=digest(dict(records=records,summary=summary,mileage_gaps=gaps,meta=meta))
         self._positions(records,positions)
         known=[dict(key=r['id'],name=r['body']['name']) for r in TripPlaceNames(self.store).regions(owner,vehicle)]
-        return dict(date=date,as_of=now,records=records,known_places=known,summary=summary,coverage={k:day[k] for k in
+        return dict(date=date,as_of=now,records=records,mileage_gaps=gaps,known_places=known,summary=summary,coverage={k:day[k] for k in
                     ('coverage','reads','effective_states','first_read','last_read')},revision=revision,**meta)
 
     def update(self,owner,vehicle,data,scope=None,guard=None):

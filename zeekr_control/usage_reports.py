@@ -8,6 +8,7 @@ from .tracks import day_bounds
 from .usage_events import UsageEvents, total, number, MAX_SUMMARY_BYTES
 from .analysis_work import TimeMap
 from .data_contract import recorded_by, date_at as date_label
+from .mileage_gaps import MileageGaps
 
 DAY = 86400000
 
@@ -148,6 +149,11 @@ class UsageReports:
         bills = [row['body'] for row in saved['records'] if not row['deleted']] if saved else []
         linked = {bill['event'].get('id') for bill in bills if isinstance(bill.get('event'),dict)}
         for result in (current,previous):
+            gap_rows=MileageGaps(self.events.path.parent/'mileage-gaps.sqlite3').between(
+                vehicle,result['window']['start'],result['window']['end'],now)
+            result['mileage_gaps']=gap_rows
+            for day in result['days']:
+                day['pending_mileage_km']=total(g['distance_km'] for g in gap_rows if date_label(g['right_time'])==day['date'])
             self._coverage(scope,vehicle,result,now)
             window = result['window']
             selected = [bill for bill in bills if isinstance(bill.get('date'),str)

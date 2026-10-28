@@ -23,6 +23,7 @@ from .report_attention import build as build_attention
 from .start_evidence import build as start_evidence, project as project_start
 from .start_evidence import from_summary as saved_start_evidence, MAX_GAP
 from .notification_location import select_location
+from .mileage_gaps import MileageGaps
 from .trip_visibility import visible_clause, cancel_event_delivery
 
 MAX_AGE = MAX_GAP
@@ -395,6 +396,7 @@ class Monitor:
         continuous = (reclassified_charge_stop or
                       previous is not None and timestamp - previous['time'] <= MAX_AGE
                       and 0 <= now - previous['observed'] <= MAX_AGE)
+        MileageGaps(self.tracks.path.parent/'mileage-gaps.sqlite3').record(vehicle,previous,point,active=had_activity)
         seed_telemetry = None
         trip_started = False
         moving = point['speed'] is not None and point['speed'] > 0

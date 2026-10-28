@@ -4,7 +4,7 @@ const {fixture}=require('./ui_insight_helpers.cjs');
 const context=await page.evaluate(()=>state.insights_context);
 const date=await page.evaluate(()=>beijingDate(Date.now()));
 const original=await page.evaluate(date=>fetch('/api/insights/report?period=month&date='+date).then(r=>r.json()),date);
-let report={...original,context,current:{...original.current,days:[{date,distance_km:8.4,trip_count:1,partial_trip_count:1}],events:original.current.events},previous:original.previous};
+let report={...original,context,current:{...original.current,days:[{date,distance_km:8.4,trip_count:1,partial_trip_count:1,pending_mileage_km:26}],events:original.current.events},previous:original.previous};
 let ledger={context,totals:{actual_cents:0,actual_charge_count:1,life_count:0,unknown_charge_count:1,unlinked_charge_count:1}};
 await page.route('**/api/insights/report?*',r=>r.fulfill({json:report}));await page.route('**/api/insights/costs?*',r=>r.fulfill({json:ledger}));
 await page.getByRole('button',{name:'总览',exact:true}).first().click();
@@ -13,6 +13,7 @@ await page.getByRole('button',{name:'总览',exact:true}).first().click();
 await page.waitForFunction(()=>!document.querySelector('#overview-records')?.textContent.includes('正在读取已保存记录'));
 await page.getByRole('button',{name:'重新读取记录汇总',exact:true}).click();
 await page.waitForFunction(()=>document.querySelector('#overview-today-value')?.textContent==='8.4');
+assert.match(await page.locator('#overview-today-note').innerText(),/中断待核对 26 km/);
 assert.equal(await page.locator('#overview-cost-value').innerText(),'0');assert.match(await page.locator('#overview-cost-note').innerText(),/2 项充电待补/);assert.match(await page.locator('#overview-today-note').innerText(),/片段/);
 // An unfinished commute is observed evidence, not a completed trip or zero mileage.
 const endedReport=report;

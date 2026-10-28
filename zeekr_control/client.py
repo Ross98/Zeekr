@@ -11,9 +11,12 @@ import re
 import secrets
 import time
 import uuid
+import socket
+import ssl
+import errno
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, quote
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.parse import urlencode, quote, urlsplit
+from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
 
 from .errors import ApiError, RateLimited
 from .query_policy import QueryPolicy, retry_seconds
@@ -53,9 +56,12 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def transport(method, url, headers, body):
+    official = urlsplit(url).scheme == 'https' and urlsplit(url).netloc in {
+        urlsplit(host).netloc for host in HOSTS.values()}
     try:
         request = Request(url, data=body, headers=headers, method=method)
-        with build_opener(NoRedirect()).open(request, timeout=20) as response:
+        handlers = [ProxyHandler({}), NoRedirect()] if official else [NoRedirect()]
+        with build_opener(*handlers).open(request, timeout=20) as response:
             raw = response.read(4 * 1024 * 1024 + 1)
         if len(raw) > 4 * 1024 * 1024:
             raise ApiError('网关响应过大。',retryable=True)
@@ -64,8 +70,17 @@ def transport(method, url, headers, body):
         if exc.code == 429:
             raise RateLimited(retry_seconds(exc.headers.get('Retry-After') if exc.headers else None)) from None
         raise ApiError('网关 HTTP %d；未自动重试。' % exc.code, http_status=exc.code) from None
-    except (URLError, TimeoutError, OSError):
-        raise ApiError('网络或 TLS 连接失败；未自动重试。',retryable=True) from None
+    except (URLError, TimeoutError, OSError) as exc:
+        reason = exc.reason if isinstance(exc, URLError) else exc
+        if isinstance(reason, ssl.SSLCertVerificationError):code, label='certificate','证书校验失败'
+        elif isinstance(reason, socket.gaierror):code, label='dns','DNS 解析失败'
+        elif isinstance(reason, (TimeoutError, socket.timeout)) or getattr(reason,'errno',None)==errno.ETIMEDOUT:code, label='timeout','连接或读取超时'
+        elif getattr(reason,'errno',None)==errno.ECONNREFUSED:code, label='connection_refused','连接被拒绝'
+        elif isinstance(reason, ssl.SSLError):code, label='tls','TLS 握手或传输失败'
+        else:code, label='connection','网络连接中断'
+        route='官方接口直连' if official else '系统网络'
+        raise ApiError('网络或 TLS 连接失败（%s，%s）；本次请求未重放。'%(label,route),
+                       retryable=True,network_code=code) from None
     except (ValueError, UnicodeError, RecursionError):
         raise ApiError('网关响应不是有效 JSON。',retryable=True) from None
 
