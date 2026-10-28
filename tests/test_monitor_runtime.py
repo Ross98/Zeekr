@@ -11,6 +11,30 @@ from test_monitor import BASE, sample
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_status_accepts_relative_data_directory(self):
+        import os
+        from zeekr_control.monitor import Monitor
+        from zeekr_control.monitor_runtime import read_status
+        Monitor(self.root/'tracks.sqlite3')
+        save(self.root/'monitor-health.json', {'status':'paused','heartbeat':str(BASE)})
+        relative = Path(os.path.relpath(self.root))
+        self.assertEqual(read_status(relative), read_status(self.root))
+
+
+    def test_status_without_event_tables_preserves_health_and_database(self):
+        from zeekr_control.monitor_runtime import read_status
+        from zeekr_control.tracks import TrackStore
+        TrackStore(self.root / 'tracks.sqlite3')
+        save(self.root/'monitor-health.json', {'status':'paused','heartbeat':str(BASE)})
+        before = (self.root/'tracks.sqlite3').read_bytes()
+        for public in (False, True):
+            with self.subTest(public=public):
+                result = read_status(self.root, 'car-a', public=public)
+                self.assertEqual(result['status'], 'paused')
+                self.assertEqual(result['events'], [])
+        self.assertEqual((self.root/'tracks.sqlite3').read_bytes(), before)
+
+
     def test_network_retry_stays_bounded_and_records_diagnostic_incident(self):
         from zeekr_control.errors import ApiError
         from zeekr_control.personal_store import account_scope

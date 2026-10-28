@@ -12,6 +12,73 @@ from zeekr_control.storage import save
 
 
 class DeliveryReliabilityTests(unittest.TestCase):
+    def test_paused_delivery_still_exposes_storage_check_failure(self):
+        from zeekr_control.notification_health import service
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            save(root/'delivery-health.json',{'status':'paused','heartbeat':'1000',
+                                             'error_code':'storage_health_unavailable'})
+            self.assertEqual(service(root,'delivery-health.json',1000)['error_code'],'service_unavailable')
+
+
+    def test_delivery_cancellation_still_stops_later_queues(self):
+        from zeekr_control.delivery_runtime import DeliveryWorker
+        from zeekr_control.delivery_state import DeliveryCancelled
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'private';save(root/'session.json',{'accessToken':'synthetic'})
+            save(root/'monitor-binding.json',{'vehicle_key':'car'})
+            worker=DeliveryWorker(root/'session.json',sender=Mock(),alert_sender=Mock())
+            def pause(*args):
+                save(root/'sampling.json',{'enabled':'false'})
+                raise DeliveryCancelled()
+            with patch.object(worker.storage,'tick'),patch.object(worker.auth_alert,'deliver'), \
+                    patch.object(worker.reminders,'deliver',side_effect=pause), \
+                    patch.object(worker.tyres,'deliver') as tyres,patch.object(worker.monitor,'deliver') as monitor, \
+                    patch('zeekr_control.delivery_runtime.SnapshotStore.read',return_value={'raw':{}}):
+                worker.tick(1000)
+                tyres.assert_not_called();monitor.assert_not_called()
+            self.assertEqual(worker.status,'paused')
+
+
+    def test_one_notification_source_failure_does_not_block_vehicle_delivery(self):
+        from zeekr_control.delivery_runtime import DeliveryWorker
+        from unittest.mock import patch
+        for source in ('auth','custom','tyres','snapshot'):
+            with self.subTest(source=source),tempfile.TemporaryDirectory() as folder:
+                root=Path(folder)/'private';save(root/'session.json',{'accessToken':'synthetic'})
+                save(root/'monitor-binding.json',{'vehicle_key':'car'})
+                worker=DeliveryWorker(root/'session.json',sender=Mock(),alert_sender=Mock())
+                with patch.object(worker.storage,'tick'),patch.object(worker.auth_alert,'deliver') as auth, \
+                        patch.object(worker.reminders,'deliver') as custom,patch.object(worker.tyres,'deliver') as tyres, \
+                        patch.object(worker.monitor,'deliver') as monitor, \
+                        patch('zeekr_control.delivery_runtime.SnapshotStore.read',return_value={'raw':{}}) as snapshot:
+                    {'auth':auth,'custom':custom,'tyres':tyres,'snapshot':snapshot}[source].side_effect=OSError('PRIVATE')
+                    worker.tick(1000)
+                    monitor.assert_called_once()
+                    if source!='snapshot':
+                        custom.assert_called_once();tyres.assert_called_once()
+                self.assertEqual((worker.status,worker.error),('degraded','delivery_unavailable'))
+
+
+    def test_storage_check_failure_is_visible_and_clears_after_success(self):
+        from zeekr_control.delivery_runtime import DeliveryWorker
+        from zeekr_control.notification_health import read_health
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'private';save(root/'session.json',{'accessToken':'synthetic'})
+            worker=DeliveryWorker(root/'session.json',sender=Mock(),alert_sender=Mock())
+            with patch.object(worker.storage,'tick',side_effect=OSError('PRIVATE')):
+                worker.tick(1000)
+            self.assertEqual(worker.status,'degraded')
+            worker.heartbeat()
+            health=read_health(root)
+            self.assertEqual(health['services']['delivery']['error_code'],'service_unavailable')
+            self.assertNotIn('PRIVATE',json.dumps(health))
+            with patch.object(worker.storage,'tick'):worker.tick(2000)
+            self.assertEqual((worker.status,worker.error),('running',''))
+
+
     def test_commute_projection_uses_current_account_vehicle_and_guard(self):
         from zeekr_control.delivery_runtime import DeliveryWorker
         from zeekr_control.personal_store import account_scope

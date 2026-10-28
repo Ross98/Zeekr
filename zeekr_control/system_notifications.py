@@ -1,6 +1,7 @@
 """Durable authentication-outage intent; collection never performs network I/O."""
 from contextlib import contextmanager
 import sqlite3
+import re
 import time
 
 from .archive_reader import _private
@@ -43,7 +44,7 @@ class AuthFailureAlert:
             db.execute('DELETE FROM gateway_failures WHERE id NOT IN (SELECT id FROM gateway_failures ORDER BY id DESC LIMIT 200)')
 
     def blocked(self,error,now=None,manual=False,incident_id=None,reason=None):
-        if '网关代码 1509' not in error:return
+        if not re.search(r'网关代码 1509(?:$|[；;，,。\s])',error):return
         now=int(time.time()*1000) if now is None else now
         with self.connect() as db,db:
             db.execute('BEGIN IMMEDIATE')

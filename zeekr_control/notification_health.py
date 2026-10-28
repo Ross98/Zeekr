@@ -77,7 +77,7 @@ def service(root,name,now):
         allowed.update(('stale','parked_waiting'))
     status=status if status in allowed else 'degraded'
     return dict(status=status,online=online,last_heartbeat_at=stamp or None,
-                error_code='service_unavailable' if status in ('blocked','degraded','error') else None)
+                error_code='service_unavailable' if status in ('blocked','degraded','error') or data.get('error_code') in ('storage_health_unavailable','delivery_unavailable','resource_watchdog_unavailable') else None)
 
 
 def read_health(root,*,owner=None,vehicle=None,context=None,now_ms=None):

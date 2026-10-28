@@ -158,6 +158,10 @@ class Reminders:
                  +f'\n车辆观测：{updated_at(timestamp)}\n已连续确认 {rule["confirm_seconds"]} 秒；缓存可能延迟。'
                  +f'\n事件编号：{identity[:16]}')
         delivery='pending' if rule['delivery']=='wecom' and (kind!='recovered' or rule['recovery']) else 'local'
+        if db.execute('SELECT 1 FROM rule_history WHERE id=?',(identity,)).fetchone():return
+        db.execute("UPDATE rule_history SET delivery='cancelled',error='已有更新的确认状态，未发送。' "
+                   "WHERE owner=? AND vehicle=? AND rule_id=? AND delivery='pending' AND id!=?",
+                   (owner,vehicle,record['id'],identity))
         db.execute('INSERT OR IGNORE INTO rule_history VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                    (identity,owner,vehicle,record['id'],stamp,kind,rule['name'],now,timestamp,delivery,message,''))
         db.execute('DELETE FROM rule_history WHERE owner=? AND vehicle=? AND rowid NOT IN '

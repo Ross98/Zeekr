@@ -8,6 +8,13 @@ from zeekr_control.system_notifications import AuthFailureAlert
 
 
 class GatewayReasonNotificationTests(unittest.TestCase):
+    def test_other_gateway_codes_do_not_create_auth_alert(self):
+        for error in ('网关代码 15090', '网关代码 1509x'):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as folder:
+                alert = AuthFailureAlert(Path(folder))
+                alert.blocked(error, 1000)
+                self.assertFalse(alert.path.exists())
+
     def test_failed_schema_upgrade_keeps_original_context_and_database_bytes(self):
         alert=self.alert()
         db=sqlite3.connect(alert.path)

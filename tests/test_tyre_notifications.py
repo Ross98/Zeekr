@@ -7,6 +7,16 @@ from zeekr_control.notifications import DeliveryError
 from test_monitor import sample, BASE
 
 class TyreTransitionTests(unittest.TestCase):
+    def test_regressed_observation_breaks_confirmation(self):
+        for stamp,now in ((990000,1010000),(1010000,990000)):
+            with self.subTest(stamp=stamp,now=now):
+                s,e=self.step({},0,208)
+                s,e=transition(s,{'左前':260},stamp,now,260)
+                self.assertEqual(e,[])
+                s,e=self.step(s,20,208);self.assertEqual(e,[])
+                s,e=self.step(s,40,208);self.assertEqual(e[0]['level'],2)
+
+
     def step(self,state,seconds,pressure=228,base=260):
         return transition(state,{'左前':pressure},1000000+seconds*1000,1000000+seconds*1000,base)
     def test_warning_new_samples_duration_repeat_and_recovery(self):

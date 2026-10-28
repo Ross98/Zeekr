@@ -10,6 +10,22 @@ from zeekr_control.tracks import day_bounds
 
 
 class ChargeLedgerTests(unittest.TestCase):
+    def test_batch_restore_rejects_existing_and_within_batch_duplicate_links(self):
+        manual=self.save(event_id='',amount='20')
+        self.save(revision=1,id=manual['id'],amount='20')
+        self.ledger.update('owner','car',{'action':'delete','id':manual['id'],'revision':2})
+        linked=self.save(revision=3,amount='30')
+        with self.assertRaisesRegex(ValueError,'已关联'):
+            self.ledger.batch_change('owner','car','restore',[manual['id']],4)
+        self.assertEqual(self.query()['totals']['actual_cents'],3000)
+        self.ledger.update('owner','car',{'action':'delete','id':linked['id'],'revision':4})
+        with self.assertRaisesRegex(ValueError,'已关联'):
+            self.ledger.batch_change('owner','car','restore',[manual['id'],linked['id']],5)
+        self.assertEqual(self.personal.read('owner','car','charges')['revision'],5)
+        self.ledger.batch_change('owner','car','restore',[manual['id']],5)
+        self.assertEqual(self.query()['totals']['actual_cents'],2000)
+
+
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.db=self.root/'tracks.sqlite3'

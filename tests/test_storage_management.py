@@ -148,6 +148,53 @@ else:
 
 
 class StorageHealthTests(unittest.TestCase):
+    def test_one_channels_retries_do_not_postpone_other_daily_reminder(self):
+        from zeekr_control.notifications import DeliveryError
+        bark=[]
+        self.health.alert_sender=lambda *args:bark.append(args)
+        def failed(message):raise DeliveryError('rejected')
+        self.health.sender=failed
+        for offset in range(0,86401,900):self.tick(NOW+offset,self.sample(used=91))
+        self.assertEqual(len(bark),2)
+
+
+    def test_legacy_shared_retry_deadline_survives_upgrade_and_restart(self):
+        from zeekr_control.storage_health import StorageHealth
+        self.health._save({'sample':dict(self.sample(used=91),status='critical'),
+                           'notification_level':'critical','notification_state':'failed',
+                           'alert_notification_state':'failed','attempt_at':NOW,
+                           'retry_at':NOW+900,'last_check':NOW})
+        bark=[];self.health.alert_sender=lambda *args:bark.append(args)
+        self.tick(NOW+300,self.sample(used=91))
+        self.assertEqual((len(bark),len(self.messages)),(0,0))
+        self.health=StorageHealth(self.root,self.messages.append,lambda *args:bark.append(args))
+        self.tick(NOW+600,self.sample(used=91))
+        self.assertEqual((len(bark),len(self.messages)),(0,0))
+        self.tick(NOW+900,self.sample(used=91))
+        self.assertEqual((len(bark),len(self.messages)),(1,1))
+
+
+    def test_failed_scan_does_not_erase_recovery_threshold_after_restart(self):
+        from zeekr_control.storage_health import StorageHealth
+        self.tick(NOW, self.sample(used=81))
+        for offset in (300,600):
+            self.tick(NOW+offset, {'scan_complete':False,'disk_used_percent':None})
+        self.health=StorageHealth(self.root,self.messages.append)
+        self.tick(NOW+900,self.sample(used=79))
+        self.assertEqual(self.health.cached()['status'],'warning')
+        self.assertFalse(any('恢复正常' in message for message in self.messages))
+        self.tick(NOW+1200,self.sample(used=77))
+        self.assertEqual(self.health.cached()['status'],'healthy')
+        self.assertIn('恢复正常',self.messages[-1])
+
+
+    def test_failed_scan_preserves_critical_hysteresis(self):
+        self.tick(NOW,self.sample(used=91))
+        self.tick(NOW+300,{'scan_complete':False,'disk_used_percent':None})
+        self.tick(NOW+600,self.sample(used=89))
+        self.assertEqual(self.health.cached()['status'],'critical')
+
+
     def test_channel_failures_keep_independent_retry_deadlines(self):
         from unittest.mock import Mock
         from zeekr_control.notifications import DeliveryError

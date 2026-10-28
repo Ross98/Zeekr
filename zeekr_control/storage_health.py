@@ -196,7 +196,8 @@ class StorageHealth:
         except OSError:
             sample = {'scan_complete': False, 'disk_used_percent': None}
         sample['checked_at'] = now
-        sample['status'] = severity(sample, state.get('sample', {}).get('status'))
+        sample['status'] = severity(sample, state.get('last_known_level', state.get('sample', {}).get('status')))
+        if sample['status'] != 'unknown': state['last_known_level'] = sample['status']
         history = [x for x in state.get('history', []) if now-7*86400 <= x['time'] < now]
         basis = sample.get('capacity_basis', 'filesystem_free')
         recent = [x for x in history if now-86400 <= x['time'] <= now-21600
@@ -222,21 +223,24 @@ class StorageHealth:
         level = sample['status']
         prior = state.get('notification_level', 'healthy')
         changed = level != prior
-        reminder_due = level != 'healthy' and now-state.get('attempt_at', 0) >= REMINDER
         legacy_retry=state.get('retry_at',now+3600)
+        for prefix in ('notification','alert_notification'):
+            state.setdefault(prefix+'_attempt_at',state.get('attempt_at',0))
+            state.setdefault(prefix+'_retry_at',legacy_retry)
+        detail_reminder = level != 'healthy' and now-state['notification_attempt_at'] >= REMINDER
+        alert_reminder = level != 'healthy' and now-state['alert_notification_attempt_at'] >= REMINDER
         detail_failed = (state.get('notification_state') in ('failed', 'pending') and level == prior
                          and now>=state.get('notification_retry_at',legacy_retry))
         alert_failed = (state.get('alert_notification_state') in ('failed', 'pending') and level == prior
                         and now>=state.get('alert_notification_retry_at',legacy_retry))
-        due = changed or reminder_due or detail_failed or alert_failed
-        if not due or self.sender is None and self.alert_sender is None:
+        send_detail = self.sender is not None and (changed or detail_reminder or detail_failed)
+        send_alert = self.alert_sender is not None and (changed or alert_reminder or alert_failed)
+        if not send_detail and not send_alert:
             self._save(state)
             return
-        send_detail = self.sender is not None and (changed or reminder_due or detail_failed)
-        send_alert = self.alert_sender is not None and (changed or reminder_due or alert_failed)
         state.update(notification_level=level, attempt_at=now)
-        if send_detail:state.update(notification_state='pending',notification_retry_at=now)
-        if send_alert:state.update(alert_notification_state='pending',alert_notification_retry_at=now)
+        if send_detail:state.update(notification_state='pending',notification_retry_at=now,notification_attempt_at=now)
+        if send_alert:state.update(alert_notification_state='pending',alert_notification_retry_at=now,alert_notification_attempt_at=now)
         self._save(state)
         if send_alert:
             if not self._deliver_channel(state,'alert_notification_state',lambda:self._alert(sample),
