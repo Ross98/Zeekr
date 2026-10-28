@@ -20,9 +20,9 @@ function chainModel(rows){
    endpoint.depart_time=row.start_time;
    // Matching endpoints alone do not establish stationary time in between.
    if(!hadEvidence&&row.start_time-endpoint.time>60000)items.push({kind:'gap',start_time:endpoint.time,end_time:row.start_time});
-  }else items.push({kind:'place',place:start,time:row.start_time,label:row.partial?'记录起点':'出发'});
+  }else items.push({kind:'place',place:start,time:row.start_time,label:row.record_source==='manual_completion'?'出发（手填）':row.partial?'记录起点':'出发'});
   items.push({kind:'trip',row});
-  endpoint={kind:'place',place:end,time:row.end_time,label:row.status==='driving'||row.status==='waiting'?'最近观测':row.partial?'记录终点':'到达'};
+  endpoint={kind:'place',place:end,time:row.end_time,label:row.record_source==='manual_completion'?'到达（手填）':row.status==='driving'||row.status==='waiting'?'最近观测':row.partial?'记录终点':'到达'};
   items.push(endpoint);hadEvidence=false;
  }
  return items;
@@ -38,7 +38,7 @@ function chain(rows,selection,date){
   if(item.kind==='place')return `<div class="tv-node"><time>${escape(timeLabel(item.time,date))}</time><i aria-hidden="true"></i><div><strong>${escape(item.place.label)}</strong><small>${escape(item.label)}${item.depart_time?' · '+escape(clock(item.depart_time))+' 再出发':''}</small></div></div>`;
   if(item.kind==='gap')return '<div class="tv-gap">间隔内移动情况未观测，未推断停车</div>';
   const r=item.row,selected=selection===r.id;
-  if(item.kind==='trip')return `<div class="tv-leg ${selected?'selected':''}" data-chain-record="${escape(r.id)}"><div class="tv-rail" aria-hidden="true"></div><div><div class="tv-leg-values"><strong>${escape(number(r.distance_km,' km'))}</strong><span>行驶观测 ${escape(duration(r.duration_seconds))}</span></div><button class="local-trip-row tv-select ${selected?'selected':''}" data-local-trip="${escape(r.id)}" aria-pressed="${selected}">${selected?'已选中 · 查看详情':'查看行程'}${r.partial?' · 部分记录':''}${r.status==='driving'?' · 记录中':''}</button></div></div>`;
+  if(item.kind==='trip')return `<div class="tv-leg ${selected?'selected':''}" data-chain-record="${escape(r.id)}"><div class="tv-rail" aria-hidden="true"></div><div><div class="tv-leg-values"><strong>${escape(number(r.distance_km,' km'))}</strong><span>${r.record_source==='manual_completion'?'手填时长':'行驶观测'} ${escape(duration(r.duration_seconds))}</span></div><button class="local-trip-row tv-select ${selected?'selected':''}" data-local-trip="${escape(r.id)}" aria-pressed="${selected}">${selected?'已选中 · 查看详情':'查看行程'}${r.record_source==='manual_completion'?' · 手动补全':r.partial?' · 部分记录':''}${r.status==='driving'?' · 记录中':''}</button></div></div>`;
   const type=item.kind==='parking'?'停车观测':'充电',quality=r.observation_quality||{};
   return `<div class="tv-observation" data-chain-record="${escape(r.id)}"><button class="local-trip-row tv-select ${selected?'selected':''}" data-local-trip="${escape(r.id)}" aria-pressed="${selected}"><strong>${type}</strong> · ${escape(placeOf(r,'end').label)}${r.end_place_evidence?.source==='parking_reference'?' · 推定地点':r.end_place_evidence?.source==='parking_arrival_confirmation'?' · 人工确认到达地点':''}<span>${escape(clock(r.start_time))}—${escape(clock(r.end_time))} · ${escape(duration(r.duration_seconds))}</span>${item.kind==='parking'?`<span>${r.parking_status==='parked'?'已确认停车':'停车待确认'}${numeric(quality.unknown_seconds)&&quality.unknown_seconds>0?' · 缺口 '+escape(duration(quality.unknown_seconds)):''}${r.open?' · 后续未观测':''}</span>`:r.partial?'<span>部分记录</span>':''}</button></div>`;
  }).join('');
@@ -56,7 +56,7 @@ function summary(timeline,date){
  if(!timeline)return '';
  const s=timeline.summary||{},c=timeline.coverage||{},charges=numeric(s.actual_cents)?`${Number((s.actual_cents/100).toFixed(2))} 元`:'未知';
  const pending=numeric(s.pending_mileage_km)&&s.pending_mileage_km>0?`<p class="section-note" role="status">中断待核对里程：<strong>${escape(number(s.pending_mileage_km))} km</strong>。两次车辆状态间的里程差，按恢复观测日列示；实际行驶日期、起止时间和趟数未知，不计入已结束行程。</p>`:'';
- return `<div class="tv-summary"><div><h2>${escape(date)}</h2><small>当天出行 · 北京时间</small></div><div><small>结束行程里程</small><strong>${escape(number(s.distance_km))}</strong> km</div><div><small>观测驾驶时长</small><strong>${escape(duration(s.duration_seconds))}</strong></div><div><small>结束行程</small><strong>${s.trip_count??0}</strong> 趟</div></div><div class="tv-bills">充电 ${s.charge_count??0} 次 · 已填账单 ${escape(charges)} · 待补账 ${s.pending_count??0} 次</div><p class="section-note">${{missing:'无归档观测；不代表当天没用车。',limited:'观测受限。',observed:'有有效车辆时刻，不表示全天覆盖。',future:'未来日期。'}[c.coverage]||'覆盖未知。'}跨日里程归结束日；时钟仅显示当天时段。</p>${pending}`;
+ return `<div class="tv-summary"><div><h2>${escape(date)}</h2><small>当天出行 · 北京时间</small></div><div><small>结束行程里程</small><strong>${escape(number(s.distance_km))}</strong> km</div><div><small>行程时长</small><strong>${escape(duration(s.duration_seconds))}</strong></div><div><small>结束行程</small><strong>${s.trip_count??0}</strong> 趟</div></div><div class="tv-bills">充电 ${s.charge_count??0} 次 · 已填账单 ${escape(charges)} · 待补账 ${s.pending_count??0} 次</div><p class="section-note">${{missing:'无归档观测；不代表当天没用车。',limited:'观测受限。',observed:'有有效车辆时刻，不表示全天覆盖。',future:'未来日期。'}[c.coverage]||'覆盖未知。'}跨日里程归结束日；时钟仅显示当天时段。</p>${pending}`;
 }
 function overview(data,date){
  if(!data)return '';

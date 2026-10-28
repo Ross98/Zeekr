@@ -116,6 +116,14 @@ class DailyTimeline:
                     if row[side+'_place']['decision'] in ('automatic','unresolved'):row[side+'_place']=dict(charge_places[event['id']])
             point=positions.get((event['id'],'end')) or positions.get((event['id'],'start'))
             row['_position']=dict(latitude=point['point'][0],longitude=point['point'][1],state_time=point['time']) if point else None
+            if row.get('record_source')=='manual_completion':
+                completion=MileageGaps(Path(self.database).parent/'mileage-gaps.sqlite3').completion(owner,vehicle,row['id'])
+                row['_position']=None
+                if completion:
+                    row['manual_completion']=completion
+                    for side in ('start','end'):
+                        row[side+'_place']=dict(key='manual:'+row['id']+':'+side,label=completion[side+'_place'],
+                            source='manual',decision='confirmed',issues=[],label_only=True,evidence='manual_completion')
             row['bill']=booked.get(event['id']) if row['type']=='charge' else None
             records.append(row)
         parked=ParkingAnalytics(self.archive,self.database,store=self.store,owner=owner).query(
@@ -164,8 +172,8 @@ class DailyTimeline:
         summary=dict(distance_km=total(r['distance_km'] for r in trips),duration_seconds=total(r['duration_seconds'] for r in trips),
                      trip_count=len(trips),charge_count=sum(r['type']=='charge' for r in ended),
                      actual_cents=day['actual_cents'],pending_count=day['pending_count'],unpriced_count=day['unpriced_count'])
-        gaps=MileageGaps(Path(self.database).parent/'mileage-gaps.sqlite3').between(vehicle,lower,upper,now)
-        summary['pending_mileage_km']=total(g['distance_km'] for g in gaps)
+        gaps=MileageGaps(Path(self.database).parent/'mileage-gaps.sqlite3').history(owner,vehicle,lower,upper,now)
+        summary['pending_mileage_km']=total(g['distance_km'] for g in gaps if g['status']=='pending')
         revision=digest(dict(records=records,summary=summary,mileage_gaps=gaps,meta=meta))
         self._positions(records,positions)
         known=[dict(key=r['id'],name=r['body']['name']) for r in TripPlaceNames(self.store).regions(owner,vehicle)]

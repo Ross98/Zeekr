@@ -33,6 +33,7 @@ function recallParkingDetails(row){
   return `<div class="recall-parking-evidence"><p><strong>${recallParkingStatus(row)}</strong> · ${row.soc_drop==null?'停车耗电未知':`停车耗电 ${esc(tripNumber(row.soc_drop,' 个百分点'))}`}</p><p class="subtle">区间跨度不代表缺口内连续停车。P 档仅作静止佐证，缓存重复不增加有效观测。</p><details><summary>停车观测依据 · ${row.sample_count} 条有效观测</summary><p>P 档有效观测 ${row.p_gear_samples??0} 条 · 缓存重复读取 ${q.repeat_reads??0} 次</p><p>有效观测最大间隔 ${esc(tripDuration(q.max_gap_seconds??null))} · 未知区间 ${esc(tripDuration(q.unknown_seconds??null))}</p>${gaps.map(g=>`<p>数据缺口 ${esc(tripTime(g.start_time))} — ${esc(tripTime(g.end_time))} · ${esc(tripDuration(g.duration_seconds))}</p>`).join('')}${q.gaps_limited?'<p class="subtle">仅列前 50 处缺口。</p>':''}</details>${phases.length?`<details><summary>停车内充电 · ${phases.length} 段</summary>${phases.map(p=>`<p>${esc(tripTime(p.start_time))} — ${esc(tripTime(p.end_time))} · ${esc(tripDuration(p.duration_seconds))}</p>`).join('')}</details>`:''}</div>`;
 }
 function recallFacts(row){
+  if(row.record_source==='manual_completion'){const c=row.manual_completion;return `<div class="local-trip-intro"><h2>手动补全行程</h2><p>出发 ${esc(tripTime(row.start_time))}<br>到达 ${esc(tripTime(row.end_time))} · 北京时间</p><p>${esc(row.start_place?.label||'起点未知')} → ${esc(row.end_place?.label||'终点未知')}</p><div class="local-trip-facts"><div><span>原始里程差</span><strong>${esc(tripNumber(row.distance_km,' km'))}</strong></div><div><span>手填行程时长</span><strong>${esc(tripDuration(row.duration_seconds))}</strong></div></div><p class="subtle">时间和地点由用户确认。驾驶过程未采集，不补造 GPS、轨迹或驾驶能耗。</p>${c?`${mileageEvidenceView(c.evidence)}<button class="button secondary" data-mileage-open="${esc(row.mileage_gap_id)}">查看／调整补全</button>`:''}</div>`;}
   const place=side=>{const p=row[side+'_place'];if(!p)return '';return `<div class="recall-place"><span>${side==='start'?'起点':'终点'} ${esc(p.label)} · ${recallSources[p.source]||'未知'}${p.evidence==='user_confirmation'?' · 用户确认地点，未修复 GPS':''}${p.decision==='rejected'?' · 已拒绝匹配':''}${p.issues?.some(i=>['adjacent_conflict','candidate_conflict','missing_position'].includes(i))?' · 待核对':''}</span>${(p.key||(localTrips.timeline?.known_places||[]).length)?`<button class="button quiet" data-recall-correct="${side}">修正地点</button>${p.key?`<button class="button quiet" data-recall-history="${side}">地点历史</button>`:'<span class="subtle">仅确认地点名称，不生成定位</span>'}`:'<span class="subtle">缺少可信位置</span>'}</div>${recallParkingEvidence(row,side)}`;};
   return `<div class="local-trip-intro"><h2>${recallTypes[row.type]||'行程'}${row.cross_midnight?' · 跨午夜':''}</h2><p>记录起点 ${esc(tripTime(row.start_time))}<br>${row.open?'最近观测':'记录终点'} ${esc(tripTime(row.end_time))}</p>${place('start')}${place('end')}<p>${row.type==='parking'?'停车区间跨度':'观测时长'} ${esc(tripDuration(row.duration_seconds))}${row.type==='trip'?` · 里程 ${esc(tripNumber(row.distance_km,' km'))}`:''}</p>${recallParkingDetails(row)}${row.partial&&row.type!=='parking'?'<p class="subtle">部分记录；缺失范围不推断。</p>':''}${row.reason_labels?`<p class="subtle">${row.reason_labels.map(esc).join('；')}</p>`:''}${row.type==='charge'?`<p>账单金额 ${esc(tripNumber(row.bill?.actual_cents==null?null:row.bill.actual_cents/100,' 元'))}</p><button class="button secondary" data-recall-ledger>打开账本编辑</button>`:''}<div id="recall-correction"></div><div id="recall-history"></div><button class="button secondary recall-map-jump" data-recall-map>查看地图</button></div>`;
 }
@@ -120,3 +121,63 @@ window.recallCanReturn=()=>recallLedgerReturn?.context===state?.insights_context
 
 window.recallPersonalRevision=0;
 window.recallInvalidate=()=>{const reload=recallYear?.context===state?.insights_context&&$('.recall-year-panel')?.open;window.recallPersonalRevision++;recallYearSerial++;recallYear=null;recallHistory=null;if($('#recall-year-result'))$('#recall-year-result').innerHTML='<p role="status">数据已更新，请重新读取年度回顾。</p>';if(reload)recallLoadYear();};
+
+const mileageLocalTime=stamp=>Number.isFinite(stamp)?new Date(stamp+8*3600000).toISOString().slice(0,16):'';
+const mileageEvidenceTime=stamp=>new Date(stamp).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false});
+function mileageEvidenceView(row){return `<details><summary>原始证据（保留）</summary><p class="subtle">${esc(mileageEvidenceTime(row.left_time))} — ${esc(mileageEvidenceTime(row.right_time))} · 北京时间</p><p>总里程 ${esc(tripNumber(row.odometer_before))} → ${esc(tripNumber(row.odometer_after))} km · 差值 ${esc(tripNumber(row.distance_km))} km</p><p class="subtle">电量 ${esc(tripNumber(row.soc_before,'%'))} → ${esc(tripNumber(row.soc_after,'%'))}；跨时段电量变化不等于本次行驶耗电。</p></details>`;}
+function mileageGapWorkspace(){
+ const h=localTrips,rows=h?.timeline?.mileage_gaps||[],d=h?.mileageDraft;
+ if(!rows.length&&!d)return '';
+ let form='';
+ if(d){const row=d.row,min=mileageLocalTime(Math.ceil(row.left_time/60000)*60000),max=mileageLocalTime(Math.floor(row.right_time/60000)*60000);
+  form=`<form id="mileage-completion-form" class="recall-editor mileage-editor"><h3>${row.status==='completed'?'调整手动补全行程':'核对并补全行程'} · ${esc(tripNumber(row.distance_km))} km</h3><p class="subtle">按北京时间填写。地点为手动确认，不生成 GPS；里程沿用原始差值，不能修改。</p><fieldset ${d.busy?'disabled':''}><div class="mileage-fields"><label>出发时间（北京时间）<input name="start" type="datetime-local" required min="${min}" max="${max}" value="${esc(d.start)}"></label><label>到达时间（北京时间）<input name="end" type="datetime-local" required min="${min}" max="${max}" value="${esc(d.end)}"></label><label>出发地点<input name="start_place" required maxlength="80" list="mileage-place-options" value="${esc(d.start_place)}"></label><label>到达地点<input name="end_place" required maxlength="80" list="mileage-place-options" value="${esc(d.end_place)}"></label></div><datalist id="mileage-place-options">${(h.timeline?.known_places||[]).map(p=>`<option value="${esc(p.name)}"></option>`).join('')}</datalist>${mileageEvidenceView(row)}<div id="mileage-review">${d.review?`<p><strong>${esc(d.start_place)} → ${esc(d.end_place)}</strong><br>${esc(d.start.replace('T',' '))} — ${esc(d.end.replace('T',' '))} · ${esc(tripNumber(row.distance_km))} km</p><p class="subtle">保存为手动补全行程，仅计入一次里程；原始证据保留，轨迹缺失不补造。原始电量差不计为本次驾驶能耗。</p>`:''}</div><p id="mileage-completion-status" role="status">${esc(d.message||'')}</p><div class="recall-actions"><button type="submit" class="button secondary">预览补全</button>${d.review?'<button type="button" class="button" data-mileage-confirm>确认并计入行程</button>':''}<button type="button" class="button quiet" data-mileage-cancel>取消</button></div></fieldset></form>`;
+ }
+ return `<section class="card mileage-workspace"><div class="card-head"><h2>中断里程核对</h2><span class="subtle">原始证据保留</span></div>${rows.map(row=>`<div class="mileage-entry"><div class="recall-actions"><strong>${esc(tripNumber(row.distance_km))} km · ${row.status==='completed'?'已手动补全':'待核对'}</strong>${row.can_edit?`<button type="button" class="button secondary" data-mileage-open="${esc(row.id)}">${row.status==='completed'?'查看／调整补全':'核对并补全'}</button>`:''}</div>${!d||d.row.id!==row.id?mileageEvidenceView(row):''}</div>`).join('')}${form}</section>`;
+}
+function renderMileageGaps(){const el=$('#mileage-gap-workspace');if(el)el.innerHTML=mileageGapWorkspace();}
+function openMileageGap(id){
+ const h=localTrips;let row=h?.timeline?.mileage_gaps?.find(r=>r.id===id);
+ if(h?.mileageDraft){
+  if(h.mileageDraft.busy)return;
+  if(h.mileageDraft.row.id!==id){h.mileageDraft.message='请先保存或取消当前补全，再核对其他记录。';renderMileageGaps();}
+  $('#mileage-completion-form input')?.focus({preventScroll:true});$('#mileage-completion-form')?.scrollIntoView({block:'nearest'});return;
+ }
+ if(!row&&h?.selected?.manual_completion?.gap_id===id){const c=h.selected.manual_completion;row={id,...c.evidence,status:'completed',revision:c.revision,completion:c,can_edit:true};}
+ if(!h||!row||!row.can_edit)return;
+ const c=row.completion||{};
+ h.mileageDraft={row,context:h.context,start:mileageLocalTime(c.start_time),end:mileageLocalTime(c.end_time),start_place:c.start_place||'',end_place:c.end_place||'',review:false,busy:false,message:''};
+ renderMileageGaps();$('#mileage-completion-form input')?.focus({preventScroll:true});$('#mileage-completion-form')?.scrollIntoView({block:'nearest'});
+}
+async function confirmMileageGap(){
+ const h=localTrips,d=h?.mileageDraft;
+ if(!d||!d.review||d.busy||d.context!==h.context)return;
+ d.busy=true;d.message='正在保存补全…';renderMileageGaps();
+ try{
+  const result=await api('/api/mileage-gaps/complete',{gap_id:d.row.id,revision:d.row.revision??0,start:d.start,end:d.end,start_place:d.start_place,end_place:d.end_place,context:h.timeline.context});
+  if(localTrips!==h||d.context!==h.context||result.context!==state?.insights_context)return;
+  h.mileageDraft=null;window.recallInvalidate?.();
+  if(result.date!==trackDate){recallOpenDay(result.date,result.event_id);return;}
+  await loadLocalTrips(true);if(localTrips===h){h.selection=result.event_id;h.selected=h.events.find(r=>r.id===result.event_id);renderLocalTripList();renderLocalTripDetail();renderMileageGaps();}
+ }catch(error){if(localTrips===h&&d.context===h.context){d.message=error.message;d.review=false;}}
+ finally{if(localTrips===h&&h.mileageDraft===d){d.busy=false;renderMileageGaps();}}
+}
+document.addEventListener('input',e=>{
+ const d=localTrips?.mileageDraft;
+ if(!d||!e.target.closest('#mileage-completion-form')||!['start','end','start_place','end_place'].includes(e.target.name))return;
+ d[e.target.name]=e.target.value;d.review=false;d.message='';$('#mileage-review').innerHTML='';$('[data-mileage-confirm]')?.remove();
+});
+document.addEventListener('submit',e=>{
+ if(e.target.id!=='mileage-completion-form')return;e.preventDefault();
+ const d=localTrips?.mileageDraft;if(!d||d.busy)return;
+ const a=Date.parse(d.start+'+08:00'),b=Date.parse(d.end+'+08:00');
+ if(!Number.isFinite(a)||!Number.isFinite(b)||a>=b||a<d.row.left_time||b>d.row.right_time||b>Date.now()||!d.start_place.trim()||!d.end_place.trim()){
+  d.message='请填写有效地点；出发早于到达，时间须在原始观测范围内。';d.review=false;
+ }else{d.review=true;d.message='请核对后确认保存。';}
+ renderMileageGaps();$('[data-mileage-confirm]')?.focus({preventScroll:true});
+});
+document.addEventListener('click',e=>{
+ const target=e.target.closest('[data-mileage-open],[data-mileage-confirm],[data-mileage-cancel]');if(!target)return;e.preventDefault();
+ if(target.hasAttribute('data-mileage-open'))openMileageGap(target.dataset.mileageOpen);
+ else if(target.hasAttribute('data-mileage-confirm'))confirmMileageGap();
+ else if(localTrips?.mileageDraft&&!localTrips.mileageDraft.busy){localTrips.mileageDraft=null;renderMileageGaps();}
+});

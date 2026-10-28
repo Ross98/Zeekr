@@ -66,6 +66,7 @@ from .charge_comparison import ChargeComparison
 from .parameter_experiments import ParameterExperiments
 from .usage_calendar import UsageCalendar
 from .daily_timeline import DailyTimeline
+from .mileage_gaps import MileageGaps
 from .trip_overview import TripOverview
 from .vehicle_life import VehicleLife
 from .data_quality import DataQuality
@@ -160,6 +161,7 @@ class App:
         self.charging_review = ChargingReview(self.database_path, self.personal_store)
         self.usage_calendar = UsageCalendar(self.database_path, self.archive_reader, store=self.personal_store)
         self.daily_timeline = DailyTimeline(self.database_path,self.archive_reader,self.personal_store)
+        self.mileage_gaps = MileageGaps(self.session_path.parent/'mileage-gaps.sqlite3',self.database_path)
         self.trip_overview = TripOverview(self.daily_timeline)
         self.vehicle_life = VehicleLife(self.personal_store)
         self.data_quality = DataQuality(self.archive_reader)
@@ -819,7 +821,8 @@ class App:
                 guard()
             else:
                 manager = {'ledger':self.charge_ledger,'rules':self.reminders,'tyres':self.tyre_notifications,'trip-tags':self.trip_tags,
-                           'experiments':self.experiments,'life':self.vehicle_life,'place-corrections':self.daily_timeline}[operation]
+                           'experiments':self.experiments,'life':self.vehicle_life,'place-corrections':self.daily_timeline,
+                           'mileage-gap':self.mileage_gaps}[operation]
                 extra = {'scope':session_scope(session)} if operation in ('experiments','place-corrections') else {}
                 result = manager.update(account_scope(session), vehicle, data, guard=guard,**extra)
             result['context'] = context
@@ -1362,6 +1365,8 @@ def make_server(app, port=8765, auth=None, public_origin=None, trusted_proxy=Fal
                     return self.send(200, app.manage_charges(self.path.rsplit('/',1)[1], data, owner))
                 if self.path == '/api/place-corrections':
                     return self.send(200,app.update_insight_record('place-corrections',data))
+                if self.path == '/api/mileage-gaps/complete':
+                    return self.send(200,app.update_insight_record('mileage-gap',data))
                 if self.path == '/api/insights/charging-place':
                     return self.send(200,app.update_insight_record('charging-place',data))
                 if self.path == '/api/insights/charging-place/candidates':

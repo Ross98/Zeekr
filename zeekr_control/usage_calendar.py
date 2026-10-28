@@ -105,6 +105,12 @@ class UsageCalendar:
                 if place:
                     for side in ('start','end'):
                         event[side+'_label']=place['label'];event[side+'_place_key']=place['key']
+            from .mileage_gaps import MileageGaps
+            for event in events:
+                if event.get('record_source')!='manual_completion':continue
+                completion=MileageGaps(self.events.path.parent/'mileage-gaps.sqlite3').completion(owner,vehicle,event['id'])
+                if completion:
+                    for side in ('start','end'):event[side+'_label']=completion[side+'_place']
         if self.store:
             for event in parking_events:
                 if event['place_source']=='unknown' or not window['start']<=event['end_time']<window['end']:continue

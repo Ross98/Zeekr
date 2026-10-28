@@ -77,7 +77,8 @@
       "tests/ui_storage.cjs",
       "tests/ui_calendar_compact.cjs",
       "tests/ui_usage_reports.cjs",
-      "tests/ui_remembered_auth.cjs"
+      "tests/ui_remembered_auth.cjs",
+      "tests/ui_mileage_completion.cjs"
     ]
   },
   "exclusions": [
