@@ -475,8 +475,18 @@ class Runner:
                 health.update(status='cooldown', error=error[:150])
             elif exc.retryable or any(token in error for token in ('网络或 TLS', 'HTTP 5', '并发锁')):
                 self.failures += 1
-                delay = min(900, 60 * 2 ** min(self.failures, 4))
+                delay = max(interval, min(60, 20 * 2 ** min(self.failures, 2)))
                 health.update(status='retrying', error=error[:150])
+                code=exc.network_code if exc.network_code in ('dns','timeout','certificate','tls','connection_refused','connection') else None
+                if code:health.update(network_error_code=code,network_error_at=str(now))
+                try:
+                    self.incidents.failure(account_scope(session),
+                        load(self.root/'monitor-binding.json').get('vehicle_key','unbound'),session_scope(session),now,
+                        int(health['state_time']) if health.get('state_time') else None,
+                        int(health['last_success']) if health.get('last_success') else None,
+                        kind='network:'+code if code else 'request_retryable')
+                    health.pop('incident_recording',None)
+                except (ApiError,OSError,ValueError,sqlite3.Error):health['incident_recording']='unavailable'
             else:
                 self.blocked_fingerprint = fingerprint
                 health.update(status='blocked', error=error[:150])

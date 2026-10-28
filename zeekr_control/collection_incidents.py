@@ -18,7 +18,10 @@ class CollectionIncidents:
                 db.execute('CREATE TABLE IF NOT EXISTS probes (incident_id TEXT,at INTEGER,scope TEXT,kind TEXT)')
             yield db
 
-    def failure(self,owner,vehicle,scope,now,baseline=None,last_success=None):
+    def failure(self,owner,vehicle,scope,now,baseline=None,last_success=None,kind='1509'):
+        if kind not in {'1509','request_retryable','network:dns','network:timeout','network:certificate',
+                        'network:connection_refused','network:tls','network:connection'}:
+            raise ValueError('未知采集中断类型')
         with self.connect() as db,db:
             db.execute('BEGIN IMMEDIATE')
             row=db.execute('SELECT * FROM incidents WHERE owner=? AND vehicle=? AND interface_recovered_at IS NULL',(owner,vehicle)).fetchone()
@@ -29,7 +32,7 @@ class CollectionIncidents:
                 db.execute("UPDATE incidents SET fresh_state_outcome='not_observed_before_next_outage' WHERE owner=? AND vehicle=? AND interface_recovered_at IS NOT NULL AND fresh_state_outcome='waiting'",(owner,vehicle))
                 identity=uuid.uuid4().hex
                 db.execute("INSERT INTO incidents VALUES(?,?,?,?,?,?,1,?,?,NULL,NULL,NULL,NULL,'waiting','unclassified')",(identity,owner,vehicle,scope,now,now,baseline,last_success))
-            db.execute('INSERT INTO probes VALUES(?,?,?,?)',(identity,now,scope,'1509'))
+            db.execute('INSERT INTO probes VALUES(?,?,?,?)',(identity,now,scope,kind))
             return dict(db.execute('SELECT * FROM incidents WHERE id=?',(identity,)).fetchone())
 
     def current(self,owner,vehicle):

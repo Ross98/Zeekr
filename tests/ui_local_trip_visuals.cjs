@@ -11,6 +11,9 @@ const assert=require('node:assert/strict'),path=require('node:path'),fs=require(
  await page.goto('http://127.0.0.1:'+port);
  await page.getByRole('button',{name:'行程与轨迹',exact:true}).first().click();await page.getByLabel('轨迹日期').fill('2026-09-20');await page.getByRole('button',{name:'查询行程',exact:true}).click();
  await page.locator('#local-trip-list [data-local-trip="recall-drive"]').waitFor();
+ await page.evaluate(()=>{localTrips.timeline.summary.pending_mileage_km=26;document.querySelector('#recall-summary').innerHTML=recallSummary();});
+ assert.match(await page.locator('#recall-summary').innerText(),/中断待核对里程.*26/);
+ assert.match(await page.locator('#recall-summary').innerText(),/实际行驶日期、起止时间和趟数未知/);
  await page.locator('.tv-clock').waitFor();assert.equal(routes.length,0);
  assert.equal(await page.locator('#local-trip-details-disclosure').evaluate(el=>el.open),false,'Sampling detail is collapsed by default');
  assert.equal(await page.locator('#local-trip-route').isVisible(),false);

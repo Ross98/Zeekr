@@ -5,7 +5,8 @@ class ApiError(Exception):
     """User-visible API error."""
 
     def __init__(self, message, http_status=None, retry_after=None, gateway_code=None, gateway_reason=None,
-                 notification_reason=None, retryable=False):
+                 notification_reason=None, retryable=False, network_code=None):
+        self.network_code = network_code
         self.gateway_code = gateway_code
         self.gateway_reason = gateway_reason
         # Private Bark context only; never add this field to str(error) or health/audit output.

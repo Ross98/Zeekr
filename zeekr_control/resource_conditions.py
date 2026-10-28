@@ -59,8 +59,13 @@ def observations(sample, previous=None):
         if not isinstance(collection, dict):
             level = 'unknown'
         else:
-            level = 'healthy' if collection.get('enabled') is False or collection.get('online') is True else 'critical'
-        add('collector', level, '车辆采集心跳停摆或无法确认', 'availability')
+            level = 'healthy' if collection.get('enabled') is False or collection.get('online') is True and collection.get('readable') is not False else 'critical'
+        reason='车辆接口持续读取失败，行程可能漏采' if isinstance(collection,dict) and collection.get('readable') is False else '车辆采集心跳停摆或无法确认'
+        if isinstance(collection,dict) and collection.get('readable') is False:
+            detail={'dns':'DNS 解析失败','timeout':'连接或读取超时','certificate':'证书校验失败',
+                    'tls':'TLS 握手或传输失败','connection_refused':'连接被拒绝','connection':'网络连接中断'}.get(collection.get('network_code'))
+            if detail:reason+='（'+detail+'）'
+        add('collector', level, reason, 'availability')
     # A sensor's failure has its own confirmation, independently of a previous
     # pressure alarm. Warm-up is not failure and cannot clear that alarm.
     for key, observation in list(result.items()):

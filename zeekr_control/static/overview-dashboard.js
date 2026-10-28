@@ -64,7 +64,8 @@
       const data=summary(),today=data.today;
       text('overview-today-value',number(today.distance_km));
       const openNote=today.open_trip?` · ${today.open_trip.status==='waiting'?'待收尾':'记录中'} ${number(today.open_distance_km)} km · 观测至 ${new Date(today.open_trip.end_time).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false})}`:'';
-      text('overview-today-note',today.trip_count===null?'尚无有效观测':`${today.trip_count} 次${today.open_trip?'已结束':'行程'}${today.partial_trip_count?' · 含 '+today.partial_trip_count+' 条片段':''}${openNote}`);
+      const gapNote=Number.isFinite(today.pending_mileage_km)&&today.pending_mileage_km>0?` · 中断待核对 ${number(today.pending_mileage_km)} km（按恢复观测日列示）`:'';
+      text('overview-today-note',(today.trip_count===null?'尚无有效观测':`${today.trip_count} 次${today.open_trip?'已结束':'行程'}${today.partial_trip_count?' · 含 '+today.partial_trip_count+' 条片段':''}${openNote}`)+gapNote);
       text('overview-cost-value',data.actual===null?'未知':number(data.actual/100));
       text('overview-cost-note',data.pending===null?'账本尚未读取':`含充电、充电停车费与日常支出 · ${data.pending} 项充电待补`);
       const rows=selectRecords(data.events,filter);

@@ -204,7 +204,16 @@ def collection_health(root, now=None):
     from .notification_health import service
     enabled, _ = read_settings(root)
     health = service(Path(root), 'monitor-health.json', int((time.time() if now is None else now)*1000))
-    return dict(enabled=enabled, online=health['online'])
+    data=load(Path(root)/'monitor-health.json')
+    current=time.time() if now is None else now
+    try:last=float(data.get('last_success',0))/1000
+    except (TypeError,ValueError,OverflowError):last=0
+    # Heartbeat proves the loop is alive, not that vehicle requests succeed.
+    failed=health['status'] in ('retrying','blocked','error','degraded','cooldown')
+    readable=not failed or math.isfinite(last) and 0<=current-last<=180
+    code=data.get('network_error_code')
+    code=code if code in ('dns','timeout','certificate','tls','connection_refused','connection') else None
+    return dict(enabled=enabled, online=health['online'],readable=bool(readable),network_code=code)
 
 
 def resource_status(root, now=None):

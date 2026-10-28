@@ -55,7 +55,8 @@ function clockChart(rows,date,selection){
 function summary(timeline,date){
  if(!timeline)return '';
  const s=timeline.summary||{},c=timeline.coverage||{},charges=numeric(s.actual_cents)?`${Number((s.actual_cents/100).toFixed(2))} 元`:'未知';
- return `<div class="tv-summary"><div><h2>${escape(date)}</h2><small>当天出行 · 北京时间</small></div><div><small>结束行程里程</small><strong>${escape(number(s.distance_km))}</strong> km</div><div><small>观测驾驶时长</small><strong>${escape(duration(s.duration_seconds))}</strong></div><div><small>结束行程</small><strong>${s.trip_count??0}</strong> 趟</div></div><div class="tv-bills">充电 ${s.charge_count??0} 次 · 已填账单 ${escape(charges)} · 待补账 ${s.pending_count??0} 次</div><p class="section-note">${{missing:'无归档观测；不代表当天没用车。',limited:'观测受限。',observed:'有有效车辆时刻，不表示全天覆盖。',future:'未来日期。'}[c.coverage]||'覆盖未知。'}跨日里程归结束日；时钟仅显示当天时段。</p>`;
+ const pending=numeric(s.pending_mileage_km)&&s.pending_mileage_km>0?`<p class="section-note" role="status">中断待核对里程：<strong>${escape(number(s.pending_mileage_km))} km</strong>。两次车辆状态间的里程差，按恢复观测日列示；实际行驶日期、起止时间和趟数未知，不计入已结束行程。</p>`:'';
+ return `<div class="tv-summary"><div><h2>${escape(date)}</h2><small>当天出行 · 北京时间</small></div><div><small>结束行程里程</small><strong>${escape(number(s.distance_km))}</strong> km</div><div><small>观测驾驶时长</small><strong>${escape(duration(s.duration_seconds))}</strong></div><div><small>结束行程</small><strong>${s.trip_count??0}</strong> 趟</div></div><div class="tv-bills">充电 ${s.charge_count??0} 次 · 已填账单 ${escape(charges)} · 待补账 ${s.pending_count??0} 次</div><p class="section-note">${{missing:'无归档观测；不代表当天没用车。',limited:'观测受限。',observed:'有有效车辆时刻，不表示全天覆盖。',future:'未来日期。'}[c.coverage]||'覆盖未知。'}跨日里程归结束日；时钟仅显示当天时段。</p>${pending}`;
 }
 function overview(data,date){
  if(!data)return '';
