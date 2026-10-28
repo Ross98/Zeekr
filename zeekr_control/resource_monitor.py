@@ -213,6 +213,7 @@ def collection_health(root, now=None):
     readable=not failed or math.isfinite(last) and 0<=current-last<=180
     code=data.get('network_error_code')
     code=code if code in ('dns','timeout','certificate','tls','connection_refused','connection') else None
+    if health['status']!='retrying' or '网络或 TLS' not in str(data.get('error','')):code=None
     return dict(enabled=enabled, online=health['online'],readable=bool(readable),network_code=code)
 
 

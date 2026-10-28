@@ -49,3 +49,13 @@ class NetworkRecoveryTests(unittest.TestCase):
             self.assertFalse(health['readable'])
             state=observations({'collection_health':health})
             self.assertEqual(state['collector']['observed'],'critical')
+
+    def test_old_network_diagnostic_is_not_reused_for_a_new_http_failure(self):
+        from zeekr_control.resource_monitor import collection_health
+        from zeekr_control.storage import save
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'private'
+            save(root/'monitor-health.json',dict(status='retrying',heartbeat='1000000',
+                 last_success='600000',error='网关 HTTP 503',network_error_code='timeout',
+                 network_error_at='500000'))
+            self.assertIsNone(collection_health(root,1000)['network_code'])
