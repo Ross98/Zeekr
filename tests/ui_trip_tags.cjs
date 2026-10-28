@@ -197,10 +197,13 @@ async function saveRefreshRace(browser,seed){
       const response=await route.fetch(),body=await response.json();
       const trip=body.events.find(row=>row.id==='report-trip');
       trip.manual_tags=['接娃'];trip.tags=['接娃','通勤'];trip.automatic_commute=true;
+      trip.manual_place_labels={start:'家 <甲>',end:'公司'};trip.start_place=null;trip.end_place=null;
       await route.fulfill({response,json:body});
     });
     await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"]')?.textContent.includes('通勤 · 自动'));
+    assert.match(await page.locator('[data-tag-event="report-trip"] .tag-record-main strong').innerText(),/家 <甲> → 公司/);
+    assert.equal(await page.locator('[data-tag-event="report-trip"] .tag-record-main strong button').count(),0);
     await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
     assert.equal(await page.getByLabel('行程标签（逗号分隔）',{exact:true}).inputValue(),'接娃');
     assert.equal(await page.getByRole('button',{name:'取消本趟自动通勤'}).count(),1);
