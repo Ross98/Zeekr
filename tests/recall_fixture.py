@@ -68,11 +68,17 @@ def populate(app,session,performance=False):
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--performance',action='store_true');parser.add_argument('--port',type=int,default=0);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--performance',action='store_true');parser.add_argument('--mileage-gap',action='store_true');parser.add_argument('--port',type=int,default=0);args=parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
         path=Path(directory)/'private'/'session.json';session={'accessToken':'SYNTHETIC-ONLY','userId':'recall-demo'};save(path,session)
         def forbidden(_):raise AssertionError('Vehicle gateway forbidden')
         app=App(path,client_factory=forbidden);populate(app,session,args.performance)
+        if args.mileage_gap:
+            from zeekr_control.mileage_gaps import MileageGaps
+            start,_=day_bounds('2026-09-20')
+            left=dict(time=start-7200000,observed=start-7200000,km=200,soc=60,off=True,charging=False)
+            right=dict(left,time=start+36000000,observed=start+36000000,km=226,soc=50)
+            MileageGaps(app.database_path.parent/'mileage-gaps.sqlite3').record(hashlib.sha256(b'insights-fixture-car').hexdigest(),left,right)
         server=make_server(app,args.port);print(server.server_port,flush=True)
         try:server.serve_forever()
         finally:server.server_close();app.close()

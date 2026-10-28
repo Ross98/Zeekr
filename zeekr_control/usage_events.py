@@ -65,13 +65,18 @@ def project(identity, kind, summary):
         if change >= 0:
             estimated = round(change*capacity/100, 6)
     mode = charge_mode(report)
+    manual = _object(summary.get('manual_completion'))
+    manual_id = manual.get('gap_id')
     return {'id': identity, 'kind': kind, 'start_time': start, 'end_time': end,
             'start_evidence': start_evidence(summary, kind),
             'duration_seconds': duration, 'distance_km': distance, 'start_soc': a, 'end_soc': b,
             'soc_delta': delta, 'energy_soc_delta': energy_delta,
             'partial': not complete, 'battery_capacity_kwh': capacity,
             'estimated_kwh': estimated, 'charge_mode': mode,
-            'energy_source': 'soc_capacity_estimate' if estimated is not None else None}
+            'energy_source': 'soc_capacity_estimate' if estimated is not None else None,
+            **({'record_source':'manual_completion','mileage_gap_id':summary['manual_completion']['gap_id']}
+               if manual.get('source')=='mileage_gap' and isinstance(manual_id,str)
+               and re.fullmatch(r'[0-9a-f]{64}',manual_id) and identity=='manual_'+manual_id else {})}
 
 
 class UsageEvents:

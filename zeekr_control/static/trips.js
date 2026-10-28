@@ -29,7 +29,7 @@ function localTripsPage() {
     <div class="local-trip-tools"><div class="local-date-nav">${action('前一天','local-day-before','secondary')}${action('今天','local-today','secondary')}${action('后一天','local-day-after','secondary')}</div><div class="local-date-nav">${action(tripManagementOpen?'收起管理':'管理行程','local-manage','secondary')}${action('查询行程','local-reload','secondary','refresh')}<button class="button secondary recall-mobile-map" data-recall-map>查看地图</button></div></div>
     ${tripManagementOpen?'<div id="trip-management"></div>':''}
     <div id="local-trip-activity" class="notice info" role="status"></div>
-    <div id="recall-summary">${recallSummary()}</div>${recallYearPanel()}
+    <div id="recall-summary">${recallSummary()}</div><div id="mileage-gap-workspace">${mileageGapWorkspace()}</div>${recallYearPanel()}
     <div class="tv-day-cards"><section class="card local-trip-list-card tv-chain-card"><div class="card-head"><h2>当天出行</h2><span class="subtle">按时间顺序</span></div><div id="local-trip-list" class="tv-chain-scroll" role="region" aria-label="当天出行链，可滚动" tabindex="0"></div></section>
     <section class="card tv-rhythm-card"><div class="card-head"><h2>一天的出行节奏</h2><span class="subtle">24 小时</span></div><div id="local-trip-clock" class="tv-clock-wrapper"></div></section></div>
     <details class="card local-trip-disclosure section-gap" id="local-trip-details-disclosure" data-detail="local-trip-details" ${localTrips.detailsOpen?'open':''}><summary>采样轨迹与详情<span>按需展开</span></summary><section class="local-trip-detail" id="local-trip-detail"></section></details>
@@ -175,6 +175,7 @@ async function fetchLocalTrips(h) {
     if (localTripVisible(h) && request===h.listRequest) {
       renderLocalTripList();renderLocalTripActivity();
       if($('#recall-summary'))$('#recall-summary').innerHTML=recallSummary();
+      renderMileageGaps();
       renderLocalTripFacts();
       persistNavigation();
     }
