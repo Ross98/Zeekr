@@ -95,6 +95,11 @@ class TripTags:
         place_automatic=self.place_rules.decisions(owner,vehicle,events,guard=guard)
         rows=[];trash=[]
         for event in events:
+            if event.get('record_source')=='manual_completion':
+                from .mileage_gaps import MileageGaps
+                completion=MileageGaps(self.events.path.parent/'mileage-gaps.sqlite3').completion(owner,vehicle,event['id'])
+                if completion:
+                    event['manual_place_labels']={side:completion[side+'_place'] for side in ('start','end')}
             record=annotations.get(event['id']);body=record['body'] if record and not record['deleted'] else {}
             manual=body.get('tags',[])
             decision=automatic.get(event['id'])

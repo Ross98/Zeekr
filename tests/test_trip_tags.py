@@ -33,6 +33,24 @@ class TripTagTests(unittest.TestCase):
 
     def query(self):return self.tags.query('owner','car','2026-09-20')
 
+    def test_manual_completion_labels_are_owner_scoped_and_not_map_places(self):
+        gap='a'*64; event_id='manual_'+gap
+        summary=dict(start_time=self.start,end_time=self.start+3600000,duration_seconds=3600,
+                     distance_km=26,partial=True,manual_completion=dict(source='mileage_gap',gap_id=gap))
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO monitor_events VALUES(?,?,?,?,?)',(event_id,'car','trip_end',json.dumps(summary),self.start))
+        path=self.root/'mileage-gaps.sqlite3'
+        with sqlite3.connect(path) as db:
+            db.execute('CREATE TABLE mileage_gaps(id TEXT PRIMARY KEY,vehicle TEXT,left_time INTEGER,right_time INTEGER,odometer_before REAL,odometer_after REAL,distance_km REAL,soc_before REAL,soc_after REAL)')
+            db.execute('CREATE TABLE gap_completions(gap_id TEXT,owner TEXT,event_id TEXT,revision INTEGER,body TEXT)')
+            db.execute('INSERT INTO mileage_gaps VALUES(?,?,?,?,?,?,?,?,?)',(gap,'car',self.start,self.start+3600000,1,27,26,None,None))
+            db.execute('INSERT INTO gap_completions VALUES(?,?,?,?,?)',(gap,'owner',event_id,1,json.dumps({'start_place':'家 <甲>','end_place':'公司'})))
+        event=next(r for r in self.query()['events'] if r['id']==event_id)
+        self.assertEqual(event['manual_place_labels'],{'start':'家 <甲>','end':'公司'})
+        self.assertIsNone(event['start_place']);self.assertIsNone(event['end_place'])
+        other=next(r for r in self.tags.query('other','car','2026-09-20')['events'] if r['id']==event_id)
+        self.assertNotIn('manual_place_labels',other)
+
     def test_readonly_projection_and_unknown_not_zero(self):
         result=self.query()
         self.assertEqual(len(result['events']),4)
