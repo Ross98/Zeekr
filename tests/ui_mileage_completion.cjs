@@ -15,7 +15,7 @@ const {startEvidence}=require('../scripts/browser-failure-evidence.cjs');
  await page.getByRole('button',{name:'核对并补全',exact:true}).click();assert.equal(await page.getByLabel('到达地点',{exact:true}).inputValue(),'合成公司','Reopening retains unsaved input');
  await page.getByRole('button',{name:'预览补全',exact:true}).click();await page.getByRole('button',{name:'确认并计入行程',exact:true}).waitFor();
  for(const theme of ['light','dark']){await page.getByLabel('外观',{exact:true}).selectOption(theme);for(const width of [1024,1280,1440]){await page.setViewportSize({width,height:1080});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);}}
- await page.locator('.mileage-workspace').screenshot({path:'/private/tmp/zeekr-mileage-completion-preview.png'});
+ await page.locator('.mileage-workspace').screenshot({path:path.join(require('node:os').tmpdir(),'zeekr-mileage-completion-preview.png')});
  await page.evaluate(()=>{const button=document.querySelector('[data-mileage-confirm]');button.click();button.click();});
  await page.waitForFunction(()=>document.querySelector('#mileage-gap-workspace')?.textContent.includes('已手动补全')&&!document.querySelector('#mileage-completion-form'));
  let timeline=await(await page.request.get(origin+'/api/timeline?date=2026-09-20')).json();
