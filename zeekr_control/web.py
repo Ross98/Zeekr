@@ -804,6 +804,17 @@ class App:
 
     def update_insight_record(self, operation, data):
         if operation=='charging-place':return self.update_charging_place(data)
+        if operation=='mileage-gap' and data.get('operation')=='preview':
+            with self.lock:
+                captured=self._read_context()
+                profile=dict(self.profile or {})
+            if data.get('context')!=captured.context:raise RecordConflict('账号或车辆已切换，请重新加载。')
+            def preview():
+                guard=lambda:self._check_context(captured)
+                result=self.mileage_gaps.update(captured.owner,captured.vehicle,data,profile=profile,guard=guard,now=captured.now)
+                result['energy_preview']=self.mileage_gaps.preview_cost(self.usage_calendar,captured.scope,captured.owner,captured.vehicle,result,guard=guard)
+                return result
+            return self._bounded_analysis(captured,preview)
         with self.lock:
             session = self._read_session()
             if not session.get('accessToken'):
@@ -824,6 +835,7 @@ class App:
                            'experiments':self.experiments,'life':self.vehicle_life,'place-corrections':self.daily_timeline,
                            'mileage-gap':self.mileage_gaps}[operation]
                 extra = {'scope':session_scope(session)} if operation in ('experiments','place-corrections') else {}
+                if operation=='mileage-gap':extra['profile']=self.profile
                 result = manager.update(account_scope(session), vehicle, data, guard=guard,**extra)
             result['context'] = context
             try:

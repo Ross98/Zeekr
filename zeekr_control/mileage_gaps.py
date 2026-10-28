@@ -75,13 +75,15 @@ class MileageGaps:
             return dict(json.loads(row['body']),revision=row['revision'],gap_id=row['id'],
                         evidence={k:row[k] for k in ('left_time','right_time','odometer_before','odometer_after','distance_km','soc_before','soc_after')}) if row else None
 
-    def update(self,owner,vehicle,data,guard=None,now=None):
+    def update(self,owner,vehicle,data,guard=None,now=None,profile=None):
         """Attach both private databases: the trip and status commit together."""
         now=int(time.time()*1000) if now is None else now
         identity=data.get('gap_id');revision=data.get('revision')
         if (not isinstance(identity,str) or len(identity)!=64 or any(c not in '0123456789abcdef' for c in identity)
                 or type(revision) is not int or revision<0 or not owner):raise ValueError('补全记录或版本无效。')
-        if 'distance_km' in data:raise ValueError('里程来自原始证据，不能改写。')
+        if 'distance_km' in data or 'battery_capacity_kwh' in data:raise ValueError('里程和电池容量来自服务端依据，不能改写。')
+        preview=data.get('operation')=='preview'
+        if data.get('operation') not in (None,'save','preview'):raise ValueError('补全操作无效。')
         try:
             start,end=[int(datetime.strptime(data[key],'%Y-%m-%dT%H:%M').replace(tzinfo=ZoneInfo('Asia/Shanghai')).timestamp()*1000) for key in ('start','end')]
         except (KeyError,ValueError,TypeError,OverflowError):raise ValueError('请填写有效的北京时间。') from None
@@ -130,9 +132,29 @@ class MileageGaps:
                     a,b=number(other.get('start_time'),1,32503680000000),number(other.get('end_time'),1,32503680000000)
                     if b is not None and b>start and (a is None or a<end):raise RecordConflict('时间与已有行程重叠，请先核对，避免重复计数。')
                 body=dict(start_time=start,end_time=end,start_place=labels[0],end_place=labels[1])
+                previous=json.loads(old['body']) if old else {}
+                basis=data.get('energy_basis',previous.get('energy_basis','none'))
+                if basis not in ('none','confirmed_soc'):raise ValueError('电量依据无效。')
+                energy={}
+                if basis=='confirmed_soc':
+                    a,b=(number(data.get(k,previous.get(k)),0,100) for k in ('start_soc','end_soc'))
+                    if a is None or b is None or b>a:raise ValueError('请核对 0–100% 的起止电量；途中充电或电量增加不能按此方式估算。')
+                    cap=number((profile or {}).get('battery_capacity_kwh'),.001,1000)
+                    if cap is None:raise ValueError('车辆未配置有效电池容量，暂不能估算耗电。')
+                    energy=dict(start_soc=a,end_soc=b,soc_delta=b-a,battery_capacity_kwh=cap)
+                    body.update(energy_basis=basis,start_soc=a,end_soc=b,battery_capacity_kwh=cap)
+                else:body['energy_basis']='none'
                 summary=dict(start_time=start,end_time=end,duration_seconds=(end-start)/1000,distance_km=gap['distance_km'],
                              start_soc=None,end_soc=None,soc_delta=None,partial=True,
                              manual_completion=dict(source='mileage_gap',gap_id=identity,revision=revision+1))
+                summary.update(energy)
+                if energy:summary['manual_completion']['energy_basis']=basis
+                if preview:
+                    from .usage_events import project
+                    db.rollback()
+                    if guard:guard()
+                    return dict(event=project(event_id,'trip_end',summary),status='preview',
+                                date=datetime.fromtimestamp(end/1000,ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d'))
                 if old:
                     current=db.execute('SELECT summary FROM records.monitor_events WHERE id=? AND vehicle=?',(event_id,vehicle)).fetchone()
                     if not current or json.loads(current['summary']).get('manual_completion',{}).get('gap_id')!=identity:
@@ -149,3 +171,27 @@ class MileageGaps:
                 db.execute('INSERT INTO records.trip_record_revisions VALUES(?,1) ON CONFLICT(vehicle) DO UPDATE SET revision=revision+1',(vehicle,))
                 if guard:guard()
         return dict(event_id=event_id,revision=revision+1,date=datetime.fromtimestamp(end/1000,ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d'),status='completed')
+
+    @staticmethod
+    def preview_cost(calendar,scope,owner,vehicle,proposal,guard=None):
+        """Project a proposed event through the existing calendar/cost pipeline."""
+        from .usage_calendar import UsageCalendar
+        proposed=proposal['event']
+        class ProposedEvents:
+            path=calendar.events.path
+            def between(self,car,lower,upper,*,overlap=False):
+                result=calendar.events.between(car,lower,upper,overlap=overlap)
+                result['events']=[e for e in result['events'] if e['id']!=proposed['id']]
+                matches=(proposed['start_time']<upper and proposed['end_time']>lower) if overlap else lower<=proposed['end_time']<upper
+                if car==vehicle and matches:result['events'].append(dict(proposed))
+                result['events'].sort(key=lambda e:(e['end_time'],e['id']),reverse=True)
+                return result
+        projected=UsageCalendar(calendar.events.path,calendar.archive,clock=calendar.clock,store=calendar.store)
+        projected.events=ProposedEvents()
+        result=projected.query(scope,vehicle,proposal['date'],owner=owner)
+        event=next(e for e in result['events'] if e['id']==proposed['id'])
+        if guard:guard()
+        return dict(energy_kwh=event['estimated_kwh'],
+                    kwh_per_100km=round(event['estimated_kwh']/event['distance_km']*100,6) if event['estimated_kwh'] is not None else None,
+                    energy_cost=event['energy_cost'],battery_capacity_kwh=event['battery_capacity_kwh'],
+                    start_soc=event['start_soc'],end_soc=event['end_soc'])

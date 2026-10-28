@@ -166,6 +166,9 @@ class DailyTimeline:
         lower,upper=day_bounds(date)
         records,meta=self._records(scope,vehicle,owner,date,date,now=now)
         month=self.calendar.query(scope,vehicle,date,owner=owner,now=now)
+        costs={event['id']:event.get('energy_cost') for event in month['events']}
+        for row in records:
+            if row.get('record_source')=='manual_completion':row['energy_cost']=costs.get(row['id'])
         day=next(d for d in month['days'] if d['date']==date)
         ended=[r for r in records if lower<=r['end_time']<upper and r['type']!='parking']
         trips=[r for r in ended if r['type']=='trip']

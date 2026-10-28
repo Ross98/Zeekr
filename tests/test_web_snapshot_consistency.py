@@ -30,6 +30,18 @@ class WebSnapshotConsistencyTests(unittest.TestCase):
         with patch.object(FakeClient, 'status', return_value=raw):
             return self.app.refresh(1)
 
+    def test_mileage_cost_preview_runs_outside_app_lock_and_rechecks_context(self):
+        self.refresh(self.raw)
+        context=self.app._read_context()
+        def price(*args,**kwargs):
+            self.assertFalse(self.app.lock._is_owned())
+            kwargs['guard']()
+            return {'energy_kwh':5.16}
+        with patch.object(self.app.mileage_gaps,'update',return_value={'status':'preview','date':'2026-10-28'}),patch.object(self.app.mileage_gaps,'preview_cost',side_effect=price):
+            result=self.app.update_insight_record('mileage-gap',{'operation':'preview','context':context.context})
+        self.assertEqual(result['context'],context.context)
+        self.assertEqual(result['energy_preview']['energy_kwh'],5.16)
+
     def test_older_and_missing_time_responses_keep_accepted_state_and_location(self):
         original = self.refresh(self.raw)
         location = self.app.location()
