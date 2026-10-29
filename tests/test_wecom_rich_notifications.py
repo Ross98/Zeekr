@@ -8,6 +8,7 @@ import unittest
 import zlib
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import URLError
 
 from zeekr_control.notifications import DeliveryError, WeComSender
 from zeekr_control.storage import save
@@ -224,6 +225,90 @@ class RichDeliveryTests(unittest.TestCase):
         parked=self.sample(120,km=100+distance,soc=76)
         for seconds in range(180,721,60):
             self.monitor.observe('test-vehicle',parked,self.BASE+seconds*1000)
+
+    def _wecom(self):
+        path = Path(self.temp.name) / 'wecom.json'
+        save(path, {'webhook_url': 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=SYNTHETIC_PRIVATE_KEY'})
+        return WeComSender(path)
+
+    def test_wecom_timeout_recovers_after_restart_without_repeating_bark(self):
+        from zeekr_control.monitor import Monitor
+        self._trip(); payloads = []; alerts = []
+        class Opener:
+            def open(inner, request, timeout):
+                payloads.append(json.loads(request.data))
+                if len(payloads) == 1:
+                    raise URLError(TimeoutError('PRIVATE'))
+                return io.BytesIO(b'{"errcode":0}')
+        sender = self._wecom()
+        now = self.BASE + 720000
+        with patch('zeekr_control.notifications.build_opener', return_value=Opener()):
+            self.monitor.deliver(sender, now, lambda *args: alerts.append(args))
+            event = self.monitor.events()[0]
+            self.assertEqual((event['delivery'], event['image_delivery'], event['attempts']), ('pending', 'pending', 1))
+            frozen = event['message']
+            self.monitor = Monitor(self.monitor.tracks.path, map_renderer=self.monitor.map_renderer)
+            self.monitor.deliver(sender, now + 1000, lambda *args: alerts.append(args))
+            self.assertEqual(len(payloads), 1)
+            self.monitor.deliver(sender, now + 61000, lambda *args: alerts.append(args))
+            self.monitor.deliver(sender, now + 3600000, lambda *args: alerts.append(args))
+        self.assertEqual([p['msgtype'] for p in payloads], ['markdown', 'markdown', 'image'])
+        self.assertEqual(payloads[0], payloads[1])
+        self.assertEqual(self.monitor.events()[0]['message'], frozen)
+        self.assertEqual((self.monitor.events()[0]['delivery'], self.monitor.events()[0]['image_delivery']), ('sent', 'sent'))
+        self.assertEqual(len(alerts), 2)  # start + end, each once
+
+    def test_wecom_ambiguous_retries_stop_after_two_requests(self):
+        self._trip(); payloads = []
+        class Opener:
+            def open(inner, request, timeout):
+                payloads.append(json.loads(request.data))
+                raise URLError(TimeoutError('PRIVATE'))
+        with patch('zeekr_control.notifications.build_opener', return_value=Opener()):
+            for offset in (0, 61000, 3600000, 7200000):
+                self.monitor.deliver(self._wecom(), self.BASE + 720000 + offset)
+        self.assertEqual(len(payloads), 2)
+        event = self.monitor.events()[0]
+        self.assertEqual((event['delivery'], event['attempts'], event['image_delivery']), ('uncertain', 2, 'pending'))
+
+    def test_wecom_image_retry_does_not_repeat_successful_text(self):
+        self._trip(); types = []; image_calls = 0
+        class Opener:
+            def open(inner, request, timeout):
+                nonlocal image_calls
+                kind = json.loads(request.data)['msgtype']; types.append(kind)
+                if kind == 'image':
+                    image_calls += 1
+                    if image_calls == 1: raise URLError(TimeoutError('PRIVATE'))
+                return io.BytesIO(b'{"errcode":0}')
+        with patch('zeekr_control.notifications.build_opener', return_value=Opener()):
+            self.monitor.deliver(self._wecom(), self.BASE + 720000)
+            self.monitor.deliver(self._wecom(), self.BASE + 781000)
+            self.monitor.deliver(self._wecom(), self.BASE + 900000)
+        self.assertEqual(types, ['markdown', 'image', 'image'])
+        self.assertEqual(self.monitor.events()[0]['image_delivery'], 'sent')
+
+    def test_wecom_repeated_image_timeouts_stop_without_repeating_text(self):
+        self._trip(); types = []
+        class Opener:
+            def open(inner, request, timeout):
+                kind = json.loads(request.data)['msgtype']; types.append(kind)
+                if kind == 'image': raise URLError(TimeoutError('PRIVATE'))
+                return io.BytesIO(b'{"errcode":0}')
+        with patch('zeekr_control.notifications.build_opener', return_value=Opener()):
+            for offset in (0, 61000, 3600000):
+                self.monitor.deliver(self._wecom(), self.BASE + 720000 + offset)
+        self.assertEqual(types, ['markdown', 'image', 'image'])
+        self.assertEqual(self.monitor.events()[0]['image_delivery'], 'uncertain')
+
+    def test_legacy_uncertain_event_is_not_replayed_by_new_sender(self):
+        self._trip()
+        with self.monitor.tracks.connect() as db:
+            db.execute("UPDATE monitor_events SET delivery='uncertain',attempts=1,error='通知响应未确认' WHERE kind='trip_end'")
+        with patch('zeekr_control.notifications.build_opener') as opener:
+            self.monitor.deliver(self._wecom(), self.BASE + 3600000)
+        opener.assert_not_called()
+        self.assertEqual(self.monitor.events()[0]['delivery'], 'uncertain')
 
     def test_short_trip_only_sends_text_and_never_renders_or_retries_image(self):
         self._trip(4.9);calls=[]

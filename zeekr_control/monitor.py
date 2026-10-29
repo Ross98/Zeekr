@@ -633,7 +633,7 @@ class Monitor:
             except DeliveryCancelled:
                 delivery,error='pending',None
             except DeliveryError as exc:
-                delivery = 'uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts >= 5 else 'pending'
+                delivery = exc.retry_state(attempts)
                 error = str(exc)[:100]
                 next_attempt = clock() + min(3600, 60 * 2 ** attempts) * 1000
             except Exception:
@@ -740,7 +740,7 @@ class Monitor:
             except DeliveryCancelled:
                 delivery,error='pending',None
             except DeliveryError as exc:
-                delivery='uncertain' if exc.ambiguous else 'failed' if exc.permanent or attempts>=5 else 'pending'
+                delivery=exc.retry_state(attempts)
                 error=str(exc)[:100]; next_attempt=clock()+min(3600,60*2**attempts)*1000
             except Exception as exc:
                 if called:
