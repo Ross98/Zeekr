@@ -1,9 +1,13 @@
 """Outbound-only notification senders; secrets never appear in errors."""
 import base64
 from datetime import datetime
+import errno
 import hashlib
+from http.client import HTTPException
 import json
 import re
+import socket
+import ssl
 from zoneinfo import ZoneInfo
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -24,10 +28,42 @@ def _read_response(response):
 
 
 class DeliveryError(Exception):
-    def __init__(self, message, ambiguous=False, permanent=False):
+    def __init__(self, message, ambiguous=False, permanent=False, retry_ambiguous=False):
         super().__init__(message)
         self.ambiguous = ambiguous
         self.permanent = permanent
+        self.retry_ambiguous = retry_ambiguous
+
+    def retry_state(self, previous_attempts):
+        """WeCom transport uncertainty gets at most one extra outbox attempt.
+
+        Other ambiguous errors and interrupted sends retain the no-replay rule.
+        The attempt counter is durable; no retries happen inside the sender.
+        """
+        if self.ambiguous:
+            return 'pending' if self.retry_ambiguous and previous_attempts < 1 else 'uncertain'
+        return 'failed' if self.permanent or previous_attempts >= 5 else 'pending'
+
+
+def _wecom_network_error(error, response_started):
+    """Fixed labels only; provider URLs, keys and arbitrary reasons stay local."""
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, ssl.SSLCertVerificationError):
+        label, before_send, permanent = '证书校验失败', True, True
+    elif isinstance(reason, socket.gaierror):
+        label, before_send, permanent = 'DNS 解析失败', True, False
+    elif isinstance(reason, ConnectionRefusedError) or getattr(reason, 'errno', None) == errno.ECONNREFUSED:
+        label, before_send, permanent = '连接被拒绝', True, False
+    elif isinstance(reason, TimeoutError) or getattr(reason, 'errno', None) == errno.ETIMEDOUT:
+        label, before_send, permanent = '连接或读取超时', False, False
+    elif isinstance(reason, ssl.SSLError):
+        label, before_send, permanent = 'TLS 握手或传输失败', False, False
+    else:
+        label, before_send, permanent = '网络连接中断', False, False
+    ambiguous = response_started or not before_send
+    return DeliveryError('企业微信通知失败（%s，系统网络）' % label,
+                         ambiguous=ambiguous, permanent=permanent,
+                         retry_ambiguous=ambiguous and not permanent)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -150,15 +186,20 @@ class WeComSender:
             raise DeliveryError('通知内容过长', permanent=True)
         encoded = json.dumps(payload, ensure_ascii=False).encode()
         request = Request(url, data=encoded, headers={'Content-Type': 'application/json'}, method='POST')
+        response_started = False
         try:
             with build_opener(NoRedirect()).open(request, timeout=20) as response:
+                response_started = True
                 result = _read_response(response)
         except HTTPError as exc:
             # A server error may occur after the message has been accepted.
             raise DeliveryError('通知 HTTP 错误 %d' % exc.code, ambiguous=exc.code >= 500,
-                                permanent=300 <= exc.code < 500 and exc.code != 429) from None
-        except (URLError, OSError, ValueError):
-            raise DeliveryError('通知响应未确认', ambiguous=True) from None
+                                permanent=300 <= exc.code < 500 and exc.code != 429,
+                                retry_ambiguous=exc.code >= 500) from None
+        except (URLError, OSError, HTTPException) as exc:
+            raise _wecom_network_error(exc, response_started) from None
+        except ValueError:
+            raise DeliveryError('通知响应格式未确认', ambiguous=True) from None
         if not isinstance(result, dict) or type(result.get('errcode')) is not int:
             raise DeliveryError('通知响应格式未确认', ambiguous=True)
         code = result['errcode']
