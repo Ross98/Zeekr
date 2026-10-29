@@ -4,6 +4,21 @@ from .usage_reports import DAY, date_label
 
 
 def estimate(events, books):
+    # New-policy trip SOC already contains any short stop inside its boundaries.
+    # Legacy rows retain their historical valuation; partial overlaps stay unknown.
+    trips = sorted((e for e in events if e['kind']=='trip_end'
+                    and e.get('segmentation_policy')=='p-gear-v1'
+                    and e.get('start_time') is not None), key=lambda e:e['start_time'])
+    if trips:
+        from bisect import bisect_right
+        starts=[e['start_time'] for e in trips]
+        prefix_ends=[]
+        for e in trips:prefix_ends.append(max(prefix_ends[-1] if prefix_ends else 0,e['end_time']))
+        def included(e):
+            if e['kind']!='parking' or e.get('start_time') is None:return False
+            index=bisect_right(starts,e['start_time'])-1
+            return index>=0 and e['end_time']<=prefix_ends[index]
+        events=[e for e in events if not included(e)]
     result = {}
     capacity = stock = known = cents = None
     last_end = None

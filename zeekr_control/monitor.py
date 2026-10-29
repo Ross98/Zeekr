@@ -28,7 +28,43 @@ from .trip_visibility import visible_clause, cancel_event_delivery
 
 MAX_AGE = MAX_GAP
 STOP_WAIT = 600000
+PARK_CONFIRM_WAIT = 60000
+PARK_INFERRED_WAIT = 120000
 MAX_SESSION_SAMPLES = 1000
+
+
+def confirm_p_parking(trip, point, now, *, interrupted=False):
+    """Fresh P/off evidence confirms a stop without treating missing speed as zero.
+
+    Once valid zero speed is observed, advancing P/off states with unchanged
+    odometer may corroborate it even when parked caches omit speed validity.
+    Without a valid zero, require three states over two minutes and record the
+    standstill as inferred from P/off and stable odometer, not measured zero.
+    """
+    prior = trip.get('park_confirmation')
+    eligible = (trip.get('stop') is not None and point.get('gear') == 'P'
+                and point['off'] is True and point['speed'] in (None, 0)
+                and point['charging'] is False and point['km'] is not None
+                and point['km'] == trip['stop']['km'])
+    if (not eligible or interrupted or prior and
+            (not 0 <= now-prior['observed'] <= MAX_AGE
+             or not 0 < point['time']-prior['state_time'] <= MAX_AGE
+             or point['km'] != prior['km'])):
+        trip.pop('park_confirmation', None)
+        prior = None
+    if not eligible:
+        return False
+    if prior is None:
+        trip['park_confirmation'] = dict(started=now, first_state_time=point['time'],
+            observed=now, state_time=point['time'], km=point['km'], samples=1,
+            zero_speed_seen=point['speed'] == 0)
+        return False
+    prior.update(observed=now, state_time=point['time'], samples=prior['samples']+1,
+                 zero_speed_seen=prior['zero_speed_seen'] or point['speed'] == 0)
+    wait = PARK_CONFIRM_WAIT if prior['zero_speed_seen'] else PARK_INFERRED_WAIT
+    return (prior['samples'] >= (2 if prior['zero_speed_seen'] else 3)
+            and now-prior['started'] >= wait
+            and point['time']-prior['first_state_time'] >= wait)
 
 
 def short_trip(data):
@@ -300,10 +336,18 @@ class Monitor:
                                                (['late_start'] if partial else []) +
                                                (['charge_overlap'] if charge_overlap else [])}}
 
-    def _finish_trip(self, db, vehicle, trip, now, battery_capacity_kwh, profile):
+    def _finish_trip(self, db, vehicle, trip, now, battery_capacity_kwh, profile, *, p_confirmed=False):
         data = summary(trip['start'], trip['stop'], trip['partial'])
         data['start_evidence'] = saved_start_evidence(trip, 'trip')
         data['battery_capacity_kwh'] = battery_capacity_kwh
+        data['segmentation_policy'] = 'p-gear-v1'
+        if p_confirmed:
+            confirmation = trip['park_confirmation']
+            zero_seen = confirmation['zero_speed_seen']
+            data['end_evidence'] = dict(basis='p_gear_confirmed' if zero_seen else 'p_gear_stationary_inferred', confirmed_at=now,
+                state_samples=confirmation['samples'], zero_speed_observed=zero_seen,
+                confirmation_ms=PARK_CONFIRM_WAIT if zero_seen else PARK_INFERRED_WAIT,
+                gear_mapping_source='owner_selected')
         charge_overlap = (trip.get('charging_time') is not None
                           and trip['charging_time'] <= trip['stop']['time'])
         if charge_overlap:
@@ -356,9 +400,12 @@ class Monitor:
         confirmation_cache = parking_cache and (timestamp == previous['time'] or now - timestamp > MAX_AGE)
         repeated_stop = (confirmation_cache
                          and point['off'] is True and point['charging'] is False
+                         and point.get('gear') not in ('D', 'N', 'R')
                          and point['speed'] in (None, 0) and point['km'] is not None
                          and point['km'] == trip['stop']['km'])
         if repeated_stop:
+            if point.get('gear') != 'P' or now-timestamp > MAX_AGE:
+                trip.pop('park_confirmation', None)
             confirmation = trip.get('stop_confirmation') or {
                 'started': trip['stop']['observed'], 'observed': trip['stop']['observed']}
             if not 0 <= now - confirmation['observed'] <= MAX_AGE:
@@ -377,6 +424,7 @@ class Monitor:
             # Contradictory/unknown cached state cannot bridge ten minutes
             # of parking confirmation, nor may an older cache undo it.
             trip['partial'] = True
+            trip.pop('park_confirmation', None)
             trip['stop_confirmation'] = {'started':0, 'observed':0, 'state_time':timestamp}
             with self.tracks.connect() as db:
                 db.execute('INSERT OR REPLACE INTO monitor_state VALUES (?,?)',
@@ -411,6 +459,7 @@ class Monitor:
         parking_continuous = (trip and trip['stop'] and confirmation
                               and 0 <= now - confirmation['observed'] <= MAX_AGE
                               and point['off'] is True and not moving
+                              and point.get('gear') not in ('D', 'N', 'R')
                               and point['km'] == trip['stop']['km'])
         if trip and not continuous and not parking_continuous:
             trip['partial'], trip['stop'] = True, None
@@ -428,7 +477,8 @@ class Monitor:
             # The first arrival can include the last driven distance. Once a
             # stop is frozen, further distance is evidence of resumed motion.
             resumed_motion = moving or (trip['stop'] is not None and distance_moved)
-            if trip['stop'] is None or resumed_motion or point['off'] is not True:
+            parked = point['off'] is True and point.get('gear') not in ('D', 'N', 'R')
+            if trip['stop'] is None or resumed_motion or not parked:
                 # A short stop only belongs to the trip if driving resumes.
                 # Final parking must not evict driving samples at the cap.
                 parking_buffer = trip.pop('parking_buffer', {})
@@ -444,11 +494,12 @@ class Monitor:
                 self.tracks.record(vehicle, raw, now, track_gap_seconds)
             if point['charging'] is True and trip.get('charging_time') is None:
                 trip['charging_time'] = timestamp
-            if resumed_motion or point['off'] is not True:
+            if resumed_motion or not parked:
                 trip['stop'] = None
                 trip['parking'] = None
                 trip['parking_samples'] = 0
                 trip.pop('stop_confirmation', None)
+                trip.pop('park_confirmation', None)
             elif trip['stop'] is None:
                 trip['stop'] = point
                 trip['report_end'] = telemetry
@@ -460,6 +511,9 @@ class Monitor:
                 trip['parking_samples'] = trip.get('parking_samples', 0) + 1
                 trip.setdefault('stop_confirmation', {
                     'started': trip['stop']['observed']})['observed'] = now
+            p_confirmed = confirm_p_parking(trip, point, now, interrupted=sampling_gap or not continuous)
+        else:
+            p_confirmed = False
         if charge:
             if not continuous:
                 charge['partial'] = True
@@ -477,9 +531,11 @@ class Monitor:
                     and point['km'] == trip['stop']['km']):
                 self._finish_trip(db, vehicle, trip, now, battery_capacity_kwh, profile)
                 trip = None
-            if (trip and trip['stop'] and timestamp - trip['stop']['time'] >= STOP_WAIT
-                    and now - trip['stop_confirmation']['started'] >= STOP_WAIT):
-                self._finish_trip(db, vehicle, trip, now, battery_capacity_kwh, profile)
+            if (trip and trip['stop'] and (p_confirmed or
+                    timestamp - trip['stop']['time'] >= STOP_WAIT
+                    and now - trip['stop_confirmation']['started'] >= STOP_WAIT)):
+                self._finish_trip(db, vehicle, trip, now, battery_capacity_kwh, profile,
+                                  p_confirmed=p_confirmed)
                 trip = None
             if point['charging'] is True and charge is None:
                 charge = {'start': point, 'partial': not continuous or previous['charging'] is not False or sampling_gap,
