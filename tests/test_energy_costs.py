@@ -8,6 +8,24 @@ def event(identity,kind,start,end,a,b,capacity=100,partial=False):
                 estimated_kwh=energy,partial=partial)
 
 class EnergyCostTests(unittest.TestCase):
+    def test_new_policy_nested_parking_is_counted_only_in_trip(self):
+        rows=[event('c','charge_end',1,2,0,50),event('p','parking',4,5,47,47),
+              event('t','trip_end',3,6,50,42)]
+        books={'c':dict(actual_cents=5000,metered_kwh=50)}
+        self.assertIsNone(estimate(rows,books)['t']['estimated_cents'])
+        rows[-1]['segmentation_policy']='p-gear-v1'
+        costs=estimate(rows,books)
+        self.assertEqual(costs['t']['estimated_cents'],800)
+        self.assertNotIn('p',costs)
+
+    def test_new_policy_does_not_hide_partial_overlap_or_change_legacy_costs(self):
+        rows=[event('c','charge_end',1,2,0,50),event('p','parking',3,5,50,49),
+              event('t','trip_end',4,7,49,42)]
+        rows[-1]['segmentation_policy']='p-gear-v1'
+        costs=estimate(rows,{'c':dict(actual_cents=5000,metered_kwh=50)})
+        self.assertIsNone(costs['t']['estimated_cents'])
+        self.assertIn('p',costs)
+
     def test_complete_inventory_conserves_paid_cost_across_parking_and_input_order(self):
         from itertools import permutations
         rows=[event('c1','charge_end',1,2,0,20),event('t1','trip_end',3,4,20,10),

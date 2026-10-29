@@ -77,6 +77,7 @@ def project(identity, kind, summary):
             'estimated_kwh': estimated, 'charge_mode': mode,
             'energy_source': ('manual_soc_capacity_estimate' if is_manual and manual.get('energy_basis')=='confirmed_soc'
                               else 'soc_capacity_estimate') if estimated is not None else None,
+            **({'segmentation_policy':'p-gear-v1'} if summary.get('segmentation_policy')=='p-gear-v1' else {}),
             **({'record_source':'manual_completion','mileage_gap_id':summary['manual_completion']['gap_id']}
                if is_manual else {})}
 
