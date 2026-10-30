@@ -15,7 +15,7 @@ from .personal_store import account_scope
 from .snapshots import session_scope
 from .storage import load
 from .tracks import day_bounds
-from .trip_visibility import cancel_event_delivery, has_sending_delivery
+from .trip_visibility import cancel_event_delivery, has_sending_delivery, visible_clause
 from .usage_events import project
 
 POLICY='p-gear-v1'
@@ -40,6 +40,14 @@ def earlier_digest(db, lower):
     return digest(evidence)
 
 
+def require_visible_original(db, vehicle, identity):
+    # Match report visibility, scoped to the original vehicle. The apply caller
+    # holds BEGIN IMMEDIATE so a recycle cannot race between this check and writes.
+    if not db.execute('SELECT 1 FROM monitor_events e WHERE e.vehicle=? AND e.id=? AND '
+                      +visible_clause(db,'e'),(vehicle,identity)).fetchone():
+        raise ValueError('原行程已回收或不可见，不能重分段。')
+
+
 def build_plan(database, vehicle, date, replayed, *, context=None):
     lower,upper=day_bounds(date)
     with closing(sqlite3.connect(Path(database).absolute().as_uri()+'?mode=ro',uri=True)) as db:
@@ -52,6 +60,7 @@ def build_plan(database, vehicle, date, replayed, *, context=None):
             start,end=body.get('start_time'),body.get('end_time')
             if end is None or not lower<=end<upper or body.get('segmentation_policy')==POLICY:continue
             if body.get('manual_completion'):continue
+            require_visible_original(db,vehicle,original['id'])
             if start is None or start<lower:raise ValueError('跨日期行程不能自动重分段。')
             parts=[]
             for r in replayed:
@@ -126,6 +135,7 @@ def apply_plan(root, plan, backup):
             active=json.loads(state[0]).get('trip') if state else None
             for change in plan['changes']:
                 old=change['original'];identity=old['id'];body=json.loads(old['summary'])
+                require_visible_original(db,plan['vehicle'],identity)
                 current=db.execute('SELECT * FROM monitor_events WHERE id=?',(identity,)).fetchone()
                 if current is None or dict(current)!=old or has_sending_delivery(db,identity):raise ValueError('原行程或发送状态已变化，停止修复。')
                 if active and active['start']['time']<body['end_time']:raise ValueError('进行中行程与修复范围相交。')
