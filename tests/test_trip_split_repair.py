@@ -59,6 +59,48 @@ class TripSplitRepairTests(unittest.TestCase):
         with self.live.tracks.connect() as db:db.execute("UPDATE monitor_events SET error='changed' WHERE id=?",(self.parts[0]['id'],))
         with self.assertRaises(ValueError):self.apply_plan(self.root,self.plan,self.root/'backup')
 
+    def _recycle(self, vehicle='car'):
+        with self.live.tracks.connect() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS trip_record_trash(vehicle TEXT,event_id TEXT,removed_at INTEGER,PRIMARY KEY(vehicle,event_id))')
+            db.execute('INSERT INTO trip_record_trash VALUES(?,?,?)',(vehicle,self.parts[0]['id'],BASE+1000000))
+
+    def _visible_totals(self):
+        from zeekr_control.usage_events import UsageEvents
+        events=UsageEvents(self.root/'tracks.sqlite3').between('car',BASE,BASE+86400000)['events']
+        return len(events),sum(e['distance_km'] or 0 for e in events),sum(e['estimated_kwh'] or 0 for e in events)
+
+    def _snapshot(self):
+        with self.live.tracks.connect() as db:
+            tables=[r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+            return {table:db.execute('SELECT * FROM '+table+' ORDER BY rowid').fetchall() for table in tables}
+
+    def test_plan_rejects_already_recycled_original(self):
+        self._recycle();before=self._snapshot()
+        with self.assertRaisesRegex(ValueError,'回收'):
+            self.build_plan(self.root/'tracks.sqlite3','car','2024-01-01',self.parts)
+        self.assertEqual(self._snapshot(),before)
+        self.assertEqual(self._visible_totals(),(0,0,0))
+
+    def test_apply_rechecks_recycle_state_after_plan_without_resurrecting_totals(self):
+        self._recycle();before=self._snapshot()
+        with self.assertRaisesRegex(ValueError,'回收'):
+            self.apply_plan(self.root,self.plan,self.root/'backup')
+        self.assertEqual(self._snapshot(),before)
+        self.assertEqual(self._visible_totals(),(0,0,0))
+        self.assertFalse((self.root/'backup').exists())
+
+    def test_recycled_identifier_for_other_vehicle_does_not_block_visible_original(self):
+        self._recycle('other-car')
+        self.assertTrue(self.apply_plan(self.root,self.plan,self.root/'backup'))
+        self.assertEqual(self._visible_totals(),(2,16,6.88))
+
+    def test_restored_visible_original_can_be_replanned(self):
+        self._recycle()
+        with self.live.tracks.connect() as db:db.execute('DELETE FROM trip_record_trash')
+        plan=self.build_plan(self.root/'tracks.sqlite3','car','2024-01-01',self.parts)
+        self.assertTrue(self.apply_plan(self.root,plan,self.root/'backup'))
+        self.assertEqual(self._visible_totals(),(2,16,6.88))
+
     def test_plan_rejects_changed_totals_or_out_of_window_boundaries(self):
         for change in ('distance_km','start_time'):
             parts=copy.deepcopy(self.parts);body=json.loads(parts[0]['summary'])
