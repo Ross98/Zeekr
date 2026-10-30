@@ -370,6 +370,34 @@ class RichDeliveryTests(unittest.TestCase):
         self.monitor.deliver(Sender(),self.BASE+900000)
         self.assertEqual(len(calls),1)
 
+    def test_image_retains_frozen_place_names_and_references_without_pinning_inference(self):
+        self._trip(); calls=[]
+        start_ref={'source':'commute_rule','side':'start','rule_revision':6}
+        end_ref={'source':'saved_place','position_source':'historical','position_reference':{'age_seconds':120}}
+        with self.monitor.tracks.connect() as db:
+            row=db.execute("SELECT id,summary FROM monitor_events WHERE kind='trip_end'").fetchone()
+            data=json.loads(row[1]);data.update(addresses_resolved=True,start_address='测试家园',end_address='测试公司',
+                start_location_reference=start_ref,end_location_reference=end_ref)
+            db.execute('UPDATE monitor_events SET summary=? WHERE id=?',(json.dumps(data),row[0]))
+        class Renderer:
+            def render_trip(inner,report,route,name):
+                calls.append((report,route,name));return TripImageTests._solid_png((220,225,230))
+        class Sender:
+            def send_markdown(inner,value):pass
+            def send_image(inner,value):pass
+        self.monitor.map_renderer=Renderer()
+        self.monitor.address_resolver=lambda location:self.fail('Frozen inferred place must not be replaced by geocoding route start')
+        self.monitor.deliver(Sender(),self.BASE+720000)
+        self.assertEqual(len(calls),1)
+        report,route,name=calls[0]
+        self.assertIsNone(name)
+        self.assertEqual(report['image_places'],{'start':{'name':'测试家园','reference':start_ref},'end':{'name':'测试公司','reference':end_ref}})
+        with self.monitor.tracks.connect() as db:
+            stored=json.loads(db.execute('SELECT summary FROM monitor_events WHERE id=?',(row[0],)).fetchone()[0])
+        self.assertNotIn('image_places',stored['report_v2'])
+        self.monitor.deliver(Sender(),self.BASE+900000)
+        self.assertEqual(len(calls),1)
+
     def test_trip_sends_markdown_then_png_once(self):
         self._trip()
         class Sender:

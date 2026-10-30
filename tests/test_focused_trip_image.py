@@ -4,6 +4,28 @@ from pathlib import Path
 from zeekr_control.focused_trip_image import build_geometry,fit_geometry,render_focused_trip_png,FocusedTripImage
 
 class FocusedTripTests(unittest.TestCase):
+ def test_image_endpoint_captions_preserve_provenance_without_false_map_pins(self):
+  from zeekr_control.focused_trip_image import Surface
+  report={'partial':True,'metrics':{},'image_places':{
+   'start':{'name':'测试家园','reference':{'source':'commute_rule'}},
+   'end':{'name':'测试公司','reference':{'source':'saved_place','position_source':'historical'}}}}
+  calls=[];original=Surface.text
+  def capture(surface,x,y,text,*args,**kwargs):
+   calls.append((x,y,str(text)));return original(surface,x,y,text,*args,**kwargs)
+  with patch.object(Surface,'text',capture):render_focused_trip_png(report,self.route(),build_geometry(self.route()))
+  text=[r[2] for r in calls]
+  self.assertTrue(any('测试家园' in t and '通勤推定' in t and '非精确定位' in t for t in text))
+  self.assertTrue(any('测试公司' in t and '参考定位' in t for t in text))
+  self.assertNotIn('起点名称未记录',text)
+  self.assertFalse(any(y>=114 and ('测试家园' in t or '测试公司' in t) for x,y,t in calls))
+
+ def test_long_endpoint_names_fit_without_truncating_qualifier(self):
+  from zeekr_control.focused_trip_image import Surface,place_caption
+  surface=Surface(1068,886,(0,0,0))
+  value=place_caption(surface,'起点',{'name':'测试地点'*40,'reference':{'source':'commute_rule'}},460)
+  self.assertLessEqual(surface.text_width(value,18),460)
+  self.assertIn('通勤推定',value);self.assertIn('非精确定位',value)
+
  def test_decimal_and_colon_share_numeric_baseline(self):
   from zeekr_control.focused_trip_image import _atlas
   index,masks=_atlas()

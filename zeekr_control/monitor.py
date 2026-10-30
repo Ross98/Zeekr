@@ -778,8 +778,12 @@ class Monitor:
                 if self.map_renderer is None:
                     raise ValueError('未配置真实地图渲染器')
                 if hasattr(self.map_renderer, 'render_trip'):
+                    # The frozen notification names belong to event endpoints,
+                    # not necessarily to the first/last trustworthy GPS samples.
+                    report=dict(report,image_places={side:dict(name=data.get(side+'_address'),
+                        reference=data.get(side+'_location_reference')) for side in ('start','end')})
                     name=data.get('start_address') if not data.get('start_location_reference') else None
-                    if not name and self.address_resolver and route.get('segments'):
+                    if not name and not data.get('start_address') and self.address_resolver and route.get('segments'):
                         try:
                             name=self.address_resolver(dict(route['segments'][0][0],valid=True))
                         except Exception:
