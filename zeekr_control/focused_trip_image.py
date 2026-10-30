@@ -225,6 +225,26 @@ class Surface:
 def _number(value):return '—' if type(value) not in (float,int) or not math.isfinite(value) else ('%.1f'%value).rstrip('0').rstrip('.')
 
 
+def place_caption(surface, prefix, place, width):
+    """Fit names first; never truncate the provenance or promote it to GPS."""
+    place=place if isinstance(place,dict) else {}
+    value=place.get('name');name=' '.join(value.split())[:100] if isinstance(value,str) else ''
+    if not name:return prefix+'：位置未知'
+    reference=place.get('reference');note=''
+    if isinstance(reference,dict):
+        source=reference.get('source');position=reference.get('position_source')
+        if source=='commute_rule':note='通勤推定，非精确定位'
+        elif source=='saved_place':
+            note={'direct':'已标注','boundary_sample':'已标注·边界采样',
+                  'parking_inferred':'已标注·停车推定'}.get(position,'已标注·参考定位')
+        else:note='参考地点，非精确定位'
+    suffix='（'+note+'）' if note else ''
+    shortened=False
+    while name and surface.text_width(prefix+'：'+name+('…' if shortened else '')+suffix,18)>width:
+        name=name[:-1];shortened=True
+    return prefix+'：'+name+('…' if shortened else '')+suffix
+
+
 def render_focused_trip_png(report,route,geometry,start_name=None):
     fitted=fit_geometry(geometry['segments']+geometry.get('matched',[]));surface=Surface(WIDTH,HEIGHT,BG)
     original=[[fitted['transform'](p) for p in line] for line in geometry['segments']]
@@ -234,7 +254,11 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
         when=('%s  %s — %s'%(start.strftime('%m月%d日'),start.strftime('%H:%M'),end.strftime('%H:%M'))) if start.date()==end.date() else '%s — %s'%(start.strftime('%m/%d %H:%M'),end.strftime('%m/%d %H:%M'))
         surface.text(1012-surface.text_width(when,21),53,when,21,MUTED)
     except (KeyError,TypeError,ValueError,OverflowError):surface.text(760,53,'时间未记录',21,MUTED)
-    if report.get('partial'):surface.text(56,85,'记录片段',18,(242,182,87))
+    places=report.get('image_places')
+    if report.get('partial'):surface.text(235 if places else 56,52 if places else 85,'记录片段',18,(242,182,87))
+    if isinstance(places,dict):
+        surface.text(56,86,place_caption(surface,'起点',places.get('start'),460),18,MUTED)
+        surface.text(540,86,place_caption(surface,'终点',places.get('end'),472),18,MUTED)
     # Half-size context, interpolated back up: gentle blur, no labels or icons.
     context=Surface(478,260,PAPER)
     for road in geometry['roads']:
@@ -271,7 +295,7 @@ def render_focused_trip_png(report,route,geometry,start_name=None):
         for p in segment:map_surface.circle(*p,2,(0,102,80))
     for letter,point,color in (('A',original[0][0],(0,102,80)),('B',original[-1][-1],(175,91,17))):
         x,y=point;map_surface.circle(x,y,14,(255,255,255));map_surface.circle(x,y,11,color);map_surface.text(x-4.5,y-6,letter,13,(255,255,255))
-    name=' '.join(str(start_name or '起点名称未记录').split())[:100]
+    name=' '.join(str(start_name or ('首个采样点' if isinstance(places,dict) else '起点名称未记录')).split())[:100]
     while map_surface.text_width(name,18)>500:name=name[:-2]+'…' if len(name)>2 else name[:1]
     x,y=original[0][0];labelx=min(920-map_surface.text_width(name,18),max(20,x+20));labely=max(20,y-34)
     map_surface.rect(labelx-4,labely-3,map_surface.text_width(name,18)+8,25,PAPER);map_surface.text(labelx,labely,name,18,(23,62,50))
