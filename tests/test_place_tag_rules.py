@@ -124,6 +124,9 @@ class PlaceTagRuleTests(unittest.TestCase):
         self.store.change('owner','car','place_corrections','save','manual_end',
             dict(record_id='manual',side='end',action='assign',target_key='station',label_only=True),0)
         row=self.rows()['manual'];self.assertEqual(row['tags'],['充电'])
+        self.assertEqual(row['resolved_places']['end']['key'],'station')
+        self.assertEqual(row['resolved_places']['end']['evidence'],'user_confirmation')
+        self.assertNotIn('latitude',row['resolved_places']['end'])
         self.assertEqual(row['automatic_place_tags'][0]['evidence']['sides'][0]['source'],'user_confirmation')
         with sqlite3.connect(self.db) as db:
             self.assertFalse(any(json.loads(r[0])['trusted'] for r in db.execute('SELECT location FROM observations')))

@@ -4,7 +4,7 @@ async function ruleContextRaces(browser,seed){
  const page=await browser.newPage({viewport:{width:1440,height:1000}});
  try{
   for(const file of ['place-tag-rules.js','trip-tags.js'])await page.addScriptTag({path:require('node:path').join(__dirname,'../zeekr_control/static',file)});
-  for(const scenario of ['background','account','return','month']){
+  for(const scenario of ['background','correction','account','return','month']){
    await page.evaluate(seed=>{
     document.body.innerHTML='<main></main>';const state={insights_context:'owner-a',trip_records_revision:1,place_tag_rules_revision:[1,1]},race={state,release:null};
     const request=async(url,payload)=>{
@@ -17,9 +17,9 @@ async function ruleContextRaces(browser,seed){
    },seed);
    await page.locator('[data-tag=load]').click();await page.locator('[data-tag=load]:not(:disabled)').waitFor();await page.locator('[data-tag=places-panel-open]').click();await page.locator('[data-tag=places-panel-tab][data-id=auto]').click();
    await page.getByLabel('绑定地点',{exact:true}).selectOption('rule_test_station');await page.getByLabel('自动添加的行程标签',{exact:true}).fill('旧草稿');await page.getByRole('button',{name:'预览匹配',exact:true}).click();await page.waitForFunction(()=>!!race.release);
-   if(scenario==='background'){
+   if(scenario==='background'||scenario==='correction'){
     await page.evaluate(async()=>{race.release();await new Promise(r=>setTimeout(r,0));});assert.equal(await page.locator('[data-tag=place-rule-save]').isEnabled(),true);
-    await page.evaluate(()=>{race.state.place_tag_rules_revision=[2,2];race.mount();});assert.equal(await page.getByLabel('自动添加的行程标签',{exact:true}).inputValue(),'旧草稿');assert.equal(await page.locator('[data-tag=place-rule-save]').isDisabled(),true);
+    await page.evaluate(scenario=>{if(scenario==='correction')race.state.personal_records_revision={place_corrections:1};else race.state.place_tag_rules_revision=[2,2];race.mount();},scenario);assert.equal(await page.getByLabel('自动添加的行程标签',{exact:true}).inputValue(),'旧草稿');assert.equal(await page.locator('[data-tag=place-rule-save]').isDisabled(),true);
    }else{
     await page.evaluate(scenario=>{race.state.insights_context='owner-b';race.mount();if(scenario==='return'){race.state.insights_context='owner-a';race.mount();}},scenario);
     await page.locator('[data-tag=load]').click();await page.locator('[data-tag=load]:not(:disabled)').waitFor();await page.locator('[data-tag=places-panel-open]').click();await page.locator('[data-tag=places-panel-tab][data-id=auto]').click();await page.getByLabel('自动添加的行程标签',{exact:true}).fill('新草稿');
