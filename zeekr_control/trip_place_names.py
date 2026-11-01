@@ -213,7 +213,7 @@ def interpret_place(owner, vehicle, place, identity, side, saved, aliases=()):
         chosen=next((r['body'] for r in saved['records'] if not r['deleted'] and r['body'].get('record_id')==identity and r['body'].get('side')==side),None)
         target=next((r for r in saved.get('_regions',[]) if chosen and r['id']==chosen.get('target_key')),None)
         if chosen and chosen.get('label_only') is True and chosen.get('action')=='assign' and target:
-            return dict(key=chosen['key'],statistics_key='region:'+target['id'],label=target['body']['name'],source='manual',decision='confirmed',candidate='位置未知',issues=[],latitude=target['body']['latitude'],longitude=target['body']['longitude'],evidence='user_confirmation')
+            return dict(key=chosen.get('key') or target['id'],statistics_key='region:'+target['id'],label=target['body']['name'],source='manual',decision='confirmed',candidate='位置未知',issues=[],latitude=target['body']['latitude'],longitude=target['body']['longitude'],evidence='user_confirmation')
         return dict(key=None,label='位置未知',source='unknown',decision='unresolved',issues=['missing_position'])
     result=dict(key=anchor_key(place),label=place['label'] if place['name_source']!='reference' else '未命名地点',
                 source=place['name_source'],decision='automatic',issues=[],
@@ -248,7 +248,7 @@ def interpret_place(owner, vehicle, place, identity, side, saved, aliases=()):
             else:result['issues'].append('candidate_conflict')
     if chosen:
         if chosen.get('label_only'):result['evidence']='user_confirmation'
-        result['key']=chosen.get('target_key') or chosen['key']
+        result['key']=chosen.get('target_key') or chosen.get('key') or result['key']
         if chosen['action']=='reject':
             if chosen['candidate']==candidate and result['source']!='manual':result.update(label='未命名地点',source='unknown',decision='rejected')
         else:
