@@ -24,7 +24,7 @@ async function ruleContextRaces(browser,seed){
     await page.evaluate(scenario=>{race.state.insights_context='owner-b';race.mount();if(scenario==='return'){race.state.insights_context='owner-a';race.mount();}},scenario);
     await page.locator('[data-tag=load]').click();await page.locator('[data-tag=load]:not(:disabled)').waitFor();await page.locator('[data-tag=places-panel-open]').click();await page.locator('[data-tag=places-panel-tab][data-id=auto]').click();await page.getByLabel('自动添加的行程标签',{exact:true}).fill('新草稿');
     await page.evaluate(async()=>{race.release();await new Promise(r=>setTimeout(r,0));});assert.equal(await page.getByLabel('自动添加的行程标签',{exact:true}).inputValue(),'新草稿');assert.equal(await page.locator('[data-tag=place-rule-save]').isDisabled(),true);
-    if(scenario==='month'){await page.getByRole('button',{name:'关闭地点面板',exact:true}).click();await page.getByLabel('标签月份',{exact:true}).fill('2026-11');assert.equal(await page.locator('[data-tag=place-rule-save]').count(),0);}
+    if(scenario==='month'){await page.getByRole('button',{name:'关闭地点面板',exact:true}).click();const monthInput=page.getByLabel('标签月份',{exact:true});const oldMonth=await monthInput.inputValue();await monthInput.fill(oldMonth==='2026-11'?'2026-10':'2026-11');assert.notEqual(await monthInput.inputValue(),oldMonth);assert.equal(await page.locator('[data-tag=place-rule-save]').count(),0);}
    }
   }
  }finally{await page.close();}
