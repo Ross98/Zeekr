@@ -16,11 +16,12 @@ function chainModel(rows){
    hadEvidence=row.type==='parking';continue;
   }
   const start=placeOf(row,'start'),end=placeOf(row,'end');
-  if(endpoint&&same(endpoint.place,start)&&numeric(row.start_time)&&row.start_time>=endpoint.time){
-   endpoint.depart_time=row.start_time;
+  const restarting=endpoint&&same(endpoint.place,start)&&numeric(row.start_time)&&row.start_time>=endpoint.time;
+  if(restarting){
    // Matching endpoints alone do not establish stationary time in between.
    if(!hadEvidence&&row.start_time-endpoint.time>60000)items.push({kind:'gap',start_time:endpoint.time,end_time:row.start_time});
-  }else items.push({kind:'place',place:start,time:row.start_time,label:row.record_source==='manual_completion'?'出发（手填）':row.partial?'记录起点':'出发'});
+  }
+  items.push({kind:'place',place:start,time:row.start_time,label:row.record_source==='manual_completion'?'出发（手填）':row.partial?'记录起点':restarting?'再出发':'出发'});
   items.push({kind:'trip',row});
   endpoint={kind:'place',place:end,time:row.end_time,label:row.record_source==='manual_completion'?'到达（手填）':row.status==='driving'||row.status==='waiting'?'最近观测':row.partial?'记录终点':'到达'};
   items.push(endpoint);hadEvidence=false;
@@ -35,7 +36,7 @@ function daySegments(rows,date){
 function timeLabel(value,date){return numeric(value)?(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(value)!==date?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit'}).format(value)+' ':'')+clock(value):'未知';}
 function chain(rows,selection,date){
  return chainModel(rows).map(item=>{
-  if(item.kind==='place')return `<div class="tv-node"><time>${escape(timeLabel(item.time,date))}</time><i aria-hidden="true"></i><div><strong>${escape(item.place.label)}</strong><small>${escape(item.label)}${item.depart_time?' · '+escape(clock(item.depart_time))+' 再出发':''}</small></div></div>`;
+  if(item.kind==='place')return `<div class="tv-node"><time>${escape(timeLabel(item.time,date))}</time><i aria-hidden="true"></i><div><strong>${escape(item.place.label)}</strong><small>${escape(item.label)}</small></div></div>`;
   if(item.kind==='gap')return '<div class="tv-gap">间隔内移动情况未观测，未推断停车</div>';
   const r=item.row,selected=selection===r.id;
   if(item.kind==='trip')return `<div class="tv-leg ${selected?'selected':''}" data-chain-record="${escape(r.id)}"><div class="tv-rail" aria-hidden="true"></div><div><div class="tv-leg-values"><strong>${escape(number(r.distance_km,' km'))}</strong><span>${r.record_source==='manual_completion'?'手填时长':'行驶观测'} ${escape(duration(r.duration_seconds))}</span></div><button class="local-trip-row tv-select ${selected?'selected':''}" data-local-trip="${escape(r.id)}" aria-pressed="${selected}">${selected?'已选中 · 查看详情':'查看行程'}${r.record_source==='manual_completion'?' · 手动补全':r.partial?' · 部分记录':''}${r.status==='driving'?' · 记录中':''}</button></div></div>`;
