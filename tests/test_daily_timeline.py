@@ -49,6 +49,17 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(len(overview['routes']),1)
         self.assertEqual(overview['routes'][0]['count'],2)
 
+    def test_tag_endpoints_share_correction_and_undo_interpretation(self):
+        self.correction('assign',name='本次名称 <甲>')
+        timeline=self.day()['records'][0]
+        tagged=self.tags.query('owner','car','2026-09-28')['events'][0]
+        self.assertEqual(tagged['resolved_places']['end'],timeline['end_place'])
+        self.assertEqual(tagged['distance_km'],timeline['distance_km'])
+        self.assertEqual(tagged['duration_seconds'],timeline['duration_seconds'])
+        self.timeline.update('owner','car',dict(operation='undo',revision=self.day()['correction_revision']),scope='scope')
+        restored=self.tags.query('owner','car','2026-09-28')['events'][0]
+        self.assertEqual(restored['resolved_places']['end'],self.day()['records'][0]['end_place'])
+
     def test_statistics_identity_respects_single_record_assignment(self):
         from zeekr_control.trip_place_names import anchor_key
         key=anchor_key(dict(latitude=31.21,longitude=121.41))
@@ -121,6 +132,11 @@ class TimelineTests(unittest.TestCase):
         self.assertEqual(row['end_place']['source'],'manual')
         self.assertEqual(row['end_place']['evidence'],'user_confirmation')
         self.assertNotIn('position',row)
+        tagged=self.tags.query('owner','car','2026-09-28')['events'][0]
+        self.assertEqual(tagged['resolved_places']['end'],row['end_place'])
+        self.assertIsNone(tagged['end_place'])
+        other=self.tags.query('other','car','2026-09-28')['events'][0]
+        self.assertEqual(other['resolved_places']['end']['source'],'unknown')
         self.assertEqual(self.day(owner='other')['records'][0]['end_place']['label'],'位置未知')
         self.timeline.update('owner','car',dict(operation='undo',revision=1),scope='scope')
         self.assertEqual(self.day()['records'][0]['end_place']['label'],'位置未知')
@@ -155,6 +171,8 @@ class TimelineTests(unittest.TestCase):
 
     def test_reject_keeps_fact_and_is_scoped_undoable(self):
         self.correction()
+        tagged=self.tags.query('owner','car','2026-09-28')['events'][0]
+        self.assertEqual(tagged['resolved_places']['end'],self.day()['records'][0]['end_place'])
         self.assertEqual(len(self.day()['records']),1)
         self.assertEqual(self.day()['records'][0]['end_place']['decision'],'rejected')
         self.assertNotEqual(self.day(owner='other')['records'][0]['end_place']['decision'],'rejected')

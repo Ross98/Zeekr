@@ -7,7 +7,7 @@ from .usage_events import UsageEvents
 from .usage_reports import period_window
 from .commute_tags import CommuteTags
 from .trip_places import TripPlaces
-from .trip_place_names import TripPlaceNames
+from .trip_place_names import TripPlaceNames, interpret_place
 from .place_tag_rules import PlaceTagRules
 
 
@@ -89,12 +89,19 @@ class TripTags:
         window=period_window('month',date)
         events=[row for row in self.events.between(vehicle,window['start'],window['end'])['events'] if row['kind']=='trip_end']
         place_statistics=self.place_names.apply(owner,vehicle,self.places.query(vehicle,events,self.place_names.regions(owner,vehicle)),self.commute.rule(owner,vehicle))
+        places={p['id']:p for p in place_statistics['places']}
+        corrections=self.store.read(owner,vehicle,'place_corrections')
+        corrections['_regions']=self.place_names.regions(owner,vehicle)
         saved=self.store.read(owner,vehicle,'tags')
         annotations={r['body']['event_id']:r for r in saved['records']}
         automatic=self.commute.decisions(owner,vehicle,events,guard=guard)
         place_automatic=self.place_rules.decisions(owner,vehicle,events,guard=guard)
         rows=[];trash=[]
         for event in events:
+            event['resolved_places']={}
+            for side in ('start','end'):
+                resolved=interpret_place(owner,vehicle,places.get(event.get(side+'_place')),event['id'],side,corrections)
+                event['resolved_places'][side]={k:v for k,v in resolved.items() if k not in ('latitude','longitude')}
             if event.get('record_source')=='manual_completion':
                 from .mileage_gaps import MileageGaps
                 completion=MileageGaps(self.events.path.parent/'mileage-gaps.sqlite3').completion(owner,vehicle,event['id'])

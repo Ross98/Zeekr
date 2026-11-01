@@ -207,6 +207,20 @@ async function saveRefreshRace(browser,seed){
     await page.locator('[data-tag-event="report-trip"] [data-tag="edit"]').click();
     assert.equal(await page.getByLabel('行程标签（逗号分隔）',{exact:true}).inputValue(),'接娃');
     assert.equal(await page.getByRole('button',{name:'取消本趟自动通勤'}).count(),1);
+    await page.getByRole('button',{name:'关闭工具面板',exact:true}).click();
+    await page.unroute('**/api/insights/trip-tags?**');
+    await page.route('**/api/insights/trip-tags?**',async route=>{
+      const response=await route.fetch(),body=await response.json();
+      const trip=body.events.find(row=>row.id==='report-trip');
+      delete trip.manual_place_labels;
+      trip.start_place=null;
+      trip.resolved_places={start:{label:'人工起点 <甲>',source:'manual',decision:'confirmed',evidence:'user_confirmation'},end:{label:'未命名地点',source:'unknown',decision:'rejected'}};
+      await route.fulfill({response,json:body});
+    });
+    await page.getByRole('button',{name:'读取行程标签',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('[data-tag-event="report-trip"] .tag-record-main strong')?.textContent.includes('人工起点 <甲>'));
+    assert.equal(await page.locator('[data-tag-event="report-trip"] .tag-record-main strong').innerText(),'人工起点 <甲> → 未命名地点');
+    assert.equal(await page.locator('[data-tag-event="report-trip"] .tag-record-main strong button').count(),0,'User labels and rejected matches must not invent a map point');
     const seed=await (await page.request.get(f.origin+'/api/insights/trip-tags?date=2026-09-01')).json();
     await saveRefreshRace(f.browser,seed);
     // Reload may leave a read-only research job; navigation cancels that job.

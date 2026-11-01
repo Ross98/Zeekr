@@ -7,7 +7,7 @@ import time
 
 from .commute_tags import CommuteTags, _distance
 from .parking_analytics import ParkingAnalytics
-from .trip_place_names import TripPlaceNames, anchor_key
+from .trip_place_names import TripPlaceNames, anchor_key, interpret_place
 from .place_regions import contains
 from .trip_places import TripPlaces
 from .tracks import day_bounds
@@ -30,61 +30,7 @@ class DailyTimeline:
         self.store=store
         self.calendar=UsageCalendar(database,archive,store=store)
 
-    def _interpret(self, owner, vehicle, place, identity, side, saved, aliases=()):
-        if place is None:
-            # A single-record user label is independent of GPS trust. Region
-            # coordinates support grouping only; _position remains untouched.
-            chosen=next((r['body'] for r in saved['records'] if not r['deleted'] and r['body'].get('record_id')==identity and r['body'].get('side')==side),None)
-            target=next((r for r in saved.get('_regions',[]) if chosen and r['id']==chosen.get('target_key')),None)
-            if chosen and chosen.get('label_only') is True and chosen.get('action')=='assign' and target:
-                return dict(key=chosen['key'],statistics_key='region:'+target['id'],label=target['body']['name'],source='manual',decision='confirmed',candidate='位置未知',issues=[],latitude=target['body']['latitude'],longitude=target['body']['longitude'],evidence='user_confirmation')
-            return dict(key=None,label='位置未知',source='unknown',decision='unresolved',issues=['missing_position'])
-        result=dict(key=anchor_key(place),label=place['label'] if place['name_source']!='reference' else '未命名地点',
-                    source=place['name_source'],decision='automatic',issues=[],
-                    latitude=place['latitude'],longitude=place['longitude'])
-        # Keep coordinate keys for correction/history; aggregates use the shared region identity.
-        statistics_key=place.get('statistics_key')
-        result['statistics_key']=statistics_key if isinstance(statistics_key,str) and statistics_key.startswith('region:') else result['key']
-        if result['source']=='reference':result['source']='unknown'
-        candidate=result['label']
-        result['candidate']=candidate
-        if place.get('candidate_conflict'):result['issues'].append('candidate_conflict')
-        regions=saved.get('_regions',[])
-        nearby=[r for r in regions if contains(r['body'],(result['latitude'],result['longitude']))]
-        if len(nearby)>1:result['issues'].append('adjacent_conflict')
-        if '_decisions' not in saved:
-            saved['_decisions']={};saved['_remembered']=[]
-            for r in saved['records']:
-                if r['deleted']:continue
-                body=r['body'];saved['_decisions'].setdefault((body['record_id'],body['side']),body)
-                if body.get('remember') and body.get('action')=='reject':saved['_remembered'].append(body)
-        for body in saved['_remembered']:
-            if (result['source']!='manual' and body.get('candidate')==candidate
-                    and _distance((result['latitude'],result['longitude']),(body['latitude'],body['longitude']))<=150):
-                result.update(label='未命名地点',source='unknown',decision='rejected',key=body['key'])
-        chosen=saved['_decisions'].get((identity,side))
-        if chosen is None:
-            # Read legacy fragment decisions without rewriting the personal store.
-            inherited=[saved['_decisions'][(alias,side)] for alias in aliases if (alias,side) in saved['_decisions']]
-            if inherited:
-                signatures={(body['action'],body.get('name'),body.get('target_key'),body.get('candidate')) for body in inherited}
-                if len(signatures)==1:chosen=inherited[0]
-                else:result['issues'].append('candidate_conflict')
-        if chosen:
-            if chosen.get('label_only'):result['evidence']='user_confirmation'
-            result['key']=chosen.get('target_key') or chosen['key']
-            if chosen['action']=='reject':
-                if chosen['candidate']==candidate and result['source']!='manual':result.update(label='未命名地点',source='unknown',decision='rejected')
-            else:
-                target=next((r for r in regions if r['id']==chosen.get('target_key')),None)
-                result.update(label=target['body']['name'] if target else chosen['name'],source='manual',decision='confirmed')
-                if target:
-                    result['statistics_key']='region:'+target['id']
-                elif chosen['action']=='assign' or chosen['name']!=candidate:
-                    result['statistics_key']=chosen['key']
-        if result['source']=='manual' or result['decision'] in ('confirmed','rejected'):result['issues']=[]
-        if result['source']=='unknown' and result['decision']!='rejected':result['issues'].append('missing_name')
-        return result
+    _interpret = staticmethod(interpret_place)
 
     def _records(self, scope, vehicle, owner, start_date, end_date, *, now=None):
         lower,_=day_bounds(start_date);_,upper=day_bounds(end_date)
