@@ -217,6 +217,16 @@ class StorageHealth:
                                 'capacity_basis': basis,
                                 'available_bytes': sample.get('capacity_available_bytes', sample['disk_free_bytes'])})
         state.update(sample=sample, history=history[-2016:], last_check=now)
+        # Explicit local handover to an independent host monitor. Keep sampling
+        # and delivery evidence; do not turn suppression into a sent/recovered event.
+        policy = load(self.root/'storage-notifications.json').get('enabled', '1')
+        if policy not in ('0', '1'):
+            self._save(state)
+            raise ValueError('存储通知开关必须为 0 或 1。')
+        state['notifications_enabled'] = policy == '1'
+        if not state['notifications_enabled']:
+            self._save(state)
+            return
         # A worker interrupted during send must not retry an uncertain delivery.
         if state.get('notification_state') == 'sending': state['notification_state'] = 'uncertain'
         if state.get('alert_notification_state') == 'sending': state['alert_notification_state'] = 'uncertain'
