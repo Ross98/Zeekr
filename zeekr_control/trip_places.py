@@ -3,7 +3,7 @@ from collections import Counter, defaultdict
 
 from .commute_tags import _distance
 from .tracks import TrackStore
-from .trip_endpoints import endpoint
+from .trip_endpoints import trip_endpoint_samples
 from .trip_place_names import cached_names
 from .parking_origin import parking_origin
 from .parking_destination import parking_destination
@@ -83,8 +83,7 @@ class TripPlaces:
                     for event in events:
                         start, end = event['start_time'], event['end_time']
                         ordered = start is not None and end > start
-                        first = endpoint(db,vehicle,start,min(start+180000,end),True) if ordered else None
-                        last = endpoint(db,vehicle,max(start if ordered else 0,end-180000),end,False) if start is None or ordered else None
+                        first,last = trip_endpoint_samples(db,vehicle,start,end)
                         if first is None and ordered:
                             estimate = parking_origin(db, vehicle, event)
                             if estimate:

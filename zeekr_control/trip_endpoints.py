@@ -21,3 +21,10 @@ def endpoint(db, vehicle, lower, upper, near_start):
         except (ValueError, TypeError, AttributeError):
             continue
     return None
+
+
+def trip_endpoint_samples(db, vehicle, start, end):
+    ordered = start is not None and end > start
+    first = endpoint(db, vehicle, start, min(start+180000,end), True) if ordered else None
+    last = endpoint(db, vehicle, max(start or 0,end-180000), end, False) if start is None or ordered else None
+    return first,last

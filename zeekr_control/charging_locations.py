@@ -5,6 +5,7 @@ from .analysis_cancel import check_cancelled
 from .commute_tags import _distance
 from .parking_origin import _point, _summary, _telemetry
 from .usage_events import MAX_SUMMARY_BYTES, number
+from .trip_endpoints import trip_endpoint_samples
 from .trip_visibility import visible_clause
 from .movement_barriers import trip_movement_between
 
@@ -22,7 +23,7 @@ def _fresh(stamp, observed):
             and number(observed,1,32503680000000) is not None and -30000<=observed-stamp<=180000)
 
 
-def _stationary_between(db, vehicle, event):
+def _stationary_between(db, vehicle, event, regions=None):
     """Infer only when both adjoining trips and advancing stopped telemetry agree."""
     start,end=event.get('start_time'),event['end_time']
     if start is None or not db.execute("SELECT 1 FROM sqlite_master WHERE name='report_observations'").fetchone():return None
@@ -48,7 +49,18 @@ def _stationary_between(db, vehicle, event):
     previous=max(arrivals,key=lambda r:r['end_time']);following=min(departures,key=lambda r:r['start_time'])
     a,b=previous['end_time'],following['start_time']
     left=_point(previous.get('end_location'),trusted=True);right=_point(following.get('start_location'),trusted=True)
-    if not left or not right or _distance(left,right)>RADIUS_M:return None
+    if (not left or not right) and db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone():
+        if not left:
+            first,last=trip_endpoint_samples(db,vehicle,previous['start_time'],a)
+            if last and (not first or first[0]!=last[0]):left=last[1]
+        if not right:
+            first,last=trip_endpoint_samples(db,vehicle,b,following['end_time'])
+            if first and (not last or first[0]!=last[0]):right=first[1]
+    if not left or not right:return None
+    if _distance(left,right)>RADIUS_M:
+        left_regions=regions.matches(left) if regions else []
+        right_regions=regions.matches(right) if regions else []
+        if len(left_regions)!=1 or len(right_regions)!=1 or left_regions[0]['id']!=right_regions[0]['id']:return None
     # Hidden/partial trips cannot support a point, but still contradict parking.
     if trip_movement_between(db, vehicle, a, b, exclude_event_ids=(previous['id'],following['id']),
                              unknown_lower_inclusive=True):return None
@@ -109,7 +121,7 @@ def _saved_reference(db,vehicle,event,raw):
                 reference_age_seconds=age,stationary_samples=len(stamps),start_time=stamp,end_time=end,truncated=False))
 
 
-def resolve(db, vehicle, event):
+def resolve(db, vehicle, event, *, regions=None):
     """Fixed-anchor clusters prevent drift chaining across distinct sites."""
     start,end=event.get('start_time'),event['end_time'];samples=[];truncated=False
     if start is not None and start<=end and db.execute("SELECT 1 FROM sqlite_master WHERE name='observations'").fetchone():
@@ -129,7 +141,7 @@ def resolve(db, vehicle, event):
         if candidate:result['reference_candidate']=candidate
         reference=_saved_reference(db,vehicle,event,raw)
         if reference:return reference
-        inferred=_stationary_between(db,vehicle,event)
+        inferred=_stationary_between(db,vehicle,event,regions)
         if inferred:return inferred
         # Frozen trusted boundaries are still historical evidence, never current GPS.
         for side in ('start','end'):
