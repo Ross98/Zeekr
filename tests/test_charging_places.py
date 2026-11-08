@@ -147,6 +147,21 @@ class ChargingPlaceTests(unittest.TestCase):
                 db.execute('INSERT INTO report_observations VALUES(?,?,?,?,?)',('car',stamp,stamp+1000,json.dumps(payload),'v1'))
         return start
 
+    def test_stationary_charge_uses_adjacent_trip_samples_without_frozen_gps(self):
+        start=self.stationary_charge()
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE monitor_events SET summary=json_remove(summary,'$.start_location','$.end_location') WHERE kind='trip_end'")
+        self.observe(start-61000)
+        self.observe(start+3661000,31.20135,121.4)
+        self.assertIsNone(self.detail()['location'])
+        self.review().places.store.change('owner','car','place_names','save','park',dict(name='同一园区',latitude=31.200675,longitude=121.4,radius_m=100),0)
+        detail=self.detail()
+        self.assertEqual(detail['evidence']['source'],'stationary_between_trips')
+        self.assertTrue(detail['reference'])
+        with sqlite3.connect(self.db) as db:
+            db.execute("UPDATE report_observations SET normalized_payload=json_set(normalized_payload,'$.odometer',1201) WHERE state_time=?",(start+60000,))
+        self.assertIsNone(self.detail()['location'])
+
     def test_missing_gps_requires_continuous_stationary_telemetry(self):
         start=self.stationary_charge()
         self.assertEqual(self.detail()['evidence']['source'],'stationary_between_trips')

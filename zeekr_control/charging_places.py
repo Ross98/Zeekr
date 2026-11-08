@@ -35,8 +35,8 @@ class ChargingPlaces:
     def __init__(self, database, store):
         self.events=UsageEvents(database);self.store=store;self.secret=secrets.token_bytes(32)
 
-    def _base(self, db, owner, vehicle, event):
-        result=resolve(db,vehicle,event);point=result['point'];result.update(name='地点未知',name_source='unknown',station_name=None,station_source=None,group_key=None)
+    def _base(self, db, owner, vehicle, event, regions):
+        result=resolve(db,vehicle,event,regions=regions);point=result['point'];result.update(name='地点未知',name_source='unknown',station_name=None,station_source=None,group_key=None)
         candidate=result.get('reference_candidate');naming_point=point or (candidate['point'] if candidate else None)
         if not naming_point:return result
         place=dict(id='charge_location',label='地点未知',latitude=naming_point[0],longitude=naming_point[1],departures=0,arrivals=0)
@@ -56,7 +56,7 @@ class ChargingPlaces:
         with self.events.connect() as db:
             if db is None:return results
             for event in events:
-                check_cancelled();r=self._base(db,owner,vehicle,event);anchor=r['point']
+                check_cancelled();r=self._base(db,owner,vehicle,event,named_regions);anchor=r['point']
                 single=next((x for x in overrides if x['body'].get('scope')=='single' and x['body'].get('event_id')==event['id']),None)
                 matching=[x for x in overrides if x['body'].get('scope')=='place' and anchor and _distance(anchor,tuple(x['body']['anchor']))<=x['body']['radius_m']]
                 region=matching[0] if matching else None
