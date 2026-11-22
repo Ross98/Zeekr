@@ -148,6 +148,27 @@ class UsageEvents:
         events.sort(key=lambda row: (row['end_time'], row['id']), reverse=True)
         return {'events': events, 'unreadable_or_undated': invalid}
 
+    def charge_pages(self, vehicle, upper):
+        """Read visible completed charges in bounded batches without scanning trips."""
+        with self.connect() as db:
+            if db is None:
+                return
+            cursor = db.execute("SELECT MAX(rowid) FROM monitor_events WHERE vehicle=? AND kind='charge_end'",
+                                (vehicle,)).fetchone()[0]
+            while cursor is not None:
+                check_cancelled()
+                rows = db.execute(
+                    'SELECT rowid,id,CASE WHEN length(CAST(summary AS BLOB))<=? THEN summary END,'
+                    'length(CAST(summary AS BLOB)) FROM monitor_events WHERE vehicle=? AND rowid<=? '
+                    "AND kind='charge_end' AND "+visible_clause(db)+' ORDER BY rowid DESC LIMIT 32',
+                    (MAX_SUMMARY_BYTES, vehicle, cursor)).fetchall()
+                if not rows:
+                    break
+                cursor = rows[-1][0] - 1
+                events = [self._decode(identity, 'charge_end', encoded, size)
+                          for _, identity, encoded, size in rows]
+                yield [event for event in events if event is not None and event['end_time'] < upper]
+
     def get(self, vehicle, identity):
         if not isinstance(identity, str) or not VALID_ID.fullmatch(identity) or not isinstance(vehicle, str) or not vehicle:
             raise ValueError('请选择当前车辆的有效事件。')
