@@ -107,6 +107,16 @@ class ChargeLedgerTests(unittest.TestCase):
         self.assertEqual(self.personal.read('owner','car','charges')['revision'],0)
         self.assertEqual(self.personal.read('owner','car','charging_places')['revision'],0)
 
+    def test_old_trips_do_not_exhaust_place_history(self):
+        self.save(place_correction=dict(revision=0,name='历史地点',station_name='历史站点'))
+        start=self.start-86400000
+        raw=json.dumps(dict(start_time=start,end_time=start+60000,distance_km=1))
+        with sqlite3.connect(self.db) as db:
+            db.executemany('INSERT INTO monitor_events VALUES(?,?,?,?,?)',
+                ((f'old-{i}', 'car','trip_end',raw,start) for i in range(10001)))
+        self.assertEqual(self.query('2026-10-20')['place_choices']['places'],
+                         [dict(name='历史地点',stations=['历史站点'])])
+
     def test_place_choices_cover_history_and_stay_owner_vehicle_scoped(self):
         self.save(place_correction=dict(revision=0,name='历史地点',station_name='历史站点'))
         options=self.query('2026-10-20')['place_choices']

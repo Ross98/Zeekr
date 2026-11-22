@@ -116,17 +116,30 @@ class ChargingPlaces:
         """Historical display names, scoped to this owner and visible vehicle events."""
         now=int(time.time()*1000) if now is None else now
         saved=self.store.read(owner,vehicle,COLLECTION)
-        events=[e for e in self.events.between(vehicle,0,now+1)['events'] if e['kind']=='charge_end']
-        resolved=self._resolved(owner,vehicle,events,saved);places={}
-        for event in sorted(events,key=lambda e:(e['end_time'],e['id']),reverse=True):
-            place=resolved[event['id']]
-            if place['name_source']=='unknown':continue
-            try:
-                name=_text(place['name'],True);station=_text(place['station_name'] or '')
-            except ValueError:continue
-            stations=places.setdefault(name,[])
-            if station and station not in stations:stations.append(station)
-        return dict(revision=saved['revision'],places=[dict(name=name,stations=stations) for name,stations in places.items()])
+        places={}
+        for events in self.events.charge_pages(vehicle,now+1):
+            if not events:
+                continue
+            resolved=self._resolved(owner,vehicle,events,saved)
+            for event in events:
+                place=resolved[event['id']]
+                if place['name_source']=='unknown':
+                    continue
+                try:
+                    name=_text(place['name'],True)
+                    station=_text(place['station_name'] or '')
+                except ValueError:
+                    continue
+                last,stations=places.setdefault(name,(0,{}))
+                stamp=event['end_time']
+                if station:
+                    stations[station]=max(stamp,stations.get(station,0))
+                places[name]=(max(last,stamp),stations)
+        ordered=sorted(places,key=lambda name:(-places[name][0],name))
+        return dict(revision=saved['revision'],places=[
+            dict(name=name,stations=sorted(places[name][1],
+                key=lambda station:(-places[name][1][station],station)))
+            for name in ordered])
 
     def detail(self,owner,vehicle,identity):
         event=self.events.get(vehicle,identity)
