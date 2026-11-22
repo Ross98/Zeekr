@@ -22,7 +22,7 @@ from .report_history import compare
 from .report_attention import build as build_attention
 from .start_evidence import build as start_evidence, project as project_start
 from .start_evidence import from_summary as saved_start_evidence, MAX_GAP
-from .notification_location import select_location
+from .notification_location import select_location, reference_suffix
 from .mileage_gaps import MileageGaps
 from .trip_visibility import visible_clause, cancel_event_delivery
 
@@ -148,6 +148,10 @@ def bark_message_for(kind, data):
             energy=event.get('estimated_kwh')
             if energy is not None:lines.append('充入电量估算：'+fmt(energy)+' kWh（SOC × 容量）')
         if seconds is not None:lines.append('观测时长：'+fmt(seconds/60)+' 分钟')
+    if kind == 'charge_start':
+        address = data.get('start_address')
+        place = address + reference_suffix(data.get('start_location_reference')) if address else '位置未知'
+        lines.append('充电地点：' + place)
     if kind == 'trip_end':
         lines.append('详细报告与路线图请查看企业微信；投递状态见网页。')
     elif kind == 'charge_end':
@@ -592,6 +596,74 @@ class Monitor:
             self._recover_delivery()
             self._deliver(sender,now,alert_sender,guard,image_limit,vehicle,_clock=clock)
 
+    def _prepare_notification(self, event_id, kind, encoded, vehicle, clock, message, delivery):
+        """Resolve and freeze the same evidence for detail and start-alert delivery."""
+        data = json.loads(encoded)
+        if data.get('report_v2') and data['report_v2'].get('schema_version') != 2:
+            raise ValueError('未知报告版本')
+        frozen = data.get('report_v2', {}).get('render', {}).get('message_frozen') is True
+        if not data.get('addresses_resolved') and not frozen:
+            if (data.get('report_v2') and
+                    data['report_v2'].get('render', {}).get('version') not in (None, 'zh-text-v2')):
+                raise ValueError('未知渲染器版本')
+            named = {}
+            if self.place_resolver:
+                try:
+                    named = self.place_resolver(vehicle, kind, data, event_id)
+                except DeliveryCancelled:
+                    raise
+                except (ValueError, OSError, sqlite3.Error):
+                    pass
+            for prefix in ('start', 'end') if kind == 'trip_end' else ('start',):
+                if prefix in named:
+                    data[prefix+'_address'] = named[prefix]['name']
+                    data[prefix+'_location_reference'] = named[prefix]['reference']
+                    continue
+                address = None
+                if self.address_resolver:
+                    try:
+                        with self.tracks.connect() as db:
+                            location, reference = select_location(db, vehicle,
+                                data.get(prefix + '_location'), data.get(prefix + '_time'))
+                        if location is not None:
+                            address = self.address_resolver(location)
+                        if reference is not None:
+                            data[prefix + '_location_reference'] = reference
+                    except Exception:
+                        pass
+                data[prefix + '_address'] = ' '.join(address.split())[:100] if isinstance(address, str) else None
+            # Same owner-scoped decision as the dashboard; labels are
+            # explicit inferences, never replacement GPS/route samples.
+            if kind == 'trip_end' and self.commute_resolver and any(
+                    not data.get(side+'_address') for side in ('start', 'end')):
+                try:
+                    inferred = self.commute_resolver(vehicle, dict(
+                        project(event_id, kind, data) or {}, kind=kind))
+                except DeliveryCancelled:
+                    raise
+                except (ValueError, OSError, sqlite3.Error):
+                    inferred = {}
+                for side in ('start', 'end'):
+                    place = inferred.get(side)
+                    if not data.get(side+'_address') and place:
+                        data[side+'_address'] = place['name']
+                        data[side+'_location_reference'] = place['reference']
+            data['addresses_resolved'] = True
+            if data.get('report_v2'):
+                message, omitted = render(kind, data['report_v2'], event_id,
+                    {'start': data.get('start_address'), 'end': data.get('end_address')},
+                    references={prefix: data.get(prefix + '_location_reference') for prefix in ('start', 'end')})
+                data['report_v2']['render'] = {'version': 'zh-text-v2', 'omitted': omitted,
+                                               'message_frozen': True, 'bytes': len(message.encode()),
+                                               'frozen_at': clock(),
+                                               'sha256': hashlib.sha256(message.encode()).hexdigest()}
+            else:
+                message = message_for(kind, data, event_id)
+            with self.tracks.connect() as db:
+                db.execute("UPDATE monitor_events SET summary=?,message=? WHERE id=? AND delivery=?",
+                           (json.dumps(data, ensure_ascii=False), message, event_id, delivery))
+        return data, message
+
     def _deliver(self, sender, now, alert_sender=None, guard=None, image_limit=10, vehicle=None,*,_clock=None):
         clock=delivery_clock(now) if _clock is None else _clock
         selected_vehicle=vehicle
@@ -612,70 +684,8 @@ class Monitor:
             error, next_attempt, sent_at = None, 0, None
             sender_called = False
             try:
-                data = json.loads(encoded)
-                if data.get('report_v2') and data['report_v2'].get('schema_version') != 2:
-                    raise ValueError('未知报告版本')
-                frozen = data.get('report_v2', {}).get('render', {}).get('message_frozen') is True
-                if not data.get('addresses_resolved') and not frozen:
-                    if (data.get('report_v2') and
-                            data['report_v2'].get('render', {}).get('version') not in (None, 'zh-text-v2')):
-                        raise ValueError('未知渲染器版本')
-                    named = {}
-                    if self.place_resolver:
-                        try:
-                            named = self.place_resolver(vehicle, kind, data, event_id)
-                        except DeliveryCancelled:
-                            raise
-                        except (ValueError, OSError, sqlite3.Error):
-                            pass
-                    for prefix in ('start', 'end') if kind == 'trip_end' else ('start',):
-                        if prefix in named:
-                            data[prefix+'_address'] = named[prefix]['name']
-                            data[prefix+'_location_reference'] = named[prefix]['reference']
-                            continue
-                        address = None
-                        if self.address_resolver:
-                            try:
-                                with self.tracks.connect() as db:
-                                    location, reference = select_location(db, vehicle,
-                                        data.get(prefix + '_location'), data.get(prefix + '_time'))
-                                if location is not None:
-                                    address = self.address_resolver(location)
-                                if reference is not None:
-                                    data[prefix + '_location_reference'] = reference
-                            except Exception:
-                                pass
-                        data[prefix + '_address'] = ' '.join(address.split())[:100] if isinstance(address, str) else None
-                    # Same owner-scoped decision as the dashboard; labels are
-                    # explicit inferences, never replacement GPS/route samples.
-                    if kind == 'trip_end' and self.commute_resolver and any(
-                            not data.get(side+'_address') for side in ('start', 'end')):
-                        try:
-                            inferred = self.commute_resolver(vehicle, dict(
-                                project(event_id, kind, data) or {}, kind=kind))
-                        except DeliveryCancelled:
-                            raise
-                        except (ValueError, OSError, sqlite3.Error):
-                            inferred = {}
-                        for side in ('start', 'end'):
-                            place = inferred.get(side)
-                            if not data.get(side+'_address') and place:
-                                data[side+'_address'] = place['name']
-                                data[side+'_location_reference'] = place['reference']
-                    data['addresses_resolved'] = True
-                    if data.get('report_v2'):
-                        message, omitted = render(kind, data['report_v2'], event_id,
-                            {'start': data.get('start_address'), 'end': data.get('end_address')},
-                            references={prefix: data.get(prefix + '_location_reference') for prefix in ('start', 'end')})
-                        data['report_v2']['render'] = {'version': 'zh-text-v2', 'omitted': omitted,
-                                                       'message_frozen': True, 'bytes': len(message.encode()),
-                                                       'frozen_at': clock(),
-                                                       'sha256': hashlib.sha256(message.encode()).hexdigest()}
-                    else:
-                        message = message_for(kind, data, event_id)
-                    with self.tracks.connect() as db:
-                        db.execute("UPDATE monitor_events SET summary=?,message=? WHERE id=? AND delivery='preparing'",
-                                   (json.dumps(data, ensure_ascii=False), message, event_id))
+                data, message = self._prepare_notification(
+                    event_id, kind, encoded, vehicle, clock, message, 'preparing')
                 if guard:guard()
                 with self.tracks.connect() as db:
                     claimed=db.execute("UPDATE monitor_events SET delivery='sending',attempts=attempts+1 WHERE id=? AND delivery='preparing'",(event_id,)).rowcount
@@ -706,11 +716,11 @@ class Monitor:
     def _deliver_alerts(self, sender, now, guard=None, vehicle=None,*,_clock=None):
         clock=delivery_clock(now) if _clock is None else _clock
         with self.tracks.connect() as db:
-            rows = db.execute('''SELECT a.event_id,a.attempts,e.kind,e.summary
+            rows = db.execute('''SELECT a.event_id,a.attempts,e.kind,e.summary,e.vehicle,e.message
                 FROM monitor_event_alerts a JOIN monitor_events e ON e.id=a.event_id
                 WHERE a.delivery='pending' AND a.next_attempt<=? AND (? IS NULL OR e.vehicle=?)
                 ORDER BY e.created,e.rowid LIMIT 10''', (clock(),vehicle,vehicle)).fetchall()
-        for event_id, attempts, kind, encoded in rows:
+        for event_id, attempts, kind, encoded, event_vehicle, message in rows:
             if guard:guard()
             with self.tracks.connect() as db:
                 claimed = db.execute("UPDATE monitor_event_alerts SET delivery='preparing',prepare_attempts=prepare_attempts+1 WHERE event_id=? AND delivery='pending'", (event_id,)).rowcount
@@ -719,7 +729,11 @@ class Monitor:
             delivery, error, next_attempt, sent_at = 'sent', None, 0, None
             sender_called = False
             try:
-                title, body = bark_message_for(kind, json.loads(encoded))
+                data = json.loads(encoded)
+                if kind == 'charge_start':
+                    data, message = self._prepare_notification(
+                        event_id, kind, encoded, event_vehicle, clock, message, 'pending')
+                title, body = bark_message_for(kind, data)
                 if guard:guard()
                 with self.tracks.connect() as db:
                     claimed = db.execute("UPDATE monitor_event_alerts SET delivery='sending',attempts=attempts+1 WHERE event_id=? AND delivery='preparing'", (event_id,)).rowcount

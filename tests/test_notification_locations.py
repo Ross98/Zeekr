@@ -37,6 +37,63 @@ class NotificationLocationTests(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         return sent[0], self.monitor.events()[0]['summary']
 
+    def send_charge_alert(self, seconds=600, sender=None):
+        sent, details = [], []
+        self.monitor.deliver(details.append, BASE + seconds * 1000,
+            alert_sender=sender or (lambda title, body: sent.append((title, body))))
+        self.assertEqual(details, [])
+        return sent, self.monitor.events()[0]
+
+    def test_charge_alert_resolves_reference_and_persists_report(self):
+        self.record(420)
+        self.start_charge()
+        sent, event = self.send_charge_alert()
+        self.assertEqual(len(sent), 1)
+        self.assertIn('充电地点：浦东新区·测试园区', sent[0][1])
+        self.assertIn('参考位置，3分钟前可信定位', sent[0][1])
+        self.assertIn('浦东新区·测试园区', event['message'])
+        self.assertEqual(event['summary']['start_address'], '浦东新区·测试园区')
+        self.assertIs(event['summary']['start_location']['trusted'], False)
+        self.assertTrue(event['summary']['report_v2']['render']['message_frozen'])
+        self.assertEqual(self.send_charge_alert(620)[0], [])
+
+    def test_charge_alert_saved_label_is_frozen_across_retry(self):
+        from unittest.mock import Mock
+        self.start_charge(trusted=True)
+        self.monitor.place_resolver=Mock(return_value={'start':dict(
+            name='我的充电站', reference=dict(source='saved_charge_place',scope='place'))})
+        self.monitor.address_resolver=Mock(side_effect=AssertionError('No geocoding'))
+        bodies=[]
+        def retry(title, body):
+            bodies.append(body)
+            raise DeliveryError('temporary')
+        self.send_charge_alert(sender=retry)
+        self.monitor.place_resolver=Mock(side_effect=AssertionError('Frozen'))
+        sent, event=self.send_charge_alert(700)
+        self.assertEqual(bodies, [sent[0][1]])
+        self.assertIn('我的充电站（已标注充电地点）', sent[0][1])
+        self.monitor.place_resolver.assert_not_called()
+        self.monitor.address_resolver.assert_not_called()
+
+    def test_charge_alert_without_trusted_evidence_stays_unknown(self):
+        from unittest.mock import Mock
+        self.record(299)
+        self.start_charge()
+        self.monitor.address_resolver=Mock()
+        sent, event=self.send_charge_alert()
+        self.assertIn('充电地点：位置未知', sent[0][1])
+        self.monitor.address_resolver.assert_not_called()
+        self.assertIsNone(event['summary'].get('start_address'))
+
+    def test_charge_alert_geocoder_failure_does_not_block_delivery(self):
+        from unittest.mock import Mock
+        self.start_charge(trusted=True)
+        self.monitor.address_resolver=Mock(side_effect=OSError('offline'))
+        sent, event=self.send_charge_alert()
+        self.assertEqual(len(sent), 1)
+        self.assertIn('充电地点：位置未知', sent[0][1])
+        self.assertEqual(event['alert_delivery'], 'sent')
+
     def test_recent_trusted_point_is_labeled_and_raw_location_stays_untrusted(self):
         self.record(360)
         self.record(420)
@@ -84,6 +141,22 @@ class NotificationLocationTests(unittest.TestCase):
         text,data=self.send()
         self.assertIn('充电地点：我的车库附近（已标注充电地点',text)
         self.assertEqual(data['start_location_reference']['source'],'saved_charge_place')
+        self.monitor.address_resolver.assert_not_called()
+
+    def test_charge_alert_uses_actual_saved_region(self):
+        from unittest.mock import Mock
+        from zeekr_control.notification_places import NotificationPlaces
+        from zeekr_control.personal_store import PersonalStore
+        store=PersonalStore(Path(self.temp.name)/'personal.sqlite3')
+        store.change('owner','test-vehicle','place_names','save','named-garage',
+            dict(name='我的车库',latitude=31,longitude=121,radius_m=150),0)
+        service=NotificationPlaces(self.monitor.tracks.path,store)
+        self.monitor.place_resolver=lambda vehicle,kind,data,identity:service.resolve('owner',vehicle,kind,data,identity)
+        self.monitor.address_resolver=Mock()
+        self.start_charge(trusted=True)
+        sent,event=self.send_charge_alert()
+        self.assertIn('充电地点：我的车库（已标注充电地点',sent[0][1])
+        self.assertIn('充电地点：我的车库附近（已标注充电地点',event['message'])
         self.monitor.address_resolver.assert_not_called()
 
     def test_saved_label_qualifier_survives_small_report_budget(self):

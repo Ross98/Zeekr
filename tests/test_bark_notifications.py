@@ -141,7 +141,7 @@ class BarkEventRoutingTests(unittest.TestCase):
         title, body = bark_message_for('charge_start', {
             'start_time': 0, 'start_soc': 50, 'partial': False})
         self.assertEqual(title, '⚡ 极氪开始充电')
-        self.assertEqual(body, '时间：1970年01月01日 08:00\n当前电量：50%')
+        self.assertEqual(body, '时间：1970年01月01日 08:00\n当前电量：50%\n充电地点：位置未知')
 
     def test_trip_alert_and_wecom_detail_retry_independently(self):
         from zeekr_control.notifications import DeliveryError
