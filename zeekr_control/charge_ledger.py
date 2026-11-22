@@ -108,9 +108,27 @@ class ChargeLedger:
                     and isinstance(r['body'].get('event'),dict) and r['body']['event'].get('id')==linked.get('id')
                     for r in saved['records']):
                 raise ValueError('此充电记录已关联其他账单，不能重复恢复。')
-        result=self.store.change(owner,vehicle,'charges',action,identity,body,data.get('revision'),guard=guard)
+        correction=data.get('place_correction')
+        place_body=None
+        if correction is not None:
+            if (action!='save' or not isinstance(correction,dict) or not event_id
+                    or self.events.hidden_charge_ids(vehicle,[event_id])):
+                raise ValueError('地点纠正须关联有效的充电记录。')
+            from .charging_places import ChargingPlaces
+            proposal=dict(event_id=event_id,scope='single',name=correction.get('name'),
+                          station_name=correction.get('station_name',''),revision=correction.get('revision'))
+            place_body,_,_=ChargingPlaces(self.events.path,self.store)._proposal(owner,vehicle,proposal)
+        if place_body is None:
+            result=self.store.change(owner,vehicle,'charges',action,identity,body,data.get('revision'),guard=guard)
+            place_revision=None
+        else:
+            with self.store.transaction() as db:
+                result=self.store.change(owner,vehicle,'charges',action,identity,body,data.get('revision'),guard=guard,connection=db)
+                place_result=self.store.change(owner,vehicle,'charging_places','save',place_body['record_id'],
+                    place_body,correction['revision'],guard=guard,connection=db)
+                place_revision=place_result['revision']
         return {'revision':result['revision'],'can_undo':result['can_undo'],'id':identity,
-                'saved_date':body['date'] if body else None,'action':action}
+                'saved_date':body['date'] if body else None,'action':action,'place_revision':place_revision}
 
     @staticmethod
     def entry(record, removed_event_ids=None):
@@ -201,6 +219,7 @@ class ChargeLedger:
             period=period_window('month',period['previous_date'])
         return {'window':window,'as_of':now,'future_bill_count':len(current)-len(recorded),'revision':saved['revision'],'can_undo':saved['can_undo'],
                 'entries':current,'trash':trash,'events':choices,'totals':totals,'trend':list(reversed(trend)),
+                'place_choices':ChargingPlaces(self.events.path,self.store).history_options(owner,vehicle,now),
                 'sources':{key:self.totals([row for row in recorded if row['source']==key]) for key in ('home','public','unknown')},
                 'cost_per_km':{'distance_km':distance,'distance_samples':len(trips),
                     'partial_distance_samples':sum(row['partial'] for row in trips),

@@ -55,6 +55,93 @@ class ChargeLedgerTests(unittest.TestCase):
         other=self.ledger.query('different','car','2026-09-20')['events'][0]
         self.assertIsNone(other['station_name'])
 
+    def test_bill_and_new_place_correction_save_together(self):
+        result=self.save(amount='12.34',place_correction=dict(
+            revision=0,name='新地点',station_name='新充电站'))
+        row=self.query()['entries'][0]
+        self.assertEqual(row['event']['place_label'],'新地点')
+        self.assertEqual(row['event']['station_name'],'新充电站')
+        from zeekr_control.charging_places import ChargingPlaces
+        detail=ChargingPlaces(self.db,self.personal).detail('owner','car','charge')
+        self.assertEqual(detail['correction_scope'],'single')
+        self.assertIsNone(detail['location'])
+        self.assertEqual(row['actual_cents'],1234)
+        self.assertEqual(result['place_revision'],1)
+        # Further ordinary bill edits and undo do not erase the venue decision.
+        self.save(revision=1,id=result['id'],amount='20')
+        self.ledger.update('owner','car',dict(action='undo',revision=2))
+        self.assertEqual(self.query()['entries'][0]['event']['station_name'],'新充电站')
+
+    def test_place_conflict_does_not_save_bill(self):
+        self.personal.change('owner','car','charging_places','save','prior',
+            dict(scope='single',event_id='charge',name='原地点',station_name='原站点',
+                 point=None,anchor=None,radius_m=75,version=1),0)
+        with self.assertRaises(ValueError):
+            self.save(amount='12',place_correction=dict(revision=0,name='另地点',station_name='另站点'))
+        self.assertEqual(self.personal.read('owner','car','charges')['revision'],0)
+        self.assertEqual(self.query()['events'][0]['station_name'],'原站点')
+
+    def test_bill_conflict_and_guard_failure_leave_place_unchanged(self):
+        from zeekr_control.errors import RecordConflict
+        self.save(amount='1')
+        with self.assertRaises(RecordConflict):
+            self.save(revision=0,amount='2',place_correction=dict(revision=0,name='地点',station_name='站'))
+        self.assertEqual(self.personal.read('owner','car','charging_places')['revision'],0)
+        calls=[]
+        def guard():
+            calls.append(True)
+            if len(calls)==2:raise RuntimeError('context changed')
+        with self.assertRaises(RuntimeError):
+            self.ledger.update('owner','car',dict(action='save',revision=1,event_id='charge',
+                date='2026-09-20',source='public',amount='3',place_correction=dict(
+                    revision=0,name='地点',station_name='站')),guard=guard)
+        self.assertEqual(self.personal.read('owner','car','charges')['revision'],1)
+        self.assertEqual(self.personal.read('owner','car','charging_places')['revision'],0)
+
+    def test_place_correction_requires_visible_linked_event_and_valid_name(self):
+        for extra in [dict(event_id=''),dict(event_id='other'),dict(event_id='trip'),
+                      dict(place_correction=dict(revision=0,name='',station_name='站')),
+                      dict(place_correction=dict(revision=0,name='地点',station_name='坏\n站'))]:
+            data=dict(place_correction=dict(revision=0,name='地点',station_name='站'));data.update(extra)
+            with self.assertRaises(ValueError):self.save(**data)
+        self.assertEqual(self.personal.read('owner','car','charges')['revision'],0)
+        self.assertEqual(self.personal.read('owner','car','charging_places')['revision'],0)
+
+    def test_place_choices_cover_history_and_stay_owner_vehicle_scoped(self):
+        self.save(place_correction=dict(revision=0,name='历史地点',station_name='历史站点'))
+        options=self.query('2026-10-20')['place_choices']
+        self.assertEqual(options['revision'],1)
+        self.assertEqual(options['places'],[dict(name='历史地点',stations=['历史站点'])])
+        self.assertEqual(self.ledger.query('other-owner','car','2026-10-20')['place_choices']['places'],[])
+        self.assertEqual(self.ledger.query('owner','other','2026-10-20')['place_choices']['places'],[])
+
+    def test_place_race_after_validation_rolls_back_bill(self):
+        from unittest.mock import patch
+        from zeekr_control.charging_places import ChargingPlaces
+        from zeekr_control.errors import RecordConflict
+        original=ChargingPlaces._proposal
+        def racing(service,owner,vehicle,proposal):
+            result=original(service,owner,vehicle,proposal)
+            self.personal.change(owner,vehicle,'charging_places','save','concurrent',
+                dict(scope='single',event_id='charge',name='并发地点',station_name='并发站',
+                     point=None,anchor=None,radius_m=75,version=1),0)
+            return result
+        with patch.object(ChargingPlaces,'_proposal',racing):
+            with self.assertRaises(RecordConflict):
+                self.save(amount='10',place_correction=dict(revision=0,name='地点',station_name='站'))
+        self.assertEqual(self.personal.read('owner','car','charges')['revision'],0)
+        self.assertEqual(self.query()['events'][0]['station_name'],'并发站')
+
+    def test_hidden_charge_cannot_be_corrected_and_is_absent_from_choices(self):
+        saved=self.save(amount='1',place_correction=dict(revision=0,name='隐藏地点',station_name='隐藏站'))
+        with sqlite3.connect(self.db) as db:
+            db.execute('CREATE TABLE charge_record_trash(vehicle TEXT,event_id TEXT,removed_at INTEGER)')
+            db.execute('INSERT INTO charge_record_trash VALUES(?,?,?)',('car','charge',1))
+        self.assertEqual(self.query()['place_choices']['places'],[])
+        with self.assertRaises(ValueError):
+            self.save(revision=1,id=saved['id'],place_correction=dict(revision=1,name='地点',station_name='站'))
+        self.assertEqual(self.personal.read('owner','car','charges')['revision'],1)
+
     def save(self,revision=0,**changes):
         data={'action':'save','revision':revision,'event_id':'charge','date':'2026-09-20','source':'home',
               'amount':'','metered_kwh':'','unit_price':'','service_fee':'','note':''}

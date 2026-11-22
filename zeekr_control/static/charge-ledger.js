@@ -9,8 +9,8 @@
     return hours?`${hours} 小时${rest?` ${rest} 分钟`:''}`:`${minutes} 分钟`;
   };
   const sources={home:'家充',public:'外充',unknown:'未分类'};
-  const formFields=['event_id','date','source','charge_mode_override','amount','metered_kwh','unit_price','service_fee','parking_fee','note'];
-  const blank=date=>({id:'',event_id:'',date,source:'unknown',charge_mode_override:'',amount:'',metered_kwh:'',unit_price:'',service_fee:'',parking_fee:'',note:'',revision:null});
+  const formFields=['event_id','date','source','charge_mode_override','amount','metered_kwh','unit_price','service_fee','parking_fee','note','place_choice','station_choice','place_custom','station_custom'];
+  const blank=date=>({id:'',event_id:'',date,source:'unknown',charge_mode_override:'',amount:'',metered_kwh:'',unit_price:'',service_fee:'',parking_fee:'',note:'',revision:null,place_choice:'',station_choice:'',place_custom:'',station_custom:'',place_revision:null,linked_event:null});
   function create({getState,request,escape:esc,active,time}){
     let node=null,owner='',month=dateOf(Date.now()).slice(0,7),data=null,attempted=false,loading=false,busy=false;
     let serial=0,writeSerial=0,error='',status='',draft=blank(dateOf(Date.now())),page=0,trashPage=0,editorOpen=false;
@@ -24,6 +24,30 @@
     const button=(label,action,disabled=false,extra='')=>`<button class="button secondary" data-ledger="${action}" ${disabled||busy?'disabled':''} ${extra}>${label}</button>`;
     function field(label,name,type='number',step='.01',extra=''){
       return `<label>${label}<input id="ledger-${name}" name="${name}" type="${type}" ${type==='number'?`min="0" step="${step}"`:''} value="${esc(draft[name])}" ${extra}></label>`;
+    }
+    const placeName=()=>draft.place_choice==='new:'?draft.place_custom.trim():draft.place_choice.slice(8);
+    const stationName=()=>draft.station_choice==='new:'?draft.station_custom.trim():draft.station_choice.slice(8);
+    const placeConflict=()=>draft.place_revision!==null&&draft.place_revision!==data?.place_choices?.revision;
+    function placeFields(choices){
+      if(!draft.event_id)return '<p class="ledger-wide insight-note">关联充电记录后，可同时纠正本次地点和充电站。</p>';
+      const linked=choices.find(row=>row.id===draft.event_id);
+      if(linked?.removed)return '<p class="ledger-wide insight-note">关联记录已移入回收区，恢复后可纠正地点。</p>';
+      const places=data.place_choices?.places||[],name=placeName();
+      const selected=draft.place_choice,stations=places.find(row=>row.name===name)?.stations||[];
+      const historical=(value,label,current)=>`<option value="${esc(value)}" ${value===current?'selected':''}>${esc(label)}</option>`;
+      const missing=selected.startsWith('history:')&&!places.some(row=>'history:'+row.name===selected);
+      const missingStation=draft.station_choice.startsWith('history:')&&!stations.some(station=>'history:'+station===draft.station_choice);
+      return `<label>充电地点<select id="ledger-place_choice" name="place_choice" aria-label="充电地点" ${busy||loading?'disabled':''}>
+        ${historical('',`保持当前：${linked?.place_label||'地点未知'}`,selected)}
+        ${missing?historical(selected,name,selected):''}${places.map(row=>historical('history:'+row.name,row.name,selected)).join('')}
+        ${historical('new:','填写新地点…',selected)}</select></label>
+        ${selected==='new:'?field('新充电地点','place_custom','text','', 'required maxlength="80"'):''}
+        ${selected?`<label>充电站<select id="ledger-station_choice" name="station_choice" aria-label="充电站" ${busy||loading?'disabled':''}>
+          ${historical('','不填站名，仅确认地点',draft.station_choice)}
+          ${missingStation?historical(draft.station_choice,stationName(),draft.station_choice):''}${stations.map(station=>historical('history:'+station,station,draft.station_choice)).join('')}
+          ${historical('new:','填写新充电站…',draft.station_choice)}</select></label>
+          ${draft.station_choice==='new:'?field('新充电站','station_custom','text','', 'required maxlength="80"'):''}
+          <p class="ledger-wide insight-note">仅纠正本次，与账单一起保存。删除或撤销账单不取消地点纠正。</p>`:''}`;
     }
     function pendingSection(){
       const pending=data.events.filter(row=>!row.recorded).length,unknown=data.entries.filter(row=>row.actual_cents===null).length;
@@ -44,11 +68,12 @@
         const entry=data?.entries.find(row=>row.id===draft.id),linked=entry?.event;
         if(linked)choices.unshift(linked);
         else if(entry?.source_event_removed)choices.unshift({id:entry.source_event_id,removed:true,recorded:true});
+        else if(draft.linked_event?.id===draft.event_id)choices.unshift(draft.linked_event);
       }
       node.innerHTML=`<section class="books-view-toolbar"><div class="insight-toolbar">${button('读取账本','load',!owner||!month,'id="ledger-load"')}${button('撤销上一步','undo',!data?.can_undo)}</div>${!data&&!loading&&owner?'<p class="insight-note">选择查询条件后，点击“读取账本”显示结果。</p>':''}${loading?'<p role="status">正在读取账本…</p>':''}${status?`<p role="status" class="insight-note">${esc(status)}</p>`:''}${error?`<div class="notice error" role="alert">${esc(error)}</div>`:''}${!owner?'<p>连接车辆账号并取得当前车辆绑定后，可管理账本。</p>':''}${data?`<p id="ledger-range" class="insight-note">账本月份 ${data.window.start_date.slice(0,7)} · 按账单日期归期；未记账不代表免费。</p>`:''}</section>
         ${pendingAction?`<div class="notice info" role="status"><p>当前有未保存草稿。放弃后才能继续此操作。</p>${button('继续编辑草稿','keep')}${button('放弃草稿，继续','discard')}</div>`:''}
         ${data?`${pendingSection()}
-        ${editorOpen?`<section class="card insight-panel" id="ledger-editor"><div class="insight-heading"><h3>${draft.id?'编辑账单':'新增账单'}</h3>${button(draft.id?'取消编辑':'取消新增','cancel')}</div><form id="ledger-form" class="ledger-form" novalidate><label class="ledger-wide">关联充电记录<select id="ledger-event_id" name="event_id" aria-label="关联充电记录" ${draft.event_id?'disabled':''}><option value="">手工补录，不关联记录</option>${choices.map(row=>`<option value="${esc(row.id)}" ${draft.event_id===row.id?'selected':''} ${row.recorded&&draft.event_id!==row.id?'disabled':''}>${row.removed?'已移入回收区的关联记录':`${esc(time(row.end_time))} · ${num(row.start_soc)}% → ${num(row.end_soc)}%${row.partial?' · 片段':''}${row.recorded?' · 已记账':''}`}</option>`).join('')}</select></label>${draft.event_id?`<p class="ledger-wide ledger-link-evidence">${esc(choices.find(row=>row.id===draft.event_id)?.station_name||choices.find(row=>row.id===draft.event_id)?.place_label||'站点待确认')} · 关联采集记录，地点在充电回顾校正</p>`:''}${field('账单日期','date','date','', 'required')}${field('实际账单金额（元）','amount')}${field('桩端计量电量（kWh）','metered_kwh','number','.001')}${field('停车费（元）','parking_fee')}<details class="ledger-wide" data-detail="ledger-extras"><summary>充电方式、参考估算与备注</summary><div class="books-extra-fields"><label>充电方式<select id="ledger-charge_mode_override" name="charge_mode_override" aria-label="充电方式"><option value="" ${!draft.charge_mode_override?'selected':''}>自动识别</option><option value="ac" ${draft.charge_mode_override==='ac'?'selected':''}>交流 AC</option><option value="dc" ${draft.charge_mode_override==='dc'?'selected':''}>直流 DC</option></select></label>${field('参考电价（元/kWh）','unit_price','number','.0001')}${field('估算附加费用（元）','service_fee')}<label>充电来源<select id="ledger-source" name="source" aria-label="充电来源">${Object.entries(sources).map(([key,label])=>`<option value="${key}" ${draft.source===key?'selected':''}>${label}</option>`).join('')}</select></label></div><label class="ledger-wide">账单备注<textarea id="ledger-note" name="note" aria-label="账单备注" maxlength="1000" rows="3">${esc(draft.note)}</textarea></label></details></form><p class="insight-note">实际金额填写充电费用（含电费和服务费），停车费另填，留空按 0 元。等效充电单价按实际金额 ÷ 桩端计量电量自动显示，不含停车费。参考电价与附加费用只用于独立估算；优先用桩端计量电量，缺失时才用关联事件的 SOC 电量估算。0 是明确零值，留空是未知。充电方式手动选择只覆盖本账单标签；自动识别使用关联充电记录。</p>${draft.revision!==null&&draft.revision!==data.revision?`<p class="notice error">账单已有更新，旧草稿保留。核对列表后再继续编辑。</p>${button('已核对列表，继续编辑','adopt')}`:''}<div class="insight-actions">${button(busy?'正在保存…':'保存账单','save',!owner||loading)}</div></section>`:''}
+        ${editorOpen?`<section class="card insight-panel" id="ledger-editor"><div class="insight-heading"><h3>${draft.id?'编辑账单':'新增账单'}</h3>${button(draft.id?'取消编辑':'取消新增','cancel')}</div><form id="ledger-form" class="ledger-form" novalidate><label class="ledger-wide">关联充电记录<select id="ledger-event_id" name="event_id" aria-label="关联充电记录" ${draft.event_id?'disabled':''}><option value="">手工补录，不关联记录</option>${choices.map(row=>`<option value="${esc(row.id)}" ${draft.event_id===row.id?'selected':''} ${row.recorded&&draft.event_id!==row.id?'disabled':''}>${row.removed?'已移入回收区的关联记录':`${esc(time(row.end_time))} · ${num(row.start_soc)}% → ${num(row.end_soc)}%${row.partial?' · 片段':''}${row.recorded?' · 已记账':''}`}</option>`).join('')}</select></label>${draft.event_id?`<p class="ledger-wide ledger-link-evidence">${esc(choices.find(row=>row.id===draft.event_id)?.station_name||choices.find(row=>row.id===draft.event_id)?.place_label||'站点待确认')} · 关联采集记录</p>`:''}${placeFields(choices)}${field('账单日期','date','date','', 'required')}${field('实际账单金额（元）','amount')}${field('桩端计量电量（kWh）','metered_kwh','number','.001')}${field('停车费（元）','parking_fee')}<details class="ledger-wide" data-detail="ledger-extras"><summary>充电方式、参考估算与备注</summary><div class="books-extra-fields"><label>充电方式<select id="ledger-charge_mode_override" name="charge_mode_override" aria-label="充电方式"><option value="" ${!draft.charge_mode_override?'selected':''}>自动识别</option><option value="ac" ${draft.charge_mode_override==='ac'?'selected':''}>交流 AC</option><option value="dc" ${draft.charge_mode_override==='dc'?'selected':''}>直流 DC</option></select></label>${field('参考电价（元/kWh）','unit_price','number','.0001')}${field('估算附加费用（元）','service_fee')}<label>充电来源<select id="ledger-source" name="source" aria-label="充电来源">${Object.entries(sources).map(([key,label])=>`<option value="${key}" ${draft.source===key?'selected':''}>${label}</option>`).join('')}</select></label></div><label class="ledger-wide">账单备注<textarea id="ledger-note" name="note" aria-label="账单备注" maxlength="1000" rows="3">${esc(draft.note)}</textarea></label></details></form><p class="insight-note">实际金额填写充电费用（含电费和服务费），停车费另填，留空按 0 元。等效充电单价按实际金额 ÷ 桩端计量电量自动显示，不含停车费。参考电价与附加费用只用于独立估算；优先用桩端计量电量，缺失时才用关联事件的 SOC 电量估算。0 是明确零值，留空是未知。充电方式手动选择只覆盖本账单标签；自动识别使用关联充电记录。</p>${(draft.revision!==null&&draft.revision!==data.revision)||placeConflict()?`<p class="notice error">账单或地点已有更新，旧草稿保留。核对列表后再继续编辑。</p>${button('已核对列表，继续编辑','adopt')}`:''}<div class="insight-actions">${button(busy?'正在保存…':'保存账单','save',!owner||loading)}</div></section>`:''}
         <section class="card insight-panel ledger-hub-list"><div class="insight-heading"><h3>${{pending:'待关联充电',unknown:'实际金额待补',known:'已填账单'}[listFilter]||'本月账单与待补记录'}</h3><div class="insight-actions">${listFilter!=='all'?button('显示全部','all'):''}${button('新增账单','new')}</div></div><div id="ledger-entries"></div></section>
         ${data.entries.length?`<details class="books-data-notes" data-detail="ledger-statistics"><summary>充电统计与费用口径</summary><div class="insight-metrics report-totals"><div><span>已填实际金额</span><strong>${money(t.actual_cents)} <small>元</small></strong><small>${t.actual_count} 笔账单</small></div><div><span>其余未填账单的估算</span><strong>${money(t.unbilled_estimated_cents)} <small>元</small></strong><small>${t.estimated_count} 笔估算；未并入实际金额</small></div><div><span>已录账单中费用未知</span><strong>${t.unpriced_count} <small>笔</small></strong><small>缺少实际金额或估算依据</small></div><div><span>已录桩端计量电量</span><strong>${num(t.metered_kwh)} <small>kWh</small></strong><small>${t.metered_count} 笔有计量值</small></div></div></details>`:''}
         <div id="ledger-trash"></div>`:''}`;
@@ -90,6 +115,9 @@
       }
       const identity=owner,token=++writeSerial;
       const payload={...(action==='save'?draft:{}),action,id:action==='save'?draft.id:id,revision:action==='save'?(draft.revision??data.revision):data.revision,context:owner};
+      if(action==='save'&&draft.place_choice){
+        payload.place_correction={name:placeName(),station_name:stationName(),revision:draft.place_revision};
+      }
       let returnScroll=null;
       const restore=()=>{if(returnScroll!==null&&active()){root.scrollTo({top:returnScroll,behavior:'instant'});node.querySelector('#ledger-pending-count')?.focus({preventScroll:true});}};
       const finish=root.RefreshView?.guard?root.RefreshView.guard(restore):restore;
@@ -99,7 +127,7 @@
         if(!valid(token,writeSerial,identity))return;
         if(result.context!==identity)throw Error('账号或车辆已切换，请重新加载。');
         data.revision=result.revision;data.can_undo=result.can_undo;
-        status={save:'账单已保存。',delete:'账单已删除，可在下方恢复或撤销。',restore:'账单已恢复。',undo:'上一步已撤销。'}[action];
+        status={save:result.place_revision!==null&&result.place_revision!==undefined?'账单与本次地点已保存。':'账单已保存。',delete:'账单已删除，可在下方恢复或撤销。',restore:'账单已恢复。',undo:'上一步已撤销。'}[action];
         const sameMonth=action!=='save'||month===result.saved_date.slice(0,7);
         if(action==='save'){
           returnScroll=sameMonth?pendingReturn:null;pendingReturn=null;
@@ -114,10 +142,10 @@
     function edit(id,force=false){
       if(!force&&protect(()=>edit(id,true)))return;
       const row=data.entries.find(row=>row.id===id);if(!row)return;
-      draft={id:row.id,event_id:row.source_event_id||'',date:row.date,source:row.source,
+      draft={...blank(row.date),id:row.id,event_id:row.source_event_id||'',date:row.date,source:row.source,
         amount:row.actual_cents===null?'':(row.actual_cents/100).toFixed(2),metered_kwh:row.metered_kwh??'',
         unit_price:row.unit_price??'',service_fee:row.service_fee_cents===null?'':(row.service_fee_cents/100).toFixed(2),
-        parking_fee:((row.parking_fee_cents??0)/100).toFixed(2),charge_mode_override:row.charge_mode_override||'',note:row.note,revision:data.revision};
+        parking_fee:((row.parking_fee_cents??0)/100).toFixed(2),charge_mode_override:row.charge_mode_override||'',note:row.note,revision:data.revision,linked_event:row.event||null};
       dirty=false;
       pendingReturn=null;editorOpen=true;error='';paint();openEditor();
     }
@@ -149,7 +177,21 @@
         if(draft.revision===null&&data)draft.revision=data.revision;dirty=true;draft[el.name]=el.value;
         if(el.name==='event_id'){
           const row=data?.events.find(row=>row.id===el.value);
+          draft.linked_event=row||null;
           if(row){draft.date=dateOf(row.end_time);node.querySelector('#ledger-date').value=draft.date;}
+          draft.place_choice=draft.station_choice=draft.place_custom=draft.station_custom='';draft.place_revision=null;
+          paint();
+        }
+        if(el.name==='place_choice'){
+          if(draft.place_revision===null)draft.place_revision=data.place_choices?.revision??0;
+          const stations=(data.place_choices?.places||[]).find(row=>row.name===placeName())?.stations||[];
+          draft.station_choice=stations.length===1?'history:'+stations[0]:'';
+          if(!el.value){draft.place_revision=null;draft.place_custom=draft.station_custom='';}
+          paint();
+          if(el.value==='new:')node.querySelector('#ledger-place_custom')?.focus({preventScroll:true});
+        }
+        if(el.name==='station_choice'){
+          paint();if(el.value==='new:')node.querySelector('#ledger-station_custom')?.focus({preventScroll:true});
         }
         persist();return true;
       }
@@ -161,7 +203,7 @@
       switch(target.dataset.ledger){
         case 'keep':pendingAction=null;paint();break;
         case 'discard':{const action=pendingAction;pendingAction=null;dirty=false;action?.();break;}
-        case 'adopt':draft.revision=data.revision;error='';paint();break;
+        case 'adopt':draft.revision=data.revision;if(draft.place_choice)draft.place_revision=data.place_choices?.revision??0;error='';paint();break;
         case 'all':setFilter('all');break;
         case 'unknown':setFilter('unknown');node.querySelector('#ledger-entries')?.scrollIntoView({block:'start'});break;
         case 'load':load();break;
@@ -170,7 +212,7 @@
         case 'pending-new':{
           const row=data?.events.find(row=>row.id===target.dataset.id&&!row.recorded);
           if(!row||loading)return true;
-          pendingReturn=root.scrollY;draft={...blank(dateOf(row.end_time)),event_id:row.id};
+          pendingReturn=root.scrollY;draft={...blank(dateOf(row.end_time)),event_id:row.id,linked_event:row};
           editorOpen=true;error='';paint();openEditor('amount');break;
         }
         case 'save':mutate('save');break;
@@ -195,7 +237,7 @@
         bill=data.entries.find(row=>row.source_event_id===eventId);
       }
       if(bill)edit(bill.id);
-      else if(!choice?.recorded&&data.events.some(row=>row.id===eventId)){draft={...blank(date),event_id:eventId};editorOpen=true;error='';paint();openEditor('amount');}
+      else if(!choice?.recorded&&data.events.some(row=>row.id===eventId)){draft={...blank(date),event_id:eventId,linked_event:choice};editorOpen=true;error='';paint();openEditor('amount');}
     }
     async function openDate(date){
       const next=date.slice(0,7);

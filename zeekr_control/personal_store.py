@@ -136,7 +136,21 @@ class PersonalStore:
                                                     (owner,vehicle)).fetchone()[0]
             return result
 
-    def change(self,owner,vehicle,collection,action,identity,body,revision,guard=None):
+    @contextmanager
+    def transaction(self, connection=None):
+        """Share a guarded transaction for changes to this private database."""
+        if connection is not None:
+            attached={row[1]:row[2] for row in connection.execute('PRAGMA database_list')}
+            if (not connection.in_transaction or not attached.get('main')
+                    or Path(attached['main']).resolve()!=self.path.resolve()):
+                raise ValueError('个人记录事务未确认。')
+            yield connection
+        else:
+            with self.connect(write=True) as db, db:
+                db.execute('BEGIN IMMEDIATE')
+                yield db
+
+    def change(self,owner,vehicle,collection,action,identity,body,revision,guard=None,*,connection=None):
         key=self._key(owner,vehicle,collection)
         if action not in ('save','delete','restore','undo') or type(revision) is not int or revision<0:
             raise ValueError('记录操作或版本无效。')
@@ -144,8 +158,7 @@ class PersonalStore:
             raise ValueError('记录编号无效。')
         body_limit=65536 if collection=='experiments' else 16384
         encoded=_encoded(body,body_limit) if action=='save' else None
-        with self.connect(write=True) as db,db:
-            db.execute('BEGIN IMMEDIATE')
+        with self.transaction(connection) as db:
             current=self._read(db,key)
             if current['revision']!=revision:
                 raise RecordConflict('记录已有更新，请重新加载后再保存；填写内容仍保留。')
