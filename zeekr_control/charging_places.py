@@ -208,12 +208,14 @@ class ChargingPlaces:
             output.append(g)
         return sorted(output,key=lambda g:(g['unlocated'],-(g['actual_cents'] or 0),-g['charge_count'],g['key']))
 
-    def _proposal(self,owner,vehicle,data):
+    def _proposal(self,owner,vehicle,data,*,preserve_location=False):
         detail=self.detail(owner,vehicle,data.get('event_id'));revision=data.get('revision')
         if type(revision) is not int or revision!=detail['revision']:raise ValueError('地点记录已更新，请重新读取。')
         scope=data.get('scope');name=_text(data.get('name'),True);station=_text(data.get('station_name',''))
         if scope not in ('single','place'):raise ValueError('请选择仅本次或同地点记录。')
         lat,lon=data.get('latitude'),data.get('longitude');radius=data.get('radius_m',RADIUS_M)
+        if preserve_location and detail['location']:
+            lat,lon=(detail['location'][key] for key in ('latitude','longitude'))
         if lat is None and lon is None:point=None
         elif number(lat,-90,90) is None or number(lon,-180,180) is None or lat==lon==0:raise ValueError('请选择有效的 WGS84 地图位置。')
         else:point=[lat,lon]

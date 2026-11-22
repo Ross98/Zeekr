@@ -117,7 +117,7 @@ class ChargeLedger:
             from .charging_places import ChargingPlaces
             proposal=dict(event_id=event_id,scope='single',name=correction.get('name'),
                           station_name=correction.get('station_name',''),revision=correction.get('revision'))
-            place_body,_,_=ChargingPlaces(self.events.path,self.store)._proposal(owner,vehicle,proposal)
+            place_body,_,_=ChargingPlaces(self.events.path,self.store)._proposal(owner,vehicle,proposal,preserve_location=True)
         if place_body is None:
             result=self.store.change(owner,vehicle,'charges',action,identity,body,data.get('revision'),guard=guard)
             place_revision=None

@@ -107,6 +107,18 @@ class ChargeLedgerTests(unittest.TestCase):
         self.assertEqual(self.personal.read('owner','car','charges')['revision'],0)
         self.assertEqual(self.personal.read('owner','car','charging_places')['revision'],0)
 
+    def test_bill_name_correction_preserves_saved_coordinates(self):
+        from zeekr_control.charging_places import ChargingPlaces
+        places=ChargingPlaces(self.db,self.personal)
+        proposal=dict(event_id='charge',scope='single',name='原地点',station_name='原站',
+                      latitude=31.2,longitude=121.4,revision=0)
+        preview=places.preview('owner','car',proposal)
+        places.update('owner','car',dict(proposal,action='save',token=preview['token']))
+        original=places.detail('owner','car','charge')['location']
+        self.assertIsNotNone(original)
+        self.save(place_correction=dict(revision=1,name='新地点',station_name='新站'))
+        self.assertEqual(places.detail('owner','car','charge')['location'],original)
+
     def test_old_trips_do_not_exhaust_place_history(self):
         self.save(place_correction=dict(revision=0,name='历史地点',station_name='历史站点'))
         start=self.start-86400000
@@ -130,8 +142,8 @@ class ChargeLedgerTests(unittest.TestCase):
         from zeekr_control.charging_places import ChargingPlaces
         from zeekr_control.errors import RecordConflict
         original=ChargingPlaces._proposal
-        def racing(service,owner,vehicle,proposal):
-            result=original(service,owner,vehicle,proposal)
+        def racing(service,owner,vehicle,proposal,**options):
+            result=original(service,owner,vehicle,proposal,**options)
             self.personal.change(owner,vehicle,'charging_places','save','concurrent',
                 dict(scope='single',event_id='charge',name='并发地点',station_name='并发站',
                      point=None,anchor=None,radius_m=75,version=1),0)
